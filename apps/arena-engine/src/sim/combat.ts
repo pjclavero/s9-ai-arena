@@ -18,7 +18,7 @@ import {
 import { projectileLifetimeTicks } from "../../../../packages/module-catalog/resolve/projectile.js";
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
-import type { Vehicle } from "./vehicle.js";
+import type { ModuleSpec, Vehicle } from "./vehicle.js";
 
 export interface Projectile {
   id: string;
@@ -171,12 +171,22 @@ export function ammoFor(v: Vehicle, accepts: string[]) {
   return null;
 }
 
-/**
- * Vida de proyectil de los motores ANTERIORES a P-2 (OLA 2), que no la leían del catálogo.
- * Sólo para re-simular specs grabados sin `projectileLifetimeTicks`; toda spec nueva la
- * trae resuelta por resolveVehicle (lo vigila packages/module-catalog/catalog-contract.test.ts).
- */
-export const LEGACY_PROJECTILE_LIFETIME_TICKS = 90;
+/** Vida del proyectil de un spec de arma: derivada de rangeM y velocidad; incoherente = lanza. */
+export function projectileLifetimeOf(spec: ModuleSpec): number {
+  if (spec.rangeM === undefined || spec.projectileSpeedMs === undefined) {
+    throw new Error(`${spec.moduleId}: arma sin rangeM o projectileSpeedMs (no se puede derivar el alcance)`);
+  }
+  const ttl = projectileLifetimeTicks(spec.rangeM, spec.projectileSpeedMs);
+  if (!Number.isInteger(ttl) || ttl < 1) {
+    throw new Error(`${spec.moduleId}: vida de proyectil inválida (${ttl})`);
+  }
+  if (spec.projectileLifetimeTicks !== undefined && spec.projectileLifetimeTicks !== ttl) {
+    throw new Error(
+      `${spec.moduleId}: projectileLifetimeTicks=${spec.projectileLifetimeTicks} incoherente con rangeM/velocidad (${ttl})`,
+    );
+  }
+  return ttl;
+}
 
 /** Crea el proyectil. Consume munición, energía y arranca el cooldown. */
 export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: Rng, seq: number): Projectile | null {
@@ -195,21 +205,11 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
 
   const damage = (w.spec.damage ?? 10) * (ammo.spec.damageMultiplier ?? 1) * v.performanceOf(slot);
 
-  // P-2 · la vida del proyectil sale del catálogo (weapon.rangeM, resuelta por
-  // resolveVehicle). Campo AUSENTE = spec anterior a P-2 (cabecera de replay o checkpoint
-  // grabados por un motor que fijaba 90 ticks): se aplica ESA regla, no un valor inventado.
-  // Presente e inválido = fail-closed.
-  let ttlTicks =
-    w.spec.projectileLifetimeTicks === undefined ? LEGACY_PROJECTILE_LIFETIME_TICKS : w.spec.projectileLifetimeTicks;
-  // Spec del régimen P-2 (trae la vida resuelta): la fuente es el rangeM del PROPIO spec, de modo
-  // que cambiar weapon.rangeM cambia el alcance aunque se haya editado tras resolver (contrato
-  // ME/MC). Resolver y motor usan la misma función, así que para un spec coherente coinciden.
-  if (w.spec.projectileLifetimeTicks !== undefined && w.spec.rangeM !== undefined && w.spec.projectileSpeedMs !== undefined) {
-    ttlTicks = projectileLifetimeTicks(w.spec.rangeM, w.spec.projectileSpeedMs);
-  }
-  if (!Number.isInteger(ttlTicks) || ttlTicks < 1) {
-    throw new Error(`${w.spec.moduleId}: projectileLifetimeTicks inválido (${ttlTicks})`);
-  }
+  // P-2 · UNA sola regla de alcance: la vida del proyectil se deriva SIEMPRE de rangeM y de la
+  // velocidad del propio spec (la misma función que usa resolveVehicle). No hay regla heredada
+  // de 90 ticks. Un spec sin rangeM/velocidad, o cuyo projectileLifetimeTicks (derivado)
+  // discrepa, es incoherente: falla, no se impone en silencio.
+  const ttlTicks = projectileLifetimeOf(w.spec);
 
   return {
     id: `proj_${seq}`,
