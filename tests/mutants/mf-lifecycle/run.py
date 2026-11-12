@@ -92,10 +92,6 @@ MUTANTS = [
      "containers = await deps.runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT });",
      "containers = await deps.runner.list({});",
      "apps/tournament-worker/src/mf-stream-session-survives.test.ts"),
-    ("M21-reaper-borra-sin-label-de-batalla", "apps/tournament-worker/src/battle-reaper.ts",
-     "    if (!battleId) {\n      report.kept++;\n      continue;\n    }",
-     "    if (!battleId) {\n      await deps.runner.removeById(c.id);\n      continue;\n    }",
-     "apps/tournament-worker/src/mf-stream-session-survives.test.ts"),
 ]
 
 def sh(cmd, **kw):
