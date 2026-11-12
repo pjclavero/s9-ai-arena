@@ -92,6 +92,10 @@ MUTANTS = [
      "containers = await deps.runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT });",
      "containers = await deps.runner.list({});",
      "apps/tournament-worker/src/mf-stream-session-survives.test.ts"),
+    ("M22-remove-409-en-curso-falla", "apps/bot-manager/src/docker-proxy.ts",
+     "    if (res.status === 409 && /removal of container",
+     "    if (false && /removal of container",
+     "apps/bot-manager/tests/docker-proxy-lifecycle.test.ts"),
 ]
 
 def sh(cmd, **kw):
