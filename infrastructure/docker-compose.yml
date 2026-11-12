@@ -348,6 +348,10 @@ services:
         APP_PATH: apps/tournament-worker
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
+    # OLA2-MF · el SIGTERM hace abortAll + worker.stop(): cada batalla en curso hace su teardown (TERM→KILL
+    # de 5 s + borrado, y el 409 de AutoRemove hasta 15 s). Con los 10 s por defecto Docker mataba el
+    # proceso a mitad; lo que quedara lo recoge el reaper, pero mejor no depender de él.
+    stop_grace_period: 45s
     # REVIEW (cierre funcional) · `arena`: los contenedores de los bots se conectan
     # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
     # en ESTE proceso. Deuda aceptada y registrada (TD-033, ex TD-A1): el proceso
@@ -957,6 +961,12 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 512M }
+    # OLA2-MF · tini como PID 1. Sin él, PID 1 era `crond` (exec del
+    # entrypoint), que sólo espera a SUS trabajos: los huérfanos reparentados a
+    # PID 1 —el `ssh` que lanza restic para el backend sftp:, los hijos de los
+    # `docker exec` del healthcheck— quedaban zombis para siempre (44 `ssh`
+    # zombis colgando de crond en producción). Mismo criterio que el streamer.
+    init: true
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging

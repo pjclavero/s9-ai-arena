@@ -334,6 +334,10 @@ export class ProtocolServer {
   private readonly handshakeTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private resultResolvers: ((r: BattleResult) => void)[] = [];
+  /** OLA2-MF · quienes esperan el resultado, para RECHAZARLES si el motor revienta. */
+  private resultRejecters: ((e: unknown) => void)[] = [];
+  /** OLA2-MF · error del motor dentro del bucle (null = ninguno). */
+  private engineError: unknown = null;
   private allConnectedResolvers: (() => void)[] = [];
   /** TD-034 · instante (performance.now()) del PRIMER HELLO aceptado de cada vehículo. */
   private readonly helloAtByVehicle = new Map<string, number>();
@@ -670,7 +674,22 @@ export class ProtocolServer {
         return;
       }
       const t0 = Date.now();
-      this.battle.step();
+      try {
+        this.battle.step();
+      } catch (err) {
+        // OLA2-MF · antes, un step() que lanzaba dentro del setTimeout era una
+        // excepción NO capturada: tumbaba el proceso del worker entero y dejaba
+        // todos los recursos de todas sus batallas sin teardown. Ahora es un
+        // ENGINE_ERROR de ESTA batalla: se detiene el bucle y se rechaza a quien
+        // espera el resultado (el orquestador hace el teardown).
+        this.engineError = err;
+        this.loopTimer = null;
+        const rejecters = this.resultRejecters;
+        this.resultResolvers = [];
+        this.resultRejecters = [];
+        for (const reject of rejecters) reject(err);
+        return;
+      }
       if (this.battle.isFinished()) {
         this.finish();
         return;
@@ -705,6 +724,7 @@ export class ProtocolServer {
     }
     for (const resolve of this.resultResolvers) resolve(result);
     this.resultResolvers = [];
+    this.resultRejecters = [];
   }
 
   private vehicleIdOf(agent: WebSocketBotAgent): string {
@@ -732,7 +752,11 @@ export class ProtocolServer {
   waitForResult(): Promise<BattleResult> {
     const existing = this.battle.getResult();
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve) => this.resultResolvers.push(resolve));
+    if (this.engineError !== null) return Promise.reject(this.engineError);
+    return new Promise((resolve, reject) => {
+      this.resultResolvers.push(resolve);
+      this.resultRejecters.push(reject);
+    });
   }
 
   stop(): void {

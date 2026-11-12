@@ -37,6 +37,7 @@ import { rulesOf } from "../../api/src/services/battle-rules.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
+import { BattleResourceRegistry, defaultBattleResources } from "./battle-resources.js";
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -56,6 +57,8 @@ export interface AgentDriverInput {
   ruleset: Ruleset;
   catalogVersion: string;
   signal?: AbortSignal;
+  /** OLA2-MF · titular de la reserva (`battles.claimed_by`): va en la label del contenedor. */
+  owner?: string | null;
 }
 
 export interface AgentDriverOutput {
@@ -142,6 +145,8 @@ export interface EngineExecutorOptions {
   spectate?: SpectateSink;
   /** ms entre el final de la batalla y el detach (deja al pump del gateway entregar el resultado). */
   spectateDetachDelayMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
 }
 
 export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor {
@@ -156,6 +161,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     );
   }
 
+  const res = opts.resources ?? defaultBattleResources;
   return async (ctx: BattleContext): Promise<BattleExecution> => {
     const db = opts.db;
     const { battle, participants } = ctx;
@@ -293,6 +299,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     // batalla 'visible'. Lo usan el attach y el detach (que debe esperar ese retardo).
     const spectator =
       battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
+    let ok = false;
     try {
       if (opts.spectate) {
         let round: number | null = null;
@@ -300,6 +307,22 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           const match = await db("matches").where({ id: battle.match_id }).first();
           round = (match?.round as number) ?? null;
         }
+        // OLA2-MF · un intento ANTERIOR de esta misma batalla en este proceso puede
+        // tener su feed aún drenando (retardo anti-coaching): se libera YA. Antes,
+        // su detach diferido (un setTimeout sin seguir) mataba el feed de ESTE
+        // intento, y attachBattle sobre la misma clave dejaba vivo el setInterval
+        // del feed viejo, reteniendo su motor.
+        await res.flushDraining(battle.id);
+        const sink = opts.spectate;
+        res.register(battle.id, {
+          kind: "spectate_feed",
+          phase: "streaming",
+          scope: "executor",
+          // En FINISHED se retira tras el retardo (entrega del resultado); en
+          // cualquier otro final, ya.
+          drainMs: spectateDetachDelayMs(opts.spectateDetachDelayMs ?? SPECTATE_DETACH_BASE_MS, spectator),
+          release: () => sink.detachBattle(battle.id),
+        });
         opts.spectate.attachBattle(battle.id, engine, {
           spectator,
           // OLA 2 · MA · nómina INTERNA (ids del motor, chasis): el gateway la proyecta por
@@ -345,16 +368,14 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           ruleset,
           catalogVersion: effectiveCatalogVersion,
           signal: ctx.signal,
+          owner: battle.claimed_by ?? null,
         });
+        ok = true;
       } finally {
-        if (opts.spectate) {
-          const sink = opts.spectate;
-          const t = setTimeout(
-            () => sink.detachBattle(battle.id),
-            spectateDetachDelayMs(opts.spectateDetachDelayMs ?? SPECTATE_DETACH_BASE_MS, spectator),
-          );
-          t.unref?.();
-        }
+        // OLA2-MF · el feed del espectador se cierra con el teardown único: drena
+        // (FINISHED) o se retira ya (cualquier otro final).
+        if (opts.spectate)
+          await res.cleanupBattleResources(battle.id, ok ? "FINISHED" : "FAILED", { scope: "executor" });
       }
       const { result, replay } = out;
 

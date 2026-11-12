@@ -61,6 +61,41 @@ export interface SandboxSpec {
   cmd?: string[];
   /** Borrar el contenedor al pararse (HostConfig.AutoRemove). */
   autoRemove?: boolean;
+  /**
+   * OLA2-MF · labels del contenedor (NUNCA en el espacio `s9.*`, reservado al
+   * proxy). Las de batalla (`arena.battle-id`, `arena.battle-owner`,
+   * `arena.role`) permiten al reconciliador encontrar lo que dejó una batalla.
+   */
+  labels?: Record<string, string>;
+}
+
+/**
+ * OLA2-MF · labels de ciclo de vida de batalla. Prefijo `arena.` (el proxy
+ * prohíbe al cliente cualquier `s9.*`). Valores: ids opacos, nunca secretos.
+ */
+export const LABEL_BATTLE_ID = "arena.battle-id";
+export const LABEL_BATTLE_OWNER = "arena.battle-owner";
+export const LABEL_ROLE = "arena.role";
+export const ROLE_BATTLE_BOT = "battle-bot";
+
+/** Labels de un contenedor de bot de batalla (valores saneados a lo que Docker admite). */
+export function battleLabels(battleId: string, owner?: string | null): Record<string, string> {
+  const clean = (v: string) => v.replace(/[^A-Za-z0-9_.:@-]/g, "-").slice(0, 200);
+  return {
+    [LABEL_ROLE]: ROLE_BATTLE_BOT,
+    [LABEL_BATTLE_ID]: clean(battleId),
+    ...(owner ? { [LABEL_BATTLE_OWNER]: clean(owner) } : {}),
+  };
+}
+
+/** Contenedor gestionado visto por un listado (lo mínimo para reconciliar). */
+export interface ManagedContainer {
+  id: string;
+  labels: Record<string, string>;
+  /** `created` | `running` | `exited` | `paused` | `restarting` | `removing` | `dead`. */
+  state: string;
+  /** Epoch ms de creación (Docker `Created`, segundos → ms). */
+  createdAtMs: number;
 }
 
 /** Estado de ejecución de un contenedor (de `docker inspect`). */
@@ -107,9 +142,23 @@ export interface SecurityPosture {
   limits: Partial<ContainerLimits>;
 }
 
+export interface StopOptions {
+  /**
+   * Segundos entre el SIGTERM y el SIGKILL que aplica la Engine (`?t=`). 0 =
+   * KILL inmediato. Sin valor, el del runner (5 s en el de producción).
+   */
+  timeoutSeconds?: number;
+}
+
 export interface ContainerHandle {
   id: string;
-  stop(): Promise<void>;
+  stop(opts?: StopOptions): Promise<void>;
+  /**
+   * OLA2-MF · borra el contenedor (forzado: si siguiera vivo, la Engine lo mata).
+   * 404 = ya no existe (AutoRemove) y cuenta como éxito. Opcional: un runner sin
+   * borrado depende de AutoRemove y el teardown lo registra.
+   */
+  remove?(): Promise<void>;
   posture(): Promise<SecurityPosture>;
   /**
    * B10 (issue #9) · CPU consumida por el contenedor desde que arrancó, en
@@ -131,6 +180,13 @@ export interface MeasuredContainerHandle extends ContainerHandle {
 
 export interface ContainerRunner {
   launch(spec: SandboxSpec): Promise<ContainerHandle>;
+  /**
+   * OLA2-MF · contenedores GESTIONADOS (los del proxy) que llevan TODAS estas
+   * labels, parados incluidos. Opcional: sin él no hay reconciliador externo.
+   */
+  list?(labels: Record<string, string>): Promise<ManagedContainer[]>;
+  /** OLA2-MF · borra (forzado) un contenedor gestionado por Id completo. 404 = éxito. */
+  removeById?(id: string, battleId?: string): Promise<void>;
 }
 
 /**
@@ -229,6 +285,7 @@ export class DockerContainerRunner implements ContainerRunner {
       // variables de entorno (sin secretos)
       ...Object.entries(spec.env).flatMap(([k, val]) => ["--env", `${k}=${val}`]),
       ...(spec.autoRemove ? ["--rm"] : []),
+      ...Object.entries(spec.labels ?? {}).flatMap(([k, val]) => ["--label", `${k}=${val}`]),
       spec.imageDigest,
       ...(spec.cmd ?? []),
     ];

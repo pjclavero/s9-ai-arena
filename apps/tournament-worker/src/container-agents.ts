@@ -44,6 +44,7 @@ import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protoco
 import { DEFAULT_SECCOMP_PROFILE } from "../../bot-manager/src/container-battle.js";
 import {
   DEFAULT_LIMITS,
+  battleLabels,
   complianceViolations,
   type ContainerHandle,
   type ContainerLimits,
@@ -62,6 +63,7 @@ import {
 import type { AgentDriver, AgentDriverInput, AgentDriverOutput } from "./engine-executor.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
 import { containerDiagnostics, type BotContainerDiagnostics, type BotRunDiagnostics } from "./bot-diagnostics.js";
+import { BattleResourceRegistry, defaultBattleResources, terminateContainer } from "./battle-resources.js";
 
 /** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
 export interface BotLaunchPlan {
@@ -130,6 +132,10 @@ export interface ContainerAgentsOptions {
   graceMs?: number;
   /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
   cpuSampleMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
+  /** OLA2-MF · gracia TERM→KILL de cada contenedor en el teardown (s). Def. 5. */
+  termGraceS?: number;
 }
 
 export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
@@ -140,6 +146,13 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       if (signal?.aborted) throw new Error(`batalla abortada antes de lanzar: ${String(signal.reason)}`);
       const tickIntervalMs = opts.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
       const timeouts = opts.timeouts ?? DEFAULT_STARTUP_TIMEOUTS;
+      // OLA2-MF · todo lo que se crea aquí se REGISTRA bajo el battleId en cuanto
+      // existe; el `finally` lo libera con el teardown único (scope "agents") y la
+      // orquestación lo repite sin scope (idempotente).
+      const res = opts.resources ?? defaultBattleResources;
+      const battleId = input.battleId;
+      const SCOPE = "agents";
+      const termGraceS = opts.termGraceS ?? 5;
 
       let host: BattleLaunchHost;
       try {
@@ -150,6 +163,12 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           `no se pudo abrir el host de la batalla: ${String(err)}`,
         );
       }
+      res.register(battleId, {
+        kind: "sandbox_host",
+        phase: "terminate",
+        scope: SCOPE,
+        release: () => Promise.resolve(host.close()),
+      });
 
       const wire = vehicles.map((_v, i) => protocolBotHandle(i));
       const expected: ExpectedBot[] = vehicles.map((v, i) => ({
@@ -167,10 +186,17 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // Conexión → HELLO: tramo del bot (TD-034).
         handshakeTimeoutMs: timeouts.botExecutionMs,
       });
+      // Parar el ProtocolServer = dejar de generar ticks/observaciones y cerrar
+      // las conexiones de los bots (fase 1 del teardown).
+      res.register(battleId, {
+        kind: "protocol_server",
+        phase: "stop_generation",
+        scope: SCOPE,
+        release: () => server.stop(),
+      });
       const port = host.wss ? host.port : server.port;
       if (!port) {
-        server.stop();
-        await host.close();
+        await res.cleanupBattleResources(battleId, "FAILED", { scope: SCOPE });
         throw new InfrastructureFailure("container_unavailable", "el host de la batalla no declaró puerto");
       }
       const wsUrl = `ws://${opts.engineHost}:${port}`;
@@ -184,6 +210,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 
       try {
         for (let i = 0; i < vehicles.length; i++) {
+          // OLA2-MF · un aborto durante el arranque no espera al handshake.
+          if (signal?.aborted) throw signal.reason ?? new Error("batalla abortada");
           const v = vehicles[i];
           let plan: BotLaunchPlan;
           try {
@@ -214,11 +242,77 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             seccompProfilePath: opts.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE,
             ...(plan.cmd ? { cmd: plan.cmd } : {}),
             ...(plan.autoRemove ? { autoRemove: true } : {}),
+            // OLA2-MF · identidad de batalla en el contenedor: el reaper la usa.
+            labels: battleLabels(input.battleId, input.owner),
           };
           // Reloj de PLATAFORMA de este bot: arranca al PEDIR su contenedor.
           launchRequestedAt[i] = performance.now();
+          // OLA2-MF · el lanzamiento EN VUELO ya es un recurso: si el reloj de
+          // plataforma vence (o la batalla se aborta) antes de que el runner
+          // devuelva el handle, el teardown espera ese handle y lo para y borra.
+          let inFlight: Promise<ContainerHandle | null> | null = null;
+          const instrumented: typeof opts.runner = {
+            launch: (sp) => {
+              const p = opts.runner.launch(sp);
+              inFlight = p.then(
+                (h) => h,
+                () => null,
+              );
+              return p;
+            },
+          };
+          const forgetInFlight = res.register(battleId, {
+            kind: "container_launch_in_flight",
+            phase: "cancel_jobs",
+            scope: SCOPE,
+            release: async () => {
+              // Acotado: un proxy colgado no puede colgar el teardown. Si vence, el
+              // recurso queda `failed` (se reintenta) y el contenedor, si llega a
+              // existir, lleva labels de batalla: lo recoge el reaper.
+              let t: ReturnType<typeof setTimeout> | undefined;
+              const late = inFlight
+                ? await Promise.race([
+                    inFlight,
+                    new Promise<never>((_r, rej) => {
+                      t = setTimeout(() => rej(new Error("lanzamiento en vuelo sin respuesta del runner")), 30_000);
+                      t.unref?.();
+                    }),
+                  ]).finally(() => t && clearTimeout(t))
+                : null;
+              if (late && !handles.includes(late)) {
+                await terminateContainer(late, { termGraceS: 0, stopDeadlineMs: 5_000 }).catch(() => undefined);
+                if (late.remove) await late.remove();
+              }
+            },
+          });
           try {
-            handles[i] = await launchWithinStartup(opts.runner, spec, timeouts, launchRequestedAt[i]);
+            handles[i] = await launchWithinStartup(instrumented, spec, timeouts, launchRequestedAt[i]);
+            forgetInFlight();
+            const h = handles[i]!;
+            res.register(battleId, {
+              kind: `container:${v.vehicleId}`,
+              phase: "terminate",
+              scope: SCOPE,
+              release: async () => {
+                try {
+                  await terminateContainer(h, { termGraceS });
+                } catch (err) {
+                  // Si ya no corre (o ya no existe: lo borró la fase `containers`
+                  // de un teardown anterior), la parada está hecha.
+                  const st = h.state ? await h.state().catch(() => null) : null;
+                  if (st && (st.gone || !st.running)) return;
+                  throw err;
+                }
+              },
+            });
+            if (h.remove) {
+              res.register(battleId, {
+                kind: `container_remove:${v.vehicleId}`,
+                phase: "containers",
+                scope: SCOPE,
+                release: () => h.remove!(),
+              });
+            }
           } catch (err) {
             const reason = err instanceof SandboxLaunchError ? err.reason : "sandbox_start_failed";
             throw new InfrastructureFailure(
@@ -326,6 +420,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         };
         cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
         cpuSampler.unref?.();
+        res.registerTimer(battleId, "cpu_sampler", cpuSampler, SCOPE);
 
         // UX-06 · si un bot se desconecta con la batalla en curso, se mira en ese
         // momento cómo está su contenedor (salida, OOM): al acabar ya no se sabría
@@ -351,10 +446,12 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           server.waitForResult(),
           new Promise<never>((_r, reject) => {
             guard = setTimeout(() => reject(new Error(`timeout global de la batalla tras ${overallMs} ms`)), overallMs);
+            res.registerTimer(battleId, "battle_guard", guard, SCOPE);
           }),
           new Promise<never>((_r, reject) => {
-            onAbort = () => reject(new Error(`batalla abortada: ${String(signal?.reason)}`));
-            signal?.addEventListener("abort", onAbort, { once: true });
+            onAbort = () => reject(signal?.reason ?? new Error(`batalla abortada`));
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort, { once: true });
           }),
         ]);
         const replay = server.getReplay();
@@ -390,9 +487,9 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         if (guard) clearTimeout(guard);
         if (cpuSampler) clearInterval(cpuSampler);
         if (onAbort) signal?.removeEventListener("abort", onAbort);
-        await Promise.allSettled(handles.filter((h): h is ContainerHandle => h !== null).map((h) => h.stop()));
-        server.stop();
-        await Promise.resolve(host.close()).catch(() => undefined);
+        // OLA2-MF · teardown único, sólo lo de esta capa (timers, servidor,
+        // lanzamientos en vuelo, contenedores TERM→KILL y borrado, host).
+        await res.cleanupBattleResources(battleId, "FAILED", { scope: SCOPE });
       }
     },
   };
