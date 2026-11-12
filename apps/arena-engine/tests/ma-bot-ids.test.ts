@@ -198,7 +198,12 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
         proto: "arena/1",
         type: "HELLO",
         seq: 0,
-        payload: { botId: "bot_a", botVersion: "1", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) },
+        payload: {
+          botId: "bot_a",
+          botVersion: "1",
+          sdk: { name: "custom", version: "0" },
+          battleToken: "t".repeat(16),
+        },
       }),
     );
     await server.waitForResult();
