@@ -164,7 +164,10 @@ describe("canal del bot en cada modo con objetivos (motor real)", () => {
         expect(JSON.stringify(r.seen), name).not.toMatch(INTERNAL);
       }
       if (name !== "obj-tdm") {
-        expect(recs[0].seen.some((o) => o.objectives?.length), `${name}: hay objetivos`).toBe(true);
+        expect(
+          recs[0].seen.some((o) => o.objectives?.length),
+          `${name}: hay objetivos`,
+        ).toBe(true);
       }
     }
   });
