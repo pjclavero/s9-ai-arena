@@ -59,6 +59,8 @@ export function captureInternalFrame(s: InternalFrameSource): InternalFrame {
     projectiles: s.projectiles.map((p) => ({
       id: p.id,
       position: { x: round6(p.position.x), y: round6(p.position.y) },
+      // Sólo desempate público de la numeración (no se emite): ver InternalProjectileState.
+      heading: round6(Math.atan2(p.velocity?.y ?? 0, p.velocity?.x ?? 0)),
     })),
     // Ocultas para el público: el frame las lleva con su dueño para que la proyección
     // decida por audiencia (el dueño sí las ve).

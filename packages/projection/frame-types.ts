@@ -40,6 +40,12 @@ export interface InternalVehicleState {
 export interface InternalProjectileState {
   readonly id: string;
   readonly position: Vec2Like;
+  /**
+   * Rumbo del proyectil (rad). NO se emite: sólo desempata la numeración pública de dos
+   * proyectiles que aparecen a la vez en el mismo punto (rumbo = observable en el frame
+   * siguiente), para que no mande el orden interno de las ranuras.
+   */
+  readonly heading?: number;
 }
 
 /** Entidad que puede estar OCULTA para una audiencia (hoy: minas). */

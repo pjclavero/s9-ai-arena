@@ -12,7 +12,14 @@
 import { effectOf } from "../module-catalog/effect-status.js";
 import type { ModuleCategory } from "../module-catalog/types.js";
 import type { AudienceClass, DisclosurePolicy } from "./contracts.js";
-import { DEFAULT_DISCLOSURE_POLICY, emits } from "./policy.js";
+import {
+  DEFAULT_DISCLOSURE_POLICY,
+  STATS_ACCURACY_N,
+  STATS_DAMAGE_STEP,
+  STATS_HITS_STEP,
+  emits,
+  fieldLevel,
+} from "./policy.js";
 
 /** Proyecta las estadísticas de UN bot para una audiencia (`owner`/`staff` o pública). */
 export function projectBotStats(
@@ -23,7 +30,26 @@ export function projectBotStats(
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(stats ?? {})) {
     if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
-    if (emits(policy, `stats.${k}`, audience)) out[k] = v;
+    if (!emits(policy, `stats.${k}`, audience)) continue;
+    out[k] = v;
+  }
+  // SANITIZED = cuantizado en pasos. La precisión se DERIVA de los aciertos ya cuantizados.
+  const q = (field: string) => fieldLevel(policy, `stats.${field}`, audience) === "SANITIZED";
+  const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  const step = (x: unknown, st: number): unknown => {
+    const n = num(x);
+    return n === null ? x : Math.floor(Math.max(0, n) / st) * st;
+  };
+  if ("damageDealt" in out && q("damageDealt")) out.damageDealt = step(out.damageDealt, STATS_DAMAGE_STEP);
+  if ("damageTaken" in out && q("damageTaken")) out.damageTaken = step(out.damageTaken, STATS_DAMAGE_STEP);
+  if ("shotsHit" in out && q("shotsHit")) out.shotsHit = step(out.shotsHit, STATS_HITS_STEP);
+  if ("accuracy" in out && q("accuracy")) {
+    const fired = num((stats as Record<string, unknown>).shotsFired);
+    const hitsQ = num("shotsHit" in out && q("shotsHit") ? out.shotsHit : step((stats as Record<string, unknown>).shotsHit, STATS_HITS_STEP));
+    out.accuracy =
+      fired && fired > 0 && hitsQ !== null
+        ? Math.floor(Math.min(1, hitsQ / fired) * STATS_ACCURACY_N) / STATS_ACCURACY_N
+        : null;
   }
   return out;
 }

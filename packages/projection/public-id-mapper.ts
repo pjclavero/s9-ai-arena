@@ -6,7 +6,10 @@
  *    audiencia nunca ve no consume número, así que no hay huecos que delaten entidades
  *    ocultas (el contador interno compartido entre proyectiles y minas deja de importar).
  *  - Empates en un mismo frame por clave PÚBLICA (prefijo, x, y cuantizadas), nunca por el
- *    orden interno: permutar el orden interno no cambia la numeración.
+ *    orden interno: permutar el orden interno no cambia la numeración. Sólo dos entidades
+ *    IDÉNTICAS en (prefijo, x, y, desempate público) —indistinguibles hoy para cualquier
+ *    espectador— conservan el orden de llegada; es ACCEPTED_RESIDUAL y la secuencia no
+ *    revela nada más que cuál de las dos gemelas diverge después.
  *  - Vehículos `v_1..v_n` por el orden PÚBLICO de la nómina (bando, botId, nombre).
  *  - Sin secreto y SIN semilla (la semilla es pública): la secuencia sólo contiene lo que la
  *    audiencia ya ve.
@@ -38,6 +41,12 @@ export interface RevealCandidate {
   readonly prefix: PublicEntityPrefix;
   readonly x: number;
   readonly y: number;
+  /**
+   * Desempate PÚBLICO adicional (p. ej. el rumbo de un proyectil), observable en el frame
+   * siguiente. Sin él, dos entidades con la misma (prefijo, x, y) quedarían en el orden en
+   * que llegan, que es el interno.
+   */
+  readonly tie?: number;
 }
 
 export interface RosterOrderEntry {
@@ -126,7 +135,7 @@ export class AudiencePublicIdMapper implements PublicIdMapper {
    */
   reveal(batch: readonly RevealCandidate[]): void {
     const fresh = batch.filter((c) => !this.toPub.has(c.id));
-    fresh.sort((a, b) => cmp(a.prefix, b.prefix) || qn(a.x) - qn(b.x) || qn(a.y) - qn(b.y));
+    fresh.sort((a, b) => cmp(a.prefix, b.prefix) || qn(a.x) - qn(b.x) || qn(a.y) - qn(b.y) || qn(a.tie ?? 0) - qn(b.tie ?? 0));
     for (const c of fresh) {
       const prev = this.retired.get(c.id);
       if (prev && this.continuity[c.prefix] === true) {

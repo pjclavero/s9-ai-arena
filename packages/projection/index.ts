@@ -16,3 +16,4 @@ export * from "./projection-key.js";
 export * from "./public-id-mapper.js";
 export * from "./stream.js";
 export * from "./visibility.js";
+export * from "./bot-ids.js";

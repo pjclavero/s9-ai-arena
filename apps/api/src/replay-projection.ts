@@ -155,6 +155,14 @@ function rosterOf(header: any, meta: ViewerMeta | null): InternalRosterEntry[] {
 
 const PUBLIC_REPLAY = audienceKey("public_replay");
 
+/** Digest de la nómina PÚBLICA (bando, botId, nombre; orden público, sin ids internos). */
+export function publicRosterDigest(roster: readonly InternalRosterEntry[]): string {
+  const rows = roster
+    .map((r) => [String(r.team ?? ""), String(r.botId ?? ""), typeof r.name === "string" ? r.name : null])
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16);
+}
+
 /** Proyector de la audiencia `public_replay` sin frames (nómina y resultado). */
 function rosterProjector(battleId: string, header: any, meta: ViewerMeta | null): AudienceProjector {
   return new AudienceProjector({
@@ -194,7 +202,10 @@ export function projectedReplayStream(
   const pr = rosterProjector(battleId, h, meta);
   const key = pr.key("*", { renderTarget: "http", visibilityEpochDigest: `sha256:${sha}` });
   // Subclave: lo que el llamador aporta además del stream (nómina con nombres, resultado).
-  return streamCache.getOrProject(key, `${meta ? "meta" : "nometa"}:${replay.result ? "result" : "noresult"}`, run);
+  // Lleva el DIGEST de la nómina pública (bando, botId, nombre): un cambio de nombre tras
+  // cachear no sirve nombres antiguos (el sha del crudo no cubre el nombre, que es de la BD).
+  const sub = `${meta ? "meta" : "nometa"}:${replay.result ? "result" : "noresult"}:${publicRosterDigest(rosterOf(h, meta))}`;
+  return streamCache.getOrProject(key, sub, run);
 }
 
 /** Conveniencia (tests y herramientas): proyección de UN frame interno aislado. */

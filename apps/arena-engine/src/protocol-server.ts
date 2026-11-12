@@ -38,6 +38,7 @@ import {
 import { Battle, type BattleResult, type BotAgent } from "./sim/battle.js";
 import { replayFromBattle, type Replay } from "./replay.js";
 import { projectWelcomeModule } from "../../../packages/projection/equipment.js";
+import { BotIdBook } from "../../../packages/projection/bot-ids.js";
 import deps from "./engine-deps.json" with { type: "json" };
 import { assertBotIdDelCable } from "../../../packages/protocol/bot-handle.js";
 
@@ -209,7 +210,11 @@ class WebSocketBotAgent implements BotAgent {
   /** Ya se avisó al bot de un COMMAND inválido en el ciclo abierto (un aviso por ciclo). */
   private invalidNotifiedThisCycle = false;
 
-  constructor(botId: string, ws: WebSocket, decisionDeadlineMs: number, diag: BotProtocolDiagnostics) {
+  /** OLA 2 · MA · ids públicos de ESTE bot (cada bot es su propia audiencia). */
+  readonly ids: BotIdBook;
+
+  constructor(botId: string, ws: WebSocket, decisionDeadlineMs: number, diag: BotProtocolDiagnostics, ids: BotIdBook) {
+    this.ids = ids;
     this.botId = botId;
     this.ws = ws;
     this.decisionDeadlineMs = decisionDeadlineMs;
@@ -238,7 +243,7 @@ class WebSocketBotAgent implements BotAgent {
     this.expectedForTick = forTick;
     this.windowOpen = true;
     this.invalidNotifiedThisCycle = false;
-    this.onSend(envelope("OBSERVATION", observation, observation.tick));
+    this.onSend(envelope("OBSERVATION", this.ids.observation(observation), observation.tick));
 
     this.deadlineTimer = setTimeout(() => {
       this.windowOpen = false;
@@ -248,7 +253,7 @@ class WebSocketBotAgent implements BotAgent {
   }
 
   onEvent(event: any): void {
-    this.onSend(envelope("EVENT", event, event.tick));
+    this.onSend(envelope("EVENT", this.ids.event(event), event.tick));
   }
 
   /**
@@ -298,7 +303,8 @@ class WebSocketBotAgent implements BotAgent {
       );
       return;
     }
-    this.pendingCommand = payload;
+    // Los ids del bot son PÚBLICOS (v_N): se traducen a internos aquí, en la frontera.
+    this.pendingCommand = this.ids.command(payload);
   }
 
   /** Se desconecta el transporte: decide() seguirá devolviendo null indefinidamente.
@@ -479,7 +485,7 @@ export class ProtocolServer {
     } else {
       diag.helloOk = true;
       diag.helloTick = this.battle.tick;
-      agent = new WebSocketBotAgent(expected.botId, ws, this.decisionDeadlineMs, diag);
+      agent = new WebSocketBotAgent(expected.botId, ws, this.decisionDeadlineMs, diag, this.bookFor(vehicle));
       this.agents.set(expected.vehicleId, agent);
       this.battle.attachBot(expected.vehicleId, agent);
     }
@@ -576,6 +582,17 @@ export class ProtocolServer {
     }
   }
 
+  /** Libro de ids públicos del bot: nómina de SU equipo numerada por orden público. */
+  private bookFor(vehicle: { id: string; team: string }): BotIdBook {
+    const all = this.battle.getVehicles();
+    return new BotIdBook({
+      battleId: this.battle.config.battleId,
+      observer: vehicle.id,
+      team: all.filter((v) => v.team === vehicle.team).map((v) => ({ id: v.id, team: v.team, botId: v.botId })),
+      allVehicleIds: all.map((v) => v.id),
+    });
+  }
+
   private buildWelcome(expected: ExpectedBot): unknown {
     const vehicle = this.battle.getVehicle(expected.vehicleId)!;
     const ruleset = this.battle.config.ruleset;
@@ -586,14 +603,13 @@ export class ProtocolServer {
     // validación. Ningún aliado recibe el loadout de otro (teammates = sólo ids).
     const modules = vehicle.spec.modules.map((m) => projectWelcomeModule(m as unknown as Record<string, unknown>));
 
-    const teammates = this.battle
-      .getVehicles()
-      .filter((v) => v.team === vehicle.team && v.id !== vehicle.id)
-      .map((v) => v.id);
+    // Ids PÚBLICOS del canal del bot (nunca `veh_N`): selfId y aliados.
+    const ids = this.agents.get(expected.vehicleId)?.ids ?? this.bookFor(vehicle);
+    const teammates = ids.teammateIds();
 
     return {
       battleId: this.battle.config.battleId,
-      selfId: vehicle.id,
+      selfId: ids.selfId(),
       team: vehicle.team,
       encoding: "json",
       timing: {

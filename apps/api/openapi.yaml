@@ -545,6 +545,9 @@ paths:
         '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # OLA 2 · EQUIPMENT_PRIVATE: la extensión GET /bots/{botId}/loadouts (listBotLoadouts, fuera del
+  # contrato) sólo responde al dueño y al staff; para cualquier otro es 404 uniforme, también
+  # con un bot de visibilidad pública.
   /bots/{botId}/loadouts:
     post:
       tags: [bots]

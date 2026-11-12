@@ -24,6 +24,19 @@ import type {
 /** D-B5 · granularidad pública del casco: hullLevel ∈ 0..20 (0 sólo si está destruido). */
 export const HULL_LEVEL_N = 20;
 
+/**
+ * Cuantización pública de las estadísticas (D-B1/R2, hallazgo P2-5 de la revisión): el daño
+ * y los aciertos EXACTOS delatan el daño por impacto (arma/munición) y el casco total de un
+ * bot destruido. Para quien no es dueño ni staff salen en PASOS:
+ *  - daño: `STATS_DAMAGE_STEP` = casco máximo del catálogo (480) / N (20) = 24 HP;
+ *  - aciertos: de `STATS_HITS_STEP` en `STATS_HITS_STEP`;
+ *  - precisión: DERIVADA de los aciertos ya cuantizados (nunca de los exactos), en pasos de 1/N.
+ * Los valores exactos son sólo del dueño y del staff.
+ */
+export const STATS_DAMAGE_STEP = 24;
+export const STATS_HITS_STEP = 5;
+export const STATS_ACCURACY_N = HULL_LEVEL_N;
+
 /** Versión del algoritmo de proyección (entra en `mappingId` y en la clave de caché). */
 export const PROJECTION_VERSION = "2.0.0";
 
@@ -47,6 +60,11 @@ function all(v: FieldVisibility): Partial<Record<AudienceClass, FieldVisibility>
   const out: Partial<Record<AudienceClass, FieldVisibility>> = {};
   for (const a of PROJECTED) out[a] = v;
   return out;
+}
+
+/** Dueño y staff ven el valor exacto; el resto, SANITIZED (cuantizado). */
+function exactForOwnerElseQuantized(): Partial<Record<AudienceClass, FieldVisibility>> {
+  return { ...all("SANITIZED"), owner: "PUBLIC", staff: "PUBLIC" };
 }
 
 /** Sólo el dueño (y staff, que audita) ven el campo; el resto, PRIVATE. */
@@ -107,11 +125,11 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     // ------------------------------------------- estadísticas post-batalla
     "stats.botId": PUBLIC,
     "stats.team": PUBLIC,
-    "stats.damageDealt": PUBLIC,
-    "stats.damageTaken": PUBLIC,
+    "stats.damageDealt": exactForOwnerElseQuantized(), // daño/impacto delata arma y munición
+    "stats.damageTaken": exactForOwnerElseQuantized(), // ≈ casco total si el bot cae
     "stats.shotsFired": PUBLIC, // cadencia: residual físico (disparos visibles)
-    "stats.shotsHit": PUBLIC,
-    "stats.accuracy": PUBLIC,
+    "stats.shotsHit": exactForOwnerElseQuantized(),
+    "stats.accuracy": exactForOwnerElseQuantized(), // derivada de shotsHit CUANTIZADO
     "stats.kills": PUBLIC,
     "stats.teamKills": PUBLIC,
     "stats.deaths": PUBLIC,
@@ -146,6 +164,8 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "residual.explosionRadius": RESIDUAL,
     "residual.impactsToKill": RESIDUAL,
     "residual.collisionRadius": RESIDUAL,
+    "residual.damagePerHit": RESIDUAL,
+    "residual.hullFromDamageTaken": RESIDUAL,
     "residual.mineTriggerPosition": RESIDUAL,
   },
 };
@@ -193,5 +213,9 @@ export const ACCEPTED_RESIDUALS: Readonly<Record<string, string>> = {
   "residual.explosionRadius": "El radio de una explosión visible, por sus efectos sobre el casco ajeno.",
   "residual.impactsToKill": "Cuántos impactos hacen falta para destruir un vehículo (con hullLevel cuantizado).",
   "residual.collisionRadius": "El tamaño del vehículo, por las distancias de contacto en las colisiones.",
+  "residual.damagePerHit":
+    "El daño medio por impacto, como cociente de damageDealt/shotsHit cuantizados: sólo se afina con totales grandes (muchos impactos) y es inevitable mientras se publiquen ambos agregados.",
+  "residual.hullFromDamageTaken":
+    "El orden de magnitud del casco total de un bot destruido (damageTaken ≈ casco, con resolución de un paso de 24 HP): inevitable mientras se publique el daño recibido; los valores exactos y el casco máximo siguen privados.",
   "residual.mineTriggerPosition": "La posición de una mina en el instante en que explota (evento público).",
 };

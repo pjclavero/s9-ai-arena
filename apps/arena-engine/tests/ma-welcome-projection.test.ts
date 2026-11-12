@@ -69,7 +69,7 @@ describe("PRIVATE_EQUIPMENT · WELCOME proyectado", () => {
     }
     expect(futureSeen, "control: el ModuleSpec del motor lleva campos no publicables").toBeGreaterThan(0);
     // Los aliados: sólo ids (nunca su loadout).
-    expect(welcome.teammates).toEqual(["veh_2"]);
+    expect(welcome.teammates).toEqual(["v_2"]); // id público, no veh_N
     expect(JSON.stringify(welcome)).not.toContain("mine_bay");
   });
 });

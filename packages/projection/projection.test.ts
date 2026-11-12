@@ -14,6 +14,9 @@ import {
   DEFAULT_DISCLOSURE_POLICY,
   ENTITY_ID_SCHEMA_RE,
   HULL_LEVEL_N,
+  STATS_ACCURACY_N,
+  STATS_DAMAGE_STEP,
+  STATS_HITS_STEP,
   ProjectionCache,
   VisibilityTracker,
   audienceKey,
@@ -388,5 +391,68 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
 
   it("raw no es una audiencia proyectable", () => {
     expect(() => audienceKey("raw")).toThrow();
+  });
+});
+
+describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
+  const stats = { botId: "bot-a", team: "red", damageDealt: 1234, damageTaken: 301, shotsFired: 77, shotsHit: 33, accuracy: 33 / 77 };
+
+  it("un tercero recibe daño en pasos de STATS_DAMAGE_STEP, aciertos en pasos de STATS_HITS_STEP y precisión derivada de los aciertos cuantizados", () => {
+    const t = projectBotStats(stats, "public_replay") as Record<string, number>;
+    expect(t.damageDealt).toBe(Math.floor(1234 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP);
+    expect(t.damageTaken).toBe(Math.floor(301 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP);
+    expect(t.shotsHit).toBe(Math.floor(33 / STATS_HITS_STEP) * STATS_HITS_STEP);
+    expect(t.accuracy).toBe(Math.floor((t.shotsHit / 77) * STATS_ACCURACY_N) / STATS_ACCURACY_N);
+    expect(t.shotsFired).toBe(77); // cadencia visible: residual, no se toca
+    // control positivo: el exacto existe y los pasos lo cambian de verdad
+    expect(stats.damageDealt % STATS_DAMAGE_STEP).not.toBe(0);
+    expect(t.damageDealt).not.toBe(stats.damageDealt);
+  });
+
+  it("dos baterías con daño EXACTO distinto dentro del mismo paso son indistinguibles para un tercero (y no para el dueño)", () => {
+    const a = projectBotStats({ ...stats, damageDealt: 1201, shotsHit: 31, accuracy: 31 / 77 }, "public_replay");
+    const b = projectBotStats({ ...stats, damageDealt: 1223, shotsHit: 34, accuracy: 34 / 77 }, "public_replay");
+    expect(a).toEqual(b);
+    const oa = projectBotStats({ ...stats, damageDealt: 1201 }, "owner");
+    const ob = projectBotStats({ ...stats, damageDealt: 1223 }, "owner");
+    expect(oa).not.toEqual(ob);
+  });
+
+  it("dueño y staff ven el valor exacto; la precisión pública NO se calcula con los aciertos exactos", () => {
+    for (const aud of ["owner", "staff"] as const) {
+      const o = projectBotStats(stats, aud) as Record<string, number>;
+      expect(o).toMatchObject({ damageDealt: 1234, damageTaken: 301, shotsHit: 33 });
+      expect(o.accuracy).toBeCloseTo(33 / 77, 10);
+    }
+    const t = projectBotStats(stats, "team") as Record<string, number>;
+    expect(t.damageDealt % STATS_DAMAGE_STEP).toBe(0);
+  });
+
+  it("sin disparos la precisión es null (no se inventa)", () => {
+    const t = projectBotStats({ botId: "b", team: "r", damageDealt: 0, shotsFired: 0, shotsHit: 0, accuracy: null }, "public_replay");
+    expect(t.accuracy).toBeNull();
+  });
+});
+
+describe("desempate público de la numeración (hallazgo P3-8)", () => {
+  it("dos proyectiles que aparecen a la vez en el mismo punto se numeran por su rumbo público, no por el orden interno", () => {
+    const mk = (order: [string, string]) => {
+      const m = new AudiencePublicIdMapper({ battleId: "b", audience: audienceKey("public_live"), projectionVersion: "t" });
+      const cand = {
+        proj_7: { id: "proj_7", prefix: "p" as const, x: 5, y: 5, tie: 0.5 },
+        proj_9: { id: "proj_9", prefix: "p" as const, x: 5, y: 5, tie: 2.5 },
+      };
+      m.reveal(order.map((k) => cand[k as keyof typeof cand]));
+      return [m.toPublic("proj_7"), m.toPublic("proj_9")];
+    };
+    expect(mk(["proj_7", "proj_9"])).toEqual(["p_1", "p_2"]);
+    expect(mk(["proj_9", "proj_7"])).toEqual(["p_1", "p_2"]); // permutar el orden interno no cambia nada
+    // permutar los IDS internos (mismos rumbos) tampoco: manda el rumbo
+    const m = new AudiencePublicIdMapper({ battleId: "b", audience: audienceKey("public_live"), projectionVersion: "t" });
+    m.reveal([
+      { id: "proj_1", prefix: "p", x: 5, y: 5, tie: 2.5 },
+      { id: "proj_2", prefix: "p", x: 5, y: 5, tie: 0.5 },
+    ]);
+    expect([m.toPublic("proj_2"), m.toPublic("proj_1")]).toEqual(["p_1", "p_2"]);
   });
 });

@@ -122,7 +122,13 @@ export class AudienceProjector {
       mark(v.id, "revealed", { id: v.id, prefix: "v", x: v.position?.x ?? 0, y: v.position?.y ?? 0 });
     }
     for (const p of frame.projectiles ?? []) {
-      mark(p.id, "revealed", { id: p.id, prefix: "p", x: p.position?.x ?? 0, y: p.position?.y ?? 0 });
+      mark(p.id, "revealed", {
+        id: p.id,
+        prefix: "p",
+        x: p.position?.x ?? 0,
+        y: p.position?.y ?? 0,
+        tie: typeof p.heading === "number" ? p.heading : 0,
+      });
     }
     for (const d of frame.deployables ?? []) {
       this.ownerOf.set(d.id, d.ownerId);

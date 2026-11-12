@@ -17,6 +17,7 @@ import {
   canSeeBot,
   createLoadoutRevision,
   getVisibleBot,
+  isBotOwner,
   isStaff,
   validateLoadoutServerSide,
 } from "../services/bots.js";
@@ -360,14 +361,19 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   /**
    * R3.7 (ERR-VIS-04) · Extensión: listar las revisiones de loadout de un bot.
    * El contrato de E1 solo tenía el POST, así que el editor del panel no podía
-   * cargar la revisión vigente (arrancaba siempre vacío). Misma visibilidad que
-   * el propio bot (getVisibleBot); la última revisión es la "vigente".
+   * cargar la revisión vigente (arrancaba siempre vacío). OLA 2: sólo dueño y staff
+   * (EQUIPMENT_PRIVATE); la última revisión es la "vigente".
    */
   defineExtension(
     router,
     { operationId: "listBotLoadouts", method: "get", path: "/bots/{botId}/loadouts", minRole: "user" },
     async (req, res) => {
       const bot = await getVisibleBot(db, req.auth, String(req.params.botId));
+      // OLA 2 · EQUIPMENT_PRIVATE (D-B1=R2): el loadout es PRIVADO también para un bot de
+      // visibilidad pública: sólo su dueño y el staff. Cualquier otro (incluido un
+      // miembro del equipo o un usuario con sesión) recibe el MISMO 404 que un id
+      // inexistente (no se revela ni que el bot existe).
+      if (!isBotOwner(req.auth, bot) && !isStaff(req.auth)) throw notFound();
       const rows = await db("bot_loadouts").where({ bot_id: bot.id }).orderBy("revision", "asc");
       res.json(rows.map(loadoutToJson));
     },

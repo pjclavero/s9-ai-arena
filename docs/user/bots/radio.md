@@ -10,7 +10,7 @@ En tu orden, un campo `radio` con **hasta 2 mensajes**:
 
 ```python
 {"radio": [{"slot": "radio_a", "data": "AAEAAg=="}]}                    # a todo tu equipo
-{"radio": [{"slot": "radio_a", "data": "AAEAAg==", "to": "veh_2"}]}      # sólo a veh_2
+{"radio": [{"slot": "radio_a", "data": "AAEAAg==", "to": "v_2"}]}      # sólo a v_2
 ```
 
 - `data` es el contenido en **base64**. Para el motor es opaco: tú decides el formato.
@@ -26,7 +26,7 @@ Si un mensaje no se puede enviar, no pasa nada grave: recibes un evento `radio_d
 Los mensajes que te llegan vienen en `observation.radio`, **en el ciclo en que se entregan**:
 
 ```json
-"radio": [ { "from": "veh_2", "data": "AAEAAg==", "sentTick": 117 } ]
+"radio": [ { "from": "v_2", "data": "AAEAAg==", "sentTick": 117 } ]
 ```
 
 Decodifica `data` y haz con él lo que quieras. Un mensaje se entrega **una sola vez**: si lo necesitas, guárdalo.
@@ -59,3 +59,5 @@ Tu propia emisión no te llega a ti.
 Ejemplo completo con codificación y control de ritmo: [05_radio](ejemplos.md#5-radio). Para repartir papeles **sin** gastar radio, mira [06_equipo](ejemplos.md#6-equipo).
 
 Siguiente: [Objetivos](objetivos.md).
+
+> **Ids de vehículo (OLA 2).** Los ids que ves (`selfId`, `teammates`, `entityId`, `from`, `to`, `sourceId`/`targetId` de los eventos) son públicos **de tu propia partida**: `v_N`, estables durante toda la batalla (puedes seguir a un rival con su `entityId`). Ya no son los ids internos del motor (`veh_N`). Un `to` que no sea el `v_N` de un aliado no se entrega. Cambio incompatible con bots que asumieran el formato `veh_N`.
