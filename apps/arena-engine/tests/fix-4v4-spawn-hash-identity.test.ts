@@ -25,11 +25,14 @@ const realMap = (): ArenaMap =>
 // RE-ANCLADO en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con nombre (MD)
 // y contrato de daño de MB (orden por slot, hp del blindaje = hp del módulo, turretHeading normalizado,
 // armor.profile en el estado del vehículo). Atribución: m0-atribucion.py (INTEGRACION.md).
+// RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
+// pasada de rearme desactivada (scripts g3-revert, VM112) vuelven EXACTAMENTE los valores anteriores.
+// Antes de G3: 2v2-open e4ab04bd…, 4v4-real bc7231c2… (1v1-real y 2v2-real no cambian).
 const PRE_FIX_HASHES: Record<string, string> = {
   "1v1-real": "3f1bb8bb19304936512e7f8bfa9f52c3ab5ebb0f390c6e9ea281f63e6513ecc1",
   "2v2-real": "587aa2e1fb5f32515d35f1d17d2de1eda9cc764c4dfaf6ca48e150ff142a8e40",
-  "2v2-open": "e4ab04bdbc7db18c54c9046f10d1ebc9fd060c8160c04d30b0de81ade4bec0ed",
-  "4v4-real": "bc7231c2f169744d68c6ecf1627c6c047d05ea3dd57fa77f491c0c0c0d5bf237",
+  "2v2-open": "33b4233a2c899af3c5733f82c0b8489041e69469e98e39b03a6c91e3db6ce636",
+  "4v4-real": "70fef4b020f624dc80968b9ad3a73a662e558ea487c8234d9101ae754fbcca70",
 };
 
 function run(name: string, n: number, map: ArenaMap): string {

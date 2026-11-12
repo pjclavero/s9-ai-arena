@@ -318,5 +318,8 @@ describe("Respawn TDM · nunca encima de un vehículo", () => {
 // RE-ANCLADO en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con nombre (MD)
 // y contrato de daño de MB (orden por slot, hp del blindaje = hp del módulo, turretHeading normalizado,
 // armor.profile en el estado del vehículo). Atribución: m0-atribucion.py (INTEGRACION.md).
-const GOLDEN_1V1_HASH_E902B0A = "2fec122af7cb6cae1add29e13e777ae1cf8ed5ce88a8f3a7a4a0a64a9b1c9f52";
+// RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
+// pasada de rearme desactivada (scripts g3-revert, VM112) vuelven EXACTAMENTE los valores anteriores.
+// Antes de G3: GOLDEN_1V1_HASH_E902B0A = 2fec122a… (el de mvp-arena-01 no cambia).
+const GOLDEN_1V1_HASH_E902B0A = "decdf0ae8871c795a708b99c065d5779124b2cdc4c39e0d31100b7716853b9b2";
 const GOLDEN_1V1_REALMAP_HASH_E902B0A = "43f0f3b9cc7b6240dc03ffdc89d44b94fb516d75ebe0d7025e0fc0176b301a3e";

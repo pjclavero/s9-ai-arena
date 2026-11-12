@@ -57,13 +57,18 @@ function runFor(b: Battle, ticks: number) {
 // nombre (MD) + las causas a/b/c de MB + armor.profile en el estado. Con a/b/c revertidas, los ticks
 // vuelven a ser los de MD (778/2801/1084…) y sólo difiere el componente `vehicles` (armor.profile).
 // tdm_4v4_norespawn llega ahora al límite de tiempo (6000) en vez de acabar por eliminación.
+// Diagnóstico G3: NO es munición (búsqueda de HunterBot, ver respawn-rearm.test.ts y game-modes.md).
+// RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
+// pasada de rearme desactivada (scripts g3-revert, VM112) vuelven EXACTAMENTE los valores anteriores.
+// Antes de G3 (y hoy con rearmPolicy self, respawn-rearm.test.ts): tdm_1v1 df7b19ab…/3000,
+// tdm_2v2 0af19ee4…/3000, tdm_4v4 682cd1e9…/2371, ctf_1v1 960c80cc…/2000. dm_1v1 y norespawn no cambian.
 const HASHES_9AAAD79 = {
   dm_1v1: { hash: "7b1b74e3c8b05e4e87aef8b56b10c44f4dc4139a6b4f94218448c802b226161f", tick: 469 },
-  tdm_1v1: { hash: "df7b19ab8c88a3e1da243c93d76c837fc0ec0b06900259f4e92ead2f405c83f8", tick: 3000 },
-  tdm_2v2: { hash: "0af19ee467fcb2ff76059fcafb8e3010daa8ea9bfe80e1e0e9bca50d9d27a2a5", tick: 3000 },
-  tdm_4v4: { hash: "682cd1e9276a3ca00aa465efc44dfb842fe85b00778972208f2a37284d4eefbb", tick: 2371 },
+  tdm_1v1: { hash: "626dbae962a619f79d8a0887fac6ed4a087bf17f0ed8e41c42e07682871796e7", tick: 3000 },
+  tdm_2v2: { hash: "a9ca0c858792da3588f4c74dddedb3761c34a4a638b5b91261dca0468ed2d44c", tick: 3000 },
+  tdm_4v4: { hash: "da66d598db143623fff6fb30f0ec8e9c76ad4082d34e4dacfcdd95639944c795", tick: 2286 },
   tdm_4v4_norespawn: { hash: "86544a85f9a0ae80752970b3fcaafb18a9e8a6b2295059db6734b14574092b98", tick: 6000 },
-  ctf_1v1: { hash: "960c80cc76e70e3028d2bac75eaa30df4db63da3ce7215e39357dbda2d1e4578", tick: 2000 },
+  ctf_1v1: { hash: "5ca4f6688ffbf47a581faf70e4748c30dab6827c758e4cd4f12e5944169ad27f", tick: 2000 },
 };
 
 describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
