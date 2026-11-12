@@ -486,6 +486,8 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
       "CORS_ORIGIN",
       "S9_PUBLIC_SPECTATE_ENABLED",
       "S9_PUBLIC_REPLAYS_ENABLED",
+      // MG · intervalo de relectura de los ajustes de runtime (llega con la recreación de la API).
+      "S9_RUNTIME_SETTINGS_REFRESH_MS",
       "S9_METRICS_ENABLED",
       "ARTIFACT_VERIFY_KEY_FILE",
       // EQ5b · Administración → Streaming (no desplegado: llega con la recreación de la API).

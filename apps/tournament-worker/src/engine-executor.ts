@@ -325,6 +325,14 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         });
         opts.spectate.attachBattle(battle.id, engine, {
           spectator,
+          // OLA 2 · MA · nómina INTERNA (ids del motor, chasis): el gateway la proyecta por
+          // audiencia (ids públicos, sin chasis bajo EQUIPMENT_PRIVATE). Nunca va tal cual.
+          roster,
+          mapEntityIds: [
+            ...arenaMap.walls.map((w) => w.id),
+            ...arenaMap.destructibles.map((d) => d.id),
+            ...arenaMap.zones.map((z) => z.id),
+          ],
           meta: {
             mode: battle.mode,
             mapId: battle.map_id,
@@ -333,7 +341,6 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
             matchId: battle.match_id,
             round,
             official: battle.official,
-            roster,
             // UX-D (D5 · C-G9) · geometría PÚBLICA del mapa para el visor (ViewerPage
             // ya la lee de `init.meta.world`, pero nadie la mandaba: el directo se
             // pintaba sin muros). Sólo lo que también ve cualquiera en el editor.

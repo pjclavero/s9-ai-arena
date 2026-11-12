@@ -30,6 +30,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
+import { broadcastReasonText } from "./PublicAccessSettings.js";
 import { ErrorState, FormError, LoadingState, LiveStatus, StatusBadge, type StatusVariant } from "../ui/primitives.js";
 import { helpHref } from "../help/tree.js";
 
@@ -135,8 +136,11 @@ interface TargetInfo {
   broadcastable?: boolean;
   broadcastBlockedReason?: "battle_not_public" | "tournament_not_broadcastable" | null;
   tournamentBroadcast?: boolean | null;
-  /** @deprecated alias de `broadcastable`. */
+  /** @deprecated MG · vale lo mismo que `broadcastAvailable`. */
   publicBroadcastable: boolean;
+  /** MG · /broadcast (anónima) puede mostrarlo AHORA, con el motivo si no. */
+  broadcastAvailable?: boolean;
+  reason?: string | null;
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
 }
@@ -154,6 +158,9 @@ export interface Destination {
   broadcastable: boolean;
   broadcastBlockedReason: "battle_not_public" | "tournament_not_broadcastable" | null;
   tournamentBroadcast: boolean | null;
+  /** MG · estado EFECTIVO (ausente en APIs anteriores a 0.18.0). */
+  broadcastAvailable?: boolean;
+  reason?: string | null;
 }
 interface Recordings {
   dir: string;
@@ -386,7 +393,7 @@ export function destinationText(d: Destination, now = Date.now()): string {
   }
   const st = STATUS_HUMAN[d.status] ?? d.status;
   const when = d.status === "running" ? relativeTime(d.startedAt, now) : relativeTime(d.finishedAt ?? d.createdAt, now);
-  return [d.label, st, when].filter(Boolean).join(" · ") + (d.broadcastable ? "" : " · No retransmisible");
+  return [d.label, st, when].filter(Boolean).join(" · ") + (canBroadcast(d) ? "" : " · No retransmisible");
 }
 
 /**
@@ -399,10 +406,31 @@ export function finishedBattleNotice(d: Pick<Destination, "kind" | "status">): s
   return "Esta batalla ya terminó: la emisión mostrará sólo su pantalla final con el resultado. La repetición no se retransmite.";
 }
 
+type Eligibility = Pick<Destination, "kind" | "broadcastable" | "broadcastBlockedReason" | "tournamentBroadcast"> &
+  Partial<Pick<Destination, "broadcastAvailable" | "reason">>;
+
+/**
+ * MG · ¿Se puede retransmitir? Autorizado por visibilidad (`broadcastable`) Y legible de
+ * verdad por /broadcast (`broadcastAvailable`, si la API lo da). Una batalla programada
+ * cuenta como retransmisible: /broadcast muestra la espera y la verá al empezar.
+ */
+export function canBroadcast(d: Eligibility): boolean {
+  if (!d.broadcastable) return false;
+  if (d.broadcastAvailable === undefined) return true; // API anterior: sólo hay autorización
+  return d.broadcastAvailable || d.reason === "battle_not_started";
+}
+
 /** §6 · Explicación humana de si un destino se puede retransmitir. */
-export function eligibilityText(
-  d: Pick<Destination, "kind" | "broadcastable" | "broadcastBlockedReason" | "tournamentBroadcast">,
-): string {
+export function eligibilityText(d: Eligibility): string {
+  // MG · autorizado pero la página pública no podría leerlo: se dice el motivo REAL.
+  if (d.broadcastable && d.broadcastAvailable === false) {
+    if (d.reason === "battle_not_started") return `Retransmisible cuando empiece: ${broadcastReasonText(d.reason)}`;
+    return `No retransmisible ahora: ${broadcastReasonText(d.reason)}${
+      d.reason === "public_spectate_disabled" || d.reason === "public_replays_disabled"
+        ? " Actívalo en Administración → «Acceso público / Broadcast»."
+        : ""
+    }`;
+  }
   if (d.broadcastable) {
     if (d.kind === "tournament") {
       return d.tournamentBroadcast
@@ -757,6 +785,8 @@ function ReadyView(props: {
           broadcastable: !!(t.broadcastable ?? t.publicBroadcastable),
           broadcastBlockedReason: t.broadcastBlockedReason ?? null,
           tournamentBroadcast: t.tournamentBroadcast ?? null,
+          broadcastAvailable: t.broadcastAvailable,
+          reason: t.reason,
         }),
       )
       .catch(() => undefined);
@@ -778,7 +808,12 @@ function ReadyView(props: {
   if (!st.settings.enabled) blockers.push("El streaming está desactivado.");
   if (!st.capabilities.streamerReachable) blockers.push("El servicio de streaming no está disponible.");
   if (!dest) blockers.push(kind === "battle" ? "Elige una batalla." : "Elige un torneo.");
-  else if (!dest.broadcastable) blockers.push("Este destino no se puede retransmitir.");
+  else if (!canBroadcast(dest))
+    blockers.push(
+      dest.broadcastable && dest.broadcastAvailable === false
+        ? broadcastReasonText(dest.reason)
+        : "Este destino no se puede retransmitir.",
+    );
   if (ch && !ch.ready)
     blockers.push(st.settings.mode === "rtmps" ? `No hay una clave de ${props.channel} configurada.` : "");
   const canStart = blockers.filter(Boolean).length === 0;
@@ -859,7 +894,7 @@ function ReadyView(props: {
             {list ? (options.length ? "— Elige —" : "No hay nada que retransmitir") : "Cargando…"}
           </option>
           {options.map((d) => (
-            <option key={d.id} value={`${d.kind}:${d.id}`} data-broadcastable={d.broadcastable ? "1" : "0"}>
+            <option key={d.id} value={`${d.kind}:${d.id}`} data-broadcastable={canBroadcast(d) ? "1" : "0"}>
               {destinationText(d)}
             </option>
           ))}
@@ -869,10 +904,10 @@ function ReadyView(props: {
       {dest && (
         <div data-testid="stream-target-info">
           <p
-            data-testid={dest.broadcastable ? "simple-broadcastable" : "stream-target-private"}
-            data-reason={dest.broadcastBlockedReason ?? undefined}
-            className={dest.broadcastable ? "ok" : "error"}
-            role={dest.broadcastable ? undefined : "alert"}
+            data-testid={canBroadcast(dest) ? "simple-broadcastable" : "stream-target-private"}
+            data-reason={dest.broadcastBlockedReason ?? (canBroadcast(dest) ? undefined : (dest.reason ?? undefined))}
+            className={canBroadcast(dest) ? "ok" : "error"}
+            role={canBroadcast(dest) ? undefined : "alert"}
           >
             {eligibilityText(dest)}
           </p>
@@ -885,9 +920,9 @@ function ReadyView(props: {
             <p>
               {dest.kind} <code data-testid="simple-target-id">{dest.id}</code>
             </p>
-            {dest.broadcastBlockedReason && (
+            {(dest.broadcastBlockedReason || dest.reason) && (
               <p>
-                Motivo: <code>{dest.broadcastBlockedReason}</code>
+                Motivo: <code>{dest.broadcastBlockedReason ?? dest.reason}</code>
               </p>
             )}
           </TechDetails>
@@ -1192,7 +1227,17 @@ function ManualTargetCard(props: { st: StreamingAdminState; route: string; busy:
   const active = isActive(st);
   const cred = st.credentials.find((c) => c.platform === st.settings.platform);
   const credOk = st.settings.mode === "record" || !!cred?.configured;
-  const ok = !!(target?.broadcastable ?? target?.publicBroadcastable);
+  const authorized = !!(target?.broadcastable ?? target?.publicBroadcastable);
+  const ok =
+    !!target &&
+    canBroadcast({
+      kind: target.kind,
+      broadcastable: authorized,
+      broadcastBlockedReason: target.broadcastBlockedReason ?? null,
+      tournamentBroadcast: target.tournamentBroadcast ?? null,
+      broadcastAvailable: target.broadcastAvailable,
+      reason: target.reason,
+    });
   const canStart = st.settings.enabled && st.capabilities.streamerReachable && !active && !st.session && ok && credOk;
   return (
     <div className="card" data-testid="streaming-controls">
@@ -1246,13 +1291,15 @@ function ManualTargetCard(props: { st: StreamingAdminState; route: string; busy:
           <p
             className={ok ? "ok" : "error"}
             data-testid="manual-target-eligibility"
-            data-reason={target.broadcastBlockedReason ?? undefined}
+            data-reason={target.broadcastBlockedReason ?? (ok ? undefined : (target.reason ?? undefined))}
           >
             {eligibilityText({
               kind: target.kind,
-              broadcastable: ok,
+              broadcastable: authorized,
               broadcastBlockedReason: target.broadcastBlockedReason ?? null,
               tournamentBroadcast: target.tournamentBroadcast ?? null,
+              broadcastAvailable: target.broadcastAvailable,
+              reason: target.reason,
             })}
           </p>
           <p>

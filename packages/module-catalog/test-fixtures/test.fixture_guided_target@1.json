@@ -1,0 +1,61 @@
+{
+  "id": "test.fixture_guided_target",
+  "version": 1,
+  "name": "Fixture: proyectil guiado a blanco (lock por radar)",
+  "actions": [
+    {
+      "kind": "fire",
+      "cooldownTicks": 90,
+      "cost": {
+        "energyEU": 10,
+        "ammo": 1
+      },
+      "projectile": {
+        "speedMs": 60,
+        "lifetimeTicks": 120,
+        "spreadRad": 0,
+        "guidance": {
+          "mode": "target",
+          "turnRateRads": 1.5,
+          "acquisitionRangeM": 80,
+          "lockRequirements": {
+            "channel": "radar",
+            "requiresLineOfSight": true,
+            "minLockTicks": 6
+          },
+          "trackingErrorRad": 0.02,
+          "onLockLost": "ballistic"
+        },
+        "onImpact": [
+          {
+            "primitive": "damage",
+            "strength": 50,
+            "damageType": "kinetic",
+            "targets": {
+              "relations": [
+                "enemy"
+              ],
+              "kinds": [
+                "vehicle"
+              ]
+            },
+            "stacking": "none"
+          },
+          {
+            "primitive": "penetration",
+            "strength": 0.2,
+            "targets": {
+              "relations": [
+                "enemy"
+              ],
+              "kinds": [
+                "vehicle"
+              ]
+            },
+            "stacking": "none"
+          }
+        ]
+      }
+    }
+  ]
+}

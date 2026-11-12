@@ -9,7 +9,6 @@
  *   4. Un bot lento no cambia el resultado: si no responde a tiempo, acción segura y a otra cosa.
  * El hash del estado final es la prueba: mismo seed ⇒ mismo hash, siempre.
  */
-import { createHash } from "node:crypto";
 import {
   DECISION_EVERY_N_TICKS,
   emptyDict,
@@ -19,18 +18,10 @@ import {
   TICK_HZ,
   type Ruleset,
 } from "../../../../packages/game-rules/index.js";
-import { Rng } from "../rng.js";
+import { RngStreams } from "../rng.js";
+import { computeStateHash, type StateHashBreakdown } from "./state-hash.js";
 import deps from "../engine-deps.json" with { type: "json" };
-import {
-  applyDamage,
-  canDeployMine,
-  canFire,
-  deployMine,
-  explosionFalloff,
-  fire,
-  type Mine,
-  type Projectile,
-} from "./combat.js";
+import { canDeployMine, canFire, deployMine, explosionFalloff, fire, type Mine, type Projectile } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
 import {
   TECHNICAL_LIMIT,
@@ -44,9 +35,17 @@ import {
   type GameMode,
   type SpawnDisk,
 } from "./modes.js";
-import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
-import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
+import { PhysicsWorld, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
+import { captureInternalFrame } from "./internal-frame.js";
+import { buildObservation, radioRangeOf, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
+import { resolveDamage, type EngineDamageRecord, type EnginePacket } from "./damage.js";
+import {
+  DEFAULT_DIRECT_DAMAGE_TYPE,
+  DEFAULT_EXPLOSION_DAMAGE_TYPE,
+  ZONE_DAMAGE_TYPE,
+} from "../../../../packages/game-rules/damage-contract.js";
+import type { DamageSourceKind } from "../../../../packages/module-catalog/contracts/engine-v2.js";
 
 const MAX_MINES_PER_VEHICLE = 3;
 /**
@@ -74,6 +73,8 @@ export interface BattleConfig {
   snapshotEveryNTicks?: number;
   /** Cada cuántos ticks se emite un hash de estado para verificar replays. */
   hashEveryNTicks?: number;
+  /** OLA2-MD · cada cuántos ticks se graba un checkpoint con el desglose por componentes (defecto 300). */
+  checkpointEveryNTicks?: number;
   recordReplay?: boolean;
   /**
    * N2 · Latencia simulada (DETERMINISTA, off por defecto). Cuando está presente, el
@@ -152,7 +153,8 @@ function insideArena(p: Vec2, map: Pick<ArenaMap, "widthM" | "heightM">): boolea
 
 export class Battle {
   readonly config: BattleConfig;
-  private rng: Rng;
+  /** OLA2-MD · flujos de RNG con nombre (combat, sensors, effects, guidance, latency). */
+  private rng: RngStreams;
   private physics: PhysicsWorld;
   private mode: GameMode;
   private vehicles: Vehicle[] = [];
@@ -173,6 +175,12 @@ export class Battle {
   private destructibleHp = new Map<string, number>();
 
   private entitySeq = 0;
+  /**
+   * OLA 2 · MB · Registros EXACTOS de daño del tick en curso (INTERNAL_DAMAGE_STATE), en
+   * orden de resolución. Derivados: no entran en el hash ni en el replay; los consume la
+   * etapa interna (captureInternalFrame, MA) y el damageLog derivado (MD).
+   */
+  private tickDamage: EngineDamageRecord[] = [];
   tick = 0;
   private finished = false;
   private result: BattleResult | null = null;
@@ -182,11 +190,13 @@ export class Battle {
   publicEvents: any[] = [];
   /**
    * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
-   * desempate `kills`). No entra en el hash: es una función del historial de muertes.
+   * desempate `kills`). SÍ entra en el hash (componente `mode`, state-hash v2).
    */
   private teamKills: Record<string, number> = emptyDict<number>();
   snapshots: any[] = [];
   stateHashes: { tick: number; hash: string }[] = [];
+  /** OLA2-MD · checkpoints del replay v2: hash + desglose por componentes (incluye el final). */
+  checkpoints: { tick: number; hash: string; components: StateHashBreakdown["components"] }[] = [];
   replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
   /**
    * N2 · Comandos "en vuelo" bajo latencia simulada: readyAtTick es el tick de
@@ -198,7 +208,7 @@ export class Battle {
 
   constructor(config: BattleConfig) {
     this.config = config;
-    this.rng = new Rng(config.seed);
+    this.rng = new RngStreams(config.seed);
     this.physics = new PhysicsWorld();
     const teams = [...new Set(config.participants.map((p) => p.team))].sort();
     // El modo puede RECHAZAR la lista de participantes (ERR-ENG-07): deathmatch exige
@@ -357,7 +367,7 @@ export class Battle {
           this.radioQueue,
           this.mode.score,
           objectives,
-          this.rng,
+          this.rng.stream("sensors"),
         );
 
         // Los eventos pendientes de ESTE bot se le entregan y se vacían.
@@ -395,7 +405,7 @@ export class Battle {
             // campo ausente esta rama entera no se ejecuta y no se toca this.rng,
             // que es la garantía de cero-regresión con latencia OFF.
             const span = Math.max(0, latency.maxCycles - latency.minCycles) + 1;
-            const d = latency.minCycles + this.rng.int(span);
+            const d = latency.minCycles + this.rng.stream("latency").int(span);
             if (d <= 0) {
               // Sin retardo efectivo: mismo comportamiento que sin latencia.
               commands.set(v.id, cmd);
@@ -486,6 +496,9 @@ export class Battle {
           sentTick: this.tick,
           deliverAtTick: this.tick + RADIO_DELIVERY_DELAY_DECISIONS * DECISION_EVERY_N_TICKS,
           to: r.to,
+          // P-2 · alcance real (radio.rangeM), del estado de batalla al emitir.
+          origin: { ...poses.get(v.id)!.position },
+          rangeM: radioRangeOf(v, r.slot),
         });
       }
     }
@@ -508,15 +521,8 @@ export class Battle {
         this.physics.driveVehicle(v.id, 0, 0, { maxSpeedMs: 0, accelerationMs2: 100, turnRateRads: 0 });
       }
 
-      // Giro de torreta hacia el objetivo, limitado por la velocidad del módulo.
-      const rate = v.turretRate();
-      if (v.lastTurretTarget != null && rate > 0) {
-        let diff = v.lastTurretTarget - v.turretHeading;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        const maxStep = rate * TICK_DT;
-        v.turretHeading += clamp(diff, -maxStep, maxStep);
-      }
+      // Giro de torreta hacia el objetivo: tasa y arco de la MONTURA (D-B2), en vehicle.ts.
+      v.stepTurret(TICK_DT);
     }
     this.physics.step();
     // Perímetro DURO (UX-07): el muro implícito para el movimiento; esta corrección
@@ -535,6 +541,7 @@ export class Battle {
     }
 
     // --- PASO 5 · Combate: disparos, proyectiles, minas, explosiones, daño
+    this.tickDamage = [];
     this.resolveFiring(commands, posesAfter);
     this.resolveProjectiles(posesAfter);
     this.resolveMines(posesAfter);
@@ -585,13 +592,18 @@ export class Battle {
     // --- PASO 8 · Snapshots y hash de estado
     const snapEvery = this.config.snapshotEveryNTicks ?? 3;
     if (this.tick % snapEvery === 0) {
-      this.snapshots.push(this.publicSnapshot(posesAfter));
+      this.snapshots.push(this.internalFrame(posesAfter));
     }
     // Cadencia del hash: config > ruleset > 30. Va en el ruleset (ERR-ENG-04) para que
     // viaje en la cabecera del replay y una auditoría con hash por tick sea reproducible.
     const hashEvery = this.config.hashEveryNTicks ?? this.config.ruleset.hashEveryNTicks ?? 30;
-    if (this.tick % hashEvery === 0) {
-      this.stateHashes.push({ tick: this.tick, hash: this.stateHash() });
+    const ckptEvery = this.config.checkpointEveryNTicks ?? 300;
+    const wantHash = this.tick % hashEvery === 0;
+    const wantCkpt = ckptEvery > 0 && this.tick % ckptEvery === 0;
+    if (wantHash || wantCkpt) {
+      const bd = this.stateHashBreakdown();
+      if (wantHash) this.stateHashes.push({ tick: this.tick, hash: bd.hash });
+      if (wantCkpt) this.checkpoints.push({ tick: this.tick, hash: bd.hash, components: bd.components });
     }
 
     // Purga de radio ya entregada. Solo si hay algo: filter() sobre una cola vacía
@@ -624,16 +636,20 @@ export class Battle {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
       const cmd = commands.get(v.id);
-      if (!cmd?.fire?.length || !Array.isArray(cmd.fire)) continue;
+      if (!cmd) continue;
+      const wantsFire = Array.isArray(cmd.fire) && cmd.fire.length > 0;
+      if (!wantsFire && !cmd.deployMine) continue; // minar no exige disparar en el mismo comando
       const pose = poses.get(v.id)!;
 
       // Sanea la lista de ranuras: solo strings, y sin repetidos (un bot que envía la
       // misma arma 100 veces no dispara 100 veces; la cadencia manda igualmente, pero
       // deduplicar evita gastar 100 tiradas del RNG y desplazar la secuencia).
-      const slots: string[] = [...new Set<string>(cmd.fire.filter((s: unknown): s is string => typeof s === "string"))];
+      const slots: string[] = !wantsFire
+        ? []
+        : [...new Set<string>(cmd.fire.filter((s: unknown): s is string => typeof s === "string"))];
 
       for (const slot of slots) {
-        const rejection = canFire(v, slot, this.tick, this.rng);
+        const rejection = canFire(v, slot, this.tick, this.rng.stream("combat"));
         if (rejection) {
           this.emit({ kind: "rejected_action", slot, reason: rejection }, v.id);
           continue;
@@ -642,7 +658,7 @@ export class Battle {
           x: pose.position.x + Math.cos(v.turretHeading) * (v.spec.radiusM + 0.3),
           y: pose.position.y + Math.sin(v.turretHeading) * (v.spec.radiusM + 0.3),
         };
-        const p = fire(v, slot, this.tick, muzzle, this.rng, this.entitySeq++);
+        const p = fire(v, slot, this.tick, muzzle, this.rng.stream("combat"), this.entitySeq++);
         if (p) {
           this.projectiles.push(p);
           this.sounds.push({ position: muzzle, kind: "gunshot", intensity: 1 });
@@ -693,6 +709,9 @@ export class Battle {
 
       if (hit && hit.entityId) {
         const impact = hit.point;
+        // D-B6 · el vehículo impactado directamente recibe el impacto directo y queda
+        // EXCLUIDO de la onda de su propio proyectil: un paquete por vehículo y detonación.
+        let directTarget: string | null = null;
         const target = this.vehicles.find((v) => v.id === hit.entityId);
 
         if (target) {
@@ -702,7 +721,17 @@ export class Battle {
             survivors.push({ ...p, position: to, ttlTicks: p.ttlTicks - 1 });
             continue;
           }
-          this.damageVehicle(target, p.damage, impact, poses, p.ownerId, p.team);
+          directTarget = target.id;
+          this.damageVehicle(
+            target,
+            p.damage,
+            impact,
+            poses,
+            p.ownerId,
+            p.team,
+            DEFAULT_DIRECT_DAMAGE_TYPE,
+            "projectile",
+          );
         } else if (this.destructibleHp.has(hit.entityId)) {
           const hp = (this.destructibleHp.get(hit.entityId) ?? 0) - p.damage;
           this.destructibleHp.set(hit.entityId, hp);
@@ -713,7 +742,9 @@ export class Battle {
           }
         }
 
-        if (p.explosionRadiusM > 0) this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team);
+        if (p.explosionRadiusM > 0) {
+          this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team, "explosion", directTarget);
+        }
         this.sounds.push({ position: impact, kind: "explosion", intensity: 1 });
         continue; // el proyectil muere al impactar
       }
@@ -752,7 +783,7 @@ export class Battle {
 
       if (triggered) {
         this.emit({ kind: "mine_triggered", position: m.position });
-        this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team);
+        this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team, "deployable", null);
         this.sounds.push({ position: m.position, kind: "explosion", intensity: 1 });
       } else {
         survivors.push(m);
@@ -768,9 +799,12 @@ export class Battle {
     poses: Map<string, any>,
     ownerId: string,
     team: string,
+    sourceKind: DamageSourceKind,
+    excludeId: string | null,
   ): void {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
+      if (v.id === excludeId) continue;
       if (v.team === team && !this.config.ruleset.friendlyFire) continue;
       const p = poses.get(v.id);
       if (!p) continue;
@@ -779,7 +813,7 @@ export class Battle {
       if (f <= 0) continue;
       // Una explosión no atraviesa muros.
       if (!this.physics.hasLineOfSight(center, p.position)) continue;
-      this.damageVehicle(v, damage * f, center, poses, ownerId, team);
+      this.damageVehicle(v, damage * f, center, poses, ownerId, team, DEFAULT_EXPLOSION_DAMAGE_TYPE, sourceKind);
     }
   }
 
@@ -793,49 +827,61 @@ export class Battle {
         const p = poses.get(v.id);
         if (!p) continue;
         if (Math.hypot(p.position.x - z.position.x, p.position.y - z.position.y) > z.radiusM) continue;
-        // El daño ambiental va directo al chasis: no hay blindaje contra el ácido.
-        v.hullHp = Math.max(0, v.hullHp - dps * TICK_DT);
-        if (v.hullHp <= 0 && v.alive) {
-          v.alive = false;
-          this.emit({ kind: "vehicle_destroyed", targetId: v.id });
-          this.mode.onKill?.(v, null, {
-            tick: this.tick,
-            ruleset: this.config.ruleset,
-            vehicles: this.vehicles,
-            poses,
-            map: this.config.map,
-            emit: (e: any) => this.emit(e),
-          });
-          this.noteElimination(v);
-        }
+        // El daño ambiental va directo al chasis (perfil `environmental`: sin blindaje,
+        // sin sector, sin módulo, sin RNG), pero por la MISMA puerta que el resto.
+        this.damageVehicle(v, dps * TICK_DT, z.position, poses, null, null, ZONE_DAMAGE_TYPE, "zone");
       }
     }
   }
 
+  /**
+   * ÚNICA puerta de daño de vehículo del bucle: construye el DamagePacket, lo resuelve
+   * (damage.ts) y emite los eventos. Muerte y onKill en UN solo sitio, sea cual sea el
+   * origen. La firma posicional (target, amount, from, poses, ownerId, ownerTeam, …) se
+   * conserva: replay.ts (resimulateWithEvents) lee `ownerId` en la posición 4.
+   */
   private damageVehicle(
     target: Vehicle,
-    damage: number,
+    amount: number,
     from: Vec2,
     poses: Map<string, any>,
-    ownerId: string,
-    ownerTeam: string,
+    ownerId: string | null,
+    ownerTeam: string | null,
+    type: EnginePacket["type"] = DEFAULT_DIRECT_DAMAGE_TYPE,
+    sourceKind: DamageSourceKind = "projectile",
   ): void {
+    const packet: EnginePacket = {
+      amount,
+      type,
+      penetration: 0,
+      from,
+      owner: ownerId,
+      ownerTeam,
+      sourceKind,
+      seq: this.tickDamage.length,
+    };
     const tp = poses.get(target.id)!;
-    const res = applyDamage(target, damage, from, tp.position, tp.heading, this.rng);
+    // Integración OLA2 (MD+MB): el sector del impacto se sortea del flujo RNG con nombre "combat"
+    // (el mismo que usaba applyDamage en MD).
+    const res = resolveDamage(packet, target, tp, this.rng.stream("combat"), this.tick);
+    this.tickDamage.push(res);
 
-    // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
-    // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
-    // te hiere sin decirte quién ha sido.
-    const canSee = this.physics.hasLineOfSight(tp.position, from, target.id);
-    this.emit(
-      {
-        kind: "hit_taken",
-        sector: res.sector,
-        damage: round6(res.effectiveDamage),
-        ...(canSee ? { sourceId: ownerId } : {}),
-      },
-      target.id,
-    );
+    // Daño ambiental (sin atacante): sin hit_taken ni hit_dealt, como siempre.
+    if (ownerId !== null) {
+      // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
+      // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
+      // te hiere sin decirte quién ha sido.
+      const canSee = this.physics.hasLineOfSight(tp.position, packet.from, target.id);
+      this.emit(
+        {
+          kind: "hit_taken",
+          sector: res.sector,
+          damage: round6(res.effective),
+          ...(canSee ? { sourceId: ownerId } : {}),
+        },
+        target.id,
+      );
+    }
 
     if (res.moduleSlot && res.moduleDestroyed) {
       this.emit(
@@ -845,13 +891,16 @@ export class Battle {
     }
 
     // El atacante sabe que ha acertado (ve el impacto).
-    const attacker = this.vehicles.find((v) => v.id === ownerId);
+    // DEPENDENCIA MD (arena/2): `damage` exacto → `impact` (impactClassOf en damage-contract).
+    const attacker = ownerId !== null ? this.vehicles.find((v) => v.id === ownerId) : undefined;
     if (attacker) {
-      this.emit({ kind: "hit_dealt", targetId: target.id, damage: round6(res.effectiveDamage) }, attacker.id);
+      this.emit({ kind: "hit_dealt", targetId: target.id, damage: round6(res.effective) }, attacker.id);
     }
 
     if (res.killed) {
-      if (ownerTeam !== target.team) this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
+      if (ownerTeam !== null && ownerTeam !== target.team) {
+        this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
+      }
       this.emit({ kind: "vehicle_destroyed", targetId: target.id });
       this.mode.onKill?.(target, ownerTeam, {
         tick: this.tick,
@@ -863,6 +912,11 @@ export class Battle {
       });
       this.noteElimination(target);
     }
+  }
+
+  /** OLA 2 · MB · Registros exactos de daño del último tick (INTERNOS; para la etapa interna). */
+  damageRecordsOfLastTick(): readonly EngineDamageRecord[] {
+    return this.tickDamage;
   }
 
   /**
@@ -877,102 +931,81 @@ export class Battle {
     this.publicEvents.push({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
   }
 
-  // ------------------------------------------------------ snapshot y hash
+  // ------------------------------------------------------ frame interno y hash
   /**
-   * Snapshot PÚBLICO: lo que ve un espectador. Jamás contiene observaciones privadas
-   * ni el estado interno de los sensores de un bot (test de fuga en E8).
+   * OLA 2 · MA · INTERNAL FRAME del tick (contrato §2, A2). Ya no hay snapshot «público»
+   * fabricado por el motor: cada audiencia lo deriva `projectFrame()` (packages/projection).
+   * `this.snapshots` guarda estos frames internos; nunca salen sin proyectar.
    */
-  private publicSnapshot(poses: Map<string, any>): any {
+  private internalFrame(poses: Map<string, any>): any {
     const limited = respawnLimited(this.config.ruleset);
-    return {
+    return captureInternalFrame({
+      battleId: this.config.battleId,
       tick: this.tick,
-      // Motor 0.4.0 · sólo con prórroga declarada (snapshots de 0.3.0 idénticos).
+      // Motor 0.4.0 · sólo con prórroga declarada.
       ...(this.config.ruleset.overtime
         ? { overtime: this.mode.overtimeSince !== null && this.mode.overtimeSince !== undefined }
         : {}),
-      vehicles: this.vehicles.map((v) => {
-        const p = poses.get(v.id);
-        return {
-          id: v.id,
-          team: v.team,
-          alive: v.alive,
-          position: p ? { x: round6(p.position.x), y: round6(p.position.y) } : null,
-          heading: p ? round6(p.heading) : 0,
-          turretHeading: round6(v.turretHeading),
-          hullHp: round6(v.hullHp),
-          hullHpMax: v.spec.hullHp,
-          carryingFlag: v.carryingFlag,
-          juggernaut: v.juggernaut,
-          // R-RULES · sólo con respawn limitado (snapshots de 0.3.0 idénticos).
-          ...(limited ? { respawnsLeft: respawnsLeft(v, this.config.ruleset) } : {}),
-          modules: [...v.modules.values()].map((m) => ({
-            slot: m.spec.slot,
-            state: v.stateOf(m.spec.slot),
-          })),
-        };
-      }),
-      projectiles: this.projectiles.map((p) => ({
-        id: p.id,
-        position: { x: round6(p.position.x), y: round6(p.position.y) },
-      })),
-      // Las minas NO van en el snapshot público: son información oculta hasta que explotan.
-      score: { ...this.mode.score },
+      vehicles: this.vehicles,
+      poses,
+      projectiles: this.projectiles,
+      mines: this.mines,
+      score: this.mode.score,
       objectives: this.mode.objectives(),
-    };
+      // R-RULES · sólo con respawn limitado.
+      ...(limited ? { respawnsLeft: (v: Vehicle) => respawnsLeft(v, this.config.ruleset) } : {}),
+    });
   }
 
   /**
    * Hash canónico del estado de simulación. Es LA prueba de determinismo.
-   * Incluye el estado del RNG: dos batallas con el mismo hash han consumido
-   * exactamente la misma aleatoriedad.
+   * OLA2-MD · v2 por componentes (state-hash.ts): cubre TODO el estado vivo que decide el
+   * futuro, incluidos los flujos de RNG con nombre. Nada de proyección ni visibilidad.
    */
   stateHash(): string {
+    return this.stateHashBreakdown().hash;
+  }
+
+  /** OLA2-MD · desglose por componentes (contrato §13). Los campos los nombra stateHashInput(). */
+  stateHashBreakdown(): StateHashBreakdown {
+    return computeStateHash(this.stateHashInput(), { skipKeys: STATE_HASH_SKIP });
+  }
+
+  /**
+   * Estado vivo por componente. Regla: todo campo mutable de la simulación entra aquí (los
+   * objetos se serializan ENTEROS con canonicalize, así que un campo nuevo de Vehicle,
+   * proyectil, mina o modo entra solo). Sólo se omite `spec` (configuración inmutable que
+   * ya viaja en la cabecera). `effects`, `effectQueue`, `interference` y `botRefs` están
+   * vacíos hasta que MC/MA los rellenen en su fase.
+   */
+  private stateHashInput() {
     const poses = this.poses();
-    // Huella del solver (ERR-ENG-04): cuerpos despiertos + pares de contacto. Una
-    // divergencia interna de Rapier (islas de sueño, contactos) puede ser invisible
-    // en las poses cuantizadas y aun así seguir viva; esto la saca a la luz.
+    // Huella del solver (ERR-ENG-04): cuerpos despiertos + pares de contacto.
     const solver = this.physics.solverFingerprint();
-    const limited = respawnLimited(this.config.ruleset);
-    const canonical = {
+    return {
       tick: this.tick,
       rng: this.rng.getState(),
+      allocator: { nextSeq: this.entitySeq, ownCounters: {}, contactCounters: {} },
       solver: [solver.awakeBodies, solver.contactPairs],
-      vehicles: this.vehicles.map((v) => {
-        const p = poses.get(v.id);
-        return {
-          id: v.id,
-          pos: p ? [q(p.position.x), q(p.position.y)] : null,
-          h: p ? q(p.heading) : 0,
-          vel: p ? [q(p.velocity.x), q(p.velocity.y)] : null,
-          turret: q(v.turretHeading),
-          hp: q(v.hullHp),
-          energy: q(v.energyEU),
-          alive: v.alive,
-          dq: v.disqualified,
-          flag: v.carryingFlag,
-          // R3.8 · la marca de juggernaut es estado de simulación: va en el hash como
-          // carryingFlag. Añadirla invalida los goldens con hash (regenerados y documentados).
-          jug: v.juggernaut,
-          modules: [...v.modules.values()]
-            .sort((a, b) => a.spec.slot.localeCompare(b.spec.slot))
-            .map((m) => [m.spec.slot, q(m.hp), m.offline, m.ammo, m.charges, m.cooldownUntilTick]),
-          armor: Object.entries(v.armor)
-            .sort()
-            .map(([s, a]) => [s, q(a!.hp)]),
-          // R-RULES (ADR-021) · las reapariciones usadas son estado de simulación SÓLO
-          // cuando limitan; sin `maxRespawns` no entran y el hash de 0.3.0 no cambia.
-          ...(limited ? { rsp: v.respawnsUsed } : {}),
-        };
-      }),
-      projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),
-      mines: this.mines.map((m) => [m.id, q(m.position.x), q(m.position.y)]),
-      destructibles: [...this.destructibleHp.entries()].sort().map(([k, v]) => [k, q(v)]),
-      score: Object.entries(this.mode.score).sort(),
-      objectives: this.mode.objectives(),
-      // Motor 0.4.0 (ADR-022) · estado de prórroga, SÓLO si el ruleset la declara.
-      ...(this.config.ruleset.overtime ? { ot: this.mode.overtimeSince ?? null } : {}),
+      vehicles: this.vehicles.map((v) => ({ pose: poses.get(v.id) ?? null, state: v })),
+      projectiles: this.projectiles,
+      deployables: this.mines,
+      effects: [],
+      effectQueue: [],
+      interference: [],
+      destructibles: this.destructibleHp,
+      // Colas de entrega hacia los bots: radio en vuelo, búferes de sonido y eventos
+      // privados aún no entregados (deciden la próxima observación).
+      radioQueue: {
+        radio: this.radioQueue,
+        sounds: this.sounds,
+        observedSounds: this.observedSounds,
+        pendingEvents: this.pendingEvents,
+      },
+      pendingCommands: this.pendingLatencyCommands,
+      botRefs: {},
+      mode: { state: this.mode, objectives: this.mode.objectives(), teamKills: this.teamKills },
     };
-    return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
   }
 
   private finish(winner: string | "draw"): void {
@@ -983,11 +1016,17 @@ export class Battle {
     // cambiar las trayectorias con el perímetro de UX-07). Los snapshots no entran en
     // el hash de estado: no altera el determinismo.
     const last = this.snapshots[this.snapshots.length - 1];
-    if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
+    if (!last || last.tick !== this.tick) this.snapshots.push(this.internalFrame(this.poses()));
     // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
     const technical = winner === TECHNICAL_LIMIT;
     if (technical) {
       this.publicEvents.push({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
+    }
+    // OLA2-MD · checkpoint FINAL garantizado (desglose por componentes del estado final).
+    const finalHash = this.stateHashBreakdown();
+    const lastCkpt = this.checkpoints[this.checkpoints.length - 1];
+    if (!lastCkpt || lastCkpt.tick !== this.tick) {
+      this.checkpoints.push({ tick: this.tick, hash: finalHash.hash, components: finalHash.components });
     }
     this.result = {
       battleId: this.config.battleId,
@@ -995,7 +1034,7 @@ export class Battle {
       ...(technical ? { endReason: "technical_limit" as const } : {}),
       ticks: this.tick,
       score: { ...this.mode.score },
-      finalStateHash: this.stateHash(),
+      finalStateHash: finalHash.hash,
       disqualified: this.vehicles.filter((v) => v.disqualified).map((v) => v.id),
       versions: {
         engine: deps.engine.version,
@@ -1022,15 +1061,24 @@ export class Battle {
   }
 
   /**
-   * Snapshot público del estado actual, calculado on-demand. Es EXACTAMENTE lo mismo
-   * que se guarda periódicamente en `this.snapshots` (R13.1 · inspector de solo lectura).
+   * Frame INTERNO del estado actual, on-demand: lo mismo que se guarda periódicamente en
+   * `this.snapshots`. Sólo para proyectarlo (inspector, tests); nunca se publica tal cual.
    */
-  getPublicSnapshot(): any {
-    return this.publicSnapshot(this.poses());
+  getInternalFrame(): any {
+    return this.internalFrame(this.poses());
   }
 
   /** Observación de un bot concreto: la usan el servidor de protocolo (E5) y los tests. */
   observationFor(vehicleId: string): any {
+    // OLA2-MD · GUARDA (review MD P2): los raycasts de Rapier fuera del bucle (y el step
+    // dt=0 de syncQueries tras un alta/baja de cuerpo) alteran contactos/sueño y por tanto
+    // la física posterior. En una batalla GRABADA (oficial) eso rompería verify(), así que
+    // no se admite. Residual: batallas sin recordReplay (tests, spectator) no son verificables.
+    if (this.config.recordReplay) {
+      throw new Error(
+        "observationFor() no se puede llamar fuera del bucle en una batalla grabada (recordReplay): altera la física y rompe verify()",
+      );
+    }
     const v = this.vehicles.find((x) => x.id === vehicleId);
     if (!v) throw new Error(`Vehículo desconocido: ${vehicleId}`);
     return buildObservation(
@@ -1048,7 +1096,9 @@ export class Battle {
       this.radioQueue,
       this.mode.score,
       this.mode.objectives(),
-      this.rng,
+      // OLA2-MD · COPIA del flujo de sensores: una observación pedida fuera del bucle no
+      // avanza el RNG de la simulación (cierra R1). Ver residual en el informe MD.
+      this.rng.stream("sensors").clone(),
     );
   }
 
@@ -1073,10 +1123,8 @@ export class Battle {
   }
 }
 
-/** Cuantización para el hash: elimina el ruido del último bit sin ocultar divergencias reales. */
-function q(n: number): number {
-  return Math.round(n * 1e5) / 1e5;
-}
+/** OLA2-MD · configuración inmutable (ya en la cabecera del replay): fuera del hash. */
+const STATE_HASH_SKIP: ReadonlySet<string> = new Set(["spec"]);
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
 }

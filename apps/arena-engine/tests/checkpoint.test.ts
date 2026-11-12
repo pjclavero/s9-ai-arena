@@ -167,7 +167,8 @@ describe("rechazos estrictos", () => {
 
   it("formatVersion desconocida: rechazada", async () => {
     const ckpt = await makeCkpt();
-    const malo = { ...ckpt, formatVersion: 2 as any };
+    // OLA2-MD · la única soportada es 2; la 1 (antigua) se rechaza.
+    const malo = { ...ckpt, formatVersion: 1 as any };
     await expect(restoreCheckpoint(malo, freshAgents())).rejects.toThrow(/formatVersion desconocida/);
   });
 

@@ -133,12 +133,13 @@ def test_05_radio_envia_y_recibe() -> None:
     result = _sim(900, ruleset="tdm_mvp@1").run([(a, "gunner"), (rival, "gunner"), (b, "gunner")])
     assert result["disqualified"] == []
     _assert_valid_commands(a)
-    assert a.teammates == ["veh_3"] and b.teammates == ["veh_1"] and rival.teammates == []
+    # OLA 2 · ids PÚBLICOS de la audiencia de cada bot (v_N por orden de botId en su equipo).
+    assert a.teammates == ["v_2"] and b.teammates == ["v_1"] and rival.teammates == []
     assert any("radio" in m["payload"] for m in a.sent + b.sent)
     # Los compañeros se oyen entre ellos, y sólo entre ellos.
     assert a.heard + b.heard, "ningún compañero recibió ni decodificó un mensaje de radio"
-    assert all(h["from"] == "veh_3" for h in a.heard)
-    assert all(h["from"] == "veh_1" for h in b.heard)
+    assert all(h["from"] == "v_2" for h in a.heard)
+    assert all(h["from"] == "v_1" for h in b.heard)
     assert all(h["x"] >= 0 and h["y"] >= 0 for h in a.heard + b.heard)
     # El rival no recibe nada: ni mensajes ni una clave "radio" en su observación.
     assert rival.heard == []

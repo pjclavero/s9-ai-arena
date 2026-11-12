@@ -23,6 +23,7 @@
  * preseleccionada; no emite); terminada, «Ver resultado», «Replay: no disponible
  * para retransmisión» y el replay normal si existe. Nunca «Retransmitir replay».
  */
+import { broadcastReasonText } from "./PublicAccessSettings.js";
 import { useEffect, useRef } from "react";
 import { api, type Me } from "../api.js";
 import { streamingHref } from "../broadcast/BroadcastButton.js";
@@ -77,7 +78,7 @@ interface ModuleStatsView {
   uses: number;
   /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
   rejections?: number;
-  damageDealt: number;
+  damageDealt?: number;
   finalState: string;
 }
 
@@ -85,8 +86,8 @@ interface BotStatsView {
   botName?: string;
   version?: number;
   team: string;
-  damageDealt: number;
-  damageTaken: number;
+  damageDealt?: number;
+  damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
   accuracy: number | null;
@@ -154,8 +155,8 @@ interface TeamStatsView {
   kills: number;
   teamKills?: number;
   deaths?: number;
-  damageDealt: number;
-  damageTaken: number;
+  damageDealt?: number;
+  damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
   flagCaptures?: number;
@@ -406,6 +407,22 @@ export const BROADCAST_BLOCKED_TEXT: Record<string, string> = {
 interface TargetView {
   broadcastable: boolean;
   broadcastBlockedReason: string | null;
+  /** MG · /broadcast puede leerla de verdad (ajustes públicos vigentes); ausente en APIs < 0.18.0. */
+  broadcastAvailable?: boolean;
+  reason?: string | null;
+}
+
+/** MG · autorizada por visibilidad pero la página pública no podría leerla (p. ej. espectador público apagado). */
+function effectivelyBlocked(t: TargetView | null | undefined): boolean {
+  // `battle_not_started` (espera) y `streaming_not_configured` (el botón sólo ABRE Streaming, que
+  // explica el estado del streamer) no bloquean el enlace; los motivos de lectura pública sí.
+  return (
+    !!t &&
+    t.broadcastable &&
+    t.broadcastAvailable === false &&
+    t.reason !== "battle_not_started" &&
+    t.reason !== "streaming_not_configured"
+  );
 }
 
 /**
@@ -438,7 +455,9 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
               <span data-testid="watch-live-pending">Ver en directo: disponible en cuanto la batalla arranque.</span>
             )}{" "}
             {isAdmin &&
-              (target.status === "ready" && target.data && !target.data.broadcastable ? (
+              (target.status === "ready" &&
+              target.data &&
+              (!target.data.broadcastable || effectivelyBlocked(target.data)) ? (
                 <button type="button" disabled data-testid="broadcast-battle-blocked">
                   Retransmitir
                 </button>
@@ -459,10 +478,16 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
                 ? "Comprobando si se puede retransmitir…"
                 : target.status === "error"
                   ? "No se ha podido comprobar si se puede retransmitir; Streaming lo volverá a comprobar antes de emitir."
-                  : target.data?.broadcastable
-                    ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
-                    : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
-                      "No se puede retransmitir esta batalla.")}
+                  : effectivelyBlocked(target.data)
+                    ? `No se puede retransmitir ahora: ${broadcastReasonText(target.data?.reason)}`
+                    : target.data?.broadcastable
+                      ? `Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí.${
+                          target.data?.reason === "streaming_not_configured"
+                            ? " Aviso: este despliegue no tiene streamer configurado; Streaming lo indicará."
+                            : ""
+                        }`
+                      : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
+                        "No se puede retransmitir esta batalla.")}
             </p>
           )}
         </>
@@ -562,7 +587,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
           <tr>
             <th>Bot</th>
             <th>Disparos</th>
-            <th>Aciertos</th>
+            <th title="Cifra aproximada: se publica redondeada de 5 en 5">Aciertos (de 5 en 5)</th>
             <th>Precisión</th>
             <th>Daño hecho</th>
             <th>Daño recibido</th>
@@ -587,8 +612,8 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{st.shotsFired}</td>
                 <td>{st.shotsHit}</td>
                 <td>{pct(st.accuracy)}</td>
-                <td>{Math.round(st.damageDealt)}</td>
-                <td>{Math.round(st.damageTaken)}</td>
+                <td>{typeof st.damageDealt === "number" ? Math.round(st.damageDealt) : "—"}</td>
+                <td>{typeof st.damageTaken === "number" ? Math.round(st.damageTaken) : "—"}</td>
                 <td>
                   {st.kills}
                   {st.teamKills ? ` (+${st.teamKills} de fuego amigo)` : ""}
@@ -695,8 +720,8 @@ function SidesStats({
               kills: sum((x) => x.kills),
               teamKills: sum((x) => x.teamKills),
               deaths: st.every((x) => typeof x.deaths === "number") ? sum((x) => x.deaths) : undefined,
-              damageDealt: sum((x) => x.damageDealt),
-              damageTaken: sum((x) => x.damageTaken),
+              damageDealt: st.every((x) => typeof x.damageDealt === "number") ? sum((x) => x.damageDealt) : undefined,
+              damageTaken: st.every((x) => typeof x.damageTaken === "number") ? sum((x) => x.damageTaken) : undefined,
               shotsFired: sum((x) => x.shotsFired),
               shotsHit: sum((x) => x.shotsHit),
               survivors: st.filter((x) => (typeof x.aliveAtEnd === "boolean" ? x.aliveAtEnd : !x.died)).length,
@@ -715,7 +740,7 @@ function SidesStats({
           <th>Daño hecho</th>
           <th>Daño recibido</th>
           <th>Disparos</th>
-          <th>Aciertos</th>
+          <th title="Cifra aproximada: se publica redondeada de 5 en 5">Aciertos (de 5 en 5)</th>
           {showRespawns && <th>Respawns</th>}
           {showRemaining && <th>Respawns restantes</th>}
           {showSurvivors && <th>Supervivientes</th>}
@@ -732,8 +757,8 @@ function SidesStats({
               {t.teamKills ? ` (+${t.teamKills} de fuego amigo)` : ""}
             </td>
             <td>{typeof t.deaths === "number" ? t.deaths : "—"}</td>
-            <td>{Math.round(t.damageDealt)}</td>
-            <td>{Math.round(t.damageTaken)}</td>
+            <td>{typeof t.damageDealt === "number" ? Math.round(t.damageDealt) : "—"}</td>
+            <td>{typeof t.damageTaken === "number" ? Math.round(t.damageTaken) : "—"}</td>
             <td>{t.shotsFired}</td>
             <td>{t.shotsHit}</td>
             {showRespawns && <td>{typeof t.respawns === "number" ? t.respawns : "—"}</td>}

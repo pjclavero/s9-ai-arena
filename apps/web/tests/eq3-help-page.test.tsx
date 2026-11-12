@@ -165,11 +165,12 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     expect(slots.textContent).toContain("Propulsión");
   });
 
-  it("Armas: «Efecto real» dice la verdad del motor (rangeM no se usa)", async () => {
+  it("Armas: «Efecto real» dice la verdad del motor (P-2: rangeM es el alcance real)", async () => {
     installFetch("ok");
     await show("#/help/equipamiento/weapon");
     const cannon = screen.getByTestId("help-module-weapon.cannon@1");
-    expect(cannon.textContent).toMatch(/Alcance.*60 m.*Aún sin efecto en la batalla/s);
+    expect(cannon.textContent).toMatch(/Alcance.*360 m.*Cambia la batalla/s);
+    expect(cannon.textContent).not.toMatch(/Aún sin efecto en la batalla/);
     expect(cannon.textContent).toMatch(/Daño.*45.*Cambia la batalla/s);
   });
 
