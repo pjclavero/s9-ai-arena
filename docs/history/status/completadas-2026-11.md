@@ -21,3 +21,14 @@ pendientes o parciales, está en [la auditoría](../../audits/2026-11/PENDING-AU
 | Reglas oficiales de batalla con copia inmutable, desempates y CTF con prórroga (motor 0.4.0) | PR #201 | 2026-11-02 | `docs/adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md`; migración `016_battle_rules` |
 | Batallas por equipos 4 contra 4 | PR #189 | 2026-10-29 | `apps/api/src/routes/battles.ts` (`MAX_PARTICIPANTS_PER_TEAM`); `tests/browser/specs/team-battle-4v4.spec.ts` |
 | Frontera de privilegio y ámbito del proxy de Docker | PR #164 (RC2) y PR #167 | 2026-10-21 | `infrastructure/scripts/install-docker-proxy.sh`; `functional-e2e / container-proxy-e2e` |
+
+
+## Cierres posteriores a la auditoría del 2 de noviembre
+
+| Función | Completada en | Fecha | Evidencia |
+|---|---|---|---|
+| Proxy interno de broadcast: `web` reenvía `/api/v1/` y `/ws/` en vez de devolver la SPA | PR #274 | 2026-11-12 | gate `INTERNAL_BROADCAST_API_PROXY=PASS`; nginx real y CI |
+| Acceso público / Broadcast gestionable desde la admin, persistente, auditado y en caliente | PR #269 | 2026-11-12 | `runtime-settings.ts`, `PublicAccessSettings.tsx`, migración 021 y tests MG |
+| Emisión real de una batalla a YouTube con contenido visible | cierre operativo de #256/#274 | 2026-11-12 | `BATTLE_VISIBLE_ON_STREAM=PASS` reportado por el operador: mapa, vehículos, movimiento, HUD, 0 frames descartados |
+
+OLA 2 (#268/#270/#271/#272/#273/#276) y Streaming V2 (#275) **no** figuran como completados aquí porque todavía falta su integración/implementación final.

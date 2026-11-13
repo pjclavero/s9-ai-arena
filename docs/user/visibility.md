@@ -51,6 +51,10 @@ Al inscribir un bot privado en un torneo con retransmisión pública verás: «E
 
 La autorización para mostrar en público a un bot privado la da **el torneo**, porque se anuncia antes de inscribirse. Una batalla de práctica no tiene ese aviso previo, y el dueño de un bot privado no ha aceptado que se vea. Por eso la administración de Streaming la rechaza con el motivo `battle_not_public`. Si quieres emitir una batalla de práctica, sus bots tienen que ser públicos. Si la batalla es de un torneo sin retransmisión pública, el motivo es `tournament_not_broadcastable`.
 
+## Próxima frontera pública OLA 2 (pendiente de integración)
+
+Los PR de OLA 2 añaden una frontera pública única (`projectFrame()`), identificadores públicos por audiencia y la política **EQUIPMENT_PRIVATE**. Cuando el conjunto se integre y pase `ENGINE_HARDENING_READY=PASS`, la emisión/replay público no deberá exponer el loadout completo ni valores internos como masa, coste o daño absoluto de bots ajenos. Esta mejora todavía no se describe como comportamiento activo de `main` hasta cerrar la integración.
+
 ## Detalles que conviene saber
 
 - **El nombre que ves es el actual.** El replay, el cuadro y la emisión muestran el nombre que el bot tiene hoy. Si lo renombras, tus batallas pasadas muestran el nombre nuevo. La versión y el equipo que jugaron sí se guardan con cada batalla.
