@@ -55,6 +55,12 @@ los secretos, el aislamiento y la tabla de qué existe y qué falta.
 
 → [streaming-architecture.md](streaming-architecture.md)
 
+Diseño (MS-1, sin implementar) del Broadcast Manager: sesión de salida persistente separada de lo que
+se muestra, cola de emisión, start sincronizado con la batalla, fuentes por batalla para OBS, replays,
+listas y el menú único Administración → Retransmisión.
+
+→ [STREAMING_ARCHITECTURE_V2.md](STREAMING_ARCHITECTURE_V2.md)
+
 ### Workers
 
 Los dos procesos que reclaman trabajo de la cola. `tournament-worker` ejecuta batallas y torneos,
