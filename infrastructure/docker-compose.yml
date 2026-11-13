@@ -789,6 +789,14 @@ services:
       # 1000:1000 igual que `node`: lo comprueba el build de la imagen con `stat`.
       ARENA_DATA_DIRS: /data/replays
       LOG_FORMAT: json
+      # DIAG · tap PASIVO de la señal FLV que recibe el relé (apps/streamer/src/tap.ts).
+      # APAGADO por defecto; sólo diagnóstico. Guarda el último keyframe (≤ MAX_FILES
+      # capturas, ≤ MAX_MB) en /tmp del contenedor; se lee por GET /diag/tap* (con el
+      # secreto de control). Ver docs/operations/streaming.md § Diagnóstico.
+      STREAM_TAP_ENABLED: ${STREAM_TAP_ENABLED:-false}
+      STREAM_TAP_INTERVAL_SEC: ${STREAM_TAP_INTERVAL_SEC:-10}
+      STREAM_TAP_MAX_FILES: ${STREAM_TAP_MAX_FILES:-10}
+      STREAM_TAP_MAX_MB: ${STREAM_TAP_MAX_MB:-32}
     volumes:
       # Solo para el modo grabación E11.M (clips a arena_replays/video).
       - arena_replays:/data/replays

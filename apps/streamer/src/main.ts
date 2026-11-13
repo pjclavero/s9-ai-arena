@@ -17,6 +17,7 @@ import { StreamSupervisor, type Spawner } from "./supervisor.js";
 import { createControlServer } from "./control.js";
 import type { Capabilities } from "./session.js";
 import { checkWritableDataDir, requireWritableDataDir } from "../../../packages/data-dir/index.js";
+import { createTapFromEnv } from "./tap.js";
 
 /** Lee un fichero de secreto en el momento (no se cachea: rotar no exige reiniciar). */
 function readSecretFile(path: string | undefined): string | null {
@@ -113,6 +114,17 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
       logger("warn", "directorio de grabación no utilizable (sólo afecta a «Sólo grabar»)", { reason: c.reason });
   }
 
+  // DIAG · tap pasivo de la señal de ingesta: OFF por defecto (STREAM_TAP_ENABLED=true lo enciende).
+  const tap = createTapFromEnv(env, logger);
+  if (tap) {
+    tap.start();
+    logger("warn", "DIAG: tap pasivo de ingesta ENCENDIDO (sólo diagnóstico)", {
+      intervalMs: tap.config.intervalMs,
+      maxFiles: tap.config.maxFiles,
+      maxBytes: tap.config.maxBytes,
+    });
+  }
+
   const spawner = realSpawner;
   const allowPlainRtmp = env.STREAMER_ALLOW_PLAIN_RTMP === "1";
   const supervisor = new StreamSupervisor({
@@ -126,6 +138,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
     // #256 · puerta BROADCAST_RENDER_READY y vigilante: un frame del MISMO display que
     // captura la emisión (x11grab), clasificado por frame-check.ts.
+    tap,
     renderProbe: () => grabDisplayLuma(env.FFMPEG_BIN ?? "ffmpeg", config.display, config.width, config.height),
   });
 
@@ -156,6 +169,8 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     readPrivateKey: () => readSecretFile(env.STREAM_SECRETS_PRIVATE_KEY_FILE),
     readLegacyKey,
     allowPlainRtmp,
+    tap,
+    ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
   });
   server.listen(config.controlPort, () => {
     logger("info", "API de control escuchando", {
@@ -172,6 +187,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   // SIGKILL + 1 s) a que los hijos salgan antes de terminar el proceso.
   const shutdown = () => {
     supervisor.stop();
+    tap?.stop();
     server.close();
     const deadline = Date.now() + 6000;
     const wait = () => {

@@ -31,6 +31,7 @@ import { SecretRegistry, type Logger, type StreamerConfig } from "./config.js";
 import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { presetOf, sessionFingerprint, type PresetName, type SessionPlan } from "./session.js";
 import { classifyFrame, type FrameVerdict, type LumaStats } from "./frame-check.js";
+import type { IngestTap } from "./tap.js";
 
 /**
  * #256 · BROADCAST_RENDER_READY. La emisión real de YouTube salió en BLANCO durante toda
@@ -133,6 +134,12 @@ export interface SupervisorOptions {
   renderReadyTimeoutMs?: number;
   renderPollMs?: number;
   renderWatchIntervalMs?: number;
+  /**
+   * DIAG · tap pasivo de la señal de ingesta (OFF por defecto: sólo existe con
+   * STREAM_TAP_ENABLED=true). Recibe una COPIA lógica de cada trozo FLV DESPUÉS de
+   * entregarlo al relé; lo que devuelva o haga no afecta al relé (ver tap.ts).
+   */
+  tap?: IngestTap | null;
 }
 
 /** Contadores de §28 (stream_*), acumulados desde que arrancó el proceso. */
@@ -647,8 +654,21 @@ export class StreamSupervisor {
         void this.retry();
         return;
       }
+      const tap = this.opts.tap ?? null;
+      tap?.beginStream();
       media.on("data", (chunk: Buffer) => {
-        if (!publisher!.writeFlv(chunk)) media.pause();
+        const accepting = publisher!.writeFlv(chunk);
+        // La decisión de backpressure va ANTES que el tap: observar nunca la retrasa.
+        if (!accepting) media.pause();
+        // DIAG · el tap observa DESPUÉS del relé y de la pausa, y no decide nada: su
+        // resultado no existe para el control de flujo (sólo `accepting` pausa a ffmpeg).
+        if (tap) {
+          try {
+            tap.observe(chunk);
+          } catch {
+            /* observe() no lanza; defensa en profundidad: el relé nunca se entera */
+          }
+        }
       });
       media.on("error", () => {});
       publisher.on("drain", () => media.resume());
