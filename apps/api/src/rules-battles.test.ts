@@ -160,7 +160,11 @@ describe("presets 1v1", () => {
 
   it("Combate ⇒ respawn ilimitado 5 s y 5 bajas", async () => {
     const { rules } = await accepted(duel({ preset: "combat", teamSize: 1 }));
-    expect(rules.engineRuleset.respawn).toEqual({ enabled: true, delayTicks: 150, rearmPolicy: "all_alive_participants" });
+    expect(rules.engineRuleset.respawn).toEqual({
+      enabled: true,
+      delayTicks: 150,
+      rearmPolicy: "all_alive_participants",
+    });
     expect(rules.engineRuleset.scoreToWin).toBe(5);
   });
 
@@ -200,7 +204,12 @@ describe("presets por equipos (2v2, 3v3, 4v4)", () => {
   for (const n of [2, 3, 4]) {
     it(`Respawn limitado ${n}v${n} ⇒ maxRespawns 2 (3 vidas)`, async () => {
       const { rules } = await accepted(team(n, { preset: "team_limited_respawn", teamSize: n }));
-      expect(rules.engineRuleset.respawn).toEqual({ enabled: true, delayTicks: 150, maxRespawns: 2, rearmPolicy: "all_alive_participants" });
+      expect(rules.engineRuleset.respawn).toEqual({
+        enabled: true,
+        delayTicks: 150,
+        maxRespawns: 2,
+        rearmPolicy: "all_alive_participants",
+      });
       expect(rules.params.teamSize).toBe(n);
     });
   }

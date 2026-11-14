@@ -65,7 +65,12 @@ describe("respawn limitado 2v2 (1 reaparición, 2 vidas)", () => {
   }, 120_000);
 
   it("el replay verifica y lleva la copia del ruleset con maxRespawns", async () => {
-    expect(replay.header.ruleset.respawn).toEqual({ enabled: true, delayTicks: 30, maxRespawns: 1, rearmPolicy: "all_alive_participants" });
+    expect(replay.header.ruleset.respawn).toEqual({
+      enabled: true,
+      delayTicks: 30,
+      maxRespawns: 1,
+      rearmPolicy: "all_alive_participants",
+    });
     expect((await verify(replay)).matches).toBe(true);
   });
 
