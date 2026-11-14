@@ -296,10 +296,20 @@ describe("G3 · el 2v2 con respawn ya no se estanca por munición", () => {
   it("all_alive_participants: tras varias reapariciones el rojo se rearma y la batalla termina por eliminación", () => {
     const b = starvedBattle("all_alive_participants");
     let respawns = 0;
-    let prev = new Set(b.getVehicles().filter((v) => v.alive).map((v) => v.id));
+    let prev = new Set(
+      b
+        .getVehicles()
+        .filter((v) => v.alive)
+        .map((v) => v.id),
+    );
     for (let t = 0; t < 40_000 && !b.isFinished(); t++) {
       b.step();
-      const now = new Set(b.getVehicles().filter((v) => v.alive).map((v) => v.id));
+      const now = new Set(
+        b
+          .getVehicles()
+          .filter((v) => v.alive)
+          .map((v) => v.id),
+      );
       for (const id of now) if (!prev.has(id)) respawns++;
       prev = now;
     }
@@ -333,7 +343,14 @@ describe("G3 · self reproduce EXACTAMENTE las anclas anteriores a la regla", ()
       const base = loadRuleset(rs);
       const ruleset = loadRuleset(rs, { respawn: { ...base.respawn, rearmPolicy: "self" } });
       const parts = roster(n);
-      const b = new Battle({ battleId: "rr", seed: "rules-seed", ruleset, map: map(), participants: parts, recordReplay: true });
+      const b = new Battle({
+        battleId: "rr",
+        seed: "rules-seed",
+        ruleset,
+        map: map(),
+        participants: parts,
+        recordReplay: true,
+      });
       for (const p of parts) b.attachBot(p.id, new HunterBot(p.botId));
       for (let t = 0; t < ticks && !b.isFinished(); t++) b.step();
       expect({ hash: b.stateHash(), tick: b.tick }).toEqual(PRE_G3[key]);
@@ -346,7 +363,14 @@ describe("G3 · diagnóstico de tdm_4v4_norespawn (sin respawn la regla no aplic
   it("no es munición: tras la última baja nadie se ve (radar) ni dispara; termina por TIEMPO con desempate", () => {
     const parts = roster(4);
     const ruleset = loadRuleset("tdm_mvp@1", { respawn: { enabled: false, delayTicks: 0 }, scoreToWin: 99 });
-    const b = new Battle({ battleId: "rr", seed: "rules-seed", ruleset, map: emptyArena(), participants: parts, recordReplay: true });
+    const b = new Battle({
+      battleId: "rr",
+      seed: "rules-seed",
+      ruleset,
+      map: emptyArena(),
+      participants: parts,
+      recordReplay: true,
+    });
     for (const p of parts) b.attachBot(p.id, new HunterBot(p.botId));
     let noAmmo = 0;
     const emit = (b as any).emit.bind(b);
@@ -360,7 +384,10 @@ describe("G3 · diagnóstico de tdm_4v4_norespawn (sin respawn la regla no aplic
     expect(noAmmo).toBe(0);
     // Todos los supervivientes conservan munición: el estancamiento es de búsqueda, no de munición.
     for (const v of b.getVehicles().filter((x) => x.alive && x.modulesOf("sensor").length > 0))
-      expect(rounds(v).every((n) => n > 0), v.id).toBe(true);
+      expect(
+        rounds(v).every((n) => n > 0),
+        v.id,
+      ).toBe(true);
     expect(b.isFinished()).toBe(true);
     const r = b.getResult()!;
     expect(r.ticks).toBeGreaterThanOrEqual(ruleset.timeLimitTicks);

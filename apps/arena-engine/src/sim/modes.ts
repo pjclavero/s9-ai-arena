@@ -9,10 +9,7 @@ import {
   type Ruleset,
   type TimeoutTiebreakCriterion,
 } from "../../../../packages/game-rules/index.js";
-import {
-  OVERTIME_TECHNICAL_LIMIT_TICKS,
-  respawnRearmPolicyProblems,
-} from "../../../../packages/game-rules/index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS, respawnRearmPolicyProblems } from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
 
 /**
