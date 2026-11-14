@@ -37,8 +37,8 @@ CA = "apps/tournament-worker/src/container-agents.ts"
 MUTANTS = [
     # ------------------------------------------------------------ D-B4 · armorBroken público
     ("G1_armor_all_sectors_leak", P + "project-frame.ts",
-     "Number.isFinite(sec.hpMax) && armorBroken(sec.hp, sec.hpMax)) broken[s] = true;",
-     "Number.isFinite(sec.hpMax)) (broken as any)[s] = armorBroken(sec.hp, sec.hpMax);",
+     "Number.isFinite(sec.hpMax) && armorBroken(sec.hp, sec.hpMax))\n        broken[s] = true;",
+     "Number.isFinite(sec.hpMax))\n        (broken as any)[s] = armorBroken(sec.hp, sec.hpMax);",
      [PURE, ARMOR], None),
     ("G2_policy_row_removed", P + "policy.ts",
      '    "vehicle.armorBroken": all("SANITIZED"),\n', "", [PURE, ARMOR, HUD], None),
@@ -68,6 +68,14 @@ MUTANTS = [
      "    if (this.opts.display) {\n      // OLA2-MF", "    if (false && this.opts.display) {\n      // OLA2-MF", [XVFB], "arranca Xvfb"),
     ("G14_xvfb_after_chromium", "apps/streamer/src/supervisor.ts",
      "    if (this.opts.display) {\n      // OLA2-MF", "    this.launchPipeline();\n    if (this.opts.display) {\n      // OLA2-MF", [XVFB], None),
+    # ------------------------------------------------ MF · garantías en el tournament-worker
+    ("G21_teardown_failure_hidden", RES,
+     "      this.stats.failures++;\n      e.state = \"failed\";",
+     "      this.stats.failures++;\n      this.entries.get(e.battleId)?.delete(e.id);\n      e.state = \"failed\";", [WORKER], "NO es «limpio»"),
+    ("G22_cleanup_marks_clean_always", RES,
+     "      clean: remaining.length === 0 && externalLeftovers.length === 0,", "      clean: true,", [WORKER], "NO es «limpio»"),
+    ("G23_launch_in_flight_not_registered", CA,
+     "            kind: \"container_launch_in_flight\",", "            kind: \"container_launch_in_flightX\",", [WORKER], None),
     # ------------------------------------------------------ REVIEW-ME-2 P2-A / P2-B
     ("G15_hashsees_undo_broken_is_fixture_error", RDET,
      "        return [() => p.ttlTicks--, () => p.ttlTicks++];", "        return [() => p.ttlTicks--, () => p.ttlTicks];", [RDET], "FixtureError"),
