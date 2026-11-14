@@ -32,7 +32,7 @@
  *    cada decisión y emite por radio cada decisión.
  *  - A (rojo, compañero) a 30 m de E: escucha la radio.
  *  - X (azul): persigue a E pasando por encima de sus minas y le dispara.
- *  - W (azul, G1): escolta a X a ~4 m (sin armas ni blindaje). Cuando un proyectil de E
+ *  - W (azul, G1): escolta a X pegada a ~3 m (sin armas ni blindaje). Cuando un proyectil de E
  *    impacta en X, W queda dentro de su ONDA: así el radio de explosión de la munición tiene
  *    efecto observable. Medido en VM112 (G1): en esta arena los impactos en MURO casi nunca
  *    dañan con la onda (el punto de impacto cae dentro del muro y la línea de visión desde él
@@ -230,7 +230,7 @@ class Chaser implements BotAgent {
   }
 }
 
-/** Escolta a X (veh_3) a ~4 m: queda en la onda de los impactos de E sobre X. */
+/** Escolta a X (veh_3) pegada a ~3 m: queda en la onda de los impactos de E sobre X. */
 class Escort implements BotAgent {
   battle: Battle | null = null;
   constructor(
@@ -245,7 +245,7 @@ class Escort implements BotAgent {
     let diff = Math.atan2(x.y - me.y, x.x - me.x) - obs.self.heading;
     while (diff > Math.PI) diff -= 2 * Math.PI;
     while (diff < -Math.PI) diff += 2 * Math.PI;
-    return { forTick: obs.tick, move: { throttle: d > 4 ? 0.8 : 0, steer: Math.max(-1, Math.min(1, diff * 2)) } };
+    return { forTick: obs.tick, move: { throttle: d > 3 ? 0.8 : 0, steer: Math.max(-1, Math.min(1, diff * 2)) } };
   }
   onEvent(e: unknown) {
     this.log.event("W", e);
