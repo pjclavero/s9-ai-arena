@@ -189,7 +189,7 @@ describe("POST /battles · CTF", () => {
     });
     expect(r.status, JSON.stringify(r.body)).toBe(202);
     expect(r.body.rules.respawnLabel).toBe("0 reapariciones por bot (1 vida en total)");
-    expect(r.body.rules.engine.respawn).toEqual({ enabled: true, delayTicks: 150, maxRespawns: 0 });
+    expect(r.body.rules.engine.respawn).toEqual({ enabled: true, delayTicks: 150, maxRespawns: 0, rearmPolicy: "all_alive_participants" });
   });
 });
 
