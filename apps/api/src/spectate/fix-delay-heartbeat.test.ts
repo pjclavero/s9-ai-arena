@@ -12,7 +12,12 @@
  *    `delayMs` constante, cadencia fija;
  *  - el init anuncia el retardo efectivo en ms;
  *  - reconectar NO reinicia el retardo: la conexión nueva sigue del buffer del feed;
- *  - sin retardo, ni un latido: todo como siempre.
+ *  - sin retardo, ni un latido: todo como siempre;
+ *  - canales laterales (P2-1 de la revisión): el `id` de cada latido es un UUID v4
+ *    distinto cada vez (no un contador ni nada derivado de lo retenido), y la
+ *    cadencia, la presencia y el cuerpo del latido son los mismos con la batalla
+ *    ociosa, con mensajes retenidos y tras el fin real de la batalla mientras el
+ *    socket siga abierto.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -33,6 +38,53 @@ const PRODUCE_EVERY_MS = 40;
 const SLACK_MS = 80;
 const HB_MS = 100;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** UUID v4 canónico (minúsculas, como `crypto.randomUUID()`). */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** El `id` de cada latido: UUID v4 y distinto en cada uno (ni contador ni derivado). */
+function expectRandomIds(beats: { msg: any }[]): void {
+  for (const b of beats) {
+    expect(typeof b.msg.id, `id no textual: ${JSON.stringify(b.msg.id)}`).toBe("string");
+    expect(b.msg.id, `id de latido no es UUID v4: ${JSON.stringify(b.msg.id)}`).toMatch(UUID_V4);
+  }
+  const ids = beats.map((b) => b.msg.id);
+  expect(new Set(ids).size, "ids de latido repetidos").toBe(ids.length);
+}
+
+/**
+ * Batalla gobernada por el test: ociosa (sin producir nada) hasta `start()`, produce
+ * snapshots y eventos hasta `finish()`, y después queda terminada con resultado.
+ */
+function controlledBattle() {
+  let done = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const battle: SpectatableBattle = {
+    snapshots: [],
+    publicEvents: [],
+    isFinished: () => done,
+    getResult: () => (done ? { winner: "red" } : null),
+  };
+  let tick = 0;
+  const start = () => {
+    timer = setInterval(() => {
+      tick++;
+      battle.snapshots.push({
+        tick,
+        vehicles: [{ id: "v_red", team: "red", position: { x: 1000 + tick, y: 2000 + tick }, hp: 777 - tick }],
+      });
+      if (tick % 5 === 0) battle.publicEvents.push({ type: "vehicle_destroyed", tick, vehicleId: "v_blue" });
+    }, PRODUCE_EVERY_MS);
+  };
+  const finish = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+    done = true;
+  };
+  cleanups.push(() => {
+    if (timer) clearInterval(timer);
+  });
+  return { battle, start, finish };
+}
 
 /** Batalla con vehículos (posición + hp) y eventos: lo que un latido NO debe llevar. */
 function liveBattle() {
@@ -134,6 +186,8 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
       expect(b.msg.v).toBe(1);
       expect(b.msg.delayMs).toBe(1000);
     }
+    // El id NO es un canal lateral: UUID v4 aleatorio, distinto en cada latido.
+    expectRandomIds(beats);
     // Todos los latidos son IDÉNTICOS salvo el id aleatorio: nada varía con la batalla.
     const bodies = new Set(beats.map(({ msg: { id: _id, ...rest } }) => JSON.stringify(rest)));
     expect([...bodies]).toEqual([JSON.stringify({ v: 1, type: "heartbeat", delayMs: 1000 })]);
@@ -143,6 +197,73 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     // La fábrica pura tampoco: sólo relojes.
     expect(heartbeatMessage(30_000)).toEqual({ type: "heartbeat", delayMs: 30_000 });
   }, 10_000);
+
+  it("HEARTBEAT_SIDE_CHANNELS · cadencia, presencia y cuerpo del latido idénticos con batalla ociosa, con mensajes retenidos y tras el fin real (socket abierto)", async () => {
+    const DELAY_MS = 1000;
+    const WINDOW_MS = 900;
+    const gw = gateway();
+    const { battle, start, finish } = controlledBattle();
+    gw.attachBattle("b-side", battle, { spectator: { delaySeconds: DELAY_MS / 1000 }, pollIntervalMs: 10 });
+    const { ws, got } = await connect(gw, "b-side");
+    const feed = (gw as any).feeds.get("b-side");
+    const [conn] = [...feed.clients];
+
+    // Fase A · OCIOSA: la batalla no ha producido nada ⇒ nada retenido.
+    const aFrom = Date.now();
+    await sleep(WINDOW_MS);
+    const aTo = Date.now();
+    expect(battle.snapshots.length, "la fase ociosa produjo snapshots").toBe(0);
+    expect(conn.timers.size, "en la fase ociosa no debe haber nada retenido").toBe(0);
+
+    // Fase B · RETENIDOS: la batalla produce y el retardo retiene mensajes.
+    start();
+    await sleep(150);
+    const bFrom = Date.now();
+    await sleep(WINDOW_MS / 2);
+    expect(conn.timers.size, "en la fase B debe haber mensajes retenidos").toBeGreaterThan(0);
+    await sleep(WINDOW_MS / 2);
+    const bTo = Date.now();
+    expect(conn.timers.size, "en la fase B debe haber mensajes retenidos").toBeGreaterThan(0);
+
+    // Fase C · TERMINADA: fin real de la batalla (feed.finished), retenidos ya
+    // entregados (resultado incluido) y el socket SIGUE abierto.
+    finish();
+    const deadline = Date.now() + 2000;
+    while (!feed.finished && Date.now() < deadline) await sleep(10);
+    expect(feed.finished, "el gateway no vio el fin de la batalla").toBe(true);
+    await sleep(DELAY_MS + 300);
+    expect(conn.timers.size, "tras el fin y el retardo no debe quedar nada retenido").toBe(0);
+    expect(
+      got.some((g) => g.msg.type === "result"),
+      "el resultado retrasado no llegó",
+    ).toBe(true);
+    const cFrom = Date.now();
+    await sleep(WINDOW_MS);
+    const cTo = Date.now();
+    expect(ws.readyState, "el socket debía seguir abierto").toBe(WebSocket.OPEN);
+
+    const beats = got.filter((g) => g.msg.type === "heartbeat");
+    const inWin = (from: number, to: number) => beats.filter((b) => b.at >= from && b.at < to);
+    const phases = { ociosa: inWin(aFrom, aTo), retenidos: inWin(bFrom, bTo), terminada: inWin(cFrom, cTo) };
+    // Presencia y cadencia iguales en las tres fases (la cadencia es fija: HB_MS).
+    const expected = Math.floor(WINDOW_MS / HB_MS);
+    const counts = Object.values(phases).map((p) => p.length);
+    for (const [name, p] of Object.entries(phases)) {
+      const why = `fase ${name}: ${p.length} latidos (esperados ≈ ${expected})`;
+      expect(p.length, why).toBeGreaterThanOrEqual(expected - 3);
+      expect(p.length, why).toBeLessThanOrEqual(expected + 3);
+    }
+    expect(Math.max(...counts) - Math.min(...counts), `latidos por fase ${counts.join("/")}`).toBeLessThanOrEqual(3);
+    // Sin huecos en TODA la vida del socket: ninguna fase apaga ni frena el latido.
+    for (let i = 1; i < beats.length; i++) {
+      expect(beats[i].at - beats[i - 1].at, `hueco entre latidos ${i - 1}→${i}`).toBeLessThan(HB_MS * 3);
+    }
+    expect(cTo - beats[beats.length - 1].at, "el latido se apagó antes de cerrar el socket").toBeLessThan(HB_MS * 3);
+    // Cuerpo IDÉNTICO en todas las fases salvo el id; el id, UUID v4 distinto.
+    const bodies = new Set(beats.map(({ msg: { id: _id, ...rest } }) => JSON.stringify(rest)));
+    expect([...bodies]).toEqual([JSON.stringify({ v: 1, type: "heartbeat", delayMs: DELAY_MS })]);
+    expectRandomIds(beats);
+  }, 15_000);
 
   it("reconectar NO reinicia el retardo: la conexión nueva sigue del buffer del feed", async () => {
     const DELAY_MS = 1500;

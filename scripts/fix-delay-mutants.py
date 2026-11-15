@@ -10,7 +10,7 @@ En serie, nunca en paralelo, y sobre un árbol COMMITEADO (cada mutante se
 revierte al terminar; el script comprueba al final que el árbol queda limpio).
 NUNCA en el orquestador ni en producción: en el laboratorio.
 
-Uso: python3 scripts/fix-delay-mutants.py [--json salida.json] [G1 C3 ...]
+Uso: python3 scripts/fix-delay-mutants.py [--json salida.json] [G1 C3 P1 ...]
 """
 import json
 import os
@@ -64,6 +64,29 @@ M = [
     ("G3c el latido revela cuánto hay retenido", GW, HB_CALL,
      "{ ...heartbeatMessage(conn.delayMs), pending: conn.timers.size }, /*immediate*/ true);",
      GWT, "NO_STATE_LEAK_IN_HEARTBEAT"),
+    # ── Canales laterales del latido (P2-1 de REVIEW-282; mutantes P1-P4 del revisor)
+    # El sobre de sendTo es {v, id: randomUUID(), ...msg}: un `id` en el mensaje lo pisa.
+    ("P1 el id del latido = cuántos mensajes hay retenidos", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: conn.timers.size }, /*immediate*/ true);",
+     GWT, "NO_STATE_LEAK_IN_HEARTBEAT"),
+    ("P2 sin latido si no hay nada retenido (batalla ociosa)", GW,
+     "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);",
+     "      const beat = () => conn.timers.size > 0 && this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("P3 el latido se apaga al terminar la batalla real (socket abierto)", GW,
+     '      this.broadcast(feed, { type: "result", result: battle.getResult() });',
+     '      this.broadcast(feed, { type: "result", result: battle.getResult() });\n'
+     "      for (const c of feed.clients) {\n"
+     "        if (c.heartbeat) clearInterval(c.heartbeat);\n"
+     "        c.heartbeat = null;\n"
+     "      }",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("P4 el id del latido es un número derivado de timers.size", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: 1_000_000 + conn.timers.size * 7919 }, /*immediate*/ true);",
+     GWT, "NO_STATE_LEAK_IN_HEARTBEAT"),
+    ("P4b el id tiene forma de UUID v4 pero deriva de timers.size", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: `00000000-0000-4000-8000-${String(conn.timers.size).padStart(12, \"0\")}` }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("G4 latidos también sin retardo", GW,
      "    if (conn.delayMs > 0) {\n      const beat",
      "    if (true) {\n      const beat",
