@@ -20,7 +20,22 @@
  *    en `watchdogTimeoutMs`, la conexión está zombi (NAT caído, cable fuera) y
  *    se cierra para forzar la reconexión — sin esperar al timeout de TCP.
  *  - Buffer CIRCULAR de eventos: una batalla larga no crece sin límite en RAM.
+ *
+ * FIX-DELAY · directo con retardo anti-coaching (`spectator.delaySeconds`): el
+ * gateway retiene snapshots y eventos ese tiempo, así que el canal pasaba 30 s
+ * mudo tras el init y el watchdog (10 s) lo cerraba en bucle. Ahora:
+ *  - los LATIDOS de control (`type:"heartbeat"`, sin retardo y sin estado de
+ *    batalla) cuentan como actividad;
+ *  - cinturón para gateways sin latidos: si el init anuncia retardo y en esta
+ *    conexión aún no ha llegado ningún latido, el watchdog tolera
+ *    `retardo + watchdogDelayMarginMs`. En cuanto llega un latido, vuelve al
+ *    umbral normal: una conexión zombi con latidos que se apagan se detecta igual
+ *    de rápido que siempre.
  */
+
+import { announcedDelayMs } from "./delay-wait.js";
+
+export { announcedDelayMs };
 
 export interface SpectateTicket {
   ticket: string;
@@ -40,6 +55,11 @@ export interface SpectatorClientOptions {
   maxReconnectAttempts?: number;
   /** Sin ningún mensaje en este tiempo ⇒ conexión zombi, se fuerza el cierre. */
   watchdogTimeoutMs?: number;
+  /**
+   * FIX-DELAY · margen sobre el retardo anunciado en el init que tolera el
+   * watchdog mientras el gateway no haya enviado ningún latido (default 5 s).
+   */
+  watchdogDelayMarginMs?: number;
   /** Capacidad del buffer circular de eventos. */
   maxBufferedEvents?: number;
   /** Fuente de aleatoriedad del jitter (inyectable en tests). */
@@ -108,7 +128,16 @@ export interface SpectatorState {
   /** serverTimeMs del último mensaje del gateway que lo trajo (R3.2, opcional). */
   serverTimeMs: number | null;
   /** init del servidor: qué permite el ruleset al espectador (fog, delay, debug). */
-  spectator: { allowFogView: boolean; delaySeconds: number; debug: boolean } | null;
+  spectator: {
+    allowFogView: boolean;
+    delaySeconds: number;
+    debug: boolean;
+    /** FIX-DELAY · retardo efectivo del canal en ms (gateways nuevos). */
+    delayMs?: number;
+    heartbeatIntervalMs?: number;
+  } | null;
+  /** FIX-DELAY · último latido de control recibido (sólo relojes, sin estado). */
+  heartbeat: { serverTimeMs: number; delayMs: number; bufferedUntil: number | null } | null;
   meta: Record<string, unknown>;
   /** Buffer circular: los últimos N eventos (una batalla larga no come RAM). */
   events: RingBuffer<any>;
@@ -127,6 +156,10 @@ export class SpectatorClient {
   private reconnecting = false;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private lastMessageAt = 0;
+  /** FIX-DELAY · ¿ha latido el gateway en ESTA conexión? */
+  private heartbeatSeen = false;
+  /** FIX-DELAY · retardo anunciado por el init de ESTA conexión (ms). */
+  private announcedDelayMs = 0;
 
   constructor(opts: SpectatorClientOptions) {
     this.opts = opts;
@@ -135,6 +168,7 @@ export class SpectatorClient {
       snapshot: null,
       serverTimeMs: null,
       spectator: null,
+      heartbeat: null,
       meta: {},
       events: new RingBuffer(opts.maxBufferedEvents ?? 500),
       result: null,
@@ -148,6 +182,7 @@ export class SpectatorClient {
       | "snapshot"
       | "event"
       | "debug"
+      | "heartbeat"
       | "result"
       | "disconnect"
       | "reconnected"
@@ -236,6 +271,8 @@ export class SpectatorClient {
         opened = true;
         this.state.connected = true;
         this.lastMessageAt = Date.now();
+        this.heartbeatSeen = false;
+        this.announcedDelayMs = 0;
         this.startWatchdog();
         if (this.everConnected) {
           this.state.reconnects++;
@@ -284,7 +321,7 @@ export class SpectatorClient {
     // Se sondea a un cuarto del timeout: detección temprana sin coste apreciable.
     this.watchdog = setInterval(
       () => {
-        if (Date.now() - this.lastMessageAt > timeout) {
+        if (Date.now() - this.lastMessageAt > this.effectiveWatchdogTimeoutMs(timeout)) {
           // Conexión zombi: cerrar dispara onclose ⇒ bucle de reconexión.
           this.stopWatchdog();
           try {
@@ -296,6 +333,17 @@ export class SpectatorClient {
       },
       Math.max(50, Math.floor(timeout / 4)),
     );
+  }
+
+  /**
+   * FIX-DELAY · umbral del watchdog. Con latidos vistos (o sin retardo) es el de
+   * siempre; con retardo anunciado y SIN latidos aún (gateway antiguo), tolera el
+   * retardo más un margen, para no confundir la espera del directo diferido con
+   * una conexión zombi.
+   */
+  private effectiveWatchdogTimeoutMs(base: number): number {
+    if (this.heartbeatSeen || this.announcedDelayMs <= 0) return base;
+    return Math.max(base, this.announcedDelayMs + (this.opts.watchdogDelayMarginMs ?? 5000));
   }
 
   private stopWatchdog(): void {
@@ -338,12 +386,24 @@ export class SpectatorClient {
     } catch {
       return; // basura en el canal: se ignora, el visor no debe morir por esto
     }
-    if (typeof msg.serverTimeMs === "number") this.state.serverTimeMs = msg.serverTimeMs;
+    // El latido lleva el reloj de AHORA, no el del stream diferido: no pisa
+    // serverTimeMs (que fecha los snapshots); va a state.heartbeat.
+    if (typeof msg.serverTimeMs === "number" && msg.type !== "heartbeat") this.state.serverTimeMs = msg.serverTimeMs;
     switch (msg.type) {
+      case "heartbeat":
+        this.heartbeatSeen = true;
+        this.state.heartbeat = {
+          serverTimeMs: typeof msg.serverTimeMs === "number" ? msg.serverTimeMs : Date.now(),
+          delayMs: typeof msg.delayMs === "number" ? msg.delayMs : 0,
+          bufferedUntil: typeof msg.bufferedUntil === "number" ? msg.bufferedUntil : null,
+        };
+        this.emit("heartbeat", this.state.heartbeat);
+        break;
       case "init":
         // Recuperación de estado íntegro: snapshot completo del servidor.
         this.state.snapshot = msg.snapshot ?? this.state.snapshot;
         this.state.spectator = msg.spectator ?? null;
+        this.announcedDelayMs = announcedDelayMs(msg.spectator);
         this.state.meta = msg.meta ?? {};
         if (msg.finished && msg.result) this.state.result = msg.result;
         this.emit("init", msg);

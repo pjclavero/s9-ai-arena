@@ -8,6 +8,7 @@ import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
 import { SpectatorClient, type SpectateTicket } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
+import { delayedWaitText } from "../viewer/delay-wait.js";
 import {
   participantsTitle,
   rosterFromMeta,
@@ -174,9 +175,13 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           },
         });
         const c = client;
+        let waitingDelayed = false;
         client.on("init", (msg) => {
           setState(msg.finished ? "finished" : "live");
-          setStatus(msg.finished ? "batalla terminada" : "en directo");
+          // FIX-DELAY · con retardo y aún sin imagen, se dice que el directo va diferido.
+          const wait = msg.finished ? null : delayedWaitText(msg.spectator, !!msg.snapshot || !!c.state.snapshot);
+          waitingDelayed = wait !== null;
+          setStatus(msg.finished ? "batalla terminada" : (wait ?? "en directo"));
           setAllowFog(msg.spectator?.allowFogView === true);
           setDebugAvailable(msg.spectator?.debug === true);
           if (msg.meta?.world) scene.setWorld(msg.meta.world);
@@ -196,6 +201,10 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           feed.onInit(msg);
         });
         client.on("snapshot", (s) => {
+          if (waitingDelayed) {
+            waitingDelayed = false;
+            setStatus("en directo");
+          }
           feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
           setOverlayTick(s.tick);
         });

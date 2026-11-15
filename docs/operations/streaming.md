@@ -40,6 +40,7 @@ pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
 ## Índice
 
 - [Emisión en blanco (#256)](#emisión-en-blanco-256)
+- [Directo con retardo anti-coaching: latidos y watchdog](#directo-con-retardo-anti-coaching-latidos-y-watchdog)
 - [Administración desde la web](#administración-desde-la-web)
 - [Seguridad de la clave de emisión](#seguridad-de-la-clave-de-emisión)
 - [Alertas](#alertas)
@@ -57,6 +58,57 @@ pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
 - [Pruebas (§31)](#pruebas-31)
 - [Defectos y limitaciones conocidos](#defectos-y-limitaciones-conocidos)
 - [Cómo se verificó](#cómo-se-verificó)
+
+## Directo con retardo anti-coaching: latidos y watchdog
+
+Defecto de aceptación (2026-11-15, torneo con `spectator.delaySeconds=30`): la
+página `/broadcast` pasaba a LIVE, obtenía ticket (201) y abría el WebSocket
+(101), pero sólo recibía el `init` (~1,3 kB). El gateway difería **todos** los
+mensajes 30 s y el watchdog del visor (`apps/web/src/viewer/spectator-client.ts`)
+cierra la conexión tras 10 s sin mensajes: a los ~13 s cerraba, pedía otro
+ticket y reconectaba, en bucle. Cada conexión moría antes de que llegara el
+primer snapshot diferido y la emisión se quedaba congelada en el «tick 0». Con
+batalla suelta (retardo 0) no pasaba.
+
+Contrato del canal (`apps/api/src/spectate/gateway.ts`):
+
+| Mensaje | Con `delaySeconds > 0` | Con retardo 0 |
+|---|---|---|
+| `init` | inmediato; lleva el estado de `ahora − retardo` (o `snapshot: null` si aún no existe) y anuncia `spectator.delaySeconds`, `spectator.delayMs` y `spectator.heartbeatIntervalMs` | inmediato, último tick; `delayMs: 0`, `heartbeatIntervalMs: 0` |
+| `snapshot`, `event`, `debug`, `result` | diferidos `delayMs` desde su producción | inmediatos |
+| `heartbeat` | **SIN retardo**, uno al conectar y luego cada `heartbeatIntervalMs` (1 s por defecto, acotado a [50 ms, 5 s]) | no se envía |
+
+El latido es `{type:"heartbeat", serverTimeMs, delayMs, bufferedUntil}` (más
+`v` e `id`), con `bufferedUntil = serverTimeMs − delayMs`. Sólo lleva **relojes
+del servidor**: ni tick, ni posiciones, ni vida, ni eventos. No adelanta nada de
+la batalla, así que el anti-coaching sigue intacto (test de whitelist
+estructural exacta en `apps/api/src/spectate/fix-delay-heartbeat.test.ts`).
+
+Visor (`SpectatorClient`):
+
+- Cualquier mensaje, latidos incluidos, cuenta como actividad para el watchdog.
+- Cinturón para un gateway sin latidos: si el `init` anuncia retardo y en esa
+  conexión aún no ha llegado ningún latido, el watchdog tolera `retardo +
+  watchdogDelayMarginMs` (5 s). En cuanto llega un latido vuelve al umbral normal
+  (10 s): una conexión zombi cuyos latidos se apagan se detecta igual de rápido
+  que sin retardo.
+- El latido no pisa `state.serverTimeMs` (que fecha el stream diferido); se
+  guarda en `state.heartbeat` y se emite como evento `heartbeat`.
+
+Reconexión: el buffer del retardo es **del feed de la batalla, no de la
+conexión**. Una reconexión (corte de red, recarga) recibe en el `init` el estado
+de `ahora − retardo` y a continuación el tramo pendiente, cada mensaje a su hora
+de producción + retardo: **no** vuelve a esperar el retardo completo
+(test «reconectar NO reinicia el retardo»).
+
+Pantallas: mientras se espera el primer snapshot diferido, `/broadcast` muestra
+«Directo con retardo de 30 s… la imagen llegará en breve» (`data-testid=
+"broadcast-delay-wait"`) en vez de un mapa vacío en el tick 0, y el visor
+interactivo (`#/viewer/<battleId>`) lo pone en su línea de estado. Al llegar la
+imagen el rótulo desaparece. Sin retardo no aparece nunca.
+
+Calibración: `python3 scripts/fix-delay-mutants.py --json <salida.json>` (en el
+laboratorio, nunca en el orquestador ni en producción).
 
 ## Emisión en blanco (#256)
 
@@ -719,6 +771,7 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | EQ5-4 | P3 | Rótulos con UUID en vez del nombre del bot; «Torneo terminado» en una batalla suelta | **corregido** |
 | EQ5-5 | P2 | Clave de emisión en el argv de FFmpeg (visible con `ps` en el host) | **corregido** (EQ5b, ADR-023): relé RTMP(S) en el propio streamer; ffmpeg escribe FLV por el fd 3 |
 | EQ5-6 | P2 | `init` del espectador con snapshot vivo aunque haya retardo (reconectar saltaba el retardo) | **corregido** en el gateway; la declaración de `delaySeconds` en rulesets sigue **abierta** (reglas) |
+| FIX-DELAY | P1 | Con `delaySeconds > 0` el watchdog del visor (10 s) cortaba la espera del primer snapshot diferido (30 s) y reconectaba en bucle: emisión congelada en el tick 0 | **corregido**: latidos de control sin retardo y watchdog coherente ([detalle](#directo-con-retardo-anti-coaching-latidos-y-watchdog)) |
 | EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **corregido** (job `streamer`) y, EQ5b, alertas `StreamerDown`/`RestartLoop`/`DroppedFramesHigh`/`NoProgress` |
 | EQ5-8 | P3 | NVENC imposible con la imagen actual | **abierto** (documentado) |
 | EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **corregido** (EQ5b): retención por edad/tamaño desde la web, auditada |

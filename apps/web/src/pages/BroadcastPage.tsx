@@ -24,6 +24,7 @@ import {
   type SourceErrorReason,
 } from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
+import { delayedWaitText } from "../viewer/delay-wait.js";
 import { LiveFeed } from "../viewer/live-feed.js";
 import { rosterFromMeta } from "../viewer/art-direction.js";
 import { buildHudModel } from "../viewer/hud-model.js";
@@ -290,12 +291,14 @@ function SourceErrorScreen({ config, reason }: { config: BroadcastConfig; reason
 
 // ───────────────────────────────────────────────── batalla en directo (E8 real)
 
-function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: BattleSummary }) {
+export function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: BattleSummary }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
   const [live, setLive] = useState(false);
   const [tick, setTick] = useState(0);
   const [initError, setInitError] = useState<string | null>(null);
+  // FIX-DELAY · directo con retardo: rótulo de espera hasta el primer snapshot diferido.
+  const [delayWait, setDelayWait] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -330,14 +333,21 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
           getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
         });
         const c = client;
+        let hasSnapshot = false;
         client.on("init", (msg) => {
           setLive(true);
+          if (msg.snapshot) hasSnapshot = true;
+          setDelayWait(delayedWaitText(msg.spectator, hasSnapshot));
           if (msg.meta?.world) scene.setWorld(msg.meta.world);
           if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
           if (msg.finished && msg.result) scene.applyResult(msg.result);
           feed.onInit(msg);
         });
         client.on("snapshot", (s) => {
+          if (!hasSnapshot) {
+            hasSnapshot = true;
+            setDelayWait(null);
+          }
           feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
           setTick(s.tick);
         });
@@ -372,6 +382,27 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
     <section data-testid="broadcast-live" style={{ flex: 1, position: "relative", minHeight: 0 }}>
       {/* Visor E8 a pantalla completa (el canvas llena el hueco). */}
       <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* FIX-DELAY · espera del primer snapshot diferido: estado claro, no un mapa vacío. */}
+      {delayWait && !initError && (
+        <div
+          data-testid="broadcast-delay-wait"
+          role="status"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: config.branding.primaryColor,
+            fontSize: 44,
+            color: accent,
+            zIndex: 2,
+          }}
+        >
+          {delayWait}
+        </div>
+      )}
 
       {/* HUD compartido (marcador, reloj, objetivo, equipos, kill feed, fin). */}
       {model ? (

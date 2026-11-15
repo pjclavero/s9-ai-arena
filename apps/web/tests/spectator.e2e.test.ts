@@ -119,7 +119,8 @@ beforeAll(async () => {
     publicSpectateEnabled: true,
   });
   moderatorToken = await tokenFor(h.db, DEV_USERS.moderator);
-  gateway = new SpectateGateway({ port: 0, publicSpectateEnabled: true });
+  // FIX-DELAY · latidos rápidos en los feeds con retardo (sólo afecta a esos feeds).
+  gateway = new SpectateGateway({ port: 0, publicSpectateEnabled: true, heartbeatIntervalMs: 100 });
   // La API emite wsUrl apuntando AL gateway real de este test.
   process.env.SPECTATE_WS_URL = `ws://127.0.0.1:${gateway.port}/spectate`;
 }, 120000);
@@ -348,4 +349,51 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     expect(firstSnapshotAt - initAt).toBeGreaterThanOrEqual(250);
     c.stop();
   });
+
+  it("FIX-DELAY · batalla con retardo MAYOR que el watchdog: snapshots tras el retardo, latidos durante la espera y CERO reconexiones", async () => {
+    // Producción 2026-11-15: delaySeconds=30 frente a un watchdog de 10 s ⇒ bucle de
+    // reconexión y emisión en el tick 0. Aquí, a escala: retardo 1,5 s, watchdog 300 ms
+    // (5× más corto que el retardo, como 30 s frente a 10 s… y más).
+    const DELAY_MS = 1500;
+    const dbId = await insertLiveBattle("fix-delay");
+    const battle = await makeBattle("fix-delay");
+    gateway.attachBattle(dbId, battle, { spectator: { delaySeconds: DELAY_MS / 1000 } });
+
+    let ticketsIssued = 0;
+    const getTicket = async () => {
+      ticketsIssued++;
+      return ticketVia(app, dbId)();
+    };
+    const c = new SpectatorClient({
+      getTicket,
+      WebSocketImpl: WsWebSocket as unknown as typeof WebSocket,
+      reconnectDelayMs: 50,
+      maxReconnectAttempts: 20,
+      watchdogTimeoutMs: 300,
+      // Sin margen: el cinturón (retardo + margen) no puede tapar la falta de latidos.
+      watchdogDelayMarginMs: -DELAY_MS,
+    });
+    let initAt = 0;
+    let firstSnapshotAt = 0;
+    let disconnects = 0;
+    let heartbeats = 0;
+    c.on("init", () => (initAt ||= Date.now()));
+    c.on("disconnect", () => disconnects++);
+    c.on("heartbeat", () => heartbeats++);
+    c.on("snapshot", () => {
+      if (!firstSnapshotAt) firstSnapshotAt = Date.now();
+    });
+    await c.connect();
+    await waitFor(() => firstSnapshotAt > 0, 10_000);
+    await new Promise((r) => setTimeout(r, 500)); // el directo sigue fluyendo
+    expect(c.state.spectator?.delayMs).toBe(DELAY_MS);
+    expect(firstSnapshotAt - initAt, "el primer snapshot llegó antes del retardo").toBeGreaterThanOrEqual(DELAY_MS - 150);
+    expect(heartbeats).toBeGreaterThanOrEqual(8);
+    expect(disconnects, "el visor reconectó durante la espera del retardo").toBe(0);
+    expect(c.state.reconnects).toBe(0);
+    expect(ticketsIssued).toBe(1);
+    expect(c.state.connected).toBe(true);
+    expect(c.state.snapshot.tick).toBeGreaterThan(0);
+    c.stop();
+  }, 30_000);
 });
