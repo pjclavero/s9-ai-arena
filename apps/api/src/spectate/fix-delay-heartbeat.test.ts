@@ -135,7 +135,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
       // el valor de los números lo cubre la whitelist y bufferedUntil = serverTimeMs − delayMs)
       const { id: _id, ...rest } = b.msg;
       const body = JSON.stringify(rest);
-      for (const needle of ["tick", "vehicle", "position", "hp", "event", "snapshot", "v_red", "red"]) {
+      for (const needle of ["tick", "vehicle", "position", "hp", "event", "snapshot", "v_red"]) {
         expect(body, `latido con «${needle}»: ${body}`).not.toContain(needle);
       }
     }

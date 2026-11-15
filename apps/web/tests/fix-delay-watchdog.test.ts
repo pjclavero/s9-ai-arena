@@ -124,7 +124,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.every(100, () => undefined); // (nada más: sólo latidos y el stream diferido)
     };
     const { c, ev, tickets } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(DELAY_MS + 500);
     expect(ev.disconnects, "reconectó durante la espera del retardo").toBe(0);
     expect(tickets()).toBe(1);
@@ -143,7 +143,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.at(60_000, () => ws.push(snap(1)));
     };
     const { c, ev, tickets } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(61_000);
     expect(ev.disconnects).toBe(0);
     expect(tickets()).toBe(1);
@@ -157,7 +157,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.at(DELAY_MS, () => ws.push(snap(1)));
     };
     const { c, ev, tickets } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(DELAY_MS + 500);
     expect(ev.disconnects, "el watchdog de 10 s cortó la espera del retardo").toBe(0);
     expect(tickets()).toBe(1);
@@ -172,7 +172,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.every(1000, () => ws.push(beat()), 4000); // late 4 s y se calla (NAT caído)
     };
     const { c, ev, tickets } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     // Último latido ≈ 4 s; umbral 10 s + sondeo 2,5 s ⇒ cortado antes de los ~17 s,
     // MUCHO antes de retardo + margen (35 s).
     await vi.advanceTimersByTimeAsync(18_000);
@@ -186,7 +186,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       if (FakeWs.instances.length === 1) ws.push(init(DELAY_MS));
     };
     const { c, ev } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(DELAY_MS + 5000 + 3000);
     expect(ev.disconnects).toBeGreaterThanOrEqual(1);
     c.stop();
@@ -197,7 +197,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       if (FakeWs.instances.length === 1) ws.push(init(0, { tick: 5, vehicles: [] }));
     };
     const { c, ev, tickets } = makeClient({ watchdogTimeoutMs: 2000 });
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(3000);
     expect(ev.disconnects).toBeGreaterThanOrEqual(1);
     expect(tickets()).toBeGreaterThanOrEqual(2);
@@ -211,7 +211,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.every(100, () => ws.push({ type: "snapshot", serverTimeMs: Date.now(), snapshot: { tick: ++t, vehicles: [] } }));
     };
     const { c, ev, tickets } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(15_000);
     expect(ev.disconnects).toBe(0);
     expect(tickets()).toBe(1);
@@ -226,7 +226,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
       ws.at(500, () => ws.push(beat()));
     };
     const { c } = makeClient();
-    await c.connect();
+    void c.connect(); // el open llega por el reloj falso: no se espera aquí
     await vi.advanceTimersByTimeAsync(10);
     const fromInit = c.state.serverTimeMs;
     await vi.advanceTimersByTimeAsync(1000);
