@@ -53,7 +53,10 @@ function liveBattle() {
 }
 
 type Received = { msg: any; raw: string; at: number };
-function connect(gw: SpectateGateway, battleId: string): Promise<{ ws: WebSocket; got: Received[]; connectedAt: number }> {
+function connect(
+  gw: SpectateGateway,
+  battleId: string,
+): Promise<{ ws: WebSocket; got: Received[]; connectedAt: number }> {
   const ticket = signSpectateTicket({ battleId, jti: randomUUID(), anon: true } as any, 60);
   const ws = new WebSocket(`ws://127.0.0.1:${gw.port}/spectate/${battleId}`, spectateProtocols(ticket));
   cleanups.push(() => ws.terminate());

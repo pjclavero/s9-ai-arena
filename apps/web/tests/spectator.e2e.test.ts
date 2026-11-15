@@ -385,7 +385,9 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     await waitFor(() => firstSnapshotAt > 0, 10_000);
     await new Promise((r) => setTimeout(r, 500)); // el directo sigue fluyendo
     expect(c.state.spectator?.delayMs).toBe(DELAY_MS);
-    expect(firstSnapshotAt - initAt, "el primer snapshot llegó antes del retardo").toBeGreaterThanOrEqual(DELAY_MS - 150);
+    expect(firstSnapshotAt - initAt, "el primer snapshot llegó antes del retardo").toBeGreaterThanOrEqual(
+      DELAY_MS - 150,
+    );
     expect(heartbeats).toBeGreaterThanOrEqual(8);
     expect(disconnects, "el visor reconectó durante la espera del retardo").toBe(0);
     expect(c.state.reconnects).toBe(0);

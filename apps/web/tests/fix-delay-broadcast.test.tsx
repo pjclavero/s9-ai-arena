@@ -47,7 +47,6 @@ vi.mock("../src/viewer/spectator-client.js", () => ({
   },
 }));
 
-
 const config: BroadcastConfig = {
   target: { kind: "tournament", tournamentId: "t1" },
   branding: DEFAULT_BRANDING,
@@ -85,7 +84,12 @@ describe("FIX-DELAY · /broadcast con retardo", () => {
   it("init con retardo que YA trae estado (reconexión pasada la ventana) ⇒ sin rótulo", async () => {
     await mount();
     act(() =>
-      emit("init", { spectator: { delaySeconds: 30 }, snapshot: { tick: 300, vehicles: [] }, finished: false, meta: {} }),
+      emit("init", {
+        spectator: { delaySeconds: 30 },
+        snapshot: { tick: 300, vehicles: [] },
+        finished: false,
+        meta: {},
+      }),
     );
     await act(async () => undefined);
     expect(screen.queryByTestId("broadcast-delay-wait")).toBeNull();

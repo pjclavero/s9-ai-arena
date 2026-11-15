@@ -80,7 +80,11 @@ function init(delayMs: number, snapshot: unknown = null) {
   };
 }
 const beat = (delayMs = DELAY_MS) => ({ type: "heartbeat", delayMs });
-const snap = (tick: number) => ({ type: "snapshot", serverTimeMs: Date.now() - DELAY_MS, snapshot: { tick, vehicles: [] } });
+const snap = (tick: number) => ({
+  type: "snapshot",
+  serverTimeMs: Date.now() - DELAY_MS,
+  snapshot: { tick, vehicles: [] },
+});
 
 function makeClient(opts: Partial<ConstructorParameters<typeof SpectatorClient>[0]> = {}) {
   let tickets = 0;
@@ -187,7 +191,9 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     FakeWs.server = (ws) => {
       ws.push(init(0, { tick: 0, vehicles: [] }));
       let t = 0;
-      ws.every(100, () => ws.push({ type: "snapshot", serverTimeMs: Date.now(), snapshot: { tick: ++t, vehicles: [] } }));
+      ws.every(100, () =>
+        ws.push({ type: "snapshot", serverTimeMs: Date.now(), snapshot: { tick: ++t, vehicles: [] } }),
+      );
     };
     const { c, ev, tickets } = makeClient();
     void c.connect(); // el open llega por el reloj falso: no se espera aquí

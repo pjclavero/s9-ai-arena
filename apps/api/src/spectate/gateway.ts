@@ -174,10 +174,7 @@ export class SpectateGateway {
   private readonly heartbeatIntervalMs: number;
 
   constructor(opts: SpectateGatewayOptions = {}) {
-    this.heartbeatIntervalMs = Math.min(
-      5000,
-      Math.max(50, opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS),
-    );
+    this.heartbeatIntervalMs = Math.min(5000, Math.max(50, opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS));
     this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
     const ps = opts.publicSpectateEnabled ?? false;
     this.publicSpectateEnabled = typeof ps === "function" ? ps : () => ps;
