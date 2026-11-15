@@ -350,7 +350,7 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     c.stop();
   });
 
-  it("FIX-DELAY · batalla con retardo MAYOR que el watchdog: snapshots tras el retardo, latidos durante la espera y CERO reconexiones", async () => {
+  it("FIX-DELAY · SPECTATOR_DELAY_HEARTBEAT · batalla con retardo MAYOR que el watchdog: snapshots tras el retardo, latidos durante la espera y CERO reconexiones", async () => {
     // Producción 2026-11-15: delaySeconds=30 frente a un watchdog de 10 s ⇒ bucle de
     // reconexión y emisión en el tick 0. Aquí, a escala: retardo 1,5 s, watchdog 300 ms
     // (5× más corto que el retardo, como 30 s frente a 10 s… y más).
@@ -370,8 +370,6 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
       reconnectDelayMs: 50,
       maxReconnectAttempts: 20,
       watchdogTimeoutMs: 300,
-      // Sin margen: el cinturón (retardo + margen) no puede tapar la falta de latidos.
-      watchdogDelayMarginMs: -DELAY_MS,
     });
     let initAt = 0;
     let firstSnapshotAt = 0;

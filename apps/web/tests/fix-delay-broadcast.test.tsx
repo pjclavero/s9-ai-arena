@@ -76,7 +76,7 @@ describe("FIX-DELAY · /broadcast con retardo", () => {
     const wait = await screen.findByTestId("broadcast-delay-wait");
     expect(wait.textContent).toMatch(/Directo con retardo de 30 s/);
     // Los latidos no cambian nada en pantalla (no traen estado).
-    act(() => emit("heartbeat", { serverTimeMs: 1, delayMs: 30_000, bufferedUntil: -29_999 }));
+    act(() => emit("heartbeat", { delayMs: 30_000 }));
     expect(screen.getByTestId("broadcast-delay-wait")).toBeTruthy();
     act(() => emit("snapshot", { tick: 1, vehicles: [] }));
     expect(screen.queryByTestId("broadcast-delay-wait")).toBeNull();

@@ -76,24 +76,31 @@ Contrato del canal (`apps/api/src/spectate/gateway.ts`):
 |---|---|---|
 | `init` | inmediato; lleva el estado de `ahora − retardo` (o `snapshot: null` si aún no existe) y anuncia `spectator.delaySeconds`, `spectator.delayMs` y `spectator.heartbeatIntervalMs` | inmediato, último tick; `delayMs: 0`, `heartbeatIntervalMs: 0` |
 | `snapshot`, `event`, `debug`, `result` | diferidos `delayMs` desde su producción | inmediatos |
-| `heartbeat` | **SIN retardo**, uno al conectar y luego cada `heartbeatIntervalMs` (1 s por defecto, acotado a [50 ms, 5 s]) | no se envía |
+| `heartbeat` | **SIN retardo**, uno al conectar y luego a cadencia FIJA cada `heartbeatIntervalMs` (1 s por defecto, acotado a [50 ms, 5 s]), independiente de la batalla | no se envía |
 
-El latido es `{type:"heartbeat", serverTimeMs, delayMs, bufferedUntil}` (más
-`v` e `id`), con `bufferedUntil = serverTimeMs − delayMs`. Sólo lleva **relojes
-del servidor**: ni tick, ni posiciones, ni vida, ni eventos. No adelanta nada de
-la batalla, así que el anti-coaching sigue intacto (test de whitelist
-estructural exacta en `apps/api/src/spectate/fix-delay-heartbeat.test.ts`).
+El latido es exactamente `{type:"heartbeat", delayMs}` más el sobre común de
+todos los mensajes (`v`: versión fija; `id`: UUID aleatorio). Los dos campos
+son **constantes** durante la conexión: ni estado de batalla (tick, ids,
+posiciones, orientación, velocidad, vida, munición, radar, eventos, marcador),
+ni marcas de tiempo, ni nada que dependa de cuántos mensajes hay retenidos o de
+cuándo se produjeron. Todos los latidos son idénticos salvo el `id`, así que no
+abren ningún canal lateral y el anti-coaching sigue intacto (whitelist
+estructural exacta e igualdad de cuerpos en
+`apps/api/src/spectate/fix-delay-heartbeat.test.ts`).
 
 Visor (`SpectatorClient`):
 
 - Cualquier mensaje, latidos incluidos, cuenta como actividad para el watchdog.
-- Cinturón para un gateway sin latidos: si el `init` anuncia retardo y en esa
-  conexión aún no ha llegado ningún latido, el watchdog tolera `retardo +
-  watchdogDelayMarginMs` (5 s). En cuanto llega un latido vuelve al umbral normal
-  (10 s): una conexión zombi cuyos latidos se apagan se detecta igual de rápido
-  que sin retardo.
-- El latido no pisa `state.serverTimeMs` (que fecha el stream diferido); se
-  guarda en `state.heartbeat` y se emite como evento `heartbeat`.
+- El umbral del watchdog **no cambia** (10 s; no es «retardo + margen»): un
+  socket muerto, un gateway sin respuesta o la ausencia real de tráfico (ni
+  latidos ni stream) se detectan igual que sin retardo.
+- El latido no toca `state.serverTimeMs` (que fecha el stream diferido); se
+  guarda en `state.heartbeat` (`delayMs` y hora LOCAL de llegada) y se emite como
+  evento `heartbeat`.
+- Despliegue: el gateway corre dentro de `tournament-worker`
+  (`apps/tournament-worker/src/main.ts`). Sin desplegar ese servicio no hay
+  latidos y un visor nuevo se comporta como el antiguo; hay que desplegar
+  tournament-worker **y** web (la API no cambia).
 
 Reconexión: el buffer del retardo es **del feed de la batalla, no de la
 conexión**. Una reconexión (corte de red, recarga) recibe en el `init` el estado
@@ -107,6 +114,11 @@ Pantallas: mientras se espera el primer snapshot diferido, `/broadcast` muestra
 interactivo (`#/viewer/<battleId>`) lo pone en su línea de estado. Al llegar la
 imagen el rótulo desaparece. Sin retardo no aparece nunca.
 
+Pruebas: `apps/web/tests/fix-delay-30s.test.ts` (gateway y visor reales a escala
+de 30 s con reloj falso), `apps/api/src/spectate/fix-delay-heartbeat.test.ts`
+(ws real), `apps/web/tests/fix-delay-watchdog.test.ts`,
+`apps/web/tests/fix-delay-broadcast.test.tsx` y el caso FIX-DELAY de
+`apps/web/tests/spectator.e2e.test.ts` (API + PostgreSQL + motor reales).
 Calibración: `python3 scripts/fix-delay-mutants.py --json <salida.json>` (en el
 laboratorio, nunca en el orquestador ni en producción).
 

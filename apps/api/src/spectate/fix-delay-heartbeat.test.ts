@@ -8,8 +8,8 @@
  *
  * Contrato que fija este test (gateway REAL en un puerto efímero, ws real):
  *  - con retardo, los latidos llegan SIN retardo (≥ 1 Hz) y los snapshots CON él;
- *  - un latido no contiene estado de la batalla (ni tick, ni posiciones, ni hp,
- *    ni eventos): sólo relojes del servidor;
+ *  - un latido no contiene estado de la batalla ni marcas de tiempo: tipo fijo y
+ *    `delayMs` constante, cadencia fija;
  *  - el init anuncia el retardo efectivo en ms;
  *  - reconectar NO reinicia el retardo: la conexión nueva sigue del buffer del feed;
  *  - sin retardo, ni un latido: todo como siempre.
@@ -72,7 +72,7 @@ function gateway(): SpectateGateway {
 }
 
 describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
-  it("con retardo: latidos inmediatos y ≥ 1 Hz durante la espera; snapshots y eventos sólo tras el retardo", async () => {
+  it("SPECTATOR_DELAY_HEARTBEAT · ANTI_COACHING_NOT_BYPASSED · con retardo: latidos inmediatos y ≥ 1 Hz durante la espera; snapshots y eventos sólo tras el retardo", async () => {
     const DELAY_MS = 1500;
     const gw = gateway();
     const { battle, producedAt } = liveBattle();
@@ -97,12 +97,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     for (let i = 1; i < beforeFirstSnap.length; i++) {
       expect(beforeFirstSnap[i].at - beforeFirstSnap[i - 1].at).toBeLessThan(1000);
     }
-    // Cada latido es «de ahora»: bufferedUntil = serverTimeMs − delayMs.
-    for (const b of beats) {
-      expect(b.msg.delayMs).toBe(DELAY_MS);
-      expect(b.msg.serverTimeMs - b.msg.bufferedUntil).toBe(DELAY_MS);
-      expect(Math.abs(b.at - b.msg.serverTimeMs)).toBeLessThan(300);
-    }
+    for (const b of beats) expect(b.msg.delayMs).toBe(DELAY_MS);
 
     // Snapshots y eventos CON retardo: ninguno antes de su producción + retardo.
     const snaps = got.filter((g) => g.msg.type === "snapshot");
@@ -118,7 +113,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     }
   }, 15_000);
 
-  it("un latido NO contiene estado de la batalla (ni tick, ni posiciones, ni hp, ni eventos)", async () => {
+  it("NO_STATE_LEAK_IN_HEARTBEAT · un latido NO contiene estado de la batalla ni marcas de tiempo: tipo fijo y retardo constante", async () => {
     const gw = gateway();
     const { battle } = liveBattle();
     await sleep(400); // la batalla ya tiene snapshots y eventos con valores reconocibles
@@ -128,24 +123,22 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     const beats = got.filter((g) => g.msg.type === "heartbeat");
     expect(beats.length).toBeGreaterThan(5);
     for (const b of beats) {
-      // Whitelist ESTRUCTURAL exacta: cualquier campo nuevo rompe aquí.
-      expect(Object.keys(b.msg).sort()).toEqual(["bufferedUntil", "delayMs", "id", "serverTimeMs", "type", "v"]);
-      for (const k of ["serverTimeMs", "delayMs", "bufferedUntil"]) expect(typeof b.msg[k]).toBe("number");
-      // (sin el id ni números: un UUID o un reloj podrían contener cifras por azar;
-      // el valor de los números lo cubre la whitelist y bufferedUntil = serverTimeMs − delayMs)
-      const { id: _id, ...rest } = b.msg;
-      const body = JSON.stringify(rest);
-      for (const needle of ["tick", "vehicle", "position", "hp", "event", "snapshot", "v_red"]) {
-        expect(body, `latido con «${needle}»: ${body}`).not.toContain(needle);
-      }
+      // Whitelist ESTRUCTURAL exacta: tipo fijo + retardo constante (+ el sobre
+      // común v/id). Ni estado de batalla ni marcas de tiempo ni nada que dependa
+      // de lo retenido (sería un canal lateral): cualquier campo nuevo rompe aquí.
+      expect(Object.keys(b.msg).sort()).toEqual(["delayMs", "id", "type", "v"]);
+      expect(b.msg.type).toBe("heartbeat");
+      expect(b.msg.v).toBe(1);
+      expect(b.msg.delayMs).toBe(1000);
     }
+    // Todos los latidos son IDÉNTICOS salvo el id aleatorio: nada varía con la batalla.
+    const bodies = new Set(beats.map(({ msg: { id: _id, ...rest } }) => JSON.stringify(rest)));
+    expect([...bodies]).toEqual([JSON.stringify({ v: 1, type: "heartbeat", delayMs: 1000 })]);
+    // Cadencia FIJA: el intervalo entre latidos no depende de la actividad de la batalla.
+    const gaps = beats.slice(1).map((b, i) => b.at - beats[i].at);
+    for (const g of gaps) expect(g).toBeLessThan(HB_MS * 3);
     // La fábrica pura tampoco: sólo relojes.
-    expect(Object.keys(heartbeatMessage(1_000_000, 30_000)).sort()).toEqual([
-      "bufferedUntil",
-      "delayMs",
-      "serverTimeMs",
-      "type",
-    ]);
+    expect(heartbeatMessage(30_000)).toEqual({ type: "heartbeat", delayMs: 30_000 });
   }, 10_000);
 
   it("reconectar NO reinicia el retardo: la conexión nueva sigue del buffer del feed", async () => {
@@ -187,7 +180,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     expect(conn.heartbeat).toBeNull();
   }, 10_000);
 
-  it("NO REGRESIÓN · delay=0: ni un latido, init con el tick vivo y stream inmediato", async () => {
+  it("DELAY_ZERO_REGRESSION · delay=0: ni un latido, init con el tick vivo y stream inmediato", async () => {
     const gw = gateway();
     const { battle, producedAt } = liveBattle();
     gw.attachBattle("b-zero", battle, { pollIntervalMs: 10 });

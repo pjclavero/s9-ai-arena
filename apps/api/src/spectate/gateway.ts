@@ -18,12 +18,11 @@
  *  - Retardo de espectador (E8.M, anti-coaching): si el ruleset declara
  *    `spectator.delaySeconds`, los mensajes se difieren ese tiempo.
  *  - FIX-DELAY · Latidos de control con retardo: mientras el stream va diferido,
- *    el gateway envía SIN retardo `{type:"heartbeat", serverTimeMs, delayMs,
- *    bufferedUntil}` cada `heartbeatIntervalMs` (1 s por defecto). Sin ellos el
- *    watchdog del visor (10 s sin mensajes) tomaba la espera de 30 s por una
- *    conexión zombi y reconectaba en bucle: la emisión se quedaba en el tick 0.
- *    El latido NO lleva estado de batalla (ni tick, ni posiciones, ni eventos):
- *    sólo relojes del servidor, que no adelantan nada. Ver `heartbeatMessage`.
+ *    el gateway envía SIN retardo `{type:"heartbeat", delayMs}` a cadencia FIJA
+ *    (`heartbeatIntervalMs`, 1 s por defecto), independiente de la batalla. Sin
+ *    ellos el watchdog del visor (10 s sin mensajes) tomaba la espera de 30 s por
+ *    una conexión zombi y reconectaba en bucle: la emisión se quedaba en el tick 0.
+ *    El latido NO lleva estado de batalla ni marcas de tiempo: ver `heartbeatMessage`.
  *
  * Quién registra batallas: en producción el worker de E9 llama a attachBattle()
  * al arrancar cada batalla (pendiente de reconciliación con E9, documentado en
@@ -110,16 +109,19 @@ interface SpectatorConnection {
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 1000;
 
 /**
- * FIX-DELAY · El latido de control del canal diferido. Construido SÓLO con
- * relojes del servidor y el retardo del feed: ningún campo sale de la batalla,
- * así que no puede adelantar información (anti-coaching intacto).
- *  - `serverTimeMs`: ahora, en el servidor.
- *  - `delayMs`: retardo del feed.
- *  - `bufferedUntil`: instante de producción hasta el que el stream diferido ya
- *    se ha entregado (= ahora − retardo). Sirve al visor para rotular la espera.
+ * FIX-DELAY · El latido de control del canal diferido. Sólo dos campos, ambos
+ * CONSTANTES durante toda la conexión:
+ *  - `type: "heartbeat"` (fijo);
+ *  - `delayMs`: el retardo del feed (el mismo que ya anuncia el init).
+ * Deliberadamente SIN estado de batalla (tick, ids, posiciones, hp, munición,
+ * radar, eventos, marcador) y SIN marcas de tiempo ni nada que dependa de cuántos
+ * mensajes hay retenidos o de cuándo se produjeron: un latido es idéntico a
+ * cualquier otro, así que no abre ningún canal lateral (anti-coaching intacto).
+ * Al enviarse lleva el sobre común de todos los mensajes (`v`: versión fija;
+ * `id`: UUID aleatorio por mensaje), que tampoco depende de la batalla.
  */
-export function heartbeatMessage(nowMs: number, delayMs: number): Record<string, unknown> {
-  return { type: "heartbeat", serverTimeMs: nowMs, delayMs, bufferedUntil: nowMs - delayMs };
+export function heartbeatMessage(delayMs: number): Record<string, unknown> {
+  return { type: "heartbeat", delayMs };
 }
 
 export interface SpectateGatewayOptions {
@@ -377,10 +379,10 @@ export class SpectateGateway {
       if (h.debugOnly && !conn.debug) continue;
       this.sendTo(conn, h.msg, false, Math.max(0, h.at + conn.delayMs - Date.now()));
     }
-    // FIX-DELAY · latidos de control SIN retardo mientras dure el canal diferido:
-    // el primero ya, para que el visor sepa desde el principio que el servidor late.
+    // FIX-DELAY · latidos de control SIN retardo y a cadencia FIJA mientras dure el
+    // canal diferido (no dependen de lo que haga la batalla): el primero ya.
     if (conn.delayMs > 0) {
-      const beat = () => this.sendTo(conn, heartbeatMessage(Date.now(), conn.delayMs), /*immediate*/ true);
+      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);
       beat();
       conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);
     }

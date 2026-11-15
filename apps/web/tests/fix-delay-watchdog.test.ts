@@ -79,12 +79,7 @@ function init(delayMs: number, snapshot: unknown = null) {
     finished: false,
   };
 }
-const beat = (delayMs = DELAY_MS) => ({
-  type: "heartbeat",
-  serverTimeMs: Date.now(),
-  delayMs,
-  bufferedUntil: Date.now() - delayMs,
-});
+const beat = (delayMs = DELAY_MS) => ({ type: "heartbeat", delayMs });
 const snap = (tick: number) => ({ type: "snapshot", serverTimeMs: Date.now() - DELAY_MS, snapshot: { tick, vehicles: [] } });
 
 function makeClient(opts: Partial<ConstructorParameters<typeof SpectatorClient>[0]> = {}) {
@@ -116,12 +111,11 @@ afterEach(() => {
 });
 
 describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conexión zombi", () => {
-  it("delay=30 s con latidos: NO reconecta durante la espera y recibe el primer snapshot a los 30 s", async () => {
+  it("WATCHDOG_WITH_DELAY · delay=30 s con latidos: NO reconecta durante la espera y recibe el primer snapshot a los 30 s", async () => {
     FakeWs.server = (ws) => {
       ws.push(init(DELAY_MS));
       ws.every(1000, () => ws.push(beat()));
       ws.at(DELAY_MS, () => ws.push(snap(1)));
-      ws.every(100, () => undefined); // (nada más: sólo latidos y el stream diferido)
     };
     const { c, ev, tickets } = makeClient();
     void c.connect(); // el open llega por el reloj falso: no se espera aquí
@@ -135,7 +129,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     c.stop();
   });
 
-  it("con latidos, una espera MÁS LARGA que retardo + margen (batalla que tarda en producir) tampoco reconecta", async () => {
+  it("WATCHDOG_WITH_DELAY · con latidos, una espera MÁS LARGA que el retardo (batalla que tarda en producir) tampoco reconecta", async () => {
     // P. ej. bots arrancando: el primer snapshot se produce a los 30 s ⇒ llega a los 60 s.
     FakeWs.server = (ws) => {
       ws.push(init(DELAY_MS));
@@ -151,21 +145,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     c.stop();
   });
 
-  it("cinturón: gateway SIN latidos que anuncia retardo ⇒ tolera retardo + margen antes de dar la conexión por zombi", async () => {
-    FakeWs.server = (ws) => {
-      ws.push(init(DELAY_MS));
-      ws.at(DELAY_MS, () => ws.push(snap(1)));
-    };
-    const { c, ev, tickets } = makeClient();
-    void c.connect(); // el open llega por el reloj falso: no se espera aquí
-    await vi.advanceTimersByTimeAsync(DELAY_MS + 500);
-    expect(ev.disconnects, "el watchdog de 10 s cortó la espera del retardo").toBe(0);
-    expect(tickets()).toBe(1);
-    expect(ev.snapshots).toEqual([1]);
-    c.stop();
-  });
-
-  it("el watchdog SIGUE detectando una conexión zombi real: los latidos se apagan ⇒ reconecta con el umbral normal", async () => {
+  it("WATCHDOG_WITH_DELAY · el watchdog SIGUE detectando una conexión zombi real: los latidos se apagan ⇒ reconecta con el umbral normal", async () => {
     FakeWs.server = (ws) => {
       if (FakeWs.instances.length > 1) return; // la reconexión: no importa lo que haga
       ws.push(init(DELAY_MS));
@@ -173,26 +153,25 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     };
     const { c, ev, tickets } = makeClient();
     void c.connect(); // el open llega por el reloj falso: no se espera aquí
-    // Último latido ≈ 4 s; umbral 10 s + sondeo 2,5 s ⇒ cortado antes de los ~17 s,
-    // MUCHO antes de retardo + margen (35 s).
+    // Último latido ≈ 4 s; umbral 10 s + sondeo 2,5 s ⇒ cortado antes de los ~17 s.
     await vi.advanceTimersByTimeAsync(18_000);
     expect(ev.disconnects, "la conexión zombi no se detectó").toBeGreaterThanOrEqual(1);
     expect(tickets()).toBeGreaterThanOrEqual(2);
     c.stop();
   });
 
-  it("zombi sin ningún mensaje tras el init con retardo: también acaba reconectando (pasado retardo + margen)", async () => {
+  it("WATCHDOG_WITH_DELAY · gateway que anuncia retardo y NO late (sin latidos ni snapshots) ⇒ zombi a los ~10 s, sin «watchdog = retardo + margen»", async () => {
     FakeWs.server = (ws) => {
       if (FakeWs.instances.length === 1) ws.push(init(DELAY_MS));
     };
     const { c, ev } = makeClient();
     void c.connect(); // el open llega por el reloj falso: no se espera aquí
-    await vi.advanceTimersByTimeAsync(DELAY_MS + 5000 + 3000);
-    expect(ev.disconnects).toBeGreaterThanOrEqual(1);
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(ev.disconnects, "el watchdog esperó más que su umbral de siempre").toBeGreaterThanOrEqual(1);
     c.stop();
   });
 
-  it("delay=0: comportamiento de siempre — sin mensajes en el umbral ⇒ zombi y reconexión, sin margen extra", async () => {
+  it("DELAY_ZERO_REGRESSION · delay=0: comportamiento de siempre — sin mensajes en el umbral ⇒ zombi y reconexión, sin margen extra", async () => {
     FakeWs.server = (ws) => {
       if (FakeWs.instances.length === 1) ws.push(init(0, { tick: 5, vehicles: [] }));
     };
@@ -204,7 +183,7 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     c.stop();
   });
 
-  it("delay=0 con stream normal: sin latidos, sin reconexiones, snapshots al ritmo de siempre", async () => {
+  it("DELAY_ZERO_REGRESSION · delay=0 con stream normal: sin latidos, sin reconexiones, snapshots al ritmo de siempre", async () => {
     FakeWs.server = (ws) => {
       ws.push(init(0, { tick: 0, vehicles: [] }));
       let t = 0;
@@ -220,10 +199,10 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     c.stop();
   });
 
-  it("el latido no pisa serverTimeMs (que fecha el stream diferido) y queda en state.heartbeat", async () => {
+  it("el latido no toca serverTimeMs (que fecha el stream diferido) y queda en state.heartbeat", async () => {
     FakeWs.server = (ws) => {
       ws.push(init(DELAY_MS));
-      ws.at(500, () => ws.push(beat()));
+      ws.at(500, () => ws.push({ ...beat(), serverTimeMs: 1 })); // aunque un gateway lo mandara
     };
     const { c } = makeClient();
     void c.connect(); // el open llega por el reloj falso: no se espera aquí
@@ -232,7 +211,6 @@ describe("FIX-DELAY · el watchdog no confunde el directo diferido con una conex
     await vi.advanceTimersByTimeAsync(1000);
     expect(c.state.serverTimeMs).toBe(fromInit);
     expect(c.state.heartbeat?.delayMs).toBe(DELAY_MS);
-    expect(c.state.heartbeat!.serverTimeMs - c.state.heartbeat!.bufferedUntil!).toBe(DELAY_MS);
     c.stop();
   });
 });
