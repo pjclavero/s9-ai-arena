@@ -140,6 +140,8 @@ beforeAll(async () => {
       streamer,
       streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
       broadcastBaseUrl: "http://web:3000/broadcast",
+      // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+      publicSpectateEnabled: true,
     });
   // Dos instancias de la API sobre la MISMA BD y el MISMO streamer.
   appA = mk(st);
@@ -311,6 +313,8 @@ describe("R3 · DEFECTO P3 · el start cuya RESPUESTA se pierde tras aplicar el 
       streamer: new HttpStreamerClient(url, undefined, 400),
       streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
       broadcastBaseUrl: "http://web:3000/broadcast",
+      // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+      publicSpectateEnabled: true,
     });
     emitting = false;
     const r = await start(app);

@@ -150,6 +150,8 @@ beforeAll(async () => {
     streamer: st,
     streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
     broadcastBaseUrl: "http://web:3000/broadcast",
+    // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+    publicSpectateEnabled: true,
   });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   user = await tokenFor(h.db, DEV_USERS.user);
@@ -376,8 +378,9 @@ describe("STREAMER · §17 · errores estables y §31 PERMISSION_DENIED / INVALI
     expect(await activeRows()).toHaveLength(0);
   });
 
-  it("INVALID_BATTLE ⇒ 404 si no existe, 400 si no es UUID; PERMISSION_DENIED ⇒ un usuario normal: 403 en start/stop/estado/credencial", async () => {
-    expect((await start(randomUUID())).status).toBe(404);
+  it("INVALID_BATTLE ⇒ 409 target_not_found si no existe (FIX-BROADCAST), 400 si no es UUID; PERMISSION_DENIED ⇒ un usuario normal: 403 en start/stop/estado/credencial", async () => {
+    const missing = await start(randomUUID());
+    expect([missing.status, missing.body.error]).toEqual([409, "target_not_found"]);
     expect(
       (
         await request(app)

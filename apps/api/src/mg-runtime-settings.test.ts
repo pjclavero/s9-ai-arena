@@ -268,9 +268,12 @@ describe("MG · BROADCAST_EFFECTIVE_STATE · lo que /broadcast puede leer de ver
       broadcastAvailable: false,
       reason: "battle_not_public",
     });
+    // FIX-BROADCAST (R2) · programada con bots públicos y espectador ON: espera LEGÍTIMA
+    // (será legible al empezar), se puede emitir ya.
     expect((await target("battle", B.scheduled)).body).toMatchObject({
-      broadcastAvailable: false,
-      reason: "battle_not_started",
+      broadcastAvailable: true,
+      reason: null,
+      broadcastPhase: "WAITING_VALID",
     });
     expect((await target("battle", B.failed)).body).toMatchObject({
       broadcastAvailable: false,
@@ -291,7 +294,10 @@ describe("MG · BROADCAST_EFFECTIVE_STATE · lo que /broadcast puede leer de ver
       for (const id of Object.values(B)) {
         const t = (await target("battle", id)).body;
         const readable = (await anonGet(`/battles/${id}`)).status === 200;
-        expect(t.broadcastAvailable, `battle ${id} con spectate=${s} replays=${r}`).toBe(readable);
+        // FIX-BROADCAST (R2) · la única excepción: una programada pública con el espectador ON
+        // está disponible (espera legítima) aunque HOY dé 404; será legible al empezar.
+        const expected = id === B.scheduled ? s : readable;
+        expect(t.broadcastAvailable, `battle ${id} con spectate=${s} replays=${r}`).toBe(expected);
         if (!t.broadcastAvailable) expect(t.reason).toEqual(expect.any(String));
       }
       const dest = (await request(app).get("/admin/streaming/destinations").set(auth(admin))).body;

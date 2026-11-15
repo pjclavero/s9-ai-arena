@@ -616,8 +616,11 @@ describe("RV-S · streaming: destinos ajenos, motivos reales y cambios de visibi
     const b = await start(tok.admin, "battle", BAT.tnPriv);
     expect([a.status, a.body.error]).toEqual([409, "battle_not_public"]);
     expect([b.status, b.body.error]).toEqual([409, "tournament_not_broadcastable"]);
-    expect((await start(tok.admin, "battle", randomUUID())).status).toBe(404);
-    expect((await start(tok.admin, "tournament", randomUUID())).status).toBe(404);
+    // FIX-BROADCAST · el destino inexistente es un rechazo con motivo estable (409), no un 404.
+    for (const kind of ["battle", "tournament"]) {
+      const r = await start(tok.admin, kind, randomUUID());
+      expect([r.status, r.body.error]).toEqual([409, "target_not_found"]);
+    }
     expect(fake.starts().length).toBe(n);
     for (const id of [BAT.loosePriv, BAT.tnPriv]) {
       expect((await get(`/battles/${id}`)).status).toBe(404);

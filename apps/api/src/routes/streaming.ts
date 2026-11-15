@@ -156,6 +156,42 @@ function publicStatus(s: StreamerStatus | null) {
   };
 }
 
+/** FIX-BROADCAST · mensaje humano del rechazo de `start` por destino no emitible. */
+export function targetRejectMessage(reason: string): string {
+  switch (reason) {
+    case "target_not_found":
+      return "El destino no existe";
+    case "public_spectate_disabled":
+      return "El espectador público está desactivado: /broadcast no podría mostrar el directo";
+    case "public_replays_disabled":
+      return "Los replays públicos están desactivados: /broadcast no podría mostrar un destino terminado";
+    case "tournament_no_content":
+      return "El torneo ha terminado y no tiene ninguna batalla que /broadcast pueda mostrar";
+    case "tournament_not_started":
+      return "El torneo está en borrador: todavía no hay nada que emitir";
+    case "target_not_available":
+      return "El torneo está cancelado";
+    case "battle_not_available":
+      return "La batalla no está disponible (fallida o revertida)";
+    case "battle_not_public":
+    case "tournament_not_broadcastable":
+      return "El destino no está autorizado para retransmisión";
+    default:
+      return "/broadcast (anónima) no puede mostrar este destino ahora";
+  }
+}
+
+/** Resumen sin datos sensibles del destino rechazado (para la admin). */
+function targetBrief(info: NonNullable<Awaited<ReturnType<typeof resolveTarget>>>) {
+  return {
+    kind: info.kind,
+    label: info.label,
+    status: info.status,
+    targetType: info.targetType,
+    battleCounts: info.battleCounts,
+  };
+}
+
 export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   const router = Router();
   const publicKey = deps.publicKey ?? (() => readPublicKey());
@@ -170,6 +206,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     if (deps.streamer.configured || !x.broadcastAvailable) return x;
     const out = { ...x, broadcastAvailable: false, reason: "streaming_not_configured" };
     if ("publicBroadcastable" in x) out.publicBroadcastable = false;
+    if ("broadcastPhase" in x) (out as Record<string, unknown>).broadcastPhase = "UNAVAILABLE";
     return out;
   }
 
@@ -301,10 +338,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     s: StreamingSettings,
     sessionId: string,
     t: { kind: "battle" | "tournament"; id: string },
+    opts: { waitScheduled?: boolean } = {},
   ) {
     const body: Record<string, unknown> = {
       sessionId,
-      broadcastUrl: broadcastUrlFor(base, t, s.branding),
+      broadcastUrl: broadcastUrlFor(base, t, s.branding, opts),
       mode: s.mode,
       encoder: s.encoder,
       preset: s.preset,
@@ -739,11 +777,31 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   });
 
   /** Comprobaciones que no cambian el estado: fallan pronto sin tomar el cerrojo. */
-  async function startPrecheck(t: { kind: "battle" | "tournament"; id: string }): Promise<{ diskCheckedFor: string }> {
+  async function startPrecheck(t: {
+    kind: "battle" | "tournament";
+    id: string;
+  }): Promise<{ diskCheckedFor: string; waitScheduled: boolean }> {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
+    const info = await emittableTarget(t);
+    if (s.mode === "record") await checkDisk();
+    return { diskCheckedFor: s.mode, waitScheduled: waitsScheduled(info) };
+  }
+
+  /** FIX-BROADCAST (R2) · batalla programada emitible: /broadcast debe esperar, no dar error. */
+  function waitsScheduled(info: { kind: string; status: string }): boolean {
+    return info.kind === "battle" && info.status === "scheduled";
+  }
+
+  /**
+   * FIX-BROADCAST · el destino existe, está autorizado (`broadcastable`) y /broadcast tiene
+   * contenido que mostrar o una espera legítima (`broadcastAvailable`). Si no, 409 con motivo
+   * estable. Lo usan `start` y `restart` (R2: el reinicio también revalida).
+   */
+  async function emittableTarget(t: { kind: "battle" | "tournament"; id: string }) {
     const info = await resolveTarget(db, t, visibility());
-    if (!info) throw notFound("Destino no encontrado");
+    // FIX-BROADCAST · un destino inexistente es un rechazo con motivo ESTABLE (409), como el resto.
+    if (!info) throw conflict("target_not_found", targetRejectMessage("target_not_found"));
     // VISIBILIDAD · la condición ya NO es «todos los bots públicos» sino «el destino está
     // autorizado para retransmisión» (resolveTarget → wherePubliclyShowable), con el motivo real.
     if (!info.broadcastable) {
@@ -754,8 +812,15 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
           : "La batalla no es de un torneo retransmisible y tiene bots no públicos: /broadcast (anónima) no podría mostrarla",
       );
     }
-    if (s.mode === "record") await checkDisk();
-    return { diskCheckedFor: s.mode };
+    // FIX-BROADCAST · autorizado NO basta: tiene que existir AHORA contenido que /broadcast
+    // pueda mostrar (o una espera legítima de torneo), con la fuente única de MG
+    // (broadcast-effective.ts → whereBattleReadable anónimo). Antes un torneo terminado
+    // sin replays públicos arrancaba y se quedaba en «Esperando el inicio del torneo…».
+    if (!info.broadcastAvailable) {
+      const reason = info.reason ?? "other";
+      throw conflict(reason, targetRejectMessage(reason), { target: targetBrief(info) });
+    }
+    return info;
   }
 
   // «Llenar el disco»: no se empieza a GRABAR con menos de MIN_FREE_BYTES libres
@@ -872,7 +937,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     req: Request,
     res: Response,
     t: { kind: "battle" | "tournament"; id: string },
-    pre: { diskCheckedFor: string },
+    pre: { diskCheckedFor: string; waitScheduled: boolean },
   ) {
     // Dentro del cerrojo se VUELVE a leer la configuración: pudo cambiar (o
     // desactivarse) mientras se hacían las comprobaciones previas.
@@ -916,7 +981,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     // Si el modo pasó a «record» después de la comprobación previa, se mide aquí.
     if (s.mode === "record" && pre.diskCheckedFor !== "record") await checkDisk();
     const sessionId = randomUUID();
-    const body = await buildStartBody(s, sessionId, t);
+    const body = await buildStartBody(s, sessionId, t, { waitScheduled: pre.waitScheduled });
     try {
       await db("streaming_sessions").insert({
         id: sessionId,
@@ -1005,7 +1070,13 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado");
     const t = { kind: session.target_kind, id: session.target_id };
-    const body = { ...(await buildStartBody(s, session.id, t)), replace: true };
+    // FIX-BROADCAST (R2) · el reinicio REVALIDA el destino: no se reinicia sobre un torneo
+    // terminado sin contenido, una batalla fallida/revertida o un destino ya no emitible.
+    const info = await emittableTarget(t);
+    const body = {
+      ...(await buildStartBody(s, session.id, t, { waitScheduled: waitsScheduled(info) })),
+      replace: true,
+    };
     const r = await callStreamer("POST", "/control/start", body);
     if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
     // EQ5c (P2-4) · el reinicio no resucita una emisión que se paró mientras volaba.

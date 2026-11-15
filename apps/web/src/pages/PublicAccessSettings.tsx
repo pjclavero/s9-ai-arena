@@ -38,12 +38,17 @@ export function broadcastReasonText(reason: string | null | undefined): string {
       return "La batalla tiene bots no públicos y no es de un torneo con retransmisión pública.";
     case "tournament_not_broadcastable":
       return "La batalla tiene bots no públicos y su torneo se creó sin retransmisión pública.";
-    case "battle_not_started":
-      return "La batalla aún no ha empezado: /broadcast mostrará la espera y la verá cuando empiece.";
     case "battle_not_available":
       return "La batalla no está disponible (fallida o revertida): no se puede retransmitir.";
     case "target_not_available":
       return "El torneo está cancelado.";
+    // FIX-BROADCAST · destinos sin contenido emitible.
+    case "tournament_no_content":
+      return "El torneo ha terminado y no tiene ninguna batalla que la página pública pueda mostrar: la emisión sólo enseñaría una pantalla vacía.";
+    case "tournament_not_started":
+      return "El torneo está en borrador: todavía no hay nada que emitir.";
+    case "target_not_found":
+      return "El destino ya no existe.";
     case "streaming_not_configured":
       return "No hay servicio de streaming configurado en este despliegue.";
     default:

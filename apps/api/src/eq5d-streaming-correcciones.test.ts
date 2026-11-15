@@ -110,6 +110,8 @@ beforeAll(async () => {
     streamer: st,
     streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
     broadcastBaseUrl: "http://web:3000/broadcast",
+    // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+    publicSpectateEnabled: true,
   });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   battle = randomUUID();
@@ -215,6 +217,8 @@ describe("EQ5d · P2 · desactivar con un start en vuelo", () => {
       streamer: st,
       streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
       broadcastBaseUrl: "http://web:3000/broadcast",
+      // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+      publicSpectateEnabled: true,
     });
     // Un bloqueo de fila REAL retiene el UPDATE del PUT de B justo después de su
     // comprobación previa de sesión (que no ve nada: A aún no ha empezado).

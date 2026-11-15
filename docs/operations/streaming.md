@@ -235,6 +235,34 @@ Reglas de operación:
   `target_not_available`, `streaming_not_configured`, `other`), calculados con la MISMA política que
   aplica `/broadcast` a un anónimo (`whereBattleReadable`) y los ajustes públicos vigentes.
   `publicBroadcastable` (obsoleto) vale ahora lo mismo que `broadcastAvailable`.
+- Destino válido (FIX-BROADCAST, contrato 0.19.0): **autorizado no es emitible**. `POST
+  /admin/streaming/start` exige `broadcastAvailable=true` (no basta `broadcastable`) y, si no, responde
+  409 con el `reason` como código estable: torneo terminado sin replays públicos
+  (`public_replays_disabled`) o sin ninguna batalla terminada que mostrar (`tournament_no_content`),
+  torneo cancelado (`target_not_available`) o en borrador (`tournament_not_started`), batalla fallida o
+  revertida (`battle_not_available`) y destino inexistente (`target_not_found`, antes 404). Son esperas
+  legítimas (`broadcastPhase: WAITING_VALID`) y sí se pueden emitir: un torneo abierto o en curso sin
+  batalla en directo, y una batalla PROGRAMADA que será pública al empezar (bots públicos o torneo con
+  `broadcast`, y espectador público activo; si no, se rechaza con su motivo real). Así la emisión puede
+  empezar antes que la batalla. `restart` revalida el destino igual que `start`.
+- Batalla programada en `/broadcast`: un anónimo recibe 404 de una programada, así que la API añade
+  `wait=scheduled` a la URL que captura el streamer cuando el destino es una programada validada. Con
+  esa marca, mientras la batalla no se haya visto nunca, el 404 es «aún no visible» ⇒ espera
+  (`WAITING_VALID`), con un tope de 30 min; vencido, o sin la marca, el 404 es `SOURCE_ERROR`
+  (`target_not_found`). La marca sólo cambia la pantalla: no da acceso a ningún dato. No se añade
+  ningún endpoint público. `GET /admin/streaming/target` añade
+  `targetType` (`standalone_battle` = batalla suelta, `tournament_battle`, `tournament`), `tournament`
+  (torneo de la batalla), `battleCounts` (batallas del torneo por estado) y `broadcastPhase`; la pantalla
+  de Streaming lo muestra en claro («Emitiendo: Torneo "prueba" (terminado, 0 en curso)», «Batalla
+  suelta A vs B (…; no pertenece a ningún torneo)») con el motivo en lenguaje humano.
+- Director de `/broadcast`: un torneo cerrado sin batalla en directo da su pantalla terminal
+  («Torneo terminado» o «Torneo cancelado») aunque la lista visible esté vacía. Los fallos de la fuente
+  ya no se tragan: un 404, una respuesta que no es JSON (p. ej. el `index.html` de la web) o JSON con
+  otra forma pasan a `SOURCE_ERROR` en el acto; los transitorios (red, 5xx, 429) se reintentan y, con 3
+  seguidos, también. El sondeo sigue y se recupera solo. El estado queda en el atributo
+  `data-director-state` del escenario (`WAITING_VALID`, `LIVE`, `INTERMISSION`, `TARGET_FINISHED`,
+  `TARGET_CANCELLED`, `SOURCE_ERROR`; con `data-source-error` el código) y en la consola
+  (`[broadcast] fuente: …`).
 - Acceso público (MG): el espectador público y los replays públicos se cambian en Administración →
   «Acceso público / Broadcast» (`PATCH /admin/settings/public-access`), sin editar `.env` ni recrear
   servicios. Se guardan en `app_runtime_settings` (migración 021); `S9_PUBLIC_SPECTATE_ENABLED` y

@@ -137,6 +137,8 @@ beforeAll(async () => {
       streamer,
       streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
       broadcastBaseUrl: "http://web:3000/broadcast",
+      // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+      publicSpectateEnabled: true,
     });
   // Dos instancias de la API sobre la MISMA BD y el MISMO streamer (dos procesos / réplicas).
   appA = mk(st);
@@ -332,6 +334,8 @@ describe("EQ6c · el cerrojo no se queda bloqueado por un streamer colgado", () 
         streamer: new HttpStreamerClient(url, undefined, 400),
         streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
         broadcastBaseUrl: "http://web:3000/broadcast",
+        // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+        publicSpectateEnabled: true,
       });
       const t0 = Date.now();
       const rs = await Promise.all([start(app), stop(app), restart(app), start(app)]);
