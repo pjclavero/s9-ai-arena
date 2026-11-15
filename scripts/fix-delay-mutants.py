@@ -38,6 +38,7 @@ BEAT = (
     "      conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);"
 )
 HB_CALL = "heartbeatMessage(conn.delayMs), /*immediate*/ true);"
+BEAT_LINE = "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);"
 
 # (nombre, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
 # Los dos mutantes OBLIGATORIOS del encargo: G1 (quitar el latido ⇒ reconexiones
@@ -86,6 +87,25 @@ M = [
      GWT, "NO_STATE_LEAK_IN_HEARTBEAT"),
     ("P4b el id tiene forma de UUID v4 pero deriva de timers.size", GW, HB_CALL,
      "{ ...heartbeatMessage(conn.delayMs), id: `00000000-0000-4000-8000-${String(conn.timers.size).padStart(12, \"0\")}` }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    # ── Residuo de REVIEW-282-DELTA (P2-2 cadencia, P3-1 id); mutantes R1-R5 del revisor
+    ("R1 con retenidos se omite 1 de cada 3 latidos (cadencia ~150 ms)", GW, BEAT_LINE,
+     "      let n = 0;\n"
+     "      const beat = () => { if (conn.timers.size > 0 && ++n % 3 === 0) return; "
+     "this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true); };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("R5 con retenidos, 1 latido extra cada 3 (cadencia ~75 ms)", GW, BEAT_LINE,
+     "      let n = 0;\n"
+     "      const beat = () => { this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true); "
+     "if (conn.timers.size > 0 && ++n % 3 === 0) this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true); };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("R3 id UUID v4 aleatorio cuyos 12 últimos hex codifican timers.size", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: randomUUID().slice(0, 24) + "
+     "conn.timers.size.toString(16).padStart(12, \"0\") }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("R4 id UUID v4 determinista por conexión (contador)", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: `00000000-0000-4000-8000-${((conn as any).hbn = "
+     "((conn as any).hbn ?? 0) + 1).toString(16).padStart(12, \"0\")}` }, /*immediate*/ true);",
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("G4 latidos también sin retardo", GW,
      "    if (conn.delayMs > 0) {\n      const beat",

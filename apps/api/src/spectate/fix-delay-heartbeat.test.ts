@@ -41,14 +41,24 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** UUID v4 canónico (minúsculas, como `crypto.randomUUID()`). */
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-/** El `id` de cada latido: UUID v4 y distinto en cada uno (ni contador ni derivado). */
+/**
+ * El `id` de cada latido: UUID v4 y distinto en cada uno (ni contador ni derivado).
+ * Forma y unicidad no bastan (P3-1 de REVIEW-282-DELTA): un UUID v4 válido y único
+ * puede llevar un contador o lo retenido en parte de sus bits. Por eso tampoco se
+ * puede repetir ni el primer grupo (32 bits) ni el último (48 bits): con ~40 latidos
+ * aleatorios la probabilidad de colisión es < 1e-6 (32 bits) y < 1e-11 (48 bits).
+ */
 function expectRandomIds(beats: { msg: any }[]): void {
   for (const b of beats) {
     expect(typeof b.msg.id, `id no textual: ${JSON.stringify(b.msg.id)}`).toBe("string");
     expect(b.msg.id, `id de latido no es UUID v4: ${JSON.stringify(b.msg.id)}`).toMatch(UUID_V4);
   }
-  const ids = beats.map((b) => b.msg.id);
+  const ids: string[] = beats.map((b) => b.msg.id);
   expect(new Set(ids).size, "ids de latido repetidos").toBe(ids.length);
+  const first = ids.map((id) => id.slice(0, 8));
+  expect(new Set(first).size, `primer grupo (32 bits) repetido entre latidos: ${first.join(",")}`).toBe(ids.length);
+  const last = ids.map((id) => id.slice(-12));
+  expect(new Set(last).size, `último grupo (48 bits) repetido entre latidos: ${last.join(",")}`).toBe(ids.length);
 }
 
 /**
@@ -252,8 +262,17 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
       const why = `fase ${name}: ${p.length} latidos (esperados ≈ ${expected})`;
       expect(p.length, why).toBeGreaterThanOrEqual(expected - 3);
       expect(p.length, why).toBeLessThanOrEqual(expected + 3);
+      // Cadencia por fase (P2-2): cada hueco entre latidos consecutivos de la fase
+      // en (0,5·HB, 1,5·HB). Un latido omitido da ≈ 2·HB y uno extra ≈ 0: el recuento
+      // solo no los ve. Medido: 99–104 ms en reposo y con carga de CPU (FIX-DELAY-P2b).
+      for (let i = 1; i < p.length; i++) {
+        const gap = p[i].at - p[i - 1].at;
+        const where = `fase ${name}: hueco ${i - 1}→${i} de ${gap} ms (periodo ${HB_MS} ms)`;
+        expect(gap, where).toBeGreaterThan(HB_MS * 0.5);
+        expect(gap, where).toBeLessThan(HB_MS * 1.5);
+      }
     }
-    expect(Math.max(...counts) - Math.min(...counts), `latidos por fase ${counts.join("/")}`).toBeLessThanOrEqual(3);
+    expect(Math.max(...counts) - Math.min(...counts), `latidos por fase ${counts.join("/")}`).toBeLessThanOrEqual(2);
     // Sin huecos en TODA la vida del socket: ninguna fase apaga ni frena el latido.
     for (let i = 1; i < beats.length; i++) {
       expect(beats[i].at - beats[i - 1].at, `hueco entre latidos ${i - 1}→${i}`).toBeLessThan(HB_MS * 3);
