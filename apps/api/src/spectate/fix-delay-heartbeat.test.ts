@@ -24,7 +24,14 @@
  *    retenido), que es justo el que oculta el retardo;
  *  - estructura del `id` (P3-4): el latido sale por el sobre común con
  *    `id: randomUUID()` sin transformar y `heartbeatMessage` sólo recibe
- *    `conn.delayMs` (AST de gateway.ts, no texto).
+ *    `conn.delayMs` (AST de gateway.ts, no texto);
+ *  - periodo (P2-4 de REVIEW-282-DELTA3): el periodo MEDIO de cada fase, incluido
+ *    el tramo «fin real no entregado», es el de la fase ociosa (± PERIOD_TOL_MS),
+ *    y el recuento de ese tramo tiene cota inferior y superior;
+ *  - ruta completa del latido (P2-4/P2-5, como clase): se programa sólo con
+ *    `setInterval(beat, this.heartbeatIntervalMs)` (periodo inmutable), sin otro
+ *    temporizador ligado a él, con un callback que sólo envía, y `sendTo` no toca
+ *    `msg` antes del sobre (AST de gateway.ts, no texto).
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -55,6 +62,16 @@ const HB_MS = 100;
  * fase de 30 ms deja un hueco de ≈ HB ± 30 en la transición: todos fuera.
  */
 const BAND_MS = 20;
+/**
+ * Periodo medio por fase frente al de la fase ociosa (P2-4 de REVIEW-282-DELTA3).
+ * Con ≥ 5 huecos por fase, la media es (último − primero)/(n − 1): el jitter de
+ * cada latido se divide entre n − 1. Medido en VM111 (4 vCPU), 40 ejecuciones
+ * (ver FIX-DELAY-P2d): |desvío| máximo de 0,49 ms en reposo, 1,89 ms con 4 bucles
+ * de CPU y 2,78 ms con 8 (sesgo positivo en el tramo con entregas: el setInterval
+ * de Node acumula el retraso de cada callback). 5 ms deja ×1,8 sobre el peor caso
+ * medido y queda ×3 por debajo de un periodo +15 % (115 ms ⇒ 15 ms de desvío).
+ */
+const PERIOD_TOL_MS = 5;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** UUID v4 canónico (minúsculas, como `crypto.randomUUID()`). */
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -99,6 +116,34 @@ function nodes(root: any): any[] {
   };
   walk(root);
   return out;
+}
+
+/** Padre de cada nodo ESTree bajo `root`. */
+function parents(root: any): Map<any, any> {
+  const out = new Map<any, any>();
+  const walk = (n: any) => {
+    for (const [k, v] of Object.entries(n)) {
+      if (k === "loc" || k === "range") continue;
+      for (const c of Array.isArray(v) ? v : [v]) {
+        if (c && typeof c === "object" && typeof c.type === "string") {
+          out.set(c, n);
+          walk(c);
+        }
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** Forma canónica de un subárbol: sin posiciones ni texto crudo (comentarios y espacios no cuentan). */
+function canon(n: any): string {
+  return JSON.stringify(n, (k, v) => (["start", "end", "loc", "range", "raw"].includes(k) ? undefined : v));
+}
+
+/** AST de un fragmento de JS de referencia (la forma exacta esperada). */
+function snippet(code: string): any {
+  return acorn.parse(code, { ecmaVersion: "latest", sourceType: "module" });
 }
 
 /**
@@ -360,6 +405,343 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     expect(retShape).toEqual(['type="heartbeat"', "delayMs=@delayMs"]);
   });
 
+  it("HEARTBEAT_PATH_STRUCTURE · el latido se programa sólo con setInterval(beat, this.heartbeatIntervalMs) inmutable, su callback sólo envía y sendTo no toca msg antes del sobre (AST de gateway.ts)", () => {
+    // P2-4 y P2-5 de REVIEW-282-DELTA3, cerrados como CLASE y no mutante a mutante:
+    // (a) nada del estado de la batalla puede gobernar CUÁNDO sale un latido, y
+    // (b) nada puede cambiar QUÉ lleva entre la fábrica pura y el sobre. Cada aserto
+    // exige una forma exacta: ante cualquier cambio de forma falla cerrado y dice
+    // qué cambió (un refactor legítimo debe actualizar este test a conciencia).
+    const ast = parseGateway();
+    const parent = parents(ast);
+    const all = nodes(ast);
+    const isId = (n: any, name: string) => n?.type === "Identifier" && n.name === name;
+    const isThisMember = (n: any, prop: string) =>
+      n?.type === "MemberExpression" && !n.computed && n.object.type === "ThisExpression" && isId(n.property, prop);
+    const ancestors = (n: any): any[] => {
+      const out: any[] = [];
+      for (let p = parent.get(n); p; p = parent.get(p)) out.push(p);
+      return out;
+    };
+    const ownerOf = (n: any): string => {
+      const m = ancestors(n).find((a) => a.type === "MethodDefinition" || a.type === "FunctionDeclaration");
+      return m ? (m.key ?? m.id).name : "<módulo>";
+    };
+    const method = (name: string) => {
+      const ms = all.filter((n: any) => n.type === "MethodDefinition" && isId(n.key, name));
+      expect(ms.length, `gateway.ts: un solo método ${name}`).toBe(1);
+      return ms[0];
+    };
+
+    // ── (a) PROGRAMACIÓN DEL LATIDO ──────────────────────────────────────────────
+    // a1. El callback `beat`: UNA declaración (const), referenciada exactamente en
+    //     su declaración, en el primer latido `beat()` y en el setInterval.
+    const beatDecls = all.filter((n: any) => n.type === "VariableDeclarator" && isId(n.id, "beat"));
+    expect(beatDecls.length, "gateway.ts: una sola declaración de beat").toBe(1);
+    const beatDecl = beatDecls[0];
+    expect(parent.get(beatDecl).kind, "beat debe ser const").toBe("const");
+    const beatRefs = all.filter((n: any) => isId(n, "beat"));
+    expect(
+      beatRefs.map((r: any) => parent.get(r).type),
+      "beat sólo se declara, se llama una vez (primer latido) y se pasa a setInterval",
+    ).toEqual(["VariableDeclarator", "CallExpression", "CallExpression"]);
+    expect(ownerOf(beatDecl), "beat se declara en handleConnection").toBe("handleConnection");
+
+    // a2. El cuerpo de `beat` sólo envía el latido (quizá tras una guarda de socket
+    //     abierto): ni feed, ni finished, ni timers, ni otro estado de batalla.
+    const BEAT_FORMS = [
+      "const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), true);",
+      "const beat = () => { this.sendTo(conn, heartbeatMessage(conn.delayMs), true); };",
+      "const beat = () => { if (conn.ws.readyState === WebSocket.OPEN) this.sendTo(conn, heartbeatMessage(conn.delayMs), true); };",
+    ];
+    const allowedBeats = BEAT_FORMS.map((s) =>
+      canon(snippet(`function f() { ${s} }`).body[0].body.body[0].declarations[0]),
+    );
+    const beatNames = [
+      ...new Set(
+        nodes(beatDecl.init)
+          .filter((n: any) => n.type === "Identifier")
+          .map((n: any) => n.name),
+      ),
+    ];
+    const stateNames = beatNames.filter(
+      (x) => !["sendTo", "conn", "heartbeatMessage", "delayMs", "ws", "readyState", "WebSocket", "OPEN"].includes(x),
+    );
+    expect(stateNames, `el callback del latido lee algo más que conn/delayMs: ${stateNames.join(", ")}`).toEqual([]);
+    expect(
+      allowedBeats.includes(canon(beatDecl)),
+      "el callback del latido no es exactamente `() => this.sendTo(conn, heartbeatMessage(conn.delayMs), true)` (o con guarda de socket abierto)",
+    ).toBe(true);
+
+    // a3. Se programa con UN setInterval(beat, this.heartbeatIntervalMs) cuyo
+    //     resultado se guarda en conn.heartbeat, en el mismo bloque `if (conn.delayMs
+    //     > 0)` que el primer latido y sin nada más en ese bloque.
+    const block = parent.get(parent.get(beatDecl));
+    const ifHb = parent.get(block);
+    expect(block.type === "BlockStatement" && ifHb?.type === "IfStatement" && ifHb.consequent === block).toBe(true);
+    const expectedIfs = BEAT_FORMS.map((b) =>
+      canon(
+        snippet(
+          `function f() { if (conn.delayMs > 0) { ${b} beat(); conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs); } }`,
+        ).body[0].body.body[0],
+      ),
+    );
+    expect(
+      expectedIfs.includes(canon(ifHb)),
+      "el bloque del latido no es exactamente `if (conn.delayMs > 0) { const beat = …; beat(); conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs); }`",
+    ).toBe(true);
+    expect(ifHb.alternate, "el bloque del latido no lleva else").toBeNull();
+
+    // a4. El periodo es inmutable: `heartbeatIntervalMs` es un campo sin
+    //     inicializador ni accesor, asignado UNA vez en el constructor con la forma
+    //     acotada de siempre (sólo depende de las opciones), y leído sólo para el
+    //     init y para el setInterval del latido. Sin acceso calculado por nombre.
+    const fieldDefs = all.filter(
+      (n: any) =>
+        (n.type === "PropertyDefinition" || n.type === "MethodDefinition") && isId(n.key, "heartbeatIntervalMs"),
+    );
+    expect(
+      fieldDefs.map((n: any) => `${n.type}:${n.value === null ? "sin-valor" : n.value?.type}:${n.static}`),
+      "heartbeatIntervalMs: un campo de instancia sin inicializador ni getter/setter",
+    ).toEqual(["PropertyDefinition:sin-valor:false"]);
+    const strLits = (v: string) => all.filter((n: any) => n.type === "Literal" && n.value === v).length;
+    expect(strLits("heartbeatIntervalMs"), "acceso a heartbeatIntervalMs por nombre calculado").toBe(0);
+    const hbMsUses = all
+      .filter((n: any) => n.type === "MemberExpression" && isId(n.property, "heartbeatIntervalMs"))
+      .map((n: any) => {
+        const p = parent.get(n);
+        const role =
+          p.type === "AssignmentExpression" && p.left === n
+            ? "asignación"
+            : p.type === "CallExpression" && isId(p.callee, "setInterval") && p.arguments[1] === n
+              ? "periodo del setInterval"
+              : p.type === "Property" && p.value === n && isId(p.key, "heartbeatIntervalMs")
+                ? "campo del init"
+                : p.type === "LogicalExpression" && p.left === n
+                  ? "opción"
+                  : `otro (${p.type})`;
+        return `${ownerOf(n)}:${n.object.type === "ThisExpression" ? "this" : n.object.name}.heartbeatIntervalMs:${role}`;
+      });
+    expect(
+      hbMsUses,
+      "usos de heartbeatIntervalMs: sólo asignación en el constructor, init y periodo del latido",
+    ).toEqual([
+      "constructor:this.heartbeatIntervalMs:asignación",
+      "constructor:opts.heartbeatIntervalMs:opción",
+      "handleConnection:this.heartbeatIntervalMs:campo del init",
+      "handleConnection:this.heartbeatIntervalMs:periodo del setInterval",
+    ]);
+    const hbMsAssign = all.find(
+      (n: any) => n.type === "AssignmentExpression" && isThisMember(n.left, "heartbeatIntervalMs"),
+    );
+    expect(hbMsAssign.operator).toBe("=");
+    expect(
+      canon(hbMsAssign.right),
+      "el periodo no es Math.min(5000, Math.max(50, opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS))",
+    ).toBe(
+      canon(
+        snippet("Math.min(5000, Math.max(50, opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS));").body[0]
+          .expression,
+      ),
+    );
+    const defaults = all.filter((n: any) => isId(n, "DEFAULT_HEARTBEAT_INTERVAL_MS"));
+    expect(
+      defaults.map((n: any) => parent.get(n).type),
+      "DEFAULT_HEARTBEAT_INTERVAL_MS: se declara y se lee una vez (en el periodo)",
+    ).toEqual(["VariableDeclarator", "LogicalExpression"]);
+    const defDecl = parent.get(defaults[0]);
+    expect(
+      parent.get(defDecl).kind === "const" &&
+        defDecl.init?.type === "Literal" &&
+        typeof defDecl.init.value === "number",
+      "DEFAULT_HEARTBEAT_INTERVAL_MS: const numérica literal",
+    ).toBe(true);
+    // …y el argumento del latido (conn.delayMs) tampoco cambia en vida del socket.
+    const delayWrites = all.filter(
+      (n: any) =>
+        (n.type === "AssignmentExpression" && n.left.type === "MemberExpression" && isId(n.left.property, "delayMs")) ||
+        (n.type === "UpdateExpression" &&
+          n.argument.type === "MemberExpression" &&
+          isId(n.argument.property, "delayMs")),
+    );
+    expect(delayWrites.length, "gateway.ts reasigna un campo delayMs").toBe(0);
+
+    // a5. Ningún otro temporizador ligado al latido: la lista COMPLETA de
+    //     temporizadores de gateway.ts es exactamente esta (bombeo del feed,
+    //     retenidos de sendTo y el latido). Cualquier setTimeout/setImmediate/
+    //     clearInterval nuevo, alias o acceso por miembro aparece aquí.
+    const TIMERS = new Set([
+      "setTimeout",
+      "setInterval",
+      "setImmediate",
+      "clearTimeout",
+      "clearInterval",
+      "clearImmediate",
+      "queueMicrotask",
+      "nextTick",
+    ]);
+    const argSig = (a: any): string =>
+      a.type === "Identifier"
+        ? a.name
+        : a.type === "ThisExpression"
+          ? "this"
+          : a.type === "MemberExpression" && !a.computed
+            ? `${argSig(a.object)}.${a.property.name}`
+            : a.type;
+    const timerUses = all
+      .filter((n: any) => n.type === "Identifier" && TIMERS.has(n.name))
+      .map((n: any) => {
+        const p = parent.get(n);
+        return p.type === "CallExpression" && p.callee === n
+          ? `${ownerOf(n)}:${n.name}(${p.arguments.map(argSig).join(", ")})`
+          : `${ownerOf(n)}:${n.name} sin llamar directamente (${p.type})`;
+      })
+      .sort();
+    expect(timerUses, "temporizadores de gateway.ts: la lista cambió").toEqual([
+      "attachBattle:setInterval(ArrowFunctionExpression, LogicalExpression)",
+      "detachBattle:clearInterval(feed.timer)",
+      "dropClient:clearInterval(conn.heartbeat)",
+      "dropClient:clearTimeout(t)",
+      "handleConnection:setInterval(beat, this.heartbeatIntervalMs)",
+      "pump:clearInterval(feed.timer)",
+      "sendTo:setTimeout(ArrowFunctionExpression, LogicalExpression)",
+    ]);
+    // Los dos temporizadores que no son del latido, con su forma exacta (ni el
+    // bombeo ni la entrega diferida tocan el latido).
+    const pumpTimer = all.find(
+      (n: any) => n.type === "CallExpression" && isId(n.callee, "setInterval") && ownerOf(n) === "attachBattle",
+    );
+    expect(canon(pumpTimer), "el setInterval del bombeo cambió de forma").toBe(
+      canon(snippet("setInterval(() => this.pump(battleId, feed), opts.pollIntervalMs ?? 33);").body[0].expression),
+    );
+    // Sólo se asigna conn.heartbeat al programarlo y al limpiarlo en dropClient,
+    // donde se limpia con UN clearInterval (cierre o desconexión).
+    const hbWrites = all
+      .filter(
+        (n: any) =>
+          n.type === "AssignmentExpression" && n.left.type === "MemberExpression" && isId(n.left.property, "heartbeat"),
+      )
+      .map(
+        (n: any) =>
+          `${ownerOf(n)}:${argSig(n.left)} ${n.operator} ${n.right.type === "CallExpression" ? argSig(n.right.callee) + "(…)" : n.right.type === "Literal" ? String(n.right.value) : n.right.type}`,
+      );
+    expect(hbWrites, "conn.heartbeat sólo se asigna al programar el latido y al limpiarlo").toEqual([
+      "handleConnection:conn.heartbeat = setInterval(…)",
+      "dropClient:conn.heartbeat = null",
+    ]);
+    const drop = method("dropClient");
+    const dropHb = drop.value.body.body.filter((s: any) => nodes(s).some((n: any) => isId(n, "heartbeat")));
+    expect(dropHb.map(canon), "dropClient: el latido se apaga con su forma exacta").toEqual(
+      snippet("if (conn.heartbeat) clearInterval(conn.heartbeat); conn.heartbeat = null;").body.map(canon),
+    );
+
+    // ── (b) INTEGRIDAD DEL SOBRE EN sendTo ───────────────────────────────────────
+    const sendTo = method("sendTo");
+    const fn = sendTo.value;
+    expect(
+      fn.params.map((q: any) => (q.type === "AssignmentPattern" ? `${q.left.name}=${q.right.value}` : q.name)),
+      "sendTo(conn, msg, immediate = false, delayOverrideMs)",
+    ).toEqual(["conn", "msg", "immediate=false", "delayOverrideMs"]);
+    const inSend = nodes(fn.body);
+    // b1. `msg` no se reasigna, ni se muta, ni se copia: sólo se esparce en el sobre.
+    const msgMutations = inSend.filter(
+      (n: any) =>
+        (n.type === "AssignmentExpression" &&
+          (isId(n.left, "msg") || (n.left.type === "MemberExpression" && isId(n.left.object, "msg")))) ||
+        (n.type === "UpdateExpression" &&
+          (isId(n.argument, "msg") || (n.argument.type === "MemberExpression" && isId(n.argument.object, "msg")))) ||
+        (n.type === "UnaryExpression" &&
+          n.operator === "delete" &&
+          n.argument.type === "MemberExpression" &&
+          isId(n.argument.object, "msg")) ||
+        (n.type === "CallExpression" &&
+          n.callee.type === "MemberExpression" &&
+          ["Object", "Reflect"].includes(n.callee.object?.name) &&
+          n.arguments.some((a: any) => isId(a, "msg"))),
+    );
+    expect(msgMutations.length, "sendTo reasigna o muta msg (asignación, msg.x =, delete, Object.assign…)").toBe(0);
+    const msgRefs = inSend.filter((n: any) => isId(n, "msg"));
+    expect(
+      msgRefs.map((n: any) => parent.get(n).type),
+      "sendTo: msg sólo aparece una vez, esparcido en el sobre (ni alias, ni lectura de campos)",
+    ).toEqual(["SpreadElement"]);
+    expect(
+      inSend.filter((n: any) => isId(n, "arguments")).length,
+      "sendTo usa `arguments` (alias del objeto msg)",
+    ).toBe(0);
+    // b2. El sobre es exactamente {v: 1, id: randomUUID(), ...msg}.
+    const payload = inSend.find((n: any) => n.type === "VariableDeclarator" && isId(n.id, "payload"));
+    expect(parent.get(payload).kind, "payload debe ser const").toBe("const");
+    expect(canon(payload.init), "el sobre no es exactamente JSON.stringify({ v: 1, id: randomUUID(), ...msg })").toBe(
+      canon(snippet("JSON.stringify({ v: 1, id: randomUUID(), ...msg });").body[0].expression),
+    );
+    // b3. Ningún spread de msg puede pisar id ni v: o el spread va ANTES, o lo que
+    //     llega como msg del latido no tiene id ni v. Hoy `...msg` va DETRÁS, así que
+    //     se exige lo segundo: la fábrica devuelve sólo {type, delayMs}, se pasa tal
+    //     cual a sendTo (HEARTBEAT_ID_STRUCTURE) y sendTo no la toca (b1).
+    const env = payload.init.arguments[0];
+    const keyIdx = (k: string) =>
+      env.properties.findIndex((q: any) => q.type === "Property" && !q.computed && isId(q.key, k));
+    const spreadIdx = env.properties.findIndex((q: any) => q.type === "SpreadElement" && isId(q.argument, "msg"));
+    const spreadAfter = spreadIdx > keyIdx("id") || spreadIdx > keyIdx("v");
+    const factory = all.find((n: any) => n.type === "FunctionDeclaration" && isId(n.id, "heartbeatMessage"));
+    const factoryKeys = factory.body.body[0]?.argument?.properties?.map((q: any) =>
+      q.type === "Property" && !q.computed ? q.key.name : q.type,
+    );
+    if (spreadAfter) {
+      expect(
+        factory.body.body.length === 1 && factory.body.body[0].type === "ReturnStatement",
+        "...msg va detrás de id/v: heartbeatMessage debe ser un único return",
+      ).toBe(true);
+      expect(factoryKeys, "...msg va detrás de id/v: el latido sólo puede llevar {type, delayMs}").toEqual([
+        "type",
+        "delayMs",
+      ]);
+      expect(msgRefs.length, "...msg va detrás de id/v: msg no puede tocarse entre la entrada y el sobre").toBe(1);
+    }
+    // La fábrica no se puede reasignar ni usar en otro sitio.
+    const factoryRefs = all.filter((n: any) => isId(n, "heartbeatMessage")).map((n: any) => parent.get(n).type);
+    expect(factoryRefs, "heartbeatMessage: sólo su declaración y la llamada del latido").toEqual([
+      "FunctionDeclaration",
+      "CallExpression",
+    ]);
+    // b4. El resto de sendTo, con su forma exacta: el latido (immediate = true) se
+    //     entrega en el acto y la entrega sólo comprueba el socket y envía `payload`.
+    const expectedSendTo = snippet(`class X {
+      sendTo(conn, msg, immediate = false, delayOverrideMs) {
+        const payload = JSON.stringify({ v: 1, id: randomUUID(), ...msg });
+        const deliver = () => {
+          if (conn.ws.readyState === WebSocket.OPEN) {
+            try {
+              conn.ws.send(payload);
+            } catch {}
+          }
+        };
+        if (conn.delayMs > 0 && !immediate) {
+          const t = setTimeout(() => {
+            conn.timers.delete(t);
+            deliver();
+          }, delayOverrideMs ?? conn.delayMs);
+          conn.timers.add(t);
+        } else {
+          deliver();
+        }
+      }
+    }`).body[0].body.body[0];
+    expect(canon(fn), "sendTo cambió de forma (ver la forma esperada en este test)").toBe(canon(expectedSendTo.value));
+    // Un único envío por socket en todo el gateway (el de sendTo) y nadie sustituye
+    // `send` de un socket.
+    const sends = all.filter((n: any) => n.type === "MemberExpression" && !n.computed && isId(n.property, "send"));
+    expect(sends.map(ownerOf), "gateway.ts: ws.send sólo en sendTo").toEqual(["sendTo"]);
+    expect(strLits("send"), "acceso a send por nombre calculado").toBe(0);
+    // Último (para que no tape el diagnóstico de los asertos anteriores): ningún
+    // literal "heartbeat" fuera de la fábrica (latido paralelo, rama por tipo de
+    // mensaje o acceso calculado a conn["heartbeat"]).
+    expect(
+      strLits("heartbeat"),
+      'el literal "heartbeat" aparece fuera de heartbeatMessage (latido paralelo, rama por tipo o acceso calculado)',
+    ).toBe(1);
+  });
+
   it("HEARTBEAT_SIDE_CHANNELS · cadencia, presencia y cuerpo del latido idénticos con batalla ociosa, con mensajes retenidos y tras el fin real (socket abierto)", async () => {
     const DELAY_MS = 1000;
     const WINDOW_MS = 900;
@@ -429,7 +811,31 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     // El tramo «fin real no entregado» existe, dura ≈ el retardo y tiene latidos.
     const finReal = inWin(realFinAt, resultAt);
     expect(resultAt - realFinAt, "tramo fin real → resultado demasiado corto").toBeGreaterThanOrEqual(DELAY_MS - 200);
-    expect(finReal.length, `tramo fin real no entregado: ${finReal.length} latidos`).toBeGreaterThanOrEqual(7);
+    // Recuento del tramo oculto con cota inferior Y superior (P2-4): en un tramo de
+    // `dur` ms caben floor(dur/HB) o ceil(dur/HB) latidos; ± 1 por los bordes.
+    const finDur = resultAt - realFinAt;
+    const finWhy = `tramo fin real no entregado: ${finReal.length} latidos en ${finDur} ms (periodo ${HB_MS} ms)`;
+    expect(finReal.length, finWhy).toBeGreaterThanOrEqual(Math.max(7, Math.floor(finDur / HB_MS) - 1));
+    expect(finReal.length, finWhy).toBeLessThanOrEqual(Math.ceil(finDur / HB_MS) + 1);
+
+    // Periodo MEDIO por fase (P2-4 de REVIEW-282-DELTA3): la banda por hueco tolera
+    // un periodo distinto de hasta ±BAND_MS (p. ej. 115 ms en el tramo oculto), que
+    // un espectador que cuente latidos detecta en segundos. La media de cada fase
+    // se compara con la de la ociosa con PERIOD_TOL_MS.
+    const meanGap = (p: Received[]) => (p.length < 2 ? Number.NaN : (p[p.length - 1].at - p[0].at) / (p.length - 1));
+    const periods: Record<string, number> = {
+      ociosa: meanGap(phases.ociosa),
+      retenidos: meanGap(phases.retenidos),
+      "fin-real-no-entregado": meanGap(finReal),
+      terminada: meanGap(phases.terminada),
+    };
+    for (const [name, m] of Object.entries(periods)) {
+      expect(Number.isFinite(m), `fase ${name}: sin huecos con que medir el periodo`).toBe(true);
+      expect(
+        Math.abs(m - periods.ociosa),
+        `fase ${name}: periodo medio ${m.toFixed(1)} ms frente a ${periods.ociosa.toFixed(1)} ms en la ociosa (± ${PERIOD_TOL_MS} ms)`,
+      ).toBeLessThanOrEqual(PERIOD_TOL_MS);
+    }
 
     // Cadencia (P2-3/P3-3): TODO hueco entre latidos consecutivos de la vida del
     // socket en HB_MS ± BAND_MS, transiciones de fase incluidas; no sólo dentro de

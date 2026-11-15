@@ -41,6 +41,25 @@ HB_CALL = "heartbeatMessage(conn.delayMs), /*immediate*/ true);"
 BEAT_LINE = "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);"
 HB_SEND = "this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true)"
 
+# ── Constantes de REVIEW-282-DELTA3 (rev282d3-own.py), copiadas byte a byte ──────────
+REV_S = "this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true)"
+REV_A = "      const beat = () => " + REV_S + ";"
+REV_BEAT = REV_A + "\n      beat();\n      conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);"
+REV_SEND = "      const send = () => " + REV_S + ";\n"
+REV_FR = "(feed.finished && conn.timers.size > 0)"
+REV_FIN = "      feed.finished = true;\n"
+REV_PAY = "    const payload = JSON.stringify({ v: 1, id: randomUUID(), ...msg });"
+
+
+def rev_chain(cond, extra):
+    return ("      const beat = () => " + REV_S + ";\n"
+            "      const loop = () => { beat(); conn.heartbeat = setTimeout(loop, this.heartbeatIntervalMs + (" + cond + " ? " + str(extra) + " : 0)) as any; };\n"
+            "      loop();")
+
+
+# id v4 con Math.random cuya variante codifica si hay retenidos (I4 del revisor).
+REV_I4_ID = ("(n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join(\"\")")
+
 # (nombre, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
 # Los dos mutantes OBLIGATORIOS del encargo: G1 (quitar el latido ⇒ reconexiones
 # periódicas y sin primer snapshot) y G7 (snapshots antes de tiempo ⇒ el gate
@@ -142,6 +161,55 @@ M = [
      "{ ...heartbeatMessage(conn.delayMs), id: randomUUID().slice(0, 24) + ((conn as any).hbn = "
      "((conn as any).hbn ?? 0) + 1).toString(16).padStart(12, \"0\") }, /*immediate*/ true);",
      GWT, "HEARTBEAT_ID_STRUCTURE"),
+    # ── Residuo de REVIEW-282-DELTA3 (P2-4 periodo en el tramo oculto, P2-5 msg
+    # reasignado en sendTo); mutantes del revisor (rev282d3-own.py), byte a byte.
+    # Una entrada con lista de (ancla, sustituto) aplica todas las sustituciones.
+    ("S2u S2 sin duplicar la llamada (desfase 30 ms con retenidos)", GW,
+     [(REV_A, REV_SEND + "      const beat = () => { if (conn.timers.size > 0) setTimeout(send, 30); else send(); };")], None,
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("S4u S4 sin duplicar la llamada (cadencia doble en fin-real-no-entregado)", GW,
+     [(REV_A, REV_SEND + "      const beat = () => { send(); if " + REV_FR + " setTimeout(send, 50); };")], None,
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("K5 periodo +15% (115 ms) solo en fin-real-no-entregado", GW,
+     [(REV_BEAT, rev_chain(REV_FR, 15))], None,
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("K6 periodo +15% (115 ms) mientras haya retenidos", GW,
+     [(REV_BEAT, rev_chain("conn.timers.size > 0", 15))], None,
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("K7 al ver el fin real se reinicia el intervalo del latido (sin latido extra)", GW, [
+        (REV_BEAT, REV_A + "\n      beat();\n      conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);\n      (conn as any).restartHb = () => { if (conn.heartbeat) clearInterval(conn.heartbeat); conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs); };"),
+        (REV_FIN, REV_FIN + "      for (const c of feed.clients) (c as any).restartHb?.();\n")], None,
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("I4 sendTo reasigna msg del latido con id v4 propio (Math.random) cuya variante codifica retenidos", GW,
+     [(REV_PAY,
+       "    if (msg.type === \"heartbeat\") { const h = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join(\"\"); msg = { ...msg, id: h(8) + \"-\" + h(4) + \"-4\" + h(3) + \"-\" + (conn.timers.size > 0 ? \"b\" : \"8\") + h(3) + \"-\" + h(12) }; }\n" + REV_PAY)], None,
+     GWT, "HEARTBEAT_PATH_STRUCTURE"),
+    # ── Propios de FIX-DELAY-P2d: misma clase, intentan eludir HEARTBEAT_PATH_STRUCTURE
+    ("X1 un solo setInterval cuyo periodo sale de una variable que cambia con el estado (115 ms en el tramo oculto)", GW,
+     [(BEAT,
+       "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);\n"
+       "      beat();\n"
+       "      let hbMs = this.heartbeatIntervalMs;\n"
+       "      const arm = () => {\n"
+       "        conn.heartbeat = setInterval(() => {\n"
+       "          beat();\n"
+       "          const want = feed.finished && conn.timers.size > 0 ? this.heartbeatIntervalMs + 15 : this.heartbeatIntervalMs;\n"
+       "          if (want !== hbMs) { hbMs = want; if (conn.heartbeat) clearInterval(conn.heartbeat); arm(); }\n"
+       "        }, hbMs);\n"
+       "      };\n"
+       "      arm();")], None,
+     GWT, "HEARTBEAT_PATH_STRUCTURE"),
+    ("X2 sendTo copia msg a otra variable y muta su id (variante = hay retenidos; sin el literal heartbeat)", GW,
+     [(REV_PAY,
+       "    const m = msg;\n"
+       "    if (\"delayMs\" in m) { const h = " + REV_I4_ID + "; m.id = h(8) + \"-\" + h(4) + \"-4\" + h(3) + \"-\" + (conn.timers.size > 0 ? \"b\" : \"8\") + h(3) + \"-\" + h(12); }\n"
+       + REV_PAY)], None,
+     GWT, "HEARTBEAT_PATH_STRUCTURE"),
+    ("X3 sendTo muta el id del latido por arguments[1] (sin nombrar msg ni el literal heartbeat)", GW,
+     [(REV_PAY,
+       "    if (\"delayMs\" in arguments[1]) { const h = " + REV_I4_ID + "; arguments[1].id = h(8) + \"-\" + h(4) + \"-4\" + h(3) + \"-\" + (conn.timers.size > 0 ? \"b\" : \"8\") + h(3) + \"-\" + h(12); }\n"
+       + REV_PAY)], None,
+     GWT, "HEARTBEAT_PATH_STRUCTURE"),
     ("G4 latidos también sin retardo", GW,
      "    if (conn.delayMs > 0) {\n      const beat",
      "    if (true) {\n      const beat",
@@ -252,13 +320,20 @@ for name, path, old, new, test, frag in M:
     p = os.path.join(ROOT, path)
     src = open(p).read()
     entry = {"id": tag, "name": name, "file": path, "test": test, "expect": frag}
-    if src.count(old) != 1:
-        entry.update(verdict="ANCLA_NO_UNICA", count=src.count(old))
-        print(f"{name}: ANCLA NO ÚNICA ({src.count(old)}) -> MUTANTE INVÁLIDO", flush=True)
+    subs = old if isinstance(old, list) else [(old, new)]
+    mutated, bad = src, None
+    for o, n in subs:
+        if mutated.count(o) != 1:
+            bad = mutated.count(o)
+            break
+        mutated = mutated.replace(o, n)
+    if bad is not None:
+        entry.update(verdict="ANCLA_NO_UNICA", count=bad)
+        print(f"{name}: ANCLA NO ÚNICA ({bad}) -> MUTANTE INVÁLIDO", flush=True)
         fails += 1
         summary["mutants"].append(entry)
         continue
-    open(p, "w").write(src.replace(old, new))
+    open(p, "w").write(mutated)
     try:
         rc, out = run_test(test)
         open(f"/tmp/fixdelay-mut-{tag}.log", "w").write(out)
