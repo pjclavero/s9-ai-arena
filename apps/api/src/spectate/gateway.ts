@@ -358,11 +358,10 @@ export class SpectateGateway {
         spectator: {
           allowFogView: feed.opts.spectator?.allowFogView === true,
           delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
-          // FIX-DELAY · retardo efectivo del canal en ms (el que aplica el gateway)
-          // y el periodo de latidos: el visor ajusta su watchdog con ellos.
-          delayMs: conn.delayMs,
-          heartbeatIntervalMs: conn.delayMs > 0 ? this.heartbeatIntervalMs : 0,
           debug: conn.debug,
+          // FIX-DELAY · sólo con retardo: retardo efectivo del canal (ms) y periodo
+          // de latidos. Sin retardo, el init es exactamente el de siempre.
+          ...(conn.delayMs > 0 ? { delayMs: conn.delayMs, heartbeatIntervalMs: this.heartbeatIntervalMs } : {}),
         },
         meta: feed.opts.meta ?? {},
         snapshot,

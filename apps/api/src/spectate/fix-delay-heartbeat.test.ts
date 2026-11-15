@@ -192,7 +192,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     await sleep(800);
     expect(got[0].msg.type).toBe("init");
     expect(got[0].msg.spectator.delaySeconds).toBe(0);
-    expect(got[0].msg.spectator.delayMs).toBe(0);
+    expect(got[0].msg.spectator).toEqual({ allowFogView: false, delaySeconds: 0, debug: false }); // init de siempre
     expect(got[0].msg.snapshot).not.toBeNull();
     expect(got.filter((g) => g.msg.type === "heartbeat")).toEqual([]);
     const snaps = got.filter((g) => g.msg.type === "snapshot");

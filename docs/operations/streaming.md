@@ -74,7 +74,7 @@ Contrato del canal (`apps/api/src/spectate/gateway.ts`):
 
 | Mensaje | Con `delaySeconds > 0` | Con retardo 0 |
 |---|---|---|
-| `init` | inmediato; lleva el estado de `ahora − retardo` (o `snapshot: null` si aún no existe) y anuncia `spectator.delaySeconds`, `spectator.delayMs` y `spectator.heartbeatIntervalMs` | inmediato, último tick; `delayMs: 0`, `heartbeatIntervalMs: 0` |
+| `init` | inmediato; lleva el estado de `ahora − retardo` (o `snapshot: null` si aún no existe) y anuncia `spectator.delaySeconds`, `spectator.delayMs` y `spectator.heartbeatIntervalMs` | inmediato, último tick; exactamente el `init` de siempre (sin `delayMs` ni `heartbeatIntervalMs`) |
 | `snapshot`, `event`, `debug`, `result` | diferidos `delayMs` desde su producción | inmediatos |
 | `heartbeat` | **SIN retardo**, uno al conectar y luego a cadencia FIJA cada `heartbeatIntervalMs` (1 s por defecto, acotado a [50 ms, 5 s]), independiente de la batalla | no se envía |
 

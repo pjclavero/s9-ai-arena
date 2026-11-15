@@ -237,7 +237,7 @@ describe("FIX-DELAY · directo con retardo de 30 s y watchdog de 10 s (gateway y
     void c.connect();
     await vi.advanceTimersByTimeAsync(20_000);
     expect(ev.inits[0].snapshot.tick).toBeGreaterThanOrEqual(19);
-    expect(ev.inits[0].spectator.delayMs).toBe(0);
+    expect(ev.inits[0].spectator).toEqual({ allowFogView: false, delaySeconds: 0, debug: false }); // init de siempre
     expect(ev.heartbeats).toBe(0);
     expect(ev.disconnects).toBe(0);
     expect(tickets()).toBe(1);
