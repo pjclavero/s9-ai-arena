@@ -39,6 +39,7 @@ BEAT = (
 )
 HB_CALL = "heartbeatMessage(conn.delayMs), /*immediate*/ true);"
 BEAT_LINE = "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);"
+HB_SEND = "this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true)"
 
 # (nombre, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
 # Los dos mutantes OBLIGATORIOS del encargo: G1 (quitar el latido ⇒ reconexiones
@@ -107,6 +108,40 @@ M = [
      "{ ...heartbeatMessage(conn.delayMs), id: `00000000-0000-4000-8000-${((conn as any).hbn = "
      "((conn as any).hbn ?? 0) + 1).toString(16).padStart(12, \"0\")}` }, /*immediate*/ true);",
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    # ── Residuo de REVIEW-282-DELTA2 (P2-3 tramo fin real no entregado, P3-3 desfase de
+    # fase, P3-4 bits del id); mutantes S1-S5 e I1-I3 del revisor (rev282d2-own.py)
+    ("S1 extra cada 5 con retenidos (N>3, control de la banda)", GW, BEAT_LINE,
+     "      let n = 0;\n      const beat = () => { " + HB_SEND
+     + "; if (conn.timers.size > 0 && ++n % 5 === 0) " + HB_SEND + "; };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("S2 desfase de fase de 30 ms solo con retenidos", GW, BEAT_LINE,
+     "      const beat = () => { if (conn.timers.size > 0) setTimeout(() => " + HB_SEND
+     + ", 30); else " + HB_SEND + "; };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("S3 tras finished, el latido se retrasa 30 ms", GW, BEAT_LINE,
+     "      const beat = () => { if (feed.finished) setTimeout(() => " + HB_SEND
+     + ", 30); else " + HB_SEND + "; };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("S4 ventana fin-real..entrega (finished && retenidos): cadencia doble", GW, BEAT_LINE,
+     "      const beat = () => { " + HB_SEND
+     + "; if (feed.finished && conn.timers.size > 0) setTimeout(() => " + HB_SEND + ", 50); };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("S5 ventana fin-real..entrega (finished && retenidos): se omite 1 de cada 2", GW, BEAT_LINE,
+     "      let n = 0;\n      const beat = () => { if (feed.finished && conn.timers.size > 0 && ++n % 2 === 0) return; "
+     + HB_SEND + "; };",
+     GWT, "HEARTBEAT_SIDE_CHANNELS"),
+    ("I1 id: grupo intermedio (2.o, 16 bits) = timers.size", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: ((u) => u.slice(0, 9) + (conn.timers.size & 0xffff)"
+     ".toString(16).padStart(4, \"0\") + u.slice(13))(randomUUID()) }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_ID_STRUCTURE"),
+    ("I2 id: nibble de variante codifica feed.finished (8 vivo / b terminado)", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: ((u) => u.slice(0, 19) + (feed.finished ? \"b\" : \"8\")"
+     " + u.slice(20))(randomUUID()) }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_ID_STRUCTURE"),
+    ("I3 id: prefijo aleatorio + contador por conexion en el ultimo grupo (unico)", GW, HB_CALL,
+     "{ ...heartbeatMessage(conn.delayMs), id: randomUUID().slice(0, 24) + ((conn as any).hbn = "
+     "((conn as any).hbn ?? 0) + 1).toString(16).padStart(12, \"0\") }, /*immediate*/ true);",
+     GWT, "HEARTBEAT_ID_STRUCTURE"),
     ("G4 latidos también sin retardo", GW,
      "    if (conn.delayMs > 0) {\n      const beat",
      "    if (true) {\n      const beat",

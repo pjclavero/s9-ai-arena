@@ -17,10 +17,21 @@
  *    distinto cada vez (no un contador ni nada derivado de lo retenido), y la
  *    cadencia, la presencia y el cuerpo del latido son los mismos con la batalla
  *    ociosa, con mensajes retenidos y tras el fin real de la batalla mientras el
- *    socket siga abierto.
+ *    socket siga abierto;
+ *  - cadencia (P2-3/P3-3 de REVIEW-282-DELTA2): TODO hueco entre latidos
+ *    consecutivos de la vida del socket cae en `HB_MS ± BAND_MS`, incluido el
+ *    tramo «fin real no entregado» (la batalla ya terminó y el resultado sigue
+ *    retenido), que es justo el que oculta el retardo;
+ *  - estructura del `id` (P3-4): el latido sale por el sobre común con
+ *    `id: randomUUID()` sin transformar y `heartbeatMessage` sólo recibe
+ *    `conn.delayMs` (AST de gateway.ts, no texto).
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
+import { fileURLToPath } from "node:url";
+import * as acorn from "acorn";
 import { WebSocket } from "ws";
 import { SpectateGateway, heartbeatMessage, spectateProtocols, type SpectatableBattle } from "./gateway.js";
 import { signSpectateTicket } from "../auth/tokens.js";
@@ -37,6 +48,13 @@ afterEach(() => {
 const PRODUCE_EVERY_MS = 40;
 const SLACK_MS = 80;
 const HB_MS = 100;
+/**
+ * Banda de cadencia: todo hueco entre latidos consecutivos en `HB_MS ± BAND_MS`.
+ * Medido en VM111 (4 vCPU) sobre la línea base: ver FIX-DELAY-P2c. Un latido
+ * omitido da ≈ 2·HB, uno extra ≈ 0, una cadencia doble ≈ HB/2 y un desfase de
+ * fase de 30 ms deja un hueco de ≈ HB ± 30 en la transición: todos fuera.
+ */
+const BAND_MS = 20;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** UUID v4 canónico (minúsculas, como `crypto.randomUUID()`). */
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -59,6 +77,28 @@ function expectRandomIds(beats: { msg: any }[]): void {
   expect(new Set(first).size, `primer grupo (32 bits) repetido entre latidos: ${first.join(",")}`).toBe(ids.length);
   const last = ids.map((id) => id.slice(-12));
   expect(new Set(last).size, `último grupo (48 bits) repetido entre latidos: ${last.join(",")}`).toBe(ids.length);
+}
+
+/** AST (ESTree, acorn) de gateway.ts sin tipos; ver HEARTBEAT_ID_STRUCTURE. */
+function parseGateway(): any {
+  const src = readFileSync(fileURLToPath(new URL("./gateway.ts", import.meta.url)), "utf8");
+  return acorn.parse(stripTypeScriptTypes(src, { mode: "strip" }), { ecmaVersion: "latest", sourceType: "module" });
+}
+
+/** Todos los nodos ESTree bajo `root` (recorrido en profundidad, sin repetir). */
+function nodes(root: any): any[] {
+  const out: any[] = [];
+  const walk = (n: any) => {
+    if (!n || typeof n.type !== "string") return;
+    out.push(n);
+    for (const [k, v] of Object.entries(n)) {
+      if (k === "loc" || k === "range") continue;
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") walk(v);
+    }
+  };
+  walk(root);
+  return out;
 }
 
 /**
@@ -208,6 +248,118 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     expect(heartbeatMessage(30_000)).toEqual({ type: "heartbeat", delayMs: 30_000 });
   }, 10_000);
 
+  it("HEARTBEAT_ID_STRUCTURE · el latido sale por el sobre común con id = randomUUID() sin transformar y heartbeatMessage sólo recibe conn.delayMs (AST de gateway.ts)", () => {
+    // P3-4 de REVIEW-282-DELTA2: un test de forma o de unicidad no excluye que el id
+    // lleve bits de estado en los grupos intermedios o en la variante. La defensa
+    // general es estructural y se comprueba sobre el AST (no con texto): TS 7 no
+    // expone API de compilador en JS, así que se quitan los tipos con
+    // `stripTypeScriptTypes` de Node (sustituye por espacios, conserva posiciones)
+    // y se parsea con acorn.
+    const ast = parseGateway();
+    const all = nodes(ast);
+    const isId = (n: any, name: string) => n?.type === "Identifier" && n.name === name;
+    const isMember = (n: any, obj: string, prop: string) =>
+      n?.type === "MemberExpression" && !n.computed && isId(n.object, obj) && isId(n.property, prop);
+    const isThisMember = (n: any, prop: string) =>
+      n?.type === "MemberExpression" && !n.computed && n.object.type === "ThisExpression" && isId(n.property, prop);
+
+    // 1. `randomUUID` es el de node:crypto y no hay otra declaración que lo sombree.
+    const imp = ast.body.filter(
+      (n: any) =>
+        n.type === "ImportDeclaration" &&
+        n.source.value === "node:crypto" &&
+        n.specifiers.some(
+          (sp: any) => sp.type === "ImportSpecifier" && isId(sp.imported, "randomUUID") && isId(sp.local, "randomUUID"),
+        ),
+    );
+    expect(imp.length, "randomUUID no se importa de node:crypto").toBe(1);
+    const shadows = all.filter(
+      (n: any) =>
+        (n.type === "VariableDeclarator" && isId(n.id, "randomUUID")) ||
+        ((n.type === "FunctionDeclaration" || n.type === "FunctionExpression") &&
+          (isId(n.id, "randomUUID") || n.params.some((q: any) => isId(q, "randomUUID")))) ||
+        (n.type === "ArrowFunctionExpression" && n.params.some((q: any) => isId(q, "randomUUID"))),
+    );
+    expect(shadows.length, "otra declaración sombrea randomUUID").toBe(0);
+
+    // 2. Hay UNA sola llamada a randomUUID en el gateway: el `id` del sobre de sendTo,
+    //    sin argumentos y sin transformar (ni slice, ni concatenación, ni plantilla).
+    const uuidCalls = all.filter((n: any) => n.type === "CallExpression" && isId(n.callee, "randomUUID"));
+    expect(uuidCalls.length, "randomUUID se llama en más de un sitio").toBe(1);
+    const sendTo = all.find((n: any) => n.type === "MethodDefinition" && isId(n.key, "sendTo"));
+    expect(sendTo, "no hay método sendTo").toBeDefined();
+    const inSendTo = nodes(sendTo);
+    const payloadDecl = inSendTo.filter((n: any) => n.type === "VariableDeclarator" && isId(n.id, "payload"));
+    expect(payloadDecl.length, "sendTo: una sola declaración de payload").toBe(1);
+    const init = payloadDecl[0].init;
+    expect(
+      init?.type === "CallExpression" && isMember(init.callee, "JSON", "stringify") && init.arguments.length === 1,
+      "sendTo: payload = JSON.stringify(sobre)",
+    ).toBe(true);
+    const env = init.arguments[0];
+    expect(env.type, "sendTo: el sobre es un objeto literal").toBe("ObjectExpression");
+    const shape = env.properties.map((q: any) =>
+      q.type === "SpreadElement" ? `...${q.argument.name}` : `${q.key.name}:${q.value.type}`,
+    );
+    expect(shape, "sendTo: sobre {v: 1, id: randomUUID(), ...msg}").toEqual([
+      "v:Literal",
+      "id:CallExpression",
+      "...msg",
+    ]);
+    expect(env.properties[0].value.value).toBe(1);
+    const idVal = env.properties[1].value;
+    expect(idVal, "sendTo: el id del sobre no es la llamada directa a randomUUID()").toBe(uuidCalls[0]);
+    expect(idVal.arguments.length, "randomUUID() con argumentos").toBe(0);
+    // …y el payload sale tal cual: cada envío del socket manda `payload` sin tocar.
+    const sends = inSendTo.filter(
+      (n: any) =>
+        n.type === "CallExpression" && n.callee.type === "MemberExpression" && isId(n.callee.property, "send"),
+    );
+    expect(sends.length, "sendTo: un solo ws.send").toBe(1);
+    expect(sends[0].arguments.map((a: any) => a.type + ":" + a.name)).toEqual(["Identifier:payload"]);
+    const payloadRefs = inSendTo.filter((n: any) => isId(n, "payload"));
+    expect(payloadRefs.length, "sendTo: payload sólo se declara y se envía").toBe(2);
+
+    // 3. El latido: UNA llamada a heartbeatMessage, con `conn.delayMs` como único
+    //    argumento (nada derivado del estado), pasada TAL CUAL como mensaje a sendTo
+    //    (sin envolver en un objeto que pise el id del sobre con su `...msg`).
+    const hbCalls = all.filter((n: any) => n.type === "CallExpression" && isId(n.callee, "heartbeatMessage"));
+    expect(hbCalls.length, "heartbeatMessage se llama en más de un sitio").toBe(1);
+    const hb = hbCalls[0];
+    expect(hb.arguments.length, "heartbeatMessage: un solo argumento").toBe(1);
+    expect(isMember(hb.arguments[0], "conn", "delayMs"), "heartbeatMessage recibe algo distinto de conn.delayMs").toBe(
+      true,
+    );
+    const carriers = all.filter(
+      (n: any) => n.type === "CallExpression" && isThisMember(n.callee, "sendTo") && n.arguments.includes(hb),
+    );
+    expect(carriers.length, "el latido no se pasa directamente a this.sendTo").toBe(1);
+    const args = carriers[0].arguments;
+    expect(args.length, "sendTo del latido: (conn, heartbeatMessage(conn.delayMs), true)").toBe(3);
+    expect(isId(args[0], "conn")).toBe(true);
+    expect(args[1], "el mensaje del latido no es heartbeatMessage(...) tal cual").toBe(hb);
+    expect(args[2].type === "Literal" && args[2].value === true, "el latido no va inmediato").toBe(true);
+
+    // 4. La fábrica: un solo parámetro y devuelve exactamente {type: "heartbeat", delayMs}
+    //    (sin `id` propio que pisaría el del sobre).
+    const fns = all.filter((n: any) => n.type === "FunctionDeclaration" && isId(n.id, "heartbeatMessage"));
+    expect(fns.length).toBe(1);
+    const fn = fns[0];
+    expect(fn.params.map((q: any) => q.name)).toEqual(["delayMs"]);
+    expect(fn.body.body.length, "heartbeatMessage: un solo return").toBe(1);
+    const ret = fn.body.body[0];
+    expect(ret.type).toBe("ReturnStatement");
+    expect(ret.argument.type).toBe("ObjectExpression");
+    const retShape = ret.argument.properties.map((q: any) =>
+      q.type === "Property" && !q.computed && q.value.type === "Literal"
+        ? `${q.key.name}=${JSON.stringify(q.value.value)}`
+        : q.type === "Property" && !q.computed && q.value.type === "Identifier"
+          ? `${q.key.name}=@${q.value.name}`
+          : q.type,
+    );
+    expect(retShape).toEqual(['type="heartbeat"', "delayMs=@delayMs"]);
+  });
+
   it("HEARTBEAT_SIDE_CHANNELS · cadencia, presencia y cuerpo del latido idénticos con batalla ociosa, con mensajes retenidos y tras el fin real (socket abierto)", async () => {
     const DELAY_MS = 1000;
     const WINDOW_MS = 900;
@@ -235,18 +387,27 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     const bTo = Date.now();
     expect(conn.timers.size, "en la fase B debe haber mensajes retenidos").toBeGreaterThan(0);
 
-    // Fase C · TERMINADA: fin real de la batalla (feed.finished), retenidos ya
-    // entregados (resultado incluido) y el socket SIGUE abierto.
+    // Fase «FIN REAL NO ENTREGADO» (P2-3): la batalla ya terminó (feed.finished)
+    // pero el resultado y la cola de snapshots siguen retenidos. Es el tramo que
+    // oculta el retardo: si el latido cambiara aquí, revelaría el fin antes de
+    // tiempo. Se comprueba que el tramo EXISTE de verdad y que tiene latidos.
     finish();
     const deadline = Date.now() + 2000;
-    while (!feed.finished && Date.now() < deadline) await sleep(10);
+    while (!feed.finished && Date.now() < deadline) await sleep(2);
+    const realFinAt = Date.now();
     expect(feed.finished, "el gateway no vio el fin de la batalla").toBe(true);
-    await sleep(DELAY_MS + 300);
-    expect(conn.timers.size, "tras el fin y el retardo no debe quedar nada retenido").toBe(0);
+    expect(conn.timers.size, "fin real: debe quedar algo retenido sin entregar").toBeGreaterThan(0);
     expect(
       got.some((g) => g.msg.type === "result"),
-      "el resultado retrasado no llegó",
-    ).toBe(true);
+      "fin real: el resultado no debe haber llegado aún",
+    ).toBe(false);
+    await sleep(DELAY_MS + 300);
+    // Fase C · TERMINADA: retenidos ya entregados (resultado incluido) y el
+    // socket SIGUE abierto.
+    expect(conn.timers.size, "tras el fin y el retardo no debe quedar nada retenido").toBe(0);
+    const result = got.find((g) => g.msg.type === "result");
+    expect(result, "el resultado retrasado no llegó").toBeDefined();
+    const resultAt = result!.at;
     const cFrom = Date.now();
     await sleep(WINDOW_MS);
     const cTo = Date.now();
@@ -262,22 +423,39 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
       const why = `fase ${name}: ${p.length} latidos (esperados ≈ ${expected})`;
       expect(p.length, why).toBeGreaterThanOrEqual(expected - 3);
       expect(p.length, why).toBeLessThanOrEqual(expected + 3);
-      // Cadencia por fase (P2-2): cada hueco entre latidos consecutivos de la fase
-      // en (0,5·HB, 1,5·HB). Un latido omitido da ≈ 2·HB y uno extra ≈ 0: el recuento
-      // solo no los ve. Medido: 99–104 ms en reposo y con carga de CPU (FIX-DELAY-P2b).
-      for (let i = 1; i < p.length; i++) {
-        const gap = p[i].at - p[i - 1].at;
-        const where = `fase ${name}: hueco ${i - 1}→${i} de ${gap} ms (periodo ${HB_MS} ms)`;
-        expect(gap, where).toBeGreaterThan(HB_MS * 0.5);
-        expect(gap, where).toBeLessThan(HB_MS * 1.5);
-      }
     }
     expect(Math.max(...counts) - Math.min(...counts), `latidos por fase ${counts.join("/")}`).toBeLessThanOrEqual(2);
-    // Sin huecos en TODA la vida del socket: ninguna fase apaga ni frena el latido.
-    for (let i = 1; i < beats.length; i++) {
-      expect(beats[i].at - beats[i - 1].at, `hueco entre latidos ${i - 1}→${i}`).toBeLessThan(HB_MS * 3);
-    }
-    expect(cTo - beats[beats.length - 1].at, "el latido se apagó antes de cerrar el socket").toBeLessThan(HB_MS * 3);
+
+    // El tramo «fin real no entregado» existe, dura ≈ el retardo y tiene latidos.
+    const finReal = inWin(realFinAt, resultAt);
+    expect(resultAt - realFinAt, "tramo fin real → resultado demasiado corto").toBeGreaterThanOrEqual(DELAY_MS - 200);
+    expect(finReal.length, `tramo fin real no entregado: ${finReal.length} latidos`).toBeGreaterThanOrEqual(7);
+
+    // Cadencia (P2-3/P3-3): TODO hueco entre latidos consecutivos de la vida del
+    // socket en HB_MS ± BAND_MS, transiciones de fase incluidas; no sólo dentro de
+    // ventanas. Así no hay tramo sin observar ni escalón de fase que se escape.
+    const phaseOf = (at: number) =>
+      at < aTo
+        ? "ociosa"
+        : at < bTo
+          ? "retenidos"
+          : at < realFinAt
+            ? "fin-pedido"
+            : at < resultAt
+              ? "fin-real-no-entregado"
+              : "terminada";
+    const bandCheck = (p: Received[], label: string) => {
+      for (let i = 1; i < p.length; i++) {
+        const gap = p[i].at - p[i - 1].at;
+        const where = `${label}: hueco ${i - 1}→${i} de ${gap} ms en fase ${phaseOf(p[i].at)} (periodo ${HB_MS} ± ${BAND_MS} ms)`;
+        expect(Math.abs(gap - HB_MS), where).toBeLessThanOrEqual(BAND_MS);
+      }
+    };
+    bandCheck(finReal, "fin real no entregado");
+    bandCheck(beats, "vida del socket");
+    expect(cTo - beats[beats.length - 1].at, "el latido se apagó antes de cerrar el socket").toBeLessThan(
+      HB_MS + BAND_MS,
+    );
     // Cuerpo IDÉNTICO en todas las fases salvo el id; el id, UUID v4 distinto.
     const bodies = new Set(beats.map(({ msg: { id: _id, ...rest } }) => JSON.stringify(rest)));
     expect([...bodies]).toEqual([JSON.stringify({ v: 1, type: "heartbeat", delayMs: DELAY_MS })]);
