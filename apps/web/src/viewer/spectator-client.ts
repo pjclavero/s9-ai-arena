@@ -20,6 +20,14 @@
  *    en `watchdogTimeoutMs`, la conexión está zombi (NAT caído, cable fuera) y
  *    se cierra para forzar la reconexión — sin esperar al timeout de TCP.
  *  - Buffer CIRCULAR de eventos: una batalla larga no crece sin límite en RAM.
+ *
+ * FIX-DELAY · directo con retardo anti-coaching (`spectator.delaySeconds`): el
+ * gateway retiene snapshots y eventos ese tiempo, así que el canal pasaba 30 s
+ * mudo tras el init y el watchdog (10 s) lo cerraba en bucle. Ahora:
+ *  - los LATIDOS de control (`type:"heartbeat"`, sin retardo y sin estado de
+ *    batalla, ≥ 1 Hz) cuentan como actividad. El umbral del watchdog NO cambia
+ *    (10 s): un socket muerto, un gateway sin respuesta o la ausencia real de
+ *    tráfico (ni latidos ni stream) se siguen detectando igual de rápido.
  */
 
 export interface SpectateTicket {
@@ -40,6 +48,7 @@ export interface SpectatorClientOptions {
   maxReconnectAttempts?: number;
   /** Sin ningún mensaje en este tiempo ⇒ conexión zombi, se fuerza el cierre. */
   watchdogTimeoutMs?: number;
+
   /** Capacidad del buffer circular de eventos. */
   maxBufferedEvents?: number;
   /** Fuente de aleatoriedad del jitter (inyectable en tests). */
@@ -108,7 +117,16 @@ export interface SpectatorState {
   /** serverTimeMs del último mensaje del gateway que lo trajo (R3.2, opcional). */
   serverTimeMs: number | null;
   /** init del servidor: qué permite el ruleset al espectador (fog, delay, debug). */
-  spectator: { allowFogView: boolean; delaySeconds: number; debug: boolean } | null;
+  spectator: {
+    allowFogView: boolean;
+    delaySeconds: number;
+    debug: boolean;
+    /** FIX-DELAY · retardo efectivo del canal en ms (gateways nuevos). */
+    delayMs?: number;
+    heartbeatIntervalMs?: number;
+  } | null;
+  /** FIX-DELAY · último latido de control (sólo el retardo; la hora es la LOCAL de llegada). */
+  heartbeat: { delayMs: number; receivedAt: number } | null;
   meta: Record<string, unknown>;
   /** Buffer circular: los últimos N eventos (una batalla larga no come RAM). */
   events: RingBuffer<any>;
@@ -135,6 +153,7 @@ export class SpectatorClient {
       snapshot: null,
       serverTimeMs: null,
       spectator: null,
+      heartbeat: null,
       meta: {},
       events: new RingBuffer(opts.maxBufferedEvents ?? 500),
       result: null,
@@ -148,6 +167,7 @@ export class SpectatorClient {
       | "snapshot"
       | "event"
       | "debug"
+      | "heartbeat"
       | "result"
       | "disconnect"
       | "reconnected"
@@ -338,8 +358,17 @@ export class SpectatorClient {
     } catch {
       return; // basura en el canal: se ignora, el visor no debe morir por esto
     }
-    if (typeof msg.serverTimeMs === "number") this.state.serverTimeMs = msg.serverTimeMs;
+    // (El latido no trae serverTimeMs; aun así nunca pisaría el reloj del stream.)
+    if (typeof msg.serverTimeMs === "number" && msg.type !== "heartbeat") this.state.serverTimeMs = msg.serverTimeMs;
     switch (msg.type) {
+      case "heartbeat":
+        // La actividad ya la anotó onmessage (lastMessageAt): eso es lo que importa.
+        this.state.heartbeat = {
+          delayMs: typeof msg.delayMs === "number" ? msg.delayMs : 0,
+          receivedAt: Date.now(),
+        };
+        this.emit("heartbeat", this.state.heartbeat);
+        break;
       case "init":
         // Recuperación de estado íntegro: snapshot completo del servidor.
         this.state.snapshot = msg.snapshot ?? this.state.snapshot;

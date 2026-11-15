@@ -17,6 +17,12 @@
  *    trae `debug: true`, y ese flag lo FIRMA la API según el rol (T8.2).
  *  - Retardo de espectador (E8.M, anti-coaching): si el ruleset declara
  *    `spectator.delaySeconds`, los mensajes se difieren ese tiempo.
+ *  - FIX-DELAY · Latidos de control con retardo: mientras el stream va diferido,
+ *    el gateway envía SIN retardo `{type:"heartbeat", delayMs}` a cadencia FIJA
+ *    (`heartbeatIntervalMs`, 1 s por defecto), independiente de la batalla. Sin
+ *    ellos el watchdog del visor (10 s sin mensajes) tomaba la espera de 30 s por
+ *    una conexión zombi y reconectaba en bucle: la emisión se quedaba en el tick 0.
+ *    El latido NO lleva estado de batalla ni marcas de tiempo: ver `heartbeatMessage`.
  *
  * Quién registra batallas: en producción el worker de E9 llama a attachBattle()
  * al arrancar cada batalla (pendiente de reconciliación con E9, documentado en
@@ -95,6 +101,27 @@ interface SpectatorConnection {
   debug: boolean;
   delayMs: number;
   timers: Set<ReturnType<typeof setTimeout>>;
+  /** FIX-DELAY · latido sin retardo (sólo con delayMs > 0). */
+  heartbeat: ReturnType<typeof setInterval> | null;
+}
+
+/** FIX-DELAY · periodo por defecto del latido de control (≥ 1 Hz). */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 1000;
+
+/**
+ * FIX-DELAY · El latido de control del canal diferido. Sólo dos campos, ambos
+ * CONSTANTES durante toda la conexión:
+ *  - `type: "heartbeat"` (fijo);
+ *  - `delayMs`: el retardo del feed (el mismo que ya anuncia el init).
+ * Deliberadamente SIN estado de batalla (tick, ids, posiciones, hp, munición,
+ * radar, eventos, marcador) y SIN marcas de tiempo ni nada que dependa de cuántos
+ * mensajes hay retenidos o de cuándo se produjeron: un latido es idéntico a
+ * cualquier otro, así que no abre ningún canal lateral (anti-coaching intacto).
+ * Al enviarse lleva el sobre común de todos los mensajes (`v`: versión fija;
+ * `id`: UUID aleatorio por mensaje), que tampoco depende de la batalla.
+ */
+export function heartbeatMessage(delayMs: number): Record<string, unknown> {
+  return { type: "heartbeat", delayMs };
 }
 
 export interface SpectateGatewayOptions {
@@ -122,6 +149,12 @@ export interface SpectateGatewayOptions {
    * conexión, así que un cambio desde la admin se aplica sin reiniciar el worker.
    */
   publicSpectateEnabled?: boolean | (() => boolean);
+  /**
+   * FIX-DELAY · ms entre latidos de control en los feeds con retardo (default
+   * 1000). Configurable para tests; acotado a [50, 5000] para que nunca deje de
+   * ser ≥ 1 latido por cada 5 s (el watchdog del visor es de 10 s).
+   */
+  heartbeatIntervalMs?: number;
 }
 
 /** R13.2 (hardening) · frame WS entrante máximo (protege contra floods de payload). */
@@ -138,8 +171,10 @@ export class SpectateGateway {
   private readonly usedTickets = new Map<string, number>();
   private readonly maxClientsPerBattle: number;
   private readonly publicSpectateEnabled: () => boolean;
+  private readonly heartbeatIntervalMs: number;
 
   constructor(opts: SpectateGatewayOptions = {}) {
+    this.heartbeatIntervalMs = Math.min(5000, Math.max(50, opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS));
     this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
     const ps = opts.publicSpectateEnabled ?? false;
     this.publicSpectateEnabled = typeof ps === "function" ? ps : () => ps;
@@ -283,6 +318,7 @@ export class SpectateGateway {
       debug: claims.debug === true,
       delayMs: feed.delayMs,
       timers: new Set(),
+      heartbeat: null,
     };
     feed.clients.add(conn);
     ws.on("close", () => this.dropClient(feed, conn));
@@ -323,6 +359,9 @@ export class SpectateGateway {
           allowFogView: feed.opts.spectator?.allowFogView === true,
           delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
           debug: conn.debug,
+          // FIX-DELAY · sólo con retardo: retardo efectivo del canal (ms) y periodo
+          // de latidos. Sin retardo, el init es exactamente el de siempre.
+          ...(conn.delayMs > 0 ? { delayMs: conn.delayMs, heartbeatIntervalMs: this.heartbeatIntervalMs } : {}),
         },
         meta: feed.opts.meta ?? {},
         snapshot,
@@ -335,6 +374,13 @@ export class SpectateGateway {
     for (const h of backlog) {
       if (h.debugOnly && !conn.debug) continue;
       this.sendTo(conn, h.msg, false, Math.max(0, h.at + conn.delayMs - Date.now()));
+    }
+    // FIX-DELAY · latidos de control SIN retardo y a cadencia FIJA mientras dure el
+    // canal diferido (no dependen de lo que haga la batalla): el primero ya.
+    if (conn.delayMs > 0) {
+      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);
+      beat();
+      conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);
     }
   }
 
@@ -351,6 +397,8 @@ export class SpectateGateway {
   private dropClient(feed: Feed, conn: SpectatorConnection, code?: number, reason?: string): void {
     for (const t of conn.timers) clearTimeout(t);
     conn.timers.clear();
+    if (conn.heartbeat) clearInterval(conn.heartbeat);
+    conn.heartbeat = null;
     feed.clients.delete(conn);
     if (code && conn.ws.readyState === WebSocket.OPEN) conn.ws.close(code, reason);
   }
