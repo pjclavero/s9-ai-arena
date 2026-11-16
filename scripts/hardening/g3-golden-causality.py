@@ -5,7 +5,8 @@ Uso: python3 -I scripts/hardening/g3-golden-causality.py <worktree> <salida.json
 
 Diferencial 2x2 sobre el SHA del worktree (árbol limpio, commit detached):
   A  regla ACTIVA      + anclas ACTUALES   ⇒ rc 0
-  B  regla DESACTIVADA + anclas ACTUALES   ⇒ rojo, exactamente los 7 goldens re-anclados
+  B  regla DESACTIVADA + anclas ACTUALES   ⇒ rojo, los 7 goldens re-anclados + el control de
+                                             rules-review-break (fijado a 4 en la ronda 2)
   C  regla DESACTIVADA + anclas ANTERIORES ⇒ rc 0 (vuelven EXACTAMENTE los valores previos)
   D  regla ACTIVA      + anclas ANTERIORES ⇒ rojo, los 7 goldens + el control de rules-review-break
 «Desactivar la regla» = sustituir SÓLO la condición de la pasada de rearme de battle.ts por
@@ -45,10 +46,12 @@ OLD_ANCHORS = [
      '"2v2-open": "e4ab04bdbc7db18c54c9046f10d1ebc9fd060c8160c04d30b0de81ade4bec0ed"'),
     (FIX, '"4v4-real": "70fef4b020f624dc80968b9ad3a73a662e558ea487c8234d9101ae754fbcca70"',
      '"4v4-real": "bc7231c2f169744d68c6ecf1627c6c047d05ea3dd57fa77f491c0c0c0d5bf237"'),
-    (BREAK, 'expect(ctrl.deaths("veh_2")).toBeGreaterThanOrEqual(3);', 'expect(ctrl.deaths("veh_2")).toBe(3);'),
-    (BREAK, '.respawnsUsed).toBeGreaterThanOrEqual(3);', ".respawnsUsed).toBe(3);"),
+    # Ronda 2 (P3-2): el control de rules-review-break fija el valor exacto (4 con la regla, 3 sin
+    # ella), así que ahora también es un golden de la regla: cae en B y en D.
+    (BREAK, 'expect(ctrl.deaths("veh_2")).toBe(4);', 'expect(ctrl.deaths("veh_2")).toBe(3);'),
+    (BREAK, '.respawnsUsed).toBe(4);', ".respawnsUsed).toBe(3);"),
 ]
-EXPECT_FAILED = {"A": 0, "B": 7, "C": 0, "D": 8}
+EXPECT_FAILED = {"A": 0, "B": 8, "C": 0, "D": 8}
 
 
 def sh(*cmd, **kw):
