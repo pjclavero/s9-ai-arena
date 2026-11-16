@@ -138,9 +138,18 @@ describe("G2 · armorBroken por capa real (replay público, espectador y broadca
           for (const s of SECTORS) if (v.armor?.[s] && v.armor[s].hp > 0) fn(v.armor[s], v, s);
       return JSON.stringify(projectReplayDocument(r2, null));
     };
-    expect(mut((_a, v, s) => delete v.armor[s]), "existencia de sector íntegro visible").toBe(base);
-    expect(mut((a) => (a.hp = a.hpMax)), "hp de sector íntegro visible").toBe(base);
-    expect(mut((a) => (a.hpMax = a.hpMax * 3)), "hpMax de sector íntegro visible").toBe(base);
+    expect(
+      mut((_a, v, s) => delete v.armor[s]),
+      "existencia de sector íntegro visible",
+    ).toBe(base);
+    expect(
+      mut((a) => (a.hp = a.hpMax)),
+      "hp de sector íntegro visible",
+    ).toBe(base);
+    expect(
+      mut((a) => (a.hpMax = a.hpMax * 3)),
+      "hpMax de sector íntegro visible",
+    ).toBe(base);
   });
 
   it("espectador directo y broadcast por WebSocket: la misma forma y la rotura aparece", async () => {

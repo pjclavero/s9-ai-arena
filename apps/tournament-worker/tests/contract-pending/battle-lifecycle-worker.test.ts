@@ -42,12 +42,7 @@ import {
 import { FakeBootstrapRunner } from "../../../bot-manager/tests/fake-bootstrap-runner.js";
 import { REMOVE_DEADLINE_MS, containerAgents, type BotLaunchProvider } from "../../src/container-agents.js";
 import type { AgentDriverInput } from "../../src/engine-executor.js";
-import {
-  BattleAbort,
-  BattleResourceRegistry,
-  classifyEnd,
-  type RegistryOptions,
-} from "../../src/battle-resources.js";
+import { BattleAbort, BattleResourceRegistry, classifyEnd, type RegistryOptions } from "../../src/battle-resources.js";
 import { reapOnce } from "../../src/battle-reaper.js";
 import { InfrastructureFailure } from "../../src/errors.js";
 
@@ -474,9 +469,7 @@ describe("G2 · ronda 2 (P2-1) · ninguna espera sin cota en el camino del teard
     let hang = true;
     // Como main.ts: la verificación es `runner.list()` por labels de la batalla.
     s.resources.setVerifier(async (battleId) =>
-      hang
-        ? new Promise<string[]>(() => {})
-        : (await s.runner.list({ [LABEL_BATTLE_ID]: battleId })).map((c) => c.id),
+      hang ? new Promise<string[]>(() => {}) : (await s.runner.list({ [LABEL_BATTLE_ID]: battleId })).map((c) => c.id),
     );
     const { out } = await timedRun(s, "g2-verify-hang", 30_000);
     expect(out.hung).toBe(false);

@@ -321,7 +321,13 @@ async function settles<T>(p: Promise<T>, ms: number): Promise<"done" | "hung"> {
   let t: ReturnType<typeof setTimeout> | undefined;
   const hung = new Promise<"hung">((r) => (t = setTimeout(() => r("hung"), ms)));
   try {
-    return await Promise.race([p.then(() => "done" as const, () => "done" as const), hung]);
+    return await Promise.race([
+      p.then(
+        () => "done" as const,
+        () => "done" as const,
+      ),
+      hung,
+    ]);
   } finally {
     clearTimeout(t);
   }

@@ -556,7 +556,13 @@ describe("N20 · contrato público: hullLevel N = 20 y blindaje cuantizado", () 
   });
 
   it("G2.2 · sin ningún sector roto no hay clave armorBroken: blindaje íntegro = sin blindaje", () => {
-    const intact = { hullHp: 151, hullHpMax: 300, alive: true, armor: { rear: { hp: 37.25, hpMax: 120 } }, modules: [] };
+    const intact = {
+      hullHp: 151,
+      hullHpMax: 300,
+      alive: true,
+      armor: { rear: { hp: 37.25, hpMax: 120 } },
+      modules: [],
+    };
     const none = { ...intact, armor: {} };
     for (const aud of ["public_live", "broadcast", "public_replay"]) {
       const a = projectDamageForViewer(intact, ctx(aud));
