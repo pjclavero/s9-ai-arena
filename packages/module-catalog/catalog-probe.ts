@@ -412,7 +412,11 @@ function durability(tested: ModuleDefinition, catalog: ModuleDefinition[], base:
     for (let i = 0; i < DURABILITY_TICKS; i++) {
       battle.step();
       const d = battle.getVehicles().find((v) => v.id === "veh_1")!;
-      rec.ch.modules.push(["D", battle.tick, [...d.modules.values()].map((m) => [m.spec.slot, d.stateOf(m.spec.slot)])]);
+      rec.ch.modules.push([
+        "D",
+        battle.tick,
+        [...d.modules.values()].map((m) => [m.spec.slot, d.stateOf(m.spec.slot)]),
+      ]);
       rec.full.push(["D", battle.tick, d.alive]);
     }
     rec.full.push(["D-final", battle.stateHash()]);

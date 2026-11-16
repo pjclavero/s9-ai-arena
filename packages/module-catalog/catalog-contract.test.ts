@@ -60,7 +60,10 @@ const SYNTHETIC: ModuleDefinition[] = (schema.properties.category.enum as Module
     massKg: 10,
     costCredits: 10,
     size: "S",
-    hp: 10,
+    // G1.2 · hp por encima de un impacto de módulo (cañón: ~16 de daño de módulo por
+    // impacto): con hp 10 cualquier impacto lo destruía con o sin la mutación (×0,25) y el
+    // hp no podía tener efecto observable (antes «pasaba» por el hp vivo copiado al estado).
+    hp: 100,
   }));
 const catalog = [...realCatalog, ...SYNTHETIC];
 const CATEGORIES = schema.properties.category.enum as ModuleCategory[];
