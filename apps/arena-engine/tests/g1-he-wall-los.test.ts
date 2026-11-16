@@ -216,6 +216,10 @@ interface Outcome {
   /** Daño efectivo de cada onda recibida, en orden (para comparar el centro de la onda). */
   waves: Map<string, number[]>;
   events: Map<string, any[]>;
+  /** Ondas de su propio HE que recibe el tirador (sólo posible con fuego amigo, P3-6). */
+  selfSplash: number;
+  /** hp de casco que el tirador pierde por su propia onda (medido en el estado). */
+  selfHullLost: number;
 }
 
 /** Batalla: el artillero dispara HE contra `aim` (un muro); las víctimas no se mueven. */
@@ -224,7 +228,7 @@ function run(
   aim: Vec2,
   victims: Record<string, Vec2>,
   extraWalls: { id: string; position: Vec2; halfW: number; halfH: number }[],
-  opts: { jitter?: readonly number[] } = {},
+  opts: { jitter?: readonly number[]; friendlyFire?: boolean } = {},
 ): Outcome {
   const map = emptyArena();
   map.walls.push(...extraWalls);
@@ -236,7 +240,11 @@ function run(
   const b = new Battle({
     battleId: "g1_he_wall",
     seed: "g1-he-wall",
-    ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 400, respawn: { enabled: false, delayTicks: 0 } }),
+    ruleset: loadRuleset("tdm_mvp@1", {
+      timeLimitTicks: 400,
+      respawn: { enabled: false, delayTicks: 0 },
+      ...(opts.friendlyFire ? { friendlyFire: true } : {}),
+    }),
     map,
     participants: [
       { id: "veh_0", botId: "b0", team: "red", spec: heGunnerNoSpread() },
@@ -252,6 +260,9 @@ function run(
   const splash = new Map(ids.map((k) => [k, 0]));
   const waves = new Map(ids.map((k) => [k, [] as number[]]));
   let wallImpacts = 0;
+  let selfSplash = 0;
+  const shooter = () => b.getVehicles().find((v) => v.id === "veh_0")!;
+  const hull0 = shooter().hullHp;
   // P3-3 (revisión): los eventos privados emitidos en un tick se entregan en el SIGUIENTE
   // tick de decisión. Se anota en qué paso cae cada impacto y cuál fue el último paso de
   // decisión: los impactos anteriores a él tienen su hit_taken entregado, sin holgura.
@@ -279,7 +290,11 @@ function run(
     }
     for (const r of b.damageRecordsOfLastTick()) {
       const i = Number(r.target.replace("veh_", "")) - 1;
-      if (i < 0) continue;
+      if (i < 0) {
+        expect(r.sourceKind, "el tirador sólo puede recibir su propia onda").toBe("explosion");
+        selfSplash++;
+        continue;
+      }
       expect(r.sourceKind, `${ids[i]} sólo puede recibir la onda`).toBe("explosion");
       splash.set(ids[i]!, splash.get(ids[i]!)! + 1);
       waves.get(ids[i]!)!.push(r.effective);
@@ -292,8 +307,9 @@ function run(
     expect(Math.hypot(p.x - victims[k]!.x, p.y - victims[k]!.y), `${k} se movió`).toBeLessThan(0.05);
   }
   const events = new Map(ids.map((k, i) => [k, bots[i]!.events]));
+  const selfHullLost = hull0 - shooter().hullHp;
   b.free();
-  return { wallImpacts, deliveredImpacts, splash, waves, events };
+  return { wallImpacts, deliveredImpacts, splash, waves, events, selfSplash, selfHullLost };
 }
 
 // Muro interior: x ∈ [60, 62], y ∈ [28, 52]. El artillero en (20, 40) dispara a (60, 40).
@@ -485,5 +501,46 @@ describe("HE_WALL_EXPLOSION_LOS · B · vehículo PEGADO al muro: la boca del ar
     expect(n).toBeGreaterThan(3);
     // Con el centro en la boca (0,25 m dentro del muro) la caída con la distancia daría ~2 % menos.
     for (let i = 0; i < n; i++) expect(Math.abs(a[i]! - b[i]!), `onda ${i}`).toBeLessThan(1e-4 * b[i]!);
+  });
+});
+
+/**
+ * Ronda 3 · P3-6 de la revisión: con FUEGO AMIGO activado, el tirador PEGADO al muro recibe
+ * su propia onda en cada disparo. NO es un cambio de regla de este PR: la regla (explode()
+ * daña a todo vehículo vivo en el radio con línea de visión desde la cara; con fuego amigo,
+ * también al propio equipo y al propio tirador) es la de siempre. Lo que cambia es la
+ * GEOMETRÍA corregida: antes la boca nacía dentro del muro y el propio muro tapaba la onda
+ * (ni el tirador ni nadie la recibía); ahora la onda sale de la cara de su lado, a
+ * ~(R + 0,05) m del centro del tirador, dentro del radio del HE. Este bloque FIJA el
+ * comportamiento actual para que la integración o el usuario decidan la regla con datos
+ * (docs/technical/he-wall-explosion.md): si se decide excluir al tirador de su onda, estos
+ * tests son los que deben cambiar.
+ */
+describe("HE_WALL_EXPLOSION_LOS · B · fuego amigo: autodaño del tirador pegado al muro (P3-6, comportamiento fijado)", () => {
+  const R = heGunnerNoSpread().radiusM;
+  const HUG = { x: 60 - R - 0.05, y: 40 };
+
+  it("fuego amigo ON: el tirador pegado recibe SU onda en CADA impacto (y la víctima oculta, nada)", () => {
+    const out = run(HUG, { x: 75, y: 40 }, { behindWall: { x: 64.5, y: 40 } }, [WALL], { friendlyFire: true });
+    expect(out.wallImpacts).toBeGreaterThan(3);
+    expect(out.selfSplash).toBe(out.wallImpacts);
+    expect(out.selfHullLost).toBeGreaterThan(0);
+    expect(out.splash.get("behindWall")).toBe(0);
+  });
+
+  it("fuego amigo OFF (por defecto): el tirador pegado NO se daña", () => {
+    const out = run(HUG, { x: 75, y: 40 }, { behindWall: { x: 64.5, y: 40 } }, [WALL]);
+    expect(out.wallImpacts).toBeGreaterThan(3);
+    expect(out.selfSplash).toBe(0);
+    expect(out.selfHullLost).toBe(0);
+  });
+
+  it("fuego amigo ON con el tirador LEJOS del muro (fuera del radio): no se daña", () => {
+    const out = run({ x: 20, y: 40 }, { x: 60, y: 40 }, { sameSide: { x: 58.5, y: 44 } }, [WALL], {
+      friendlyFire: true,
+    });
+    expect(out.wallImpacts).toBeGreaterThan(3);
+    expect(out.selfSplash).toBe(0);
+    expect(out.splash.get("sameSide")).toBe(out.wallImpacts);
   });
 });
