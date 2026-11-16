@@ -746,9 +746,11 @@ export class Battle {
           // G1.5 · impacto contra un sólido (que sigue en pie): la onda sale de su CARA, y la
           // línea de visión se decide con la geometría de esa cara, no con un rayo que nace
           // dentro del muro por el redondeo (physics.hasLineOfSightFromSurface).
+          // Ronda 2 (P1-1): el centro de la onda es el punto de la CARA. Sólo difiere de
+          // `impact` si el tramo nació dentro del sólido (boca del arma dentro del muro).
           const surface = target ? null : this.physics.impactSurface(from, angle, dist, hit.entityId, impact);
           this.explode(
-            impact,
+            surface ? surface.point : impact,
             p.damage,
             p.explosionRadiusM,
             poses,
