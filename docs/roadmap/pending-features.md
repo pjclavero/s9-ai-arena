@@ -15,6 +15,8 @@ Categorías:
 Lo que ya está hecho **no** está aquí: se anota en [el registro de completadas](../history/status/completadas-2026-11.md).
 Lo que está roto **no** es una función pendiente: es deuda y está en [technical-debt.md](technical-debt.md).
 
+> **Próxima ola planificada (2026-11-16):** las mejoras acordadas de Web/UX, streaming configurable, retransmisión de replays, coherencia `frozen`, calidad y C3b están registradas en [NEXT_WEB_STREAMING_UX_WAVE.md](NEXT_WEB_STREAMING_UX_WAVE.md). Está marcado `DESIGN_ONLY` y no debe mezclarse con OLA 2 mientras ésta siga en curso.
+
 ## Índice
 
 - [Parciales](#parciales)
