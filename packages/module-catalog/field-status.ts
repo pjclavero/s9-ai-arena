@@ -154,8 +154,8 @@ const ENERGY_LIMITED: readonly ProbeChannel[] = ["projectiles", "mines"];
  * blanco USA su módulo (catalog-probe.ts, Operator): conduce, gira la torreta, dispara,
  * siembra, emite por radio y observa.
  */
-const hp = (consumer: string, governs: readonly ProbeChannel[]): FieldContract =>
-  A(`Vehicle.stateOf (hp/hpMáx) → ${consumer}`, scale(0.25), ["modules"], governs);
+const hp = (consumer: string, governs: readonly ProbeChannel[], extra: Partial<FieldContract> = {}): FieldContract =>
+  A(`Vehicle.stateOf (hp/hpMáx) → ${consumer}`, scale(0.25), ["modules"], governs, extra);
 const V = (consumer: string, perturb: Perturb, sample?: unknown): FieldContract => ({
   status: "VALIDATION_ONLY",
   consumer,
@@ -259,7 +259,10 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     ratedLoadKg: A("vehicle.ts movementCaps (massFactor, D7)", scale(0.1), ["kinematics"], ["kinematics"]),
   },
   power: {
-    hp: hp("vehicle.ts energyGeneration (performanceOf) / passiveDrain → canFire / canDeployMine", ENERGY_LIMITED),
+    // El generador: una batería de 500 EU no se agota en la sonda y su estado no limitaría nada.
+    hp: hp("vehicle.ts energyGeneration (performanceOf) / passiveDrain → canFire / canDeployMine", ENERGY_LIMITED, {
+      carrier: "power.generator@1",
+    }),
     capacityEU: A(
       "vehicle.ts energyCapacity → tickEnergy (tope) → combat.ts canFire / canDeployMine (no_energy)",
       scale(0.05),
@@ -336,11 +339,14 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     // La munición no tiene acción propia: su estado no lo lee nadie (ammoFor no lo mira). Su hp
     // cuenta porque una munición DESTRUIDA deja de absorber daño de módulo (damage.ts: sólo
     // son candidatos los módulos con hp > 0), que pasa al arma.
+    // La de la ametralladora: su cadencia (cooldown/rendimiento) deja ver CUÁNDO se degrada el
+    // arma; con el cañón (un disparo cada 30 ticks) el adelanto no cambiaba ningún disparo.
     hp: A(
       "damage.ts resolveDamage (candidatos con hp > 0: absorbe daño de módulo mientras vive) → arma",
       scale(0.25),
       ["modules"],
       ["projectiles"],
+      { carrier: "ammo.standard@1" },
     ),
     rounds: A("vehicle.ts ModuleRuntime.ammo → combat.ts canFire (no_ammo)", set(2), ["projectiles"], ["projectiles"]),
     damageMultiplier: A(

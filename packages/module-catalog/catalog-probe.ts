@@ -77,6 +77,7 @@ import { loadRuleset } from "../game-rules/index.js";
 import { Battle, type BotAgent } from "../../apps/arena-engine/src/sim/battle.js";
 import type {
   ModuleCategory as EngineCategory,
+  ModuleSpec,
   Vehicle,
   VehicleSpec,
 } from "../../apps/arena-engine/src/sim/vehicle.js";
@@ -488,6 +489,9 @@ function sample(battle: Battle, rec: Recorder, w: Watch): void {
   ch.score.push([t, frame.score]);
 }
 
+/** D con el sumidero inerte (ver DURABILITY_SINK). */
+const withSink = (s: VehicleSpec): VehicleSpec => ({ ...s, modules: [...s.modules, { ...DURABILITY_SINK }] });
+
 /** Participante con su spec resuelto (y, sólo en D0a, transformado). */
 function spec(key: string, loadout: LoadoutInput, catalog: ModuleDefinition[], opts: ProbeOptions): VehicleSpec {
   const s = resolveVehicle(loadout, catalog);
@@ -602,14 +606,32 @@ export const DURABILITY_TICKS = 300;
  * bajo prueba y, si sólo con él no puede hacer nada observable, lo mínimo para que su ESTADO
  * tenga consecuencia de comportamiento:
  *   - arma, munición y mina gastan energía al actuar: llevan además el generador de E;
- *   - el generador sólo cuenta por lo que la energía limita: lleva además el arma de E;
+ *   - el generador sólo cuenta por lo que la energía limita: lleva además el arma y la mina de
+ *     E (lo que gasta energía al actuar), para que la reserva llegue a agotarse sin él;
  *   - la munición y la pieza `utility` no tienen acción propia: su hp cuenta porque, mientras
  *     viven, absorben daño de módulo que si no recibe el arma (damage.ts, candidatos con hp > 0).
  */
+/**
+ * Ronda 4 · Sumidero inerte de D (no es contenido del catálogo: sólo existe en la sonda). Un
+ * módulo sin acción (utility), de 1 kg e indestructible en 300 ticks. Mientras D tenga módulos
+ * vivos con él, cada impacto sigue sorteando el módulo dañado (damage.ts: sólo hay sorteo si
+ * hay candidatos), así que la destrucción del módulo bajo prueba NO desplaza el flujo «combat»
+ * del RNG (con el que también se sortea la dispersión del tirador). Sin él, cualquier hp
+ * «gobernaría» cualquier canal sólo por ese desplazamiento, sin que su consumidor actuara.
+ */
+const DURABILITY_SINK: ModuleSpec = {
+  slot: "probe_sink",
+  moduleId: "probe.sink@0",
+  category: "utility",
+  hp: 1e6,
+  massKg: 1,
+  costCredits: 0,
+};
+
 const DURABILITY_KIT: Readonly<Record<string, readonly EngineCategory[]>> = {
   chassis: [],
   movement: ["movement"],
-  power: ["power", "weapon"],
+  power: ["power", "weapon", "mine"],
   sensor: ["sensor"],
   weapon: ["weapon", "power"],
   ammo: ["weapon", "power"],
@@ -670,7 +692,7 @@ function durability(
     ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 100000, scoreToWin: 999 }),
     map,
     participants: [
-      { id: "veh_1", botId: "bD", team: "red", spec: spec("durability:veh_1", target, catalog, opts) },
+      { id: "veh_1", botId: "bD", team: "red", spec: withSink(spec("durability:veh_1", target, catalog, opts)) },
       { id: "veh_2", botId: "bP", team: "blue", spec: spec("durability:veh_2", POUNDER, catalog, opts) },
       { id: "veh_3", botId: "bR", team: "red", spec: spec("durability:veh_3", ALLY, catalog, opts) },
     ],

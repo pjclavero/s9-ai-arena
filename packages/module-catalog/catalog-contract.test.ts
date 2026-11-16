@@ -770,7 +770,8 @@ interface Ablation {
   readonly consumer: string;
   /** Campos cuyo consumidor es éste: «categoría.campo» o «*.campo» (común). */
   readonly fields: readonly string[];
-  readonly install: () => Restore;
+  /** Instala la interposición para el caso `c` (algunas se limitan a su categoría). */
+  readonly install: (c: Case) => Restore;
 }
 
 const ABLATIONS: Readonly<Record<string, Ablation>> = {
@@ -801,16 +802,16 @@ const ABLATIONS: Readonly<Record<string, Ablation>> = {
   },
   MODULE_STATE: {
     consumer:
-      "vehicle.ts stateOf: ignora el hp (operativo salvo apagado); performanceOf/activeModulesOf/canFire lo leen",
+      "vehicle.ts stateOf, SÓLO para los módulos de la categoría del caso: ignora el hp (operativo salvo apagado); lo leen performanceOf / activeModulesOf / canFire / canDeployMine / validateRadio",
     fields: ["movement.hp", "power.hp", "sensor.hp", "weapon.hp", "mine.hp", "radio.hp"],
-    install: () =>
+    install: (c) =>
       patch(
         VP,
         "stateOf",
-        () =>
+        (orig) =>
           function (this: any, slot: string) {
             const m = this.modules.get(slot);
-            if (!m) return "destroyed";
+            if (!m || m.spec.category !== c.cat) return orig.call(this, slot);
             return m.offline ? "offline" : "operational";
           },
       ),
@@ -1091,7 +1092,7 @@ describe("CATALOG_CONTRACT · D4 · ablación: con el consumidor anulado cambia 
     const governs = fieldContract(c.cat, c.field)!.governs ?? [];
     it(`ablación ${id} · ${caseName(c)}: consumidor anulado ⇒ cambia [${governs.join(", ")}]`, () => {
       const m = mutatedCase(c);
-      const restore = ABLATIONS[id]!.install();
+      const restore = ABLATIONS[id]!.install(c);
       let ablated: ProbeTrace;
       try {
         ablated = probeTrace(m.catalog, refOf(c.target), m.loadout);
