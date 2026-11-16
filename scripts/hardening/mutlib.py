@@ -53,6 +53,10 @@ class Mutant:
     # Fallo esperado (texto para la matriz MUTANT / TEST / EXPECTED FAILURE / ACTUAL).
     expect: str = ""
     extra: dict = field(default_factory=dict)
+    # Sustituciones literales ADICIONALES en el mismo fichero: (ancla, sustituto, recuento
+    # exacto). Se reemplazan todas las apariciones; si algún recuento no cuadra, el ancla del
+    # mutante cuenta como no aplicable (-1). Para mutantes que tocan varias líneas a la vez.
+    also: list = field(default_factory=list)
 
 
 def _env() -> dict:
@@ -73,13 +77,19 @@ def _clean(wt: str) -> bool:
 
 
 def _count(src: str, m: Mutant) -> int:
+    if any(src.count(old) != n for old, _, n in m.also):
+        return -1
     return len(re.findall(m.old, src, re.S | re.M)) if m.regex else src.count(m.old)
 
 
 def _apply(src: str, m: Mutant) -> str:
     if m.regex:
-        return re.sub(m.old, m.new, src, count=1, flags=re.S | re.M)
-    return src.replace(m.old, m.new, 1)
+        src = re.sub(m.old, m.new, src, count=1, flags=re.S | re.M)
+    else:
+        src = src.replace(m.old, m.new, 1)
+    for old, new, _ in m.also:
+        src = src.replace(old, new)
+    return src
 
 
 def _sha(data: bytes) -> str:
