@@ -39,6 +39,7 @@
  *    efecto observable aunque el proyectil no impacte en un muro, y el impactado directo
  *    queda excluido de su propia onda (D-B6). (Los impactos en MURO también dañan con la
  *    onda desde G1.5: ver apps/arena-engine/tests/g1-he-wall-los.test.ts.)
+ *  - G1.2: además, una batalla de DURABILIDAD (ver `durability`) para el hp de los módulos.
  *  - G1: E siembra durante más tiempo (hasta la decisión 120) para que las cargas y el
  *    enfriamiento de la mina limiten de verdad cuántas minas hay en el terreno.
  * Selección de módulos: por categoría y datos (slot que acepta la categoría, sector del
@@ -346,6 +347,76 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
   } finally {
     battle.free();
   }
+  durability(tested, catalog, loadout ?? loadoutWith(tested, catalog), rec);
   const channels = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, sha(rec.ch[c])])) as Record<ProbeChannel, string>;
   return { channels, full: sha([channels, rec.full]) };
+}
+
+/** Quieto: no decide nada (el blanco de la batalla de durabilidad). */
+class Sitter implements BotAgent {
+  constructor(readonly botId: string) {}
+  decide(obs: any) {
+    return { forTick: obs.tick };
+  }
+}
+/** Dispara sin parar contra un punto fijo. */
+class Pounder implements BotAgent {
+  constructor(
+    readonly botId: string,
+    private target: { x: number; y: number },
+  ) {}
+  decide(obs: any) {
+    return { forTick: obs.tick, turret: { targetPoint: this.target }, fire: ["turret_main"] };
+  }
+}
+
+export const DURABILITY_TICKS = 300;
+
+/**
+ * G1.2 · Batalla de DURABILIDAD: el `hp` de un módulo sólo tiene efecto observable cuando
+ * el módulo recibe daño (cambia su estado → su rendimiento). En la batalla principal el
+ * daño de módulo se reparte por masa (damage.ts: `weighted` por massKg) y un módulo ligero
+ * (radio, sensor, mina) casi nunca lo recibe en 450 ticks: con el canal antiguo (hp vivo,
+ * que ARRANCA como copia del spec) el gate lo daba por usado sin que nada cambiara. Aquí el
+ * blanco «D» lleva SÓLO el módulo bajo prueba (las entradas de su categoría en el loadout
+ * de E; para un arma, con su munición), así que todo el daño de módulo va a él, y un
+ * cañón le dispara a 12 m sin parar. Se registra, por tick, el ESTADO de cada módulo de D
+ * (canal `modules`), no su hp.
+ */
+function durability(tested: ModuleDefinition, catalog: ModuleDefinition[], base: LoadoutInput, rec: Recorder): void {
+  const catOf = (e: LoadoutModuleEntry) => findModule(catalog, e.moduleId)?.category;
+  const keep = tested.category === "ammo" ? "weapon" : tested.category;
+  const target: LoadoutInput = {
+    ...base,
+    loadoutId: "ldt_probe05",
+    modules: tested.category === "chassis" ? [] : base.modules.filter((e) => catOf(e) === keep),
+  };
+  const map = emptyArena(120, 80);
+  map.spawns = [
+    { team: "red", position: { x: 40, y: 40 }, heading: 0 },
+    { team: "blue", position: { x: 52, y: 40 }, heading: Math.PI },
+  ];
+  const battle = new Battle({
+    battleId: "catalog-probe-durability",
+    seed: "catalog-probe-durability",
+    ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 100000, scoreToWin: 999 }),
+    map,
+    participants: [
+      { id: "veh_1", botId: "bD", team: "red", spec: resolveVehicle(target, catalog) },
+      { id: "veh_2", botId: "bP", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
+    ],
+  });
+  battle.attachBot("veh_1", new Sitter("bD"));
+  battle.attachBot("veh_2", new Pounder("bP", { x: 40, y: 40 }));
+  try {
+    for (let i = 0; i < DURABILITY_TICKS; i++) {
+      battle.step();
+      const d = battle.getVehicles().find((v) => v.id === "veh_1")!;
+      rec.ch.modules.push(["D", battle.tick, [...d.modules.values()].map((m) => [m.spec.slot, d.stateOf(m.spec.slot)])]);
+      rec.full.push(["D", battle.tick, d.alive]);
+    }
+    rec.full.push(["D-final", battle.stateHash()]);
+  } finally {
+    battle.free();
+  }
 }

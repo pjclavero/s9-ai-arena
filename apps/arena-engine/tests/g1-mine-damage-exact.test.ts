@@ -144,7 +144,7 @@ function run(catalog: ModuleDefinition[], offsets: { x: number; y: number }[], t
       return Math.hypot(p.x - MINE_AT.x, p.y - MINE_AT.y);
     };
     const key = (id: string) => `${Math.round(at(id) * 1000) / 1000}m`;
-    const rename = <T,>(m: Map<string, T>) => new Map([...m].map(([id, v]) => [key(id), v]));
+    const rename = <T>(m: Map<string, T>) => new Map([...m].map(([id, v]) => [key(id), v]));
     return {
       deployTick,
       detonationTick,

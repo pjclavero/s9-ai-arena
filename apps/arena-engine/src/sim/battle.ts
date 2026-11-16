@@ -747,7 +747,17 @@ export class Battle {
           // línea de visión se decide con la geometría de esa cara, no con un rayo que nace
           // dentro del muro por el redondeo (physics.hasLineOfSightFromSurface).
           const surface = target ? null : this.physics.impactSurface(from, angle, dist, hit.entityId, impact);
-          this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team, "explosion", directTarget, surface);
+          this.explode(
+            impact,
+            p.damage,
+            p.explosionRadiusM,
+            poses,
+            p.ownerId,
+            p.team,
+            "explosion",
+            directTarget,
+            surface,
+          );
         }
         this.sounds.push({ position: impact, kind: "explosion", intensity: 1 });
         continue; // el proyectil muere al impactar

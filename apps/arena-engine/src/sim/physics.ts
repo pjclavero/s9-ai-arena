@@ -363,9 +363,18 @@ export class PhysicsWorld {
     // El resto de sólidos, con el rayo de siempre (los que tocan P ya están decididos).
     const ignore = ignoreId ? this.bodies.get(ignoreId)?.collider.handle : undefined;
     const ray = new RAPIER.Ray(P, { x: dx / dist, y: dy / dist });
-    const hit = this.world.castRay(ray, dist, true, undefined, undefined, undefined, undefined, (c: RAPIER.Collider) => {
-      return c.handle !== ignore && !touching.has(c.handle);
-    });
+    const hit = this.world.castRay(
+      ray,
+      dist,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (c: RAPIER.Collider) => {
+        return c.handle !== ignore && !touching.has(c.handle);
+      },
+    );
     if (!hit) return true;
     const id = this.colliderToId.get(hit.collider.handle);
     const kind = id ? this.kinds.get(id) : undefined;

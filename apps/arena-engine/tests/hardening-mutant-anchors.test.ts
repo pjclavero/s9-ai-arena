@@ -15,9 +15,13 @@ const EXPECTED: Record<string, number> = { mc: 17, md: 22, mb: 13, g1: 9 };
 describe("G1.4 · anclas de las matrices de mutantes (scripts/hardening)", () => {
   for (const [matrix, count] of Object.entries(EXPECTED)) {
     it(`${matrix}-mutants.py: ${count} mutantes, cada ancla aparece exactamente una vez`, () => {
-      const r = spawnSync("python3", ["-I", "-B", join(ROOT, "scripts/hardening", `${matrix}-mutants.py`), ROOT, "/dev/null", "--dry-run"], {
-        encoding: "utf8",
-      });
+      const r = spawnSync(
+        "python3",
+        ["-I", "-B", join(ROOT, "scripts/hardening", `${matrix}-mutants.py`), ROOT, "/dev/null", "--dry-run"],
+        {
+          encoding: "utf8",
+        },
+      );
       expect(r.error, String(r.error)).toBeUndefined();
       const out = JSON.parse(r.stdout);
       expect(out.bad, r.stdout).toEqual({});

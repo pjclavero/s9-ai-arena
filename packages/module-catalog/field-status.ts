@@ -98,12 +98,16 @@ export const IDENTITY_FIELDS: readonly string[] = ["id", "version", "category", 
 
 /** Campos comunes a todo módulo (propiedades raíz del esquema). */
 export const COMMON_FIELDS: Readonly<Record<string, FieldContract>> = {
-  massKg: A("resolve/index.ts → VehicleSpec.massKg → physics.addVehicle / movementCaps (D7)", scale(4, 50), ["kinematics"]),
+  massKg: A("resolve/index.ts → VehicleSpec.massKg → physics.addVehicle / movementCaps (D7)", scale(4, 50), [
+    "kinematics",
+  ]),
   costCredits: V("validator: budget_exceeded / module_cost_cap_exceeded", scale(50, 1000)),
   size: V("validator: slot_size_exceeded (SIZE_RANK de la ranura)", (v) => (v === "XL" ? "S" : "XL")),
   hp: A("vehicle.ts ModuleRuntime.hp → stateFromHealth / applyDamage", scale(0.25), ["modules"]),
   "power.passiveEUs": { ...A("vehicle.ts passiveDrain → energía", scale(6, 1), ["energy"]), sample: 2 },
-  "power.perActionEU": A("combat.ts canFire / fire / canDeployMine / deployMine (coste por acción)", scale(8, 5), ["energy"]),
+  "power.perActionEU": A("combat.ts canFire / fire / canDeployMine / deployMine (coste por acción)", scale(8, 5), [
+    "energy",
+  ]),
   // El gate lo prueba con DOS copias del módulo (ver catalog-contract.test.ts).
   maxPerVehicle: V("validator: duplicate_limit_exceeded (maxPerVehicle)", (v) => (v === 1 ? 3 : 1), 3),
   requiresChassis: V("validator: incompatible_chassis (requiresChassis)", set(["chassis.nonexistent"]), [
@@ -123,13 +127,19 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     // (resolve → VehicleSpec.turretMounts[slot.id]); el id de ranura ya no es sólo de validación.
     "slots[].id": A(
       "resolve → VehicleSpec.turretMounts[slot.id] (montura D-B2) + validator unknown_slot",
-      (v) => `${String(v)}_x`, ["turret"]),
+      (v) => `${String(v)}_x`,
+      ["turret"],
+    ),
     "slots[].accepts": V("validator: slot_type_mismatch", set(["utility"])),
     "slots[].maxSize": V("validator: slot_size_exceeded", set("S")),
     "slots[].sector": V("validator: slot_type_mismatch (sector de blindaje de la ranura)", rotate(SECTORS)),
     // D-B2 (MB): la cinemática de torreta es de la MONTURA de la ranura del chasis, no del arma.
-    "slots[].mount.turretRateRads": A("resolve → VehicleSpec.turretMounts → vehicle.ts turretRate (giro)", scale(0.2), ["turret"]),
-    "slots[].mount.turretArcRad": A("resolve → VehicleSpec.turretMounts → combat.ts canFire (out_of_arc)", set(0.5), ["events"]),
+    "slots[].mount.turretRateRads": A("resolve → VehicleSpec.turretMounts → vehicle.ts turretRate (giro)", scale(0.2), [
+      "turret",
+    ]),
+    "slots[].mount.turretArcRad": A("resolve → VehicleSpec.turretMounts → combat.ts canFire (out_of_arc)", set(0.5), [
+      "events",
+    ]),
   },
   movement: {
     maxSpeedMs: A("vehicle.ts movementCaps → physics.driveVehicle", scale(0.3), ["kinematics"]),
@@ -152,9 +162,13 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     damage: A("combat.ts fire (daño del proyectil)", scale(3), ["damage"]),
     cooldownTicks: A("combat.ts fire (cooldownUntilTick)", intScale(3), ["projectiles"]),
     projectileSpeedMs: A("combat.ts fire (velocidad) + resolve/projectile.ts (vida)", scale(0.5), ["projectiles"]),
-    rangeM: A("resolve/projectile.ts → ModuleSpec.projectileLifetimeTicks → combat.ts fire (P-2)", scale(0.1), ["projectiles"]),
+    rangeM: A("resolve/projectile.ts → ModuleSpec.projectileLifetimeTicks → combat.ts fire (P-2)", scale(0.1), [
+      "projectiles",
+    ]),
     spreadRad: A("combat.ts fire (dispersión con el RNG del motor)", scale(10, 0.05), ["projectiles"]),
-    acceptsAmmo: A("combat.ts ammoFor (munición montada) + validator incompatible_ammo", set(["ammo.none_x"]), ["projectiles"]),
+    acceptsAmmo: A("combat.ts ammoFor (munición montada) + validator incompatible_ammo", set(["ammo.none_x"]), [
+      "projectiles",
+    ]),
   },
   ammo: {
     rounds: A("vehicle.ts ModuleRuntime.ammo → combat.ts canFire (no_ammo)", set(2), ["projectiles"]),
