@@ -27,7 +27,6 @@ deuda que los sigue. La causa técnica completa está en [technical-debt.md](tec
 | Una página de «Mis bots» o de la lista de bots puede salir con menos elementos de los pedidos | la visibilidad se filtra después de leer 200 filas | producción y `main` | [TD-068](technical-debt.md#td-068) |
 | Un error de filtro al paginar se presenta como «cursor inválido» | el cursor se hace responsable de cualquier error de conversión | `main` | [TD-067](technical-debt.md#td-067) |
 | Un doble clic en «Crear bot» puede dar un error | carrera con `UNIQUE(owner_id, name)` (sin re-comprobar) | producción y `main` | [TD-013](technical-debt.md#td-013) |
-| Un bot usado en un torneo no puede inscribirse en otro | la versión pasa a `frozen` (sin re-comprobar) | producción y `main` | [TD-013](technical-debt.md#td-013) |
 | Al añadir un miembro por email, el mensaje revela si la cuenta existe | alta inmediata sin invitación (sin re-comprobar) | producción y `main` | [TD-041](technical-debt.md#td-041) |
 | No se puede borrar un mapa ni una versión de mapa | no hay operación de borrado de mapas | producción y `main` | [TD-042](technical-debt.md#td-042) |
 

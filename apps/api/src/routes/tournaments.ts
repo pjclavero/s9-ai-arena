@@ -13,6 +13,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
 import {
+  assertTournamentEligible,
   entryEligibilityGate,
   excludeTournamentEntry,
   replaceIneligibleEntry,
@@ -296,9 +297,10 @@ export function tournamentRoutes(
     if (!bot) throw badRequest("botId desconocido");
     if (bot.owner_id !== req.auth!.userId) throw forbidden("Solo el dueño inscribe su bot");
     const v = await db("bot_versions").where({ bot_id: botId, version }).first();
-    if (!v || v.state !== "published") {
-      throw conflict("bot_not_published", "Solo se inscriben versiones publicadas (no suspendidas ni retiradas)");
-    }
+    // FROZEN-REUSE (B2-B4) · `published` o `frozen` (congelada por un torneo anterior:
+    // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
+    // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
+    await assertTournamentEligible(db, v);
     // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente con una versión que
     // ya no lo es se puede cambiar por otra válida (nunca se sustituye sola).
     const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
@@ -361,6 +363,9 @@ export function tournamentRoutes(
     await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo
     await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
     // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
+    // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
+    // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
+    // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
     for (const e of entries) {
       const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();
       if (v.state === "published") {

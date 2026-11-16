@@ -84,10 +84,14 @@ export function TournamentsHelp() {
         <li>
           Un organizador (rol «organizer») crea el torneo con su formato y su modo; nace con inscripciones abiertas.
         </li>
-        <li>El dueño de cada bot lo inscribe con una de sus versiones publicadas y elegibles (con su loadout).</li>
         <li>
-          Al cerrar las inscripciones, las versiones inscritas quedan <strong>congeladas</strong>, se genera el
-          calendario y la plataforma juega las batallas sola.
+          El dueño de cada bot lo inscribe con una de sus versiones publicadas o congeladas (Frozen / Inmutable) que
+          sean elegibles (con su loadout).
+        </li>
+        <li>
+          Al cerrar las inscripciones, las versiones inscritas quedan <strong>congeladas</strong> (inmutables: mismo
+          código y loadout para siempre), se genera el calendario y la plataforma juega las batallas sola. Congelada no
+          significa «usada»: la misma versión puede inscribirse después en otros torneos, sin crear una nueva.
         </li>
         <li>Cada batalla terminada actualiza el rating de sus bots en el ranking de ese modo.</li>
       </ol>

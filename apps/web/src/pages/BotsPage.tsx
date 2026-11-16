@@ -61,6 +61,7 @@ import { FormError, LiveStatus } from "../ui/primitives.js";
 import { BOT_PANEL_SECTIONS, botHref, parseBotsRoute, sectionLabel, type BotSection } from "./bot-nav.js";
 import { BotVisibilityCard, botVisibilityLabel } from "../visibility.js";
 import { isBattleEligible, VersionEligibilityNote, type BattleEligibilityInfo } from "../version-eligibility.js";
+import { FROZEN_LABEL } from "../tournament-entry.js";
 import { slotName } from "../help/names.js";
 import { BotBattlesSection, BotReplaysSection } from "./BotActivity.js";
 import { useSessionDraft } from "../ui/draft.js";
@@ -1313,6 +1314,10 @@ function BotsWorkspace(props: {
                       <td>
                         {v.state}
                         {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
+                        {/* FROZEN-REUSE · congelada = inmutable, no «usada»: sigue pudiendo competir. */}
+                        {v.state === "frozen" && (
+                          <strong data-testid={`frozen-badge-${v.version}`}> · {FROZEN_LABEL}</strong>
+                        )}
                         {pendingActionFor(v.state) && <small> · {pendingActionFor(v.state)}</small>}
                         {v.createdAt && (
                           <>

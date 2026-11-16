@@ -17,6 +17,13 @@ import {
   modeName,
   type ParticipantLike,
 } from "../battle-result.js";
+import {
+  FROZEN_LABEL,
+  entryVersionLabel,
+  tournamentEntryChoices,
+  type EntryChoices,
+  type EntryVersion,
+} from "../tournament-entry.js";
 
 export interface TournamentBattle {
   id: string;
@@ -93,13 +100,52 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
     return () => clearInterval(timer);
   }, [loadBattles]);
 
-  // Inscripción de un bot propio (versión publicada); la API valida y autoriza.
+  // Inscripción de un bot propio (versión publicada o congelada y elegible); la API valida y autoriza.
   const [ownBots] = useResource(
     () => api<{ items: OwnBot[] }>("GET", `/bots?ownerId=${encodeURIComponent(props.me.id)}`),
     [props.me.id],
   );
   const [entryBot, setEntryBot] = useState("");
   const [entryMsg, setEntryMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  // FROZEN-REUSE (B8) · versiones del bot elegido: una `frozen` de un torneo anterior se
+  // ofrece («Frozen / Inmutable») si es elegible. Si no cargan, se cae a la última
+  // publicada del listado (comportamiento anterior) y decide la API.
+  const [entryVersions, setEntryVersions] = useState<
+    | { botId: string; status: "loading" }
+    | { botId: string; status: "error" }
+    | { botId: string; status: "ready"; choices: EntryChoices; items: EntryVersion[] }
+    | null
+  >(null);
+  const [entryVersion, setEntryVersion] = useState("");
+  useEffect(() => {
+    setEntryVersion("");
+    if (!entryBot) {
+      setEntryVersions(null);
+      return;
+    }
+    let alive = true;
+    setEntryVersions({ botId: entryBot, status: "loading" });
+    api<EntryVersion[]>("GET", `/bots/${encodeURIComponent(entryBot)}/versions`).then(
+      (items) => {
+        if (!alive) return;
+        if (!Array.isArray(items)) {
+          setEntryVersions({ botId: entryBot, status: "error" });
+          return;
+        }
+        const choices = tournamentEntryChoices(items);
+        setEntryVersions({ botId: entryBot, status: "ready", choices, items });
+        setEntryVersion(choices.defaultVersion != null ? String(choices.defaultVersion) : "");
+      },
+      () => {
+        if (alive) setEntryVersions({ botId: entryBot, status: "error" });
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [entryBot]);
+  const readyVersions = entryVersions?.status === "ready" && entryVersions.botId === entryBot ? entryVersions : null;
+  const chosenVersion = readyVersions?.items.find((v) => String(v.version) === entryVersion);
 
   async function onEnter(e: FormEvent) {
     e.preventDefault();
@@ -109,16 +155,27 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
       setEntryMsg({ kind: "error", text: "Elige un bot" });
       return;
     }
-    if (!bot.latestPublishedVersion) {
-      setEntryMsg({ kind: "error", text: "Ese bot no tiene ninguna versión publicada" });
-      return;
+    let version: number | undefined;
+    if (readyVersions) {
+      version = entryVersion ? Number(entryVersion) : undefined;
+      if (version == null) {
+        setEntryMsg({ kind: "error", text: "Ese bot no tiene ninguna versión publicada o congelada que sea elegible" });
+        return;
+      }
+    } else {
+      version = bot.latestPublishedVersion;
+      if (!version) {
+        setEntryMsg({ kind: "error", text: "Ese bot no tiene ninguna versión publicada" });
+        return;
+      }
     }
+    const frozen = readyVersions?.items.find((v) => v.version === version)?.state === "frozen";
     try {
       await api("POST", `/tournaments/${encodeURIComponent(props.id)}/entries`, {
         botId: bot.id,
-        version: bot.latestPublishedVersion,
+        version,
       });
-      setEntryMsg({ kind: "ok", text: `${bot.name} inscrito (v${bot.latestPublishedVersion})` });
+      setEntryMsg({ kind: "ok", text: `${bot.name} inscrito (v${version})${frozen ? ` · ${FROZEN_LABEL}` : ""}` });
       reloadDetail();
     } catch (err) {
       setEntryMsg({ kind: "error", text: (err as Error).message || "no se pudo inscribir" });
@@ -173,11 +230,47 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                         ownBots.data.items.map((b) => (
                           <option key={b.id} value={b.id}>
                             {b.name}
-                            {b.latestPublishedVersion ? ` (v${b.latestPublishedVersion})` : " (sin publicar)"}
+                            {b.latestPublishedVersion ? ` (v${b.latestPublishedVersion})` : ""}
                           </option>
                         ))}
                     </select>
                   </label>{" "}
+                  {readyVersions && (
+                    <label>
+                      Versión{" "}
+                      <select
+                        aria-label="versión a inscribir"
+                        value={entryVersion}
+                        onChange={(e) => setEntryVersion(e.target.value)}
+                      >
+                        {readyVersions.choices.selectable.length === 0 && (
+                          <option value="">— ninguna versión inscribible —</option>
+                        )}
+                        {readyVersions.choices.selectable.map((v) => (
+                          <option key={v.version} value={String(v.version)}>
+                            {entryVersionLabel(v)}
+                          </option>
+                        ))}
+                        {readyVersions.choices.blocked.map((b) => (
+                          <option key={`blocked-${b.version.version}`} value={`blocked-${b.version.version}`} disabled>
+                            {entryVersionLabel(b.version)} · No elegible — {b.reason}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}{" "}
+                  {entryVersions?.status === "error" && entryVersions.botId === entryBot && (
+                    <small className="muted" data-testid="entry-versions-unavailable">
+                      No se pudieron cargar sus versiones: se usará la última publicada y la plataforma comprobará si es
+                      elegible.
+                    </small>
+                  )}
+                  {chosenVersion?.state === "frozen" && (
+                    <p className="note" data-testid="entry-frozen-note">
+                      {FROZEN_LABEL}: esta versión ya compitió en otro torneo. Se inscribe tal cual (mismo código y
+                      loadout); no se crea ninguna versión nueva ni cambia su estado.
+                    </p>
+                  )}
                   <button type="submit">Inscribir</button>{" "}
                   {(() => {
                     const chosen =

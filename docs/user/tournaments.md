@@ -44,12 +44,13 @@ El formulario se muestra a todos, pero sin el rol verás «Requiere rol organize
 
 ## Inscribir un bot
 
-En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → **«Inscribir»**. Se inscribe una **versión publicada y elegible**, junto con su equipamiento, y ambos quedan fijados para el torneo. Puedes inscribir bots **privados, de equipo o públicos**: inscribirlo no cambia su visibilidad ni la de su código. Si el torneo tiene retransmisión pública y el bot no es público, la web te avisa: «Este bot es privado. Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.»
+En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → elige la **versión** (se propone la más reciente que se puede inscribir) → **«Inscribir»**. Se inscribe una **versión publicada o congelada («Frozen / Inmutable») y elegible**, junto con su equipamiento, y ambos quedan fijados para el torneo. Puedes inscribir bots **privados, de equipo o públicos**: inscribirlo no cambia su visibilidad ni la de su código. Si el torneo tiene retransmisión pública y el bot no es público, la web te avisa: «Este bot es privado. Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.»
 
 | Mensaje | Causa |
 |---|---|
 | «X inscrito (vN)» | Correcto. |
-| «Ese bot no tiene ninguna versión publicada» | Publica primero una versión ([Bots](bots.md)). |
+| «Ese bot no tiene ninguna versión publicada o congelada que sea elegible» | Publica primero una versión ([Bots](bots.md)). |
+| «X inscrito (vN) · Frozen / Inmutable» | Correcto: la versión ya compitió en otro torneo y se inscribe tal cual. |
 | «El bot ya está inscrito en este torneo» | Ya inscrito. |
 | «Las inscripciones no están abiertas» | Torneo cerrado. |
 | La versión «no es elegible» | Su equipamiento ya no cumple la validación: crea una versión nueva ([Bots](bots.md#publicar)). |
