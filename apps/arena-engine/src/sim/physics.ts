@@ -77,6 +77,13 @@ export interface RayHit {
   point: Vec2;
 }
 
+/** G1.5 · Punto de impacto sobre la cara de un sólido, con su normal exterior. */
+export interface ImpactSurface {
+  readonly point: Vec2;
+  readonly entityId: string;
+  readonly normal: Vec2;
+}
+
 /**
  * Mundo físico. Envuelve Rapier para que el resto del motor no dependa de su API:
  * si algún día D4 se revisa (Rust, otro motor), solo cambia este archivo.
@@ -277,6 +284,109 @@ export class PhysicsWorld {
       return true;
     });
     return inside;
+  }
+
+  /**
+   * G1.5 · Punto de SUPERFICIE de un impacto: el proyectil que viajaba de `from` en
+   * dirección `angle` golpeó el sólido `entityId` (muro o destructible) en `point`.
+   * Devuelve la normal EXTERIOR de la cara por la que entró (la consulta de rayo de ese
+   * collider concreto, con la misma geometría que el impacto), o `null` si no es un
+   * sólido o ya no existe (destructible destruido por el propio impacto).
+   */
+  impactSurface(from: Vec2, angle: number, maxDistance: number, entityId: string, point: Vec2): ImpactSurface | null {
+    const kind = this.kinds.get(entityId);
+    if (kind !== "wall" && kind !== "destructible") return null;
+    const h = this.bodies.get(entityId);
+    if (!h) return null;
+    this.syncQueries();
+    const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+    const hit = h.collider.castRayAndGetNormal(new RAPIER.Ray(from, dir), maxDistance, true);
+    const normal = hit ? { x: hit.normal.x, y: hit.normal.y } : this.nearestFaceNormal(h.collider, point);
+    return { point: { x: point.x, y: point.y }, entityId, normal };
+  }
+
+  /**
+   * G1.5 · Línea de visión desde un punto de SUPERFICIE (onda de un impacto contra un
+   * sólido). Geometría, sin épsilon:
+   *
+   * El punto de impacto P está, en exacto, sobre la frontera del sólido golpeado C; en
+   * coma flotante (Rapier calcula en f32) cae a ±1e-5 m de ella, a menudo DENTRO. Un rayo
+   * sólido que nace dentro de un collider lo «golpea» a distancia 0, así que
+   * `hasLineOfSight(P, víctima)` decía que el propio muro tapaba la onda (P2 «HE contra
+   * muro»). El arreglo no aleja P: decide C por su geometría.
+   *
+   * Todo collider de muro/destructible es un cuboide (convexo). Si P está en la frontera
+   * de un convexo C con normal exterior n, el semiplano H = {x : (x − P)·n ≤ 0} contiene a
+   * C (hiperplano soporte). Para una víctima V con (V − P)·n > 0, todo punto del segmento
+   * P + t(V − P), t ∈ (0, 1], cumple (·)·n = t(V − P)·n > 0: está FUERA de C. C no puede
+   * tapar. Si (V − P)·n < 0 y P está en el interior relativo de la cara, el segmento entra
+   * en el interior de C nada más salir: C SÍ tapa. (V − P)·n = 0 es rasante: el segmento
+   * va por la cara, no por el interior; no tapa.
+   *
+   * El mismo argumento vale para cualquier otro sólido cuya frontera pase por P (muros
+   * coplanarios: p. ej. un muro de borde del mapa y el perímetro implícito comparten la
+   * cara interior): son los colliders que CONTIENEN a P tras el redondeo, y se clasifican
+   * con la normal de su cara más próxima a P. El resto de sólidos se comprueba con el rayo
+   * de siempre, excluyendo esos.
+   *
+   * Por qué el signo es robusto sin tolerancia: la víctima es el centro de un vehículo,
+   * que nunca está a menos de su radio (≥ 1 m, menos la penetración blanda del solver)
+   * del plano de una cara, mientras que el error de P es del orden de 1e-5 m. El producto
+   * (V − P)·n no puede cambiar de signo por el redondeo de P.
+   *
+   * Residual documentado: si P cae exactamente en una ARISTA (esquina del cuboide) la
+   * normal es la de la cara por la que entró el rayo; una víctima detrás del plano de esa
+   * cara pero visible «doblando la esquina» se trata como tapada (conservador; medida cero).
+   */
+  hasLineOfSightFromSurface(surface: ImpactSurface, to: Vec2, ignoreId?: string): boolean {
+    const P = surface.point;
+    const dx = to.x - P.x;
+    const dy = to.y - P.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6) return true;
+    this.syncQueries();
+    // Sólidos cuya frontera pasa por P: el golpeado y los que contienen P tras el redondeo.
+    const touching = new Map<number, Vec2>();
+    const struck = this.bodies.get(surface.entityId);
+    if (struck) touching.set(struck.collider.handle, surface.normal);
+    this.world.intersectionsWithPoint(P, (c: any) => {
+      const handle: number = typeof c === "number" ? c : c.handle;
+      const id = this.colliderToId.get(handle);
+      const kind = id ? this.kinds.get(id) : undefined;
+      if ((kind === "wall" || kind === "destructible") && !touching.has(handle)) {
+        const col = this.bodies.get(id!)!.collider;
+        touching.set(handle, this.nearestFaceNormal(col, P));
+      }
+      return true;
+    });
+    for (const n of touching.values()) if (dx * n.x + dy * n.y < 0) return false;
+    // El resto de sólidos, con el rayo de siempre (los que tocan P ya están decididos).
+    const ignore = ignoreId ? this.bodies.get(ignoreId)?.collider.handle : undefined;
+    const ray = new RAPIER.Ray(P, { x: dx / dist, y: dy / dist });
+    const hit = this.world.castRay(ray, dist, true, undefined, undefined, undefined, undefined, (c: RAPIER.Collider) => {
+      return c.handle !== ignore && !touching.has(c.handle);
+    });
+    if (!hit) return true;
+    const id = this.colliderToId.get(hit.collider.handle);
+    const kind = id ? this.kinds.get(id) : undefined;
+    return kind !== "wall" && kind !== "destructible";
+  }
+
+  /** Normal exterior de la cara de un cuboide más próxima a `p` (p cerca de su frontera). */
+  private nearestFaceNormal(collider: RAPIER.Collider, p: Vec2): Vec2 {
+    const c = collider.translation();
+    const th = collider.rotation();
+    const he = collider.halfExtents();
+    const cos = Math.cos(th);
+    const sin = Math.sin(th);
+    // Coordenadas locales del cuboide.
+    const lx = (p.x - c.x) * cos + (p.y - c.y) * sin;
+    const ly = -(p.x - c.x) * sin + (p.y - c.y) * cos;
+    // Distancia con signo a cada par de caras (≈ 0 en la cara de P).
+    const fx = Math.abs(lx) - he.x;
+    const fy = Math.abs(ly) - he.y;
+    const local = fx >= fy ? { x: Math.sign(lx) || 1, y: 0 } : { x: 0, y: Math.sign(ly) || 1 };
+    return { x: local.x * cos - local.y * sin, y: local.x * sin + local.y * cos };
   }
 
   /** ¿Hay línea de visión limpia entre dos puntos? Usado por radar y por el daño de área. */
