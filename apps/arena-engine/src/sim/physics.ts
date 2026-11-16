@@ -300,9 +300,78 @@ export class PhysicsWorld {
     if (!h) return null;
     this.syncQueries();
     const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+    // G1.5 ronda 2 (P1-1 de la revisión) · el ORIGEN del tramo ya está dentro (o sobre la
+    // frontera) del sólido golpeado: la boca del arma de un vehículo pegado al muro nace
+    // dentro de él. Rapier da entonces toi = 0, el impacto en el propio origen (DENTRO, no
+    // en la cara) y normal (0,0): la premisa de hasLineOfSightFromSurface (P en la frontera
+    // con normal exterior) no se cumple y la onda atravesaba el muro. No hay épsilon: el
+    // punto de impacto se RECALCULA en exacto como el punto por el que la recta del
+    // proyectil ENTRA en el cuboide, con la normal exterior de esa cara (`entryOnCuboid`).
+    // Es la misma definición que en el caso normal (el rayo hacia delante encuentra la cara
+    // de entrada), extendida hacia atrás cuando el origen ya está dentro.
+    if (h.collider.containsPoint(from)) return this.entrySurface(h.collider, from, dir, entityId, point);
     const hit = h.collider.castRayAndGetNormal(new RAPIER.Ray(from, dir), maxDistance, true);
+    // Origen que justo TOCA la cara (containsPoint puede decir que no en la frontera): toi 0
+    // o normal nula significan lo mismo, el origen no está en espacio libre.
+    if (hit && (hit.timeOfImpact <= 0 || (hit.normal.x === 0 && hit.normal.y === 0)))
+      return this.entrySurface(h.collider, from, dir, entityId, point);
     const normal = hit ? { x: hit.normal.x, y: hit.normal.y } : this.nearestFaceNormal(h.collider, point);
     return { point: { x: point.x, y: point.y }, entityId, normal };
+  }
+
+  /** Superficie de ENTRADA de la recta del proyectil en el cuboide (ver `entryOnCuboid`). */
+  private entrySurface(
+    collider: RAPIER.Collider,
+    from: Vec2,
+    dir: Vec2,
+    entityId: string,
+    point: Vec2,
+  ): ImpactSurface {
+    const e = this.entryOnCuboid(collider, from, dir);
+    // La recta pasa por `from`, que está dentro o sobre el cuboide: siempre corta su frontera.
+    // (Red de seguridad: si no, la cara más próxima al punto, como en el caso sin impacto.)
+    if (!e) return { point: { x: point.x, y: point.y }, entityId, normal: this.nearestFaceNormal(collider, point) };
+    return { point: e.point, entityId, normal: e.normal };
+  }
+
+  /**
+   * G1.5 ronda 2 · Punto por el que la recta `from + t·dir` ENTRA en el cuboide (método de
+   * las placas, en coordenadas locales y en f64): t_entrada = max por eje del t de la placa
+   * cercana; la cara de entrada es la de ese eje, con normal exterior opuesta a `dir` en ese
+   * eje (dir·n < 0). Con el origen dentro, t_entrada ≤ 0 (la entrada queda detrás del
+   * origen, entre el vehículo y la boca); sobre la cara, t_entrada = 0. El punto queda en el
+   * plano de la cara salvo el redondeo f64 (~1e-15 m), así que vuelve a cumplirse la premisa
+   * de hasLineOfSightFromSurface. Un eje con dir exactamente 0 no acota t (recta paralela a
+   * esas caras); si además el origen está fuera de la placa, la recta no corta el cuboide.
+   */
+  private entryOnCuboid(collider: RAPIER.Collider, from: Vec2, dir: Vec2): { point: Vec2; normal: Vec2 } | null {
+    const c = collider.translation();
+    const th = collider.rotation();
+    const he = collider.halfExtents();
+    const cos = Math.cos(th);
+    const sin = Math.sin(th);
+    const o = [(from.x - c.x) * cos + (from.y - c.y) * sin, -(from.x - c.x) * sin + (from.y - c.y) * cos];
+    const u = [dir.x * cos + dir.y * sin, -dir.x * sin + dir.y * cos];
+    const h = [he.x, he.y];
+    let tEnter = -Infinity;
+    let axis = -1;
+    for (let a = 0; a < 2; a++) {
+      if (u[a] === 0) {
+        if (Math.abs(o[a]!) > h[a]!) return null;
+        continue;
+      }
+      const tNear = Math.min((-h[a]! - o[a]!) / u[a]!, (h[a]! - o[a]!) / u[a]!);
+      if (tNear > tEnter) {
+        tEnter = tNear;
+        axis = a;
+      }
+    }
+    if (axis < 0) return null;
+    const nl = axis === 0 ? { x: u[0]! > 0 ? -1 : 1, y: 0 } : { x: 0, y: u[1]! > 0 ? -1 : 1 };
+    return {
+      point: { x: from.x + dir.x * tEnter, y: from.y + dir.y * tEnter },
+      normal: { x: nl.x * cos - nl.y * sin, y: nl.x * sin + nl.y * cos },
+    };
   }
 
   /**
