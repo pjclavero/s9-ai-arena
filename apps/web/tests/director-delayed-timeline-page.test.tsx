@@ -75,35 +75,29 @@ vi.mock("../src/viewer/spectator-client.js", () => ({
   },
 }));
 
-let real = { battle: "running" as "running" | "finished", tournament: "running" };
+type RealStatus = "running" | "finished";
+let real = { battle: "running" as RealStatus, tournament: "running" };
+/** Otras batallas del torneo (detrás de A), con su estado REAL. */
+let others: Record<string, RealStatus> = {};
+const row = (id: string, status: RealStatus) => ({
+  id,
+  tournamentId: "t1",
+  status,
+  mode: "deathmatch",
+  participants: [
+    { botId: `${id}r`, botName: "Rojo", version: 1, team: "red", outcome: status === "finished" ? "win" : undefined },
+  ],
+  result: status === "finished" ? { score: { red: 3, blue: 0 } } : undefined,
+});
 function stubApi() {
   vi.stubGlobal("fetch", async (url: unknown, init?: { method?: string }) => {
     const u = String(url);
     const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response;
-    if (init?.method === "POST" && u === "/api/v1/battles/A/spectate-ticket")
-      return json({ ticket: "t", wsUrl: "/spectate/A" });
+    const ticket = /^\/api\/v1\/battles\/([^/]+)\/spectate-ticket$/.exec(u);
+    if (init?.method === "POST" && ticket) return json({ ticket: "t", wsUrl: `/spectate/${ticket[1]}` });
     if (u === "/api/v1/tournaments/t1") return json({ id: "t1", state: real.tournament });
     if (u === "/api/v1/tournaments/t1/battles")
-      return json({
-        items: [
-          {
-            id: "A",
-            tournamentId: "t1",
-            status: real.battle,
-            mode: "deathmatch",
-            participants: [
-              {
-                botId: "r",
-                botName: "Rojo",
-                version: 1,
-                team: "red",
-                outcome: real.battle === "finished" ? "win" : undefined,
-              },
-            ],
-            result: real.battle === "finished" ? { score: { red: 3, blue: 0 } } : undefined,
-          },
-        ],
-      });
+      return json({ items: [row("A", real.battle), ...Object.entries(others).map(([id, st]) => row(id, st))] });
     throw new Error(`ruta inesperada ${u}`);
   });
 }
@@ -123,6 +117,7 @@ afterEach(() => {
   feeds.clear();
   painted.splice(0);
   real = { battle: "running", tournament: "running" };
+  others = {};
 });
 
 describe("FIX-DIRECTOR-DELAY · /broadcast sigue la línea temporal retrasada", () => {
@@ -163,5 +158,41 @@ describe("FIX-DIRECTOR-DELAY · /broadcast sigue la línea temporal retrasada", 
     expect(stage().getAttribute("data-director-state")).toBe("TARGET_FINISHED");
     expect(screen.getByTestId("broadcast-last-score").textContent).toContain("red 3");
     expect(A.stopped).toBe(true);
+  });
+
+  it("LIVE_PAINTS_ON_AIR_FEED (S5) · A en antena y B ya seguida: la imagen sigue en A (ni el rótulo de espera ni los snapshots de B)", async () => {
+    stubApi();
+    render(<BroadcastPage config={config} />);
+    await waitFor(() => expect(feeds.get("A")).toBeTruthy());
+    const A = feeds.get("A")!;
+    act(() =>
+      A.emit("init", { spectator: { delaySeconds: 30, delayMs: 30_000 }, snapshot: null, finished: false, meta: {} }),
+    );
+    act(() => A.emit("snapshot", { tick: 1, vehicles: [] }));
+    await waitFor(() => expect(stage().getAttribute("data-director-state")).toBe("LIVE"));
+    await waitFor(() => expect(painted).toContain(1));
+
+    // A termina en real y B empieza en real: el director sigue B (candidata) sin ponerla en antena.
+    real = { battle: "finished", tournament: "running" };
+    others = { B: "running" };
+    await waitFor(() => expect(feeds.get("B")).toBeTruthy());
+    const B = feeds.get("B")!;
+    act(() =>
+      B.emit("init", { spectator: { delaySeconds: 30, delayMs: 30_000 }, snapshot: null, finished: false, meta: {} }),
+    );
+    await pause(150);
+    act(() => A.emit("snapshot", { tick: 2, vehicles: [] }));
+    await pause(150);
+    expect(stage().getAttribute("data-director-state")).toBe("LIVE");
+    expect(painted).toContain(2);
+    expect(screen.queryByTestId("broadcast-delay-wait"), "la imagen pinta la espera de B").toBeNull();
+    expect(screen.getByTestId("broadcast-ticker").textContent).toContain("tick 2");
+
+    // B ya emite su contenido retrasado en paralelo: sigue sin verse mientras A esté en antena.
+    act(() => B.emit("snapshot", { tick: 100, vehicles: [] }));
+    await pause(150);
+    expect(painted, "la imagen pinta el feed de la candidata").not.toContain(100);
+    expect(screen.getByTestId("broadcast-ticker").textContent).toContain("tick 2");
+    expect(B.stopped).toBe(false);
   });
 });

@@ -188,11 +188,13 @@ function delayedEndOf(real: RealBattleStatus): DelayedBattleStatus {
  *  - fin retrasado ya visto (`ended`, o feed `ended`) ⇒ terminada, AUNQUE la API aún diga
  *    `running` (con retardo 0 el `result` del WS puede adelantarse a la fila);
  *  - feed `playing` ⇒ en directo, AUNQUE la API ya diga `finished` o la haya retirado;
- *  - feed `connecting`/`pending` ⇒ oculta: su contenido retrasado aún no empezó (en el mundo
- *    retrasado todavía no ha empezado, y un visitante no ve las programadas);
- *  - feed `unavailable` ⇒ sin canal público no hay línea temporal retrasada: en curso mientras
- *    la API la dé `running` (el visor dice «directo no disponible», como siempre); si no, el
- *    feed retirado implica que su cola retrasada ya terminó (el worker la retira tras el retardo);
+ *  - feed `connecting`/`pending`/`unavailable` (no hay contenido retrasado AHORA):
+ *      · si la batalla ya salió en antena (`playedEver`: su feed llegó a `playing`), sigue en
+ *        directo —ni parpadeo a «espera» ni fin—: un corte de transporte no es un evento de la
+ *        competición. Cuánto puede durar eso lo acota el director (cota de fallback);
+ *      · si nunca emitió, OCULTA: ni LIVE ni fin. La fila real NUNCA pone una batalla en antena
+ *        ni la termina (Ronda 2, P1-1: el 4404 de la carrera ticket→attach ya no es «en curso»
+ *        y un feed caído tras el fin real ya no es «terminada»);
  *  - sin seguir: en curso real ⇒ oculta (aún no se sabe dónde va su retardo); terminada real ⇒
  *    oculta salvo que ya estuviera resuelta al arrancar el director (`resolvedAtStart`).
  */
@@ -201,7 +203,7 @@ export function projectBattleStatus(
   feed: FeedStatus | undefined,
   ended: boolean,
   resolvedAtStart: boolean,
-  retrying = false,
+  playedEver = false,
 ): DelayedBattleStatus {
   if (ended) return delayedEndOf(real);
   if (real === "scheduled") return "scheduled";
@@ -212,12 +214,9 @@ export function projectBattleStatus(
       case "ended":
         return delayedEndOf(real);
       case "unavailable":
-        return real === "running" ? "running" : delayedEndOf(real);
       case "connecting":
-        // Reintento de un feed no disponible de una batalla en curso: no se parpadea a «espera».
-        return retrying && real === "running" ? "running" : "hidden";
       case "pending":
-        return "hidden";
+        return playedEver ? "running" : "hidden";
     }
   }
   if (resolvedAtStart) return real === "gone" ? "hidden" : real;
@@ -237,7 +236,8 @@ export interface DelayedProjectionInput {
   ended: ReadonlySet<string>;
   /** Terminadas que ya lo estaban (y no eran la última) al arrancar el director. */
   resolvedAtStart: ReadonlySet<string>;
-  retrying?: ReadonlySet<string>;
+  /** Batallas cuyo feed llegó alguna vez a `playing` (ya salieron en antena). */
+  playedEver?: ReadonlySet<string>;
 }
 
 export interface DelayedProjection {
@@ -264,12 +264,12 @@ export function projectDelayedTimeline(i: DelayedProjectionInput): DelayedProjec
   for (const { battle: b, real } of i.battles) {
     const isEnded = i.ended.has(b.id);
     const atStart = i.resolvedAtStart.has(b.id);
-    const p = projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.retrying?.has(b.id) ?? false);
+    const p = projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);
     const settled = isEnded || atStart || real === "scheduled";
     if (p === "hidden") {
-      const phase = i.feed(b.id)?.phase;
-      const feedOver = phase === "ended" || (phase === "unavailable" && real !== "running");
-      if (!settled && !feedOver) unresolved.push(b.id);
+      // Ronda 2 · un feed no disponible YA NO resuelve la batalla por sí solo (la resolvía con
+      // la fila real): sólo el fin retrasado visto, o la cota de fallback del director (`ended`).
+      if (!settled && i.feed(b.id)?.phase !== "ended") unresolved.push(b.id);
       continue;
     }
     if (p === "running") {
@@ -410,11 +410,31 @@ export interface DirectorOptions {
   /** FIX-DIRECTOR-DELAY · feeds seguidos a la vez como máximo (en antena + siguiente). Def. 2. */
   maxTrackedFeeds?: number;
   /**
-   * FIX-DIRECTOR-DELAY · ms mínimos entre reintentos del feed NO disponible de una batalla que
-   * la API sigue dando en curso (p. ej. el ticket llegó antes que el `attach`). Def. 15 s.
+   * FIX-DIRECTOR-DELAY · ms mínimos entre reintentos de un feed NO disponible (def. 15 s) y
+   * reintentos máximos por batalla (def. 8). La carrera ticket→attach la reintenta antes la
+   * propia línea temporal (4404 previo al init).
    */
   feedRetryMs?: number;
+  maxFeedRetries?: number;
+  /**
+   * Ronda 2 · retardo que se supone a una batalla cuyo feed nunca anunció el suyo (p. ej. nunca
+   * se pudo conectar), para la cota de fallback. Def. el máximo que admite el servidor
+   * (`RULES_LIMITS.delaySeconds.max`): sobreestimarlo sólo retrasa, nunca adelanta.
+   */
+  fallbackDelayMs?: number;
+  /**
+   * Ronda 2 · margen sobre la cota de fallback para un feed que PARECE sano (conectado, sin
+   * `result`) pero cuya batalla la API ya no da en curso: techo contra un feed atascado sin
+   * señal. Def. 15 s. Con un feed que funciona nunca llega: su fin retrasado es anterior.
+   */
+  stallMarginMs?: number;
 }
+
+/**
+ * Máximo `spectator.delaySeconds` que acepta el servidor (packages/game-rules
+ * `RULES_LIMITS.delaySeconds.max`, en ms). Un test ata este valor al de las reglas.
+ */
+export const MAX_SPECTATOR_DELAY_MS = 30_000;
 
 /** Lectura REAL de la API en un ciclo de sondeo. */
 type RealView =
@@ -453,8 +473,18 @@ export class BroadcastDirector {
   private resolvedAtStart: Set<string> | null = null;
   /** Toda batalla vista, en orden de aparición (las que el sondeo deja de listar siguen aquí). */
   private readonly seen = new Map<string, BattleSummary>();
-  /** Feeds no disponibles que se están reintentando con la batalla aún en curso. */
-  private readonly retrying = new Set<string>();
+  /** Reintentos hechos del feed no disponible de cada batalla. */
+  private readonly feedRetries = new Map<string, number>();
+  /** Batallas cuyo feed llegó alguna vez a `playing` (ya salieron en antena). */
+  private readonly playedEver = new Set<string>();
+  /** Retardo anunciado por el feed de cada batalla (ms). */
+  private readonly delayOf = new Map<string, number>();
+  /**
+   * Ronda 2 · hora LOCAL del primer sondeo en que la API dejó de dar la batalla en curso
+   * (terminada, fallida o retirada). Es POSTERIOR al fin real, así que `+ retardo` es una cota
+   * SUPERIOR del fin retrasado: ver `fallbackExpired`.
+   */
+  private readonly notRunningSince = new Map<string, number>();
   /** ¿Ya se emitió alguna batalla en directo? (el aviso de retardo sólo sustituye a la espera inicial) */
   private everLive = false;
   private unsubscribeTimeline: (() => void) | null = null;
@@ -567,29 +597,46 @@ export class BroadcastDirector {
     const realStatus = new Map<string, RealBattleStatus>(visible.map((b) => [b.id, b.status]));
     const statusOf = (id: string): RealBattleStatus => realStatus.get(id) ?? "gone";
 
-    // 1 · Fin retrasado: lo marca el FEED (result retrasado / init con el fin vencido). Un feed
-    //     no disponible de una batalla que la API ya no da en curso también terminó (el worker
-    //     retira la batalla del gateway sólo después del retardo).
+    // 0 · Memoria de la competición real (sólo para la cota de fallback, nunca para el camino
+    //     nominal): desde cuándo la API dejó de dar cada batalla en curso.
     const now = (this.opts.now ?? Date.now)();
+    for (const b of this.seen.values()) {
+      const r = statusOf(b.id);
+      if (r === "running" || r === "scheduled") this.notRunningSince.delete(b.id);
+      else if (!this.notRunningSince.has(b.id)) this.notRunningSince.set(b.id, now);
+    }
+
+    // 1 · Fin retrasado: lo marca el FEED (result retrasado / init con el fin vencido). Si el
+    //     feed NO está sano (no disponible, sin conectar o caído), ningún dato real lo sustituye:
+    //     la batalla sólo se da por terminada al vencer la cota de fallback (fin real observado +
+    //     retardo anunciado), que nunca se adelanta al fin retrasado. Con el feed en apariencia
+    //     sano la cota lleva además un margen (`stallMarginMs`): sólo salta si el feed se atascó
+    //     sin dar señal (latidos sin contenido ni `result`), nunca antes que un feed que funciona.
     for (const id of timeline.tracked()) {
       const st = timeline.status(id);
       if (!st) continue;
+      if (st.delayMs !== null) this.delayOf.set(id, st.delayMs);
+      if (st.phase === "playing") this.playedEver.add(id);
       if (st.phase === "ended") {
         this.ended.add(id);
-        this.retrying.delete(id);
         timeline.release(id);
-      } else if (st.phase === "unavailable") {
-        if (statusOf(id) !== "running") {
-          this.ended.add(id);
-          this.retrying.delete(id);
-          timeline.release(id);
-        } else if (now - st.sinceMs >= (this.opts.feedRetryMs ?? 15_000)) {
-          this.retrying.add(id);
-          timeline.release(id);
-          timeline.track(id);
-        }
-      } else if (st.phase === "playing") {
-        this.retrying.delete(id);
+        continue;
+      }
+      const degraded = st.phase === "unavailable" || st.phase === "connecting" || st.lost;
+      if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {
+        this.ended.add(id);
+        timeline.release(id);
+        continue;
+      }
+      const tries = this.feedRetries.get(id) ?? 0;
+      if (
+        st.phase === "unavailable" &&
+        now - st.sinceMs >= (this.opts.feedRetryMs ?? 15_000) &&
+        tries < (this.opts.maxFeedRetries ?? 8)
+      ) {
+        this.feedRetries.set(id, tries + 1);
+        timeline.release(id);
+        timeline.track(id);
       }
     }
 
@@ -622,7 +669,7 @@ export class BroadcastDirector {
       feed,
       ended: this.ended,
       resolvedAtStart: this.resolvedAtStart,
-      retrying: this.retrying,
+      playedEver: this.playedEver,
     });
 
     let screen: BroadcastScreen;
@@ -653,6 +700,24 @@ export class BroadcastDirector {
       if (notice > 0) screen = { ...screen, delayNoticeMs: notice };
     }
     return screen;
+  }
+
+  /**
+   * Ronda 2 · cota de FALLBACK (sólo con el feed no sano). `notRunningSince` es la hora local del
+   * primer sondeo que vio la batalla fuera de `running`, POSTERIOR al fin real (el motor termina,
+   * el worker escribe la fila y después la sondeamos), y el gateway emite el `result` retrasado
+   * en «fin real + retardo». Así que `notRunningSince + retardo` es ≥ que el fin retrasado: la
+   * cota sólo puede llegar DESPUÉS que el feed (como mucho un sondeo), nunca antes. Usa un único
+   * reloj (el local) y una duración (el retardo anunciado; si no se conoce, el máximo del
+   * servidor), así que no compara relojes de máquinas distintas. Y no es un segundo reloj que
+   * derive del feed: con el feed sano el feed llega antes (la cota es ≥ su fin y además lleva
+   * `stallMarginMs`), así que sólo decide cuando el feed no puede (o se atascó).
+   */
+  private fallbackExpired(id: string, now: number, marginMs: number): boolean {
+    const since = this.notRunningSince.get(id);
+    if (since === undefined) return false; // la API la sigue dando en curso: no hay fin que acotar
+    const delay = this.delayOf.get(id) ?? this.opts.fallbackDelayMs ?? MAX_SPECTATOR_DELAY_MS;
+    return now >= since + delay + marginMs;
   }
 
   private remember(b: BattleSummary): void {

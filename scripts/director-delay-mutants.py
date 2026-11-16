@@ -3,7 +3,8 @@
 
 Cada mutante rompe UNA garantía (el director usa el fin real de una batalla o del torneo, el
 cambio de batalla o la pantalla final se saltan el retardo, el retardo se ignora en una sola
-transición, fuga de resultado, cableado de la página, retardo 0, latido de #282) y debe
+transición, fuga de resultado, cableado de la página, retardo 0, latido de #282; Ronda 2: los
+mutantes de los revisores X2/X2b/X3/X3c/X6/S4/S5 y los de los caminos de fallback F1-F8) y debe
 poner en ROJO el test indicado (fragmento de su nombre en la salida de vitest). Antes de los
 mutantes se ejecuta la línea base (sin mutar): todos los ficheros en VERDE.
 
@@ -33,6 +34,15 @@ STATE = '  const state = closed && unresolved.length > 0 ? "running" : i.state;'
 CHOOSE = "      screen = applyTournamentState(decideScreen(proj.battles, this.currentBattleId), proj.state);"
 FEED = "    const feed = (id: string) => timeline.status(id);"
 BATTLE_LIVE = '      else if (b?.status === "running") screen = { kind: "live", battle: b };'
+TL = "apps/web/src/broadcast/delayed-timeline.ts"
+CL = "apps/web/src/viewer/spectator-client.ts"
+PROJ = "    const p = projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);"
+NOTICE = '    if (screen.kind === "waiting" && !this.everLive) {'
+FEEDSEL = "<LiveScreen config={config} battle={screen.battle} feed={timeline?.feed(screen.battle.id) ?? null} />"
+FALLBACK_PROJ = '        return playedEver ? "running" : "hidden";'
+DEGRADED = ('      const degraded = st.phase === "unavailable" || st.phase === "connecting" || st.lost;\n'
+            "      if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {")
+RETRY_4404 = "        if (r?.code === 4404 && e.init === null && "
 BEAT = (
     "      const beat = () => this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);\n"
     "      beat();\n"
@@ -105,6 +115,74 @@ M = [
     # ── #282 sigue vivo bajo el director nuevo ──────────────────────────────────────
     ("W1 sin latidos del gateway (el defecto de #282) ⇒ el director reconecta en bucle", GW, BEAT, "      void 0;",
      E2E, "WATCHDOG_REGRESSION"),
+    # ── Ronda 2 · revisión funcional (A-REVIEW, own-mutants.py) ──────────────────────
+    ("X2 la transición usa finishedAt de la API", DIR, PROJ,
+     "    const p = (b as any).finishedAt ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
+     UT, "DELAYED_BATTLE_END"),
+    ("X2e finishedAt de la API ⇒ gateway real", DIR, PROJ,
+     "    const p = (b as any).finishedAt ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
+     E2E, "DELAYED_BATTLE_END"),
+    ("X2b transición por temporizador finishedAt + retardo - 5 s", DIR, PROJ,
+     "    const fa = (b as any).finishedAt ? Date.parse((b as any).finishedAt) : NaN;\n"
+     "    const p = Number.isFinite(fa) && Date.now() >= fa + (i.feed(b.id)?.delayMs ?? 0) - 5000 ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
+     UT, "DELAYED_BATTLE_END"),
+    ("X3 el gateway pone en init.finished el fin REAL (sin esperar la cola)", GW,
+     "      finished = feed.dueResult !== null;", "      finished = feed.battle.isFinished();",
+     E2E, "conectar ENTRE el fin real"),
+    ("X3c el init con result (aunque finished=false) cierra la batalla", TL,
+     '        if (msg?.finished) advance("ended");', '        if (msg?.finished || msg?.result) advance("ended");',
+     UT, "TIMELINE_INIT_FINISHED_ONLY"),
+    ("X6 aviso de retardo también entre batallas", DIR, NOTICE, '    if (screen.kind === "waiting") {',
+     UT, "DELAY_NOTICE_ONLY_INITIAL"),
+    # ── Ronda 2 · revisión de seguridad (A-SECURITY-REVIEW, secrev-mutants.py) ────────
+    ("S4 aviso de retardo fuera de la espera inicial (misma mutación que X6)", DIR, NOTICE,
+     '    if (screen.kind === "waiting") {',
+     UT, "DELAY_NOTICE_ONLY_INITIAL"),
+    ("S5 la pantalla en directo pinta el feed de la candidata (2.º WS)", BP, FEEDSEL,
+     "<LiveScreen config={config} battle={screen.battle} feed={timeline?.feed(timeline.tracked().at(-1) ?? screen.battle.id) ?? null} />",
+     PG, "LIVE_PAINTS_ON_AIR_FEED"),
+    # ── Ronda 2 · fallbacks (propios) ─────────────────────────────────────────────────
+    ("F1 fallback: feed no disponible + API running ⇒ en antena (estado real inmediato)", DIR, FALLBACK_PROJ,
+     '        return playedEver || real === "running" ? "running" : "hidden";',
+     UT, "FALLBACK_4404_START"),
+    ("F1b fallback: feed no disponible + API ya no running ⇒ terminada en el acto", DIR, DEGRADED,
+     DEGRADED.replace("if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {",
+                      'if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000)) || (st.phase === "unavailable" && statusOf(id) !== "running")) {'),
+     UT, "FALLBACK_FEED_LOST_AFTER_END"),
+    ("F1c F1b ⇒ la última batalla corta con 4404 (R5)", DIR, DEGRADED,
+     DEGRADED.replace("if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {",
+                      'if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000)) || (st.phase === "unavailable" && statusOf(id) !== "running")) {'),
+     UT, "FALLBACK_4404_TOURNAMENT_END"),
+    ("F2 4404 previo al init terminal (sin reintento)", TL, RETRY_4404, RETRY_4404.replace("if (r?.code", "if (false && r?.code"),
+     UT, "TIMELINE_4404_RETRY"),
+    ("F2e 4404 terminal ⇒ gateway real", TL, RETRY_4404, RETRY_4404.replace("if (r?.code", "if (false && r?.code"),
+     E2E, "FALLBACK_4404_START"),
+    ("F3 la cota de fallback no suma el retardo", DIR, "    return now >= since + delay + marginMs;", "    return now >= since + marginMs;",
+     UT, "FALLBACK_FEED_LOST_AFTER_END"),
+    ("F4 un feed caído (lost) no vence nunca la cota (congelado)", DIR,
+     '      const degraded = st.phase === "unavailable" || st.phase === "connecting" || st.lost;',
+     '      const degraded = st.phase === "unavailable" || st.phase === "connecting";',
+     UT, "FALLBACK_GATEWAY_DOWN"),
+    ("F4b sin techo para un feed atascado sin señal (congelado minutos)", DIR,
+     "      if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {",
+     "      if (this.fallbackExpired(id, now, degraded ? 0 : Infinity)) {",
+     UT, "FALLBACK_FEED_STALLED"),
+    ("F4c el techo del feed atascado no lleva margen (corta un feed sano)", DIR,
+     "      if (this.fallbackExpired(id, now, degraded ? 0 : (this.opts.stallMarginMs ?? 15_000))) {",
+     "      if (this.fallbackExpired(id, now, degraded ? 0 : -60_000)) {",
+     UT, "DELAYED_BATTLE_END"),
+    ("F5 una batalla ya en antena pasa a oculta al fallar su feed (parpadeo/fin adelantado)", DIR, FALLBACK_PROJ,
+     '        return "hidden";',
+     UT, "FALLBACK_FEED_LOST_AFTER_END"),
+    ("F6 reintento del 4404 sin límite", TL, "e.notLiveRetries < (this.opts.notLiveRetries ?? NOT_LIVE_RETRIES)", "true",
+     UT, "con un límite"),
+    ("F7 retardo desconocido ⇒ se supone 0 en la cota", DIR,
+     "    const delay = this.delayOf.get(id) ?? this.opts.fallbackDelayMs ?? MAX_SPECTATOR_DELAY_MS;",
+     "    const delay = this.delayOf.get(id) ?? this.opts.fallbackDelayMs ?? 0;",
+     UT, "sin canal público"),
+    ("F8 socket huérfano: stop() con el ticket en vuelo abre igualmente el WS", CL,
+     "    if (this.stopped) return;\n    const WS = ", "    const WS = ",
+     UT, "SPECTATOR_CLIENT_STOP_DURING_TICKET"),
 ]
 
 

@@ -18,6 +18,15 @@
  *   connecting → pending (init sin imagen retrasada) → playing (contenido retrasado) → ended
  *   (`result` retrasado, o init que ya trae el fin vencido)
  *   unavailable: rechazo terminal del ticket o del socket, o el cliente se rindió.
+ *
+ * Ronda 2 (P1-1 / L1 / P2-1 · caminos de FALLBACK): el feed puede no estar disponible o caer.
+ *  - `4404 battle_not_live` ANTES del primer init es la carrera ticket→attach (`claimBattle`
+ *    marca `running` antes de que el worker registre la batalla en el gateway): se reintenta
+ *    con backoff y con un límite, sin salir de `connecting` (la batalla sigue OCULTA). Sólo al
+ *    agotar el límite pasa a `unavailable`. Un 4404 con el init ya recibido sigue siendo terminal.
+ *  - `lost`: el socket cayó y el cliente está en su bucle de reconexión (la fase se congela en
+ *    la última vista). Se limpia con el siguiente init. El director lo usa para acotar cuánto
+ *    sigue en antena una batalla cuyo feed ya no llega (ver `BroadcastDirector`).
  */
 import { announcedDelayMs } from "../viewer/delay-wait.js";
 
@@ -32,6 +41,11 @@ export interface FeedStatus {
    * disponible; NUNCA decide una transición visible.
    */
   sinceMs: number;
+  /**
+   * El canal cayó después de conectar y el cliente está reconectando (o se rindió): la fase es
+   * la última vista, no la actual. false con el canal sano o antes del primer intento.
+   */
+  lost: boolean;
 }
 
 /** Lo que el director necesita de la línea temporal (inyectable en tests). */
@@ -64,6 +78,10 @@ export interface LiveFeedSource {
   rejection(): { code?: number; status?: number } | null;
 }
 
+/** Reintentos del 4404 previo al primer init (carrera ticket→attach) y base del backoff. */
+export const NOT_LIVE_RETRIES = 5;
+export const NOT_LIVE_RETRY_BASE_MS = 1000;
+
 const RANK: Record<FeedPhase, number> = { connecting: 0, pending: 1, playing: 2, unavailable: 2.5, ended: 3 };
 
 interface Entry {
@@ -71,6 +89,10 @@ interface Entry {
   phase: FeedPhase;
   delayMs: number | null;
   sinceMs: number;
+  lost: boolean;
+  /** Reintentos ya hechos por 4404 antes del primer init. */
+  notLiveRetries: number;
+  retryTimer: ReturnType<typeof setTimeout> | null;
   init: any | null;
   rejection: { code?: number; status?: number } | null;
   unsubs: (() => void)[];
@@ -83,6 +105,11 @@ export interface SpectatorTimelineOptions {
   createClient: (battleId: string) => TimelineClient;
   /** Reloj local inyectable (tests). */
   now?: () => number;
+  /** Reintentos del 4404 antes del primer init (def. NOT_LIVE_RETRIES) y base del backoff. */
+  notLiveRetries?: number;
+  notLiveRetryBaseMs?: number;
+  setTimeoutImpl?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeoutImpl?: (t: ReturnType<typeof setTimeout>) => void;
 }
 
 export class SpectatorTimeline implements PublicTimeline {
@@ -94,30 +121,53 @@ export class SpectatorTimeline implements PublicTimeline {
 
   track(battleId: string): void {
     if (this.entries.has(battleId)) return;
-    const client = this.opts.createClient(battleId);
     const e = {
-      client,
       phase: "connecting",
       delayMs: null,
       sinceMs: this.now(),
+      lost: false,
+      notLiveRetries: 0,
+      retryTimer: null,
       init: null,
       rejection: null,
       unsubs: [],
     } as unknown as Entry;
-    e.source = { client, lastInit: () => e.init, rejection: () => e.rejection };
+    // La pantalla lee SIEMPRE el cliente vigente (un reintento del 4404 lo sustituye).
+    e.source = {
+      get client() {
+        return e.client;
+      },
+      lastInit: () => e.init,
+      rejection: () => e.rejection,
+    };
     this.entries.set(battleId, e);
+    this.open(battleId, e);
+  }
+
+  /** Abre (o reabre tras un 4404 previo al init) el cliente de una entrada. */
+  private open(battleId: string, e: Entry): void {
+    const client = this.opts.createClient(battleId);
+    e.client = client;
+    const live = () => this.entries.get(battleId) === e && e.client === client;
     const advance = (p: FeedPhase) => {
-      if (this.entries.get(battleId) !== e) return; // liberada: ya no cuenta
+      if (!live()) return; // liberada o sustituida: ya no cuenta
       if (e.phase === "ended" || e.phase === "unavailable") return;
       if (RANK[p] <= RANK[e.phase]) return;
       e.phase = p;
       e.sinceMs = this.now();
       this.notify();
     };
+    const setLost = (v: boolean) => {
+      if (!live() || e.lost === v) return;
+      e.lost = v;
+      this.notify();
+    };
     e.unsubs.push(
       client.on("init", (msg) => {
+        if (!live()) return;
         e.init = msg;
         e.delayMs = announcedDelayMs(msg?.spectator);
+        setLost(false);
         // El init del gateway YA va retrasado: `finished` es el fin vencido, `snapshot` el
         // estado de `ahora − retardo` (null si todavía no hay ninguno tan antiguo).
         if (msg?.finished) advance("ended");
@@ -126,11 +176,34 @@ export class SpectatorTimeline implements PublicTimeline {
       }),
       client.on("snapshot", () => advance("playing")),
       client.on("result", () => advance("ended")),
+      // Sólo tras haber recibido un init: antes, «caído» y «conectando» son lo mismo.
+      client.on("disconnect", () => {
+        if (e.init !== null) setLost(true);
+      }),
       client.on("rejected", (r) => {
+        if (!live()) return;
+        if (r?.code === 4404 && e.init === null && e.notLiveRetries < (this.opts.notLiveRetries ?? NOT_LIVE_RETRIES)) {
+          // Carrera ticket→attach: la API ya dice `running` y el gateway aún no tiene la
+          // batalla. Reintento acotado; la fase sigue en `connecting` (oculta, nunca en antena).
+          e.notLiveRetries++;
+          for (const u of e.unsubs) u();
+          e.unsubs = [];
+          client.stop();
+          const wait = (this.opts.notLiveRetryBaseMs ?? NOT_LIVE_RETRY_BASE_MS) * 2 ** (e.notLiveRetries - 1);
+          e.retryTimer = (this.opts.setTimeoutImpl ?? setTimeout)(() => {
+            e.retryTimer = null;
+            if (this.entries.get(battleId) === e) this.open(battleId, e);
+          }, wait);
+          return;
+        }
         e.rejection = { code: r?.code, status: r?.status };
+        if (e.init !== null) e.lost = true;
         advance("unavailable");
       }),
-      client.on("gave_up", () => advance("unavailable")),
+      client.on("gave_up", () => {
+        if (e.init !== null) e.lost = true;
+        advance("unavailable");
+      }),
     );
     void client.connect();
   }
@@ -139,6 +212,8 @@ export class SpectatorTimeline implements PublicTimeline {
     const e = this.entries.get(battleId);
     if (!e) return;
     this.entries.delete(battleId);
+    if (e.retryTimer !== null) (this.opts.clearTimeoutImpl ?? clearTimeout)(e.retryTimer);
+    e.retryTimer = null;
     for (const u of e.unsubs) u();
     e.client.stop();
   }
@@ -150,7 +225,7 @@ export class SpectatorTimeline implements PublicTimeline {
 
   status(battleId: string): FeedStatus | undefined {
     const e = this.entries.get(battleId);
-    return e ? { phase: e.phase, delayMs: e.delayMs, sinceMs: e.sinceMs } : undefined;
+    return e ? { phase: e.phase, delayMs: e.delayMs, sinceMs: e.sinceMs, lost: e.lost } : undefined;
   }
 
   tracked(): string[] {

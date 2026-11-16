@@ -7,6 +7,10 @@
  * Escala comprimida: retardo de 1,2 s, watchdog de 400 ms (< retardo, como 10 s < 30 s en
  * producción), latido de 100 ms. Las cotas INFERIORES son las importantes (nunca antes que el
  * feed retrasado); las superiores sólo evitan que «muy tarde» pase por bueno.
+ *
+ * Las filas de la API llevan `startedAt`/`finishedAt` reales (como `battleToJson`): un director
+ * que los usara para decidir se pone en rojo. Ronda 2: además, conectar ENTRE el fin real y el
+ * fin retrasado (el init no puede traer el fin real) y la carrera ticket→attach (4404) reales.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -91,6 +95,8 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
   const summary = (b: LiveBattle): BattleSummary => {
     const status = b.realStatus();
     return {
+      startedAt: b.startedAt ? new Date(b.startedAt).toISOString() : null,
+      finishedAt: b.endedAt ? new Date(b.endedAt).toISOString() : null,
       id: b.id,
       tournamentId: "t1",
       status,
@@ -100,7 +106,7 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
         { botId: "blue", version: 1, team: "blue", outcome: status === "finished" ? "loss" : undefined },
       ],
       result: status === "finished" ? { score: { red: 2, blue: 1 } } : undefined,
-    };
+    } as BattleSummary;
   };
   // API pública anónima que refleja el estado REAL (replays públicos encendidos).
   const fetchJson = async (path: string) => {
@@ -110,31 +116,7 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
     throw new Error(`ruta inesperada ${path}`);
   };
   const timeline = new SpectatorTimeline({
-    createClient: (battleId) => {
-      const c = new SpectatorClient({
-        getTicket: async () => ({
-          ticket: signSpectateTicket({ battleId, jti: randomUUID(), anon: true } as any, 60),
-          wsUrl: `ws://127.0.0.1:${gw.port}/spectate/${battleId}`,
-        }),
-        WebSocketImpl: WsWebSocket as unknown as typeof WebSocket,
-        watchdogTimeoutMs: 400,
-        reconnectDelayMs: 50,
-        maxReconnectAttempts: 5,
-      });
-      const f = { ticks: [] as number[], resultAt: 0, heartbeats: 0, disconnects: 0, reconnects: 0 };
-      rec.feeds.set(battleId, f);
-      c.on("snapshot", (s) => f.ticks.push(s.tick));
-      c.on("init", (m) => m.snapshot && f.ticks.push(m.snapshot.tick));
-      c.on("result", () => (f.resultAt = Date.now()));
-      c.on("heartbeat", () => f.heartbeats++);
-      // Sólo cuentan los cortes con el feed aún vivo: tras el result, la línea temporal
-      // libera el cliente (stop() ⇒ onclose ⇒ «disconnect»), y eso no es un corte.
-      c.on("disconnect", () => {
-        if (!f.resultAt) f.disconnects++;
-      });
-      c.on("reconnected", () => f.reconnects++);
-      return c;
-    },
+    createClient: clientFactory(gw, rec),
   });
   const director = new BroadcastDirector({
     target: { kind: "tournament", tournamentId: "t1" },
@@ -172,6 +154,104 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
     gw.close();
   }
   return rec;
+}
+
+/** SpectatorClient real (ticket anónimo firmado, `ws`) con sus contadores en `rec`. */
+function clientFactory(gw: SpectateGateway, rec: Recorded) {
+  return (battleId: string) => {
+    const c = new SpectatorClient({
+      getTicket: async () => ({
+        ticket: signSpectateTicket({ battleId, jti: randomUUID(), anon: true } as any, 60),
+        wsUrl: `ws://127.0.0.1:${gw.port}/spectate/${battleId}`,
+      }),
+      WebSocketImpl: WsWebSocket as unknown as typeof WebSocket,
+      watchdogTimeoutMs: 400,
+      reconnectDelayMs: 50,
+      maxReconnectAttempts: 5,
+    });
+    const f = { ticks: [] as number[], resultAt: 0, heartbeats: 0, disconnects: 0, reconnects: 0 };
+    rec.feeds.set(battleId, f);
+    c.on("snapshot", (s) => f.ticks.push(s.tick));
+    c.on("init", (m) => m.snapshot && f.ticks.push(m.snapshot.tick));
+    c.on("result", () => (f.resultAt = Date.now()));
+    c.on("heartbeat", () => f.heartbeats++);
+    // Sólo cuentan los cortes con el feed aún vivo: tras el result, la línea temporal
+    // libera el cliente (stop() ⇒ onclose ⇒ «disconnect»), y eso no es un corte.
+    c.on("disconnect", () => {
+      if (!f.resultAt) f.disconnects++;
+    });
+    c.on("reconnected", () => f.reconnects++);
+    return c;
+  };
+}
+
+/**
+ * Un torneo de UNA batalla con el gateway real y el director arrancado en `directorAt` (ms desde
+ * el inicio) y la batalla registrada en el gateway en `attachAt`. La API la da `running` desde
+ * el principio: con `attachAt > 0` es la carrera ticket→attach (`claimBattle` antes del attach).
+ */
+async function runSingle(
+  delayMs: number,
+  plan: { attachAt: number; end: number; directorAt: number },
+): Promise<Recorded & { A: LiveBattle }> {
+  const gw = new SpectateGateway({ heartbeatIntervalMs: 100, publicSpectateEnabled: true });
+  const A = new LiveBattle(`s-${randomUUID()}`);
+  const rec: Recorded = { t0: Date.now(), screens: [], feeds: new Map(), battles: new Map([[A.id, A]]), maxTracked: 0 };
+  let claimedAt = 0;
+  const fetchJson = async (path: string) => {
+    if (path === "/tournaments/t1") return { id: "t1", state: A.isFinished() ? "finished" : "running" };
+    if (path === "/tournaments/t1/battles") {
+      const status = A.isFinished() ? "finished" : "running"; // `running` desde el claim
+      return {
+        items: [
+          {
+            id: A.id,
+            tournamentId: "t1",
+            status,
+            mode: "deathmatch",
+            startedAt: new Date(A.startedAt || claimedAt).toISOString(),
+            finishedAt: A.endedAt ? new Date(A.endedAt).toISOString() : null,
+            participants: [{ botId: "red", version: 1, team: "red" }],
+            result: status === "finished" ? { score: { red: 2, blue: 1 } } : undefined,
+          },
+        ],
+      };
+    }
+    throw new Error(`ruta inesperada ${path}`);
+  };
+  const timeline = new SpectatorTimeline({ createClient: clientFactory(gw, rec), notLiveRetryBaseMs: 100 });
+  const director = new BroadcastDirector({
+    target: { kind: "tournament", tournamentId: "t1" },
+    fetchJson,
+    onScreen: (screen) => rec.screens.push({ at: Date.now(), screen }),
+    onSourceError: () => undefined,
+    pollIntervalMs: 200,
+    timeline,
+  });
+  const steps: [number, () => void][] = [
+    [
+      plan.attachAt,
+      () => (gw.attachBattle(A.id, A, { spectator: { delaySeconds: delayMs / 1000 }, pollIntervalMs: 20 }), A.start()),
+    ],
+    [plan.directorAt, () => director.start()],
+    [plan.end, () => (A.finish(), setTimeout(() => gw.detachBattle(A.id), delayMs + 300))],
+  ];
+  steps.sort((x, y) => x[0] - y[0]);
+  try {
+    rec.t0 = claimedAt = Date.now();
+    let t = 0;
+    for (const [at, fn] of steps) {
+      await sleep(at - t);
+      t = at;
+      fn();
+    }
+    await sleep(delayMs + 1200);
+  } finally {
+    director.stop();
+    timeline.stopAll();
+    gw.close();
+  }
+  return { ...rec, A };
 }
 
 const liveId = (s: BroadcastScreen) => (s.kind === "live" ? s.battle.id : null);
@@ -262,6 +342,47 @@ describe("FIX-DIRECTOR-DELAY · retardo 0 con el gateway real", () => {
     // Sin retardo, ni latidos ni aviso de retardo.
     for (const f of r.feeds.values()) expect(f.heartbeats).toBe(0);
     expect(r.screens.some((x) => x.screen.kind === "waiting" && x.screen.delayNoticeMs)).toBe(false);
+  }, 30_000);
+});
+
+describe("FIX-DIRECTOR-DELAY · Ronda 2 · fallbacks con el gateway real", () => {
+  const DELAY = 1200;
+
+  it("DELAYED_TOURNAMENT_END · conectar ENTRE el fin real y el fin retrasado: el init no trae el fin real; en antena y «Torneo terminado» al final retrasado", async () => {
+    process.env.ARENA_DEV_INSECURE_SECRETS ??= "1";
+    // A termina en real a 1,5 s; el director (y su feed) arranca a 1,8 s, dentro de la cola.
+    const r = await runSingle(DELAY, { attachAt: 0, end: 1500, directorAt: 1800 });
+    const { A } = r;
+    const fin = r.screens.find((x) => x.screen.kind === "finished")?.at;
+    expect(fin, "nunca terminó").toBeDefined();
+    expect(fin! - A.endedAt, "final público antes del final retrasado (init con el fin real)").toBeGreaterThanOrEqual(
+      DELAY - EARLY_MS,
+    );
+    expect(fin! - A.endedAt).toBeLessThan(DELAY + LATE_MS);
+    const live = r.screens.find((x) => liveId(x.screen) === A.id)?.at;
+    expect(live, "la cola retrasada nunca salió en antena").toBeDefined();
+    expect(live!).toBeLessThan(fin!);
+    const f = [...r.feeds.values()][0];
+    expect(f.resultAt, "no llegó el result retrasado").toBeGreaterThan(0);
+    expect(Math.max(...f.ticks)).toBe(A.lastTick);
+  }, 30_000);
+
+  it("FALLBACK_4404_START · carrera ticket→attach real (4404): reintento, LIVE no antes del contenido retrasado y el directo SÍ sale", async () => {
+    process.env.ARENA_DEV_INSECURE_SECRETS ??= "1";
+    // La API la da `running` desde 0; el gateway no la tiene hasta 400 ms (el director pide a 0).
+    const r = await runSingle(DELAY, { attachAt: 400, end: 1400, directorAt: 0 });
+    const { A } = r;
+    const live = r.screens.find((x) => x.screen.kind === "live")?.at;
+    expect(live, "nunca salió en directo (4404 tratado como terminal)").toBeDefined();
+    expect(live! - A.startedAt, "LIVE en el inicio REAL").toBeGreaterThanOrEqual(DELAY - EARLY_MS);
+    // Sin parpadeo: nada de LIVE → espera → LIVE.
+    expect(r.screens.map((x) => x.screen.kind).filter((k, i, xs) => k !== xs[i - 1])).toEqual([
+      "waiting",
+      "live",
+      "finished",
+    ]);
+    const fin = r.screens.find((x) => x.screen.kind === "finished")!.at;
+    expect(fin - A.endedAt).toBeGreaterThanOrEqual(DELAY - EARLY_MS);
   }, 30_000);
 });
 

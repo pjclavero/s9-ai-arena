@@ -242,6 +242,9 @@ export class SpectatorClient {
    */
   private async openOnce(): Promise<void> {
     const { ticket, wsUrl } = await this.opts.getTicket();
+    // FIX-DIRECTOR-DELAY (Ronda 2, P3) · stop() con el ticket en vuelo (el director libera
+    // feeds por programa): no se abre un socket huérfano que los latidos mantendrían vivo.
+    if (this.stopped) return;
     const WS = this.opts.WebSocketImpl ?? WebSocket;
     // R2.6 (ERR-SEC-16): el ticket viaja como SUBPROTOCOLO WebSocket
     // (`Sec-WebSocket-Protocol: spectate.v1, ticket.<jwt>`), nunca en la URL:

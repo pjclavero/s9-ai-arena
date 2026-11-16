@@ -138,7 +138,7 @@ temporizador del navegador decide una transición.
 | Transición | Señal (retrasada) |
 |---|---|
 | Inicio (LIVE) | primer contenido retrasado del feed (`snapshot`, o `init` que ya lo trae) |
-| Fin de batalla | `result` retrasado (o `init.finished`); un feed retirado de una batalla que la API ya no da en curso también cuenta como fin, porque el worker la retira tras el retardo |
+| Fin de batalla | `result` retrasado (o `init.finished`). Sin feed sano, sólo la cota de fallback (abajo) |
 | Cambio de batalla | fin retrasado de la que está en antena + primer contenido retrasado de la siguiente; entre ambos, el intermedio |
 | Fin del torneo | torneo cerrado en la API **y** ninguna batalla con su final retrasado pendiente |
 
@@ -150,9 +150,36 @@ y el siguiente, que se conecta antes sin pintarse para saber cuándo empieza su 
 El aviso «Directo con retardo…» sólo sustituye a la espera inicial (secuencia `WAITING → aviso →
 LIVE`). Con retardo 0 todo sigue siendo inmediato.
 
+**Caminos de fallback (Ronda 2).** Regla: ningún camino en el que el feed retrasado falte o falle
+puede revelar una transición antes de que la línea temporal retrasada la autorice. La fila real de
+la API nunca pone una batalla en antena ni la termina.
+
+| Situación | Comportamiento |
+|---|---|
+| `4404 battle_not_live` antes del primer `init` (carrera ticket→attach: `claimBattle` marca `running` antes de que el worker registre la batalla en el gateway) | Reintento con backoff (1, 2, 4, 8, 16 s; máx. 5) sin salir de `connecting`: la batalla sigue OCULTA. Agotado, `unavailable` |
+| Feed `unavailable` / `connecting` de una batalla que nunca salió en antena | Oculta (ni LIVE ni fin). El director reintenta cada 15 s (máx. 8) |
+| Feed caído (`lost`: socket cerrado y cliente reconectando) o `unavailable` de una batalla ya en antena | Sigue en antena con la última imagen (un corte de transporte no es un evento de la competición) |
+| … y la API ya no la da en curso (terminada, fallida o retirada) | Se da por terminada al vencer la **cota de fallback**: `T_obs + retardo`, con `T_obs` la hora local del primer sondeo que la vio fuera de `running` y el retardo el anunciado por su feed (si nunca lo anunció, el máximo del servidor: 30 s) |
+| Feed en apariencia sano pero atascado (latidos sin contenido ni `result`) y la API ya no la da en curso | Techo: cota de fallback + 15 s |
+
+Por qué la cota no adelanta nada ni es un segundo reloj: `T_obs` es posterior al fin real (el motor
+termina, el worker escribe la fila y después se sondea), y el gateway emite el `result` retrasado en
+«fin real + retardo». Así que `T_obs + retardo` es mayor o igual que el fin retrasado y llega, como
+mucho, un sondeo (4 s) más tarde que el feed. Usa un solo reloj (el local del navegador) y una
+duración, sin comparar relojes de máquinas distintas (no usa `startedAt`/`finishedAt` del
+servidor). Y con el feed sano no decide: el feed llega antes, y con el feed en apariencia sano
+además lleva el margen de 15 s.
+
+Así, un gateway caído a mitad de batalla ya no deja el director congelado de 6,5 a 13 minutos
+(el bucle de reconexión del cliente). Sale a «fin real + retardo» (+ un sondeo) en cuanto la API
+da la batalla por terminada, fallida o retirada. Mientras la API la siga dando en curso, sigue
+en antena.
+
 Límites conocidos:
-- Sin canal público (espectador público apagado) no hay línea temporal retrasada: el visor dice
-  «directo no disponible» y el fin se toma de la API, como antes.
+- Sin canal público (espectador público apagado) no hay línea temporal retrasada: no se pone nada
+  en antena, y el fin de cada batalla se anuncia en la cota de fallback (fin real + 30 s), no antes.
+- Una batalla reencolada con el mismo id (lease perdido) después de darse por terminada no se vuelve
+  a emitir.
 - Si el director arranca dentro de la cola retrasada de una batalla ya terminada que un anónimo no
   ve (replays públicos apagados), esa cola no se puede sondear.
 - La API pública anónima expone en tiempo real `status`, `finishedAt`, `result` y el estado del
@@ -161,7 +188,9 @@ Límites conocidos:
 
 Pruebas: `apps/web/tests/director-delayed-timeline.test.ts` (escenario determinista con reloj
 virtual), `director-delayed-timeline.e2e.test.ts` (gateway y `ws` reales) y
-`director-delayed-timeline-page.test.tsx` (la página completa). Calibración:
+`director-delayed-timeline-page.test.tsx` (la página completa; incluye que la imagen pinta sólo el
+feed de la batalla en antena aunque la siguiente ya se siga). Los caminos de fallback llevan el
+prefijo `FALLBACK_` y `TIMELINE_`. Calibración:
 `python3 scripts/director-delay-mutants.py --json <salida.json>` (en el laboratorio).
 
 ## Emisión en blanco (#256)
