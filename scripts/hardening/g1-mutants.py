@@ -13,6 +13,16 @@ R  · ronda 2 (P2-1): los mutantes R1-R6 de la revisión independiente (evidenci
      rev-mutants.py), «el campo se copia a la observación / al registro / al cálculo del
      canal, pero el efecto real usa una constante». Deben morir en el D1 del GATE de su campo
      (filtro -t al D1), no sólo en anclas de hash o goldens.
+N  · ronda 3 (P2-1b): N1, N2 y N2b de la segunda revisión (evidencia-G1-review/ronda2/
+     rev2-mutants.py): casco con su valor inicial copiado pero muerte por un umbral fijo, y
+     registro de daño que sigue al importe mientras lo APLICADO es constante. Mueren en su D1.
+K  · ronda 3: la misma clase sobre otros canales (sensores, energía, munición): el campo se
+     copia (a la observación, a una comprobación, a un contador) y el efecto usa una
+     constante. Mueren en el D1 de su campo.
+P  · ronda 3: defensa ESTRUCTURAL. Cada mutante reintroduce en la SONDA un canal que copia la
+     configuración (un nivel absoluto, el valor inicial, el registro de daño, el importe de
+     los eventos); el bloque D0 del gate (D0a traslación de reservas, D0b registro falseado)
+     debe ponerse rojo. Calibran la defensa: sin ellos, D0 podría pasar en vacío.
 
 Uso: scripts/hardening/run-mutants.sh g1 <worktree> <salida.json> [IDS]
 """
@@ -29,9 +39,16 @@ PHYSICS = "apps/arena-engine/src/sim/physics.ts"
 SENSORS = "apps/arena-engine/src/sim/sensors.ts"
 VEHICLE = "apps/arena-engine/src/sim/vehicle.ts"
 DAMAGE = "apps/arena-engine/src/sim/damage.ts"
+PROBE = "packages/module-catalog/catalog-probe.ts"
+COMBAT = "apps/arena-engine/src/sim/combat.ts"
 EFFECTIVE = "const effective = Math.max(profile.minFraction * amount, amount * (1 - reduction));"
 INSIDE = "    if (h.collider.containsPoint(from)) return this.entrySurface(h.collider, from, dir, entityId, point);\n"
 TOUCH = "    if (hit && (hit.timeOfImpact <= 0 || (hit.normal.x === 0 && hit.normal.y === 0)))\n"
+HULL_SUB = "target.hullHp = Math.max(0, target.hullHp - hull);"
+ARMOR_SUB = "armor.hp = Math.max(0, armor.hp - absorbed * profile.armorWearFactor);"
+MODULE_SUB = "m.hp = Math.max(0, m.hp - moduleBudget);"
+N2_ALSO = [(HULL_SUB, "target.hullHp = Math.max(0, target.hullHp - 10);", 1),
+           (MODULE_SUB, "m.hp = Math.max(0, m.hp - 2);", 1)]
 MINE_EXPLODE = "this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team, \"deployable\", null);"
 
 MUTANTS = [
@@ -120,6 +137,74 @@ MUTANTS = [
            "const effective = Math.max(profile.minFraction * 20, 20 * (1 - reduction));\n  const absorbed = 20 - effective;",
            [GATE], name_filter="weapon\\.damage",
            expect="D1 weapon.damage: sin efecto observable en [damage]"),
+    # ---- ronda 3 · P2-1b: N1/N2/N2b de la segunda revisión, contra el D1 del gate
+    Mutant("N1", "chassis.hullHp copiado al estado; muerte con 300 de daño acumulado constante", DAMAGE,
+           HULL_SUB, "target.hullHp = target.hullHp - hull;", [GATE],
+           also=[("const killed = target.hullHp <= 0 && target.alive;",
+                  "const killed = target.spec.hullHp - target.hullHp >= 300 && target.alive;", 1)],
+           name_filter="chassis\\.hullHp",
+           expect="D1 chassis.hullHp: sin efecto observable en [hull]"),
+    Mutant("N2", "weapon.damage al registro; casco/módulo/blindaje APLICADOS constantes (-10/-2/-1)", DAMAGE,
+           ARMOR_SUB, "armor.hp = Math.max(0, armor.hp - 1);", [GATE], also=N2_ALSO,
+           name_filter="weapon\\.damage",
+           expect="D1 weapon.damage: sin efecto observable en [damage]"),
+    Mutant("N2b", "ammo.damageMultiplier al registro; aplicados constantes (el mismo mutante, otro campo)", DAMAGE,
+           ARMOR_SUB, "armor.hp = Math.max(0, armor.hp - 1);", [GATE], also=N2_ALSO,
+           name_filter="ammo\\.damageMultiplier",
+           expect="D1 ammo.damageMultiplier: sin efecto observable en [damage]"),
+    # ---- ronda 3 · la misma clase sobre otros canales (propios)
+    Mutant("K1", "sensor.fovRad copiado al ÁNGULO informado de cada rayo; el rayo se lanza con FOV pi/2 fijo",
+           SENSORS, "const hit = world.physics.castRay(origin, a, range, v.id);",
+           "const hit = world.physics.castRay(origin, pose.heading - Math.PI / 4 + (Math.PI / 2) * t, range, v.id);",
+           [GATE], name_filter="sensor\\.fovRad",
+           expect="D1 sensor.fovRad: sin efecto observable en [sensors] (vivo con la sonda de 577bd59, que registraba el ángulo)"),
+    Mutant("K2", "power.perActionEU copiado a la comprobación no_energy; el gasto real es 1 EU fijo", COMBAT,
+           "v.spendEnergy(w.spec.perActionEU ?? 0);", "v.spendEnergy(1);", [GATE],
+           also=[("v.spendEnergy(m.spec.perActionEU ?? 0);", "v.spendEnergy(1);", 1)],
+           name_filter="power\\.perActionEU",
+           expect="D1 power.perActionEU: sin efecto observable en [energy]"),
+    Mutant("K3", "power.generationEUs copiado (energyGeneration); la recarga real usa 5 EU/s fijos", VEHICLE,
+           "const net = this.energyGeneration() - this.passiveDrain();", "const net = 5 - this.passiveDrain();",
+           [GATE], name_filter="power\\.generationEUs",
+           expect="D1 power.generationEUs: sin efecto observable en [energy]"),
+    Mutant("K4", "ammo.rounds copiado al contador (que se descuenta) pero no_ammo no lo mira", COMBAT,
+           'if (!ammo || ammo.ammo <= 0) return "no_ammo";', 'if (!ammo) return "no_ammo";', [GATE],
+           name_filter="ammo\\.rounds",
+           expect="D1 ammo.rounds: sin efecto observable en [projectiles]"),
+    # ---- ronda 3 · defensa estructural: la SONDA vuelve a copiar; D0 debe ponerse rojo
+    Mutant("P1", "la sonda registra el hp ABSOLUTO del casco (el canal hull de 577bd59)", PROBE,
+           "  rec.transition(\"hull\", t, `${id}:alive`, v.alive);\n",
+           "  rec.transition(\"hull\", t, `${id}:alive`, v.alive);\n  rec.ch.hull.push([t, id, r6(v.hullHp)]);\n",
+           [GATE], name_filter="D0a",
+           expect="D0a: el canal hull cambia al trasladar el casco de quien no muere"),
+    Mutant("P2", "la sonda registra la energía ABSOLUTA almacenada", PROBE,
+           "  if (withEnergy) rec.flow([\"energy\"], t, `${id}:energy`, v.energyEU, reset);\n",
+           "  if (withEnergy) rec.ch.energy.push([t, id, r6(v.energyEU)]);\n",
+           [GATE], name_filter="D0a",
+           expect="D0a: el canal energy cambia al trasladar la capacidad"),
+    Mutant("P3", "la sonda registra el hp ABSOLUTO de cada módulo", PROBE,
+           "    rec.transition(\"modules\", t, `${id}:${m.spec.slot}:state`, v.stateOf(m.spec.slot));\n",
+           "    rec.transition(\"modules\", t, `${id}:${m.spec.slot}:state`, v.stateOf(m.spec.slot));\n"
+           "    rec.ch.modules.push([t, id, m.spec.slot, r6(m.hp)]);\n",
+           [GATE], name_filter="D0a",
+           expect="D0a: el canal modules cambia al escalar el hp de un módulo que nadie toca"),
+    Mutant("P4", "la sonda vuelve a leer el REGISTRO de daño (effective/hull/moduleDamage) en el canal damage", PROBE,
+           "  ch.score.push([t, frame.score]);\n",
+           "  ch.score.push([t, frame.score]);\n  for (const d of battle.damageRecordsOfLastTick())\n"
+           "    ch.damage.push([t, d.target, r6(d.effective), r6(d.hull), d.moduleSlot, r6(d.moduleDamage)]);\n",
+           [GATE], name_filter="D0b",
+           expect="D0b: el canal damage cambia al falsear el registro"),
+    Mutant("P5", "el canal events vuelve a llevar el `damage` de hit_taken/hit_dealt (= effective del registro)", PROBE,
+           "const EVENT_FIELDS = [\"tick\",", "const EVENT_FIELDS = [\"damage\", \"tick\",", [GATE],
+           name_filter="D0b",
+           expect="D0b: el canal events cambia al falsear el importe de los eventos"),
+    Mutant("P6", "el flujo registra también la PRIMERA medida (el valor inicial, copia del spec)", PROBE,
+           "    if (prev === undefined) return;\n",
+           "    if (prev === undefined) {\n      for (const c of channels) this.ch[c].push([t, key, \"init\", r6(value)]);\n"
+           "      return;\n    }\n",
+           [GATE], name_filter="D0a",
+           also=[("    for (const c of PROBE_CHANNELS) rec.ch[c].length = 0;\n", "", 1)],
+           expect="D0a: los canales cambian al trasladar los valores iniciales"),
 ]
 
 if __name__ == "__main__":
