@@ -26,6 +26,7 @@ let app: Express;
 let devTok: string;
 let userTok: string;
 let orgTok: string;
+let adminTok: string;
 let devId: string;
 let userId: string;
 
@@ -136,6 +137,7 @@ beforeAll(async () => {
   devTok = await tokenFor(h.db, DEV_USERS.developer);
   userTok = await tokenFor(h.db, DEV_USERS.user);
   orgTok = await tokenFor(h.db, DEV_USERS.organizer);
+  adminTok = await tokenFor(h.db, DEV_USERS.admin);
   devId = (await h.db("users").where({ email: DEV_USERS.developer }).first()).id;
   userId = (await h.db("users").where({ email: DEV_USERS.user }).first()).id;
 }, 180_000);
@@ -188,7 +190,8 @@ describe("#287 · equipo inscrito", () => {
     const A = await mkTeam(4);
     const t = await openTeamsTournament(4);
     expect((await enterTeam(devTok, t, A.teamId, members(A.bots))).status).toBe(201);
-    const del = await request(app).delete(`/teams/${A.teamId}`).set(as(devTok));
+    // Admin (borrar un equipo exige rol team_captain o admin; aquí se mide la FK, no el rol).
+    const del = await request(app).delete(`/teams/${A.teamId}`).set(as(adminTok));
     expect(del.status, JSON.stringify(del.body)).toBe(409);
     expect(del.body.error).toBe("team_in_use");
     expect(await entriesOf(t)).toHaveLength(4);
