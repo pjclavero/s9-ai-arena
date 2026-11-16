@@ -64,6 +64,9 @@
  *    queda excluido de su propia onda (D-B6). (Los impactos en MURO también dañan con la
  *    onda desde G1.5: ver apps/arena-engine/tests/g1-he-wall-los.test.ts.)
  *  - G1.2: además, una batalla de DURABILIDAD (ver `durability`) para el hp de los módulos.
+ *    Ronda 4: en ella el blanco USA su módulo (gira, mueve la torreta, dispara, siembra, emite
+ *    y observa), así que el estado del módulo tiene consecuencia de COMPORTAMIENTO y no sólo
+ *    de contabilidad (P2-1c).
  *  - G1: E siembra durante más tiempo (hasta la decisión 120) para que las cargas y el
  *    enfriamiento de la mina limiten de verdad cuántas minas hay en el terreno.
  * Selección de módulos: por categoría y datos (slot que acepta la categoría, sector del
@@ -72,7 +75,11 @@
 import { createHash } from "node:crypto";
 import { loadRuleset } from "../game-rules/index.js";
 import { Battle, type BotAgent } from "../../apps/arena-engine/src/sim/battle.js";
-import type { Vehicle, VehicleSpec } from "../../apps/arena-engine/src/sim/vehicle.js";
+import type {
+  ModuleCategory as EngineCategory,
+  Vehicle,
+  VehicleSpec,
+} from "../../apps/arena-engine/src/sim/vehicle.js";
 import { emptyArena } from "../../apps/arena-engine/src/fixtures.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
@@ -127,6 +134,21 @@ const ENEMY: LoadoutInput = {
     { slot: "sensor_a", moduleId: "sensor.radar@1" },
     { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: "ammo.ap@1" },
   ],
+};
+
+/**
+ * Ronda 4 · P, el tirador de la durabilidad: el de X con la ametralladora y su munición (las de
+ * E). Muchos impactos pequeños en vez de diez grandes: el daño de módulo se sortea en cada
+ * impacto (damage.ts, ponderado por masa), así que un módulo ligero (munición, radio) también
+ * lo recibe, y D sigue vivo los 300 ticks (en el chasis más resistente) para que se vea lo
+ * que HACE con sus módulos dañados.
+ */
+const POUNDER: LoadoutInput = {
+  ...ENEMY,
+  loadoutId: "ldt_probe06",
+  modules: ENEMY.modules.map((e) =>
+    e.slot === "turret_main" ? PROBE_BASE.modules.find((m) => m.slot === e.slot)! : e,
+  ),
 };
 
 /**
@@ -533,11 +555,33 @@ export function probeTrace(
   return { channels, full: sha([channels, rec.full]), facts };
 }
 
-/** Quieto: no decide nada (el blanco de la batalla de durabilidad). */
-class Sitter implements BotAgent {
-  constructor(readonly botId: string) {}
+/**
+ * Ronda 4 · El blanco «D» de la batalla de durabilidad USA lo que lleva en cada decisión: gira
+ * sobre sí mismo (sin avanzar: sigue en el punto al que apunta el tirador), barre la torreta
+ * hacia el borde de y=0 (lejos del tirador: sus disparos no tocan a nadie), dispara, siembra y
+ * emite por radio a un compañero. Así el ESTADO de cada módulo (lo que gobierna su hp) cambia
+ * lo que el vehículo HACE, no sólo lo que la sonda contabiliza.
+ */
+class Operator implements BotAgent {
+  private d = 0;
+  constructor(
+    readonly botId: string,
+    private log: Recorder,
+  ) {}
   decide(obs: any) {
-    return { forTick: obs.tick };
+    const d = this.d++;
+    this.log.obs("D", obs);
+    return {
+      forTick: obs.tick,
+      move: { throttle: 0, steer: 1 },
+      turret: { targetHeading: -Math.PI / 2 + 0.6 * Math.sin(d * 0.2) },
+      fire: ["turret_main"],
+      deployMine: { slot: "mine_bay" },
+      radio: [{ slot: "radio_a", data: b64(`dur-${String(d).padStart(10, "0")}`) }],
+    };
+  }
+  onEvent(e: unknown) {
+    this.log.event("D", e);
   }
 }
 /** Dispara sin parar contra un punto fijo. */
@@ -554,15 +598,41 @@ class Pounder implements BotAgent {
 export const DURABILITY_TICKS = 300;
 
 /**
+ * Ronda 4 · Qué lleva el blanco «D» de la durabilidad según la categoría bajo prueba: el módulo
+ * bajo prueba y, si sólo con él no puede hacer nada observable, lo mínimo para que su ESTADO
+ * tenga consecuencia de comportamiento:
+ *   - arma, munición y mina gastan energía al actuar: llevan además el generador de E;
+ *   - el generador sólo cuenta por lo que la energía limita: lleva además el arma de E;
+ *   - la munición y la pieza `utility` no tienen acción propia: su hp cuenta porque, mientras
+ *     viven, absorben daño de módulo que si no recibe el arma (damage.ts, candidatos con hp > 0).
+ */
+const DURABILITY_KIT: Readonly<Record<string, readonly EngineCategory[]>> = {
+  chassis: [],
+  movement: ["movement"],
+  power: ["power", "weapon"],
+  sensor: ["sensor"],
+  weapon: ["weapon", "power"],
+  ammo: ["weapon", "power"],
+  mine: ["mine", "power"],
+  armor: ["armor"],
+  radio: ["radio"],
+  utility: ["utility", "weapon", "power"],
+};
+
+/**
  * G1.2 · Batalla de DURABILIDAD: el `hp` de un módulo sólo tiene efecto observable cuando
  * el módulo recibe daño (cambia su estado → su rendimiento). En la batalla principal el
  * daño de módulo se reparte por masa (damage.ts: `weighted` por massKg) y un módulo ligero
- * (radio, sensor, mina) casi nunca lo recibe en 450 ticks. Aquí el blanco «D» lleva SÓLO el
+ * (radio, sensor, mina) casi nunca lo recibe en 450 ticks. Aquí el blanco «D» lleva el
  * módulo bajo prueba (las entradas de su categoría en el loadout de E; para un arma, con su
- * munición), así que todo el daño de módulo va a él, y un cañón le dispara a 12 m sin parar.
+ * munición) y lo mínimo para usarlo (DURABILITY_KIT), y le disparan a 12 m sin parar (con el
+ * cañón hasta la ronda 3; desde la ronda 4, con la ametralladora: ver POUNDER).
  * Ronda 3 · se registran, con la misma regla que la batalla principal, el hp que pierden el
  * casco y cada módulo de D en cada tick, las transiciones de estado y el tick de muerte de D
  * (el cañón lo lleva hasta la destrucción: así el hp del casco decide CUÁNDO muere).
+ * Ronda 4 · D usa su módulo (Operator) y se registra su COMPORTAMIENTO: rumbo y posición,
+ * torreta, proyectiles, minas, lo que detectan sus sensores, lo que recibe por radio su
+ * compañero «R» y el marcador (una muerte puntúa).
  */
 function durability(
   tested: ModuleDefinition,
@@ -573,16 +643,26 @@ function durability(
   opts: ProbeOptions,
 ): void {
   const catOf = (e: LoadoutModuleEntry) => findModule(catalog, e.moduleId)?.category;
-  const keep = tested.category === "ammo" ? "weapon" : tested.category;
+  const kit = DURABILITY_KIT[tested.category] ?? [];
+  // Ronda 4 · para un módulo, D va en el chasis de más casco del catálogo (por datos): así
+  // sigue vivo toda la batalla y su comportamiento depende del estado de sus módulos, no de
+  // cuándo muere. Para un chasis, el chasis bajo prueba (su casco decide CUÁNDO muere).
+  const sturdiest = catalog
+    .filter((m) => m.category === "chassis")
+    .reduce((a, b) => ((b.hullHp ?? 0) > (a.hullHp ?? 0) ? b : a));
   const target: LoadoutInput = {
     ...base,
     loadoutId: "ldt_probe05",
-    modules: tested.category === "chassis" ? [] : base.modules.filter((e) => catOf(e) === keep),
+    chassis: tested.category === "chassis" ? base.chassis : ref(sturdiest),
+    modules: base.modules.filter((e) => kit.includes(catOf(e) as EngineCategory)),
   };
   const map = emptyArena(120, 80);
   map.spawns = [
     { team: "red", position: { x: 40, y: 40 }, heading: 0 },
     { team: "blue", position: { x: 52, y: 40 }, heading: Math.PI },
+    // R: compañero de D a 16 m, fuera de la línea de tiro: dentro del alcance de la radio
+    // incluso con el módulo crítico (alcance · rendimiento).
+    { team: "red", position: { x: 40, y: 56 }, heading: 0 },
   ];
   const battle = new Battle({
     battleId: "catalog-probe-durability",
@@ -591,21 +671,37 @@ function durability(
     map,
     participants: [
       { id: "veh_1", botId: "bD", team: "red", spec: spec("durability:veh_1", target, catalog, opts) },
-      { id: "veh_2", botId: "bP", team: "blue", spec: spec("durability:veh_2", ENEMY, catalog, opts) },
+      { id: "veh_2", botId: "bP", team: "blue", spec: spec("durability:veh_2", POUNDER, catalog, opts) },
+      { id: "veh_3", botId: "bR", team: "red", spec: spec("durability:veh_3", ALLY, catalog, opts) },
     ],
   });
-  battle.attachBot("veh_1", new Sitter("bD"));
+  battle.attachBot("veh_1", new Operator("bD", rec));
   battle.attachBot("veh_2", new Pounder("bP", { x: 40, y: 40 }));
+  battle.attachBot("veh_3", new Listener("bR", "DR", rec));
   const w = new Watch("durability", facts);
-  const d = () => battle.getVehicles().find((v) => v.id === "veh_1")!;
+  const byId = (id: string) => battle.getVehicles().find((v) => v.id === id)!;
+  const d = () => byId("veh_1");
+  // Tirador y compañero sólo aportan hechos (D0a): sus reservas no entran en ningún canal.
+  const noteOthers = () => {
+    w.note(byId("veh_2"));
+    w.note(byId("veh_3"));
+  };
   try {
     sampleVehicle(rec, w, "D0", "D:", d(), false);
-    w.note(battle.getVehicles().find((v) => v.id === "veh_2")!);
+    noteOthers();
     for (let i = 0; i < DURABILITY_TICKS; i++) {
       battle.step();
-      sampleVehicle(rec, w, `D${battle.tick}`, "D:", d(), false);
-      // El tirador sólo aporta hechos (D0a): sus reservas no entran en ningún canal.
-      w.note(battle.getVehicles().find((v) => v.id === "veh_2")!);
+      const t = `D${battle.tick}`;
+      sampleVehicle(rec, w, t, "D:", d(), false);
+      noteOthers();
+      // Comportamiento de D (ronda 4): lo que HACE con lo que lleva.
+      const p = battle.getPhysics().pose("veh_1");
+      rec.ch.kinematics.push([t, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
+      rec.ch.turret.push([t, r6(d().turretHeading)]);
+      const frame = battle.getInternalFrame();
+      rec.ch.projectiles.push([t, frame.projectiles.map((q: any) => [q.id, q.position.x, q.position.y])]);
+      rec.ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
+      rec.ch.score.push([t, frame.score]);
       rec.full.push(["D", battle.tick, d().alive]);
     }
     rec.full.push(["D-final", battle.stateHash()]);

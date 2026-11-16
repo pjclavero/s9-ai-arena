@@ -12,7 +12,9 @@
  *   S6  un arma resuelta no trae la vida del proyectil (el motor caería en la regla heredada);
  *   D1  un campo ACTIVE mutado NO cambia la magnitud de efecto observable que declara
  *       (`observes`: daño aplicado, cinemática, proyectiles, minas, eventos, radio…) en la
- *       batalla de sonda (= no tiene consumidor real);
+ *       batalla de sonda (= no tiene consumidor real), o (ronda 4, P2-1c) no cambia NINGUNO
+ *       de los canales de comportamiento que GOBIERNA (`governs`): si sólo cambia su propio
+ *       estado (energía, estado de módulo, eventos), su consumidor no limita nada;
  *   D2  un campo VALIDATION_ONLY mutado no cambia el veredicto del validador, o SÍ cambia la
  *       batalla (estaría mal clasificado);
  *   D3  un metadato (nombre, descripción) cambia la batalla.
@@ -20,6 +22,10 @@
  *       sondas con specs distintos de dinámica idéntica (reservas iniciales trasladadas donde
  *       nunca limitan) dan canales distintos; D0b, falsear el registro de daño y el `damage`
  *       de los eventos DESPUÉS de aplicarse cambia algún canal.
+ *   D4  (ronda 4) con el CONSUMIDOR de un campo anulado en el test (se interpone la función
+ *       del motor que lo lee: devuelve el valor por defecto o deja de limitar; el código de
+ *       producción no se toca), la sonda NO cambia ningún canal que el campo gobierna: la
+ *       declaración `governs` estaría vacía o la sonda no vería el efecto.
  * D1-D3 son diferenciales sobre una batalla real (catalog-probe.ts) que pasa por
  * resolveVehicle(). G1: D1 compara CANALES DE EFECTO (listas blancas de magnitudes), no el
  * hash de estado: un campo que la frontera no copia, que el motor no lee, o que el motor
@@ -31,20 +37,23 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
-import { initPhysics } from "../../apps/arena-engine/src/sim/physics.js";
+import { PhysicsWorld, initPhysics } from "../../apps/arena-engine/src/sim/physics.js";
 import { Battle } from "../../apps/arena-engine/src/sim/battle.js";
-import type { VehicleSpec } from "../../apps/arena-engine/src/sim/vehicle.js";
+import { Vehicle, type VehicleSpec } from "../../apps/arena-engine/src/sim/vehicle.js";
 import { DATA_DIR, loadCatalog } from "./loadCatalog.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { validateLoadout } from "./validator/index.js";
 import { effectOf } from "./effect-status.js";
 import {
+  BEHAVIOR_CHANNELS,
   CATEGORY_FIELDS,
   COMMON_FIELDS,
   IDENTITY_FIELDS,
   PROBE_CHANNELS,
   REMOVED_FIELDS,
   fieldContract,
+  ownStateChannels,
+  type ProbeChannel,
 } from "./field-status.js";
 import { PROBE_BASE, loadoutWith, probeTrace, type ProbeFacts, type ProbeTrace } from "./catalog-probe.js";
 import type { LoadoutInput, LoadoutModuleEntry, ModuleCategory, ModuleDefinition } from "./types.js";
@@ -63,7 +72,10 @@ const SYNTHETIC: ModuleDefinition[] = (schema.properties.category.enum as Module
     version: 1,
     category: cat,
     name: "sonda",
-    massKg: 10,
+    // Ronda 4 · masa comparable a la del arma: una pieza sin acción propia sólo cuenta por el
+    // daño de módulo que absorbe mientras vive (sorteo ponderado por masa, damage.ts); con
+    // 10 kg casi nunca lo recibía.
+    massKg: 150,
     costCredits: 10,
     size: "S",
     // G1.2 · hp por encima de un impacto de módulo (cañón: ~16 de daño de módulo por
@@ -360,6 +372,36 @@ describe("CATALOG_CONTRACT · S · el esquema y la tabla de campos coinciden", (
     expect(bad).toEqual([]);
   });
 
+  it("S4 · toda entrada ACTIVE GOBIERNA algún canal de comportamiento, nunca contabilidad ni su estado propio (ronda 4)", () => {
+    const bad: string[] = [];
+    const all = [
+      ...Object.entries(COMMON_FIELDS).map(([f, c]) => ["*", f, c] as const),
+      ...CATEGORIES.flatMap((cat) => Object.entries(CATEGORY_FIELDS[cat]).map(([f, c]) => [cat, f, c] as const)),
+    ];
+    for (const [cat, f, c] of all) {
+      const k = `${cat}.${f}`;
+      if (c.status !== "ACTIVE") {
+        if (c.governs !== undefined) bad.push(`${k}: ${c.status} con governs`);
+        continue;
+      }
+      if (!c.governs || c.governs.length === 0) bad.push(`${k}: sin governs`);
+      const own = cat === "*" ? [] : ownStateChannels(cat, f);
+      for (const ch of c.governs ?? []) {
+        if (!BEHAVIOR_CHANNELS.includes(ch)) bad.push(`${k}: gobierna ${ch}, que es contabilidad o declaración`);
+        if (own.includes(ch)) bad.push(`${k}: gobierna ${ch}, donde se registra su propio estado`);
+      }
+    }
+    // Las categorías con entrada común: el estado propio se comprueba por categoría.
+    for (const cat of CATEGORIES)
+      for (const f of declaredFor(cat)) {
+        const c = fieldContract(cat, f);
+        if (c?.status !== "ACTIVE") continue;
+        for (const ch of c.governs ?? [])
+          if (ownStateChannels(cat, f).includes(ch)) bad.push(`${cat}.${f}: gobierna ${ch} (estado propio)`);
+      }
+    expect([...new Set(bad)]).toEqual([]);
+  });
+
   it("S5 · effect-status.ts (lo que ve la UI) coincide con esta tabla en todo campo del catálogo", () => {
     const map = { ACTIVE: "ACTIVE", VALIDATION_ONLY: "PARTIAL" } as const;
     const bad: string[] = [];
@@ -400,7 +442,12 @@ function cases(status: "ACTIVE" | "VALIDATION_ONLY"): { list: Case[]; uncovered:
     for (const f of declaredFor(cat)) {
       const c = fieldContract(cat, f);
       if (!c || c.status !== status) continue;
-      const t = carrier(cat, f);
+      const pinned = c.carrier ? catalog.find((m) => `${m.id}@${m.version}` === c.carrier) : undefined;
+      if (c.carrier && (!pinned || pinned.category !== cat || !presentIn(pinned).includes(f))) {
+        uncovered.push(`${cat}.${f} (portador ${c.carrier} inexistente o sin el campo)`);
+        continue;
+      }
+      const t = pinned ?? carrier(cat, f);
       if (t) list.push({ cat, field: f, target: t, injected: false });
       else if (c.sample !== undefined && anyOf(cat)) list.push({ cat, field: f, target: anyOf(cat)!, injected: true });
       else uncovered.push(`${cat}.${f}`);
@@ -416,8 +463,33 @@ function baseTrace(t: ModuleDefinition): ProbeTrace {
 }
 
 /** Canales de efecto cuya traza difiere entre dos batallas de sonda. */
-const changedChannels = (a: ProbeTrace, b: ProbeTrace): string[] =>
+const changedChannels = (a: ProbeTrace, b: ProbeTrace): ProbeChannel[] =>
   PROBE_CHANNELS.filter((ch) => a.channels[ch] !== b.channels[ch]);
+
+/** Un caso ACTIVE con su campo mutado: catálogo, loadout de E y traza (una vez por caso). */
+interface Mutated {
+  catalog: ModuleDefinition[];
+  loadout: LoadoutInput | undefined;
+  trace: ProbeTrace;
+}
+const mutatedTraces = new Map<string, Mutated>();
+const refOf = (m: ModuleDefinition) => `${m.id}@${m.version}`;
+function mutatedCase(c: Case): Mutated {
+  const k = `${c.cat}.${c.field}@${refOf(c.target)}`;
+  const hit = mutatedTraces.get(k);
+  if (hit) return hit;
+  const contract = fieldContract(c.cat, c.field)!;
+  const before = c.injected ? undefined : getPath(c.target as unknown as Json, c.field);
+  const after = contract.perturb!(c.injected ? contract.sample : before, c.target);
+  expect(after, "la mutación no cambia el valor").not.toEqual(before);
+  const mutated = withField(catalog, c.target, c.field, after);
+  // `baseLoadout`: el loadout construido con el catálogo SIN mutar (es el de baseTrace).
+  const loadout = contract.baseLoadout ? loadoutWith(c.target, catalog) : undefined;
+  const out = { catalog: mutated, loadout, trace: probeTrace(mutated, refOf(c.target), loadout) };
+  mutatedTraces.set(k, out);
+  return out;
+}
+const caseName = (c: Case) => `${c.cat}.${c.field} (${refOf(c.target)}${c.injected ? ", inyectado" : ""})`;
 
 describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la simulación", () => {
   const { list, uncovered } = cases("ACTIVE");
@@ -425,20 +497,27 @@ describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la sim
     expect(uncovered).toEqual([]);
   });
   for (const c of list) {
-    const declared = fieldContract(c.cat, c.field)!.observes ?? [];
-    it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}${c.injected ? ", inyectado" : ""}) cambia [${declared.join(", ")}]`, () => {
-      const contract = fieldContract(c.cat, c.field)!;
-      const before = c.injected ? undefined : getPath(c.target as unknown as Json, c.field);
-      const after = contract.perturb!(c.injected ? contract.sample : before, c.target);
-      expect(after, "la mutación no cambia el valor").not.toEqual(before);
+    const contract = fieldContract(c.cat, c.field)!;
+    const declared = contract.observes ?? [];
+    const governs = contract.governs ?? [];
+    it(`${caseName(c)} cambia [${declared.join(", ")}]`, () => {
       expect(declared.length, "entrada ACTIVE sin canal de efecto declarado").toBeGreaterThan(0);
-      const mutated = withField(catalog, c.target, c.field, after);
-      const changed = changedChannels(probeTrace(mutated, `${c.target.id}@${c.target.version}`), baseTrace(c.target));
+      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target));
       // Todos los canales declarados deben cambiar. El mensaje lista los que SÍ cambiaron.
       expect(
         declared.filter((ch) => !changed.includes(ch)),
         `sin efecto observable en lo declarado; canales que cambian: [${changed.join(", ")}]`,
       ).toEqual([]);
+    });
+    // Ronda 4 (P2-1c) · al menos UN canal de comportamiento gobernado cambia. Si sólo cambian
+    // la contabilidad, las declaraciones o el estado propio del campo, su consumidor no limita.
+    it(`${caseName(c)} gobierna [${governs.join(", ")}]`, () => {
+      expect(governs.length, "entrada ACTIVE sin canal gobernado").toBeGreaterThan(0);
+      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target));
+      expect(
+        governs.filter((ch) => changed.includes(ch)),
+        `ningún canal gobernado cambia: sólo cambia estado propio o declaraciones [${changed.join(", ")}]`,
+      ).not.toEqual([]);
     });
   }
 });
@@ -602,6 +681,428 @@ describe("CATALOG_CONTRACT · D0 · ningún canal de la sonda registra una COPIA
         changedChannels(forged!, probeTrace(catalog, subject)),
         `registro leído (${forgedRecords} registros)`,
       ).toEqual([]);
+    });
+  }
+});
+
+// ------------------------------------------------------------------ D4 · ablación de consumidores
+
+/**
+ * Ronda 4 (P2-1c, cerrado como CLASE «estado sin consumidor») · Defensa estructural contra una
+ * declaración `governs` vacía. Para cada campo ACTIVE se ANULA en el test el consumidor que lo
+ * lee en el motor, sin tocar el código de producción: se interpone la función que lo lee
+ * (método de Vehicle, Battle o PhysicsWorld) para que devuelva el valor por defecto o deje de
+ * limitar. Con el campo MUTADO (el escenario de su D1), la sonda con el consumidor anulado
+ * tiene que diferir de la normal en al menos un canal que el campo GOBIERNA. Si no difiere,
+ * la sonda no ve el efecto de ese consumidor en lo declarado: la declaración no vale.
+ *
+ * Cada ablación es una interposición que se deshace al terminar (try/finally). Las que
+ * modifican entidades vivas (proyectiles, minas, mensajes, cooldowns) lo hacen ANTES de que
+ * el motor las consuma en el tick, igual que lo haría el consumidor con otro valor.
+ */
+type Restore = () => void;
+const VP = Vehicle.prototype as any;
+const BP = Battle.prototype as any;
+const PP = PhysicsWorld.prototype as any;
+function patch(obj: any, name: string, make: (orig: (...a: any[]) => any) => (...a: any[]) => any): Restore {
+  const orig = obj[name];
+  if (typeof orig !== "function") throw new Error(`ablación: ${name} no es un método`);
+  obj[name] = make(orig);
+  return () => {
+    obj[name] = orig;
+  };
+}
+/** Ejecuta `pre(this, args)` y luego el método original. */
+const before = (obj: any, name: string, pre: (self: any, args: any[]) => void): Restore =>
+  patch(
+    obj,
+    name,
+    (orig) =>
+      function (this: any, ...args: any[]) {
+        pre(this, args);
+        return orig.apply(this, args);
+      },
+  );
+const modulesOfCat = (v: any, cat: string): any[] =>
+  [...v.modules.values()].filter((m: any) => m.spec.category === cat);
+/** Proyectiles que el motor ve por PRIMERA vez (recién disparados) en resolveProjectiles. */
+function onNewProjectiles(fn: (self: any, p: any) => void): Restore {
+  const seen = new Set<string>();
+  return before(BP, "resolveProjectiles", (self) => {
+    for (const p of self.projectiles) {
+      const k = `${self.config.battleId}:${p.id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      fn(self, p);
+    }
+  });
+}
+/** Sustituye datos del spec de cada sensor TAL Y COMO lo lee buildObservation (activeModulesOf). */
+const sensorSees = (override: Record<string, unknown>): Restore =>
+  patch(
+    VP,
+    "activeModulesOf",
+    (orig) =>
+      function (this: any, cat: string) {
+        const r = orig.call(this, cat);
+        return cat !== "sensor" ? r : r.map((m: any) => ({ ...m, spec: { ...m.spec, ...override } }));
+      },
+  );
+/** Envuelve damageVehicle con un antes y un después sobre el vehículo dañado. */
+function aroundDamage(pre: (target: any, args: any[]) => unknown, post: (target: any, saved: any) => void): Restore {
+  return patch(
+    BP,
+    "damageVehicle",
+    (orig) =>
+      function (this: any, ...args: any[]) {
+        const saved = pre(args[0], args);
+        try {
+          return orig.apply(this, args);
+        } finally {
+          post(args[0], saved);
+        }
+      },
+  );
+}
+
+interface Ablation {
+  /** Consumidor anulado y cómo. */
+  readonly consumer: string;
+  /** Campos cuyo consumidor es éste: «categoría.campo» o «*.campo» (común). */
+  readonly fields: readonly string[];
+  readonly install: () => Restore;
+}
+
+const ABLATIONS: Readonly<Record<string, Ablation>> = {
+  ENERGY_LIMIT: {
+    consumer: "combat.ts canFire / canDeployMine (no_energy): la energía se repone a 1e9 tras tickEnergy y nunca falta",
+    fields: ["power.capacityEU", "power.generationEUs", "*.power.passiveEUs", "*.power.perActionEU"],
+    install: () =>
+      patch(
+        VP,
+        "tickEnergy",
+        (orig) =>
+          function (this: any, dt: number) {
+            orig.call(this, dt);
+            this.energyEU = 1e9;
+          },
+      ),
+  },
+  MOVEMENT_CAPS: {
+    consumer: "vehicle.ts movementCaps: prestaciones fijas (6 m/s, 4 m/s², 1 rad/s), sin módulo, estado ni masa",
+    fields: [
+      "*.massKg",
+      "movement.maxSpeedMs",
+      "movement.accelerationMs2",
+      "movement.turnRateRads",
+      "movement.ratedLoadKg",
+    ],
+    install: () => patch(VP, "movementCaps", () => () => ({ maxSpeedMs: 6, accelerationMs2: 4, turnRateRads: 1 })),
+  },
+  MODULE_STATE: {
+    consumer:
+      "vehicle.ts stateOf: ignora el hp (operativo salvo apagado); performanceOf/activeModulesOf/canFire lo leen",
+    fields: ["movement.hp", "power.hp", "sensor.hp", "weapon.hp", "mine.hp", "radio.hp"],
+    install: () =>
+      patch(
+        VP,
+        "stateOf",
+        () =>
+          function (this: any, slot: string) {
+            const m = this.modules.get(slot);
+            if (!m) return "destroyed";
+            return m.offline ? "offline" : "operational";
+          },
+      ),
+  },
+  MODULE_SOAK: {
+    consumer: "damage.ts resolveDamage (candidatos con hp > 0): un módulo destruido sigue absorbiendo daño de módulo",
+    fields: ["ammo.hp", "utility.hp"],
+    install: () =>
+      aroundDamage(
+        (t) => {
+          const revived = [...t.modules.values()].filter((m: any) => m.hp <= 0 && m.spec.category !== "armor");
+          for (const m of revived) m.hp = 1e-9;
+          return revived;
+        },
+        (_t, revived: any[]) => {
+          for (const m of revived) if (m.hp <= 1e-9) m.hp = 0;
+        },
+      ),
+  },
+  ARMOR_OFF: {
+    consumer: "damage.ts resolveDamage (armor[sector], armorActive, resist): el vehículo dañado no tiene blindaje",
+    fields: ["armor.hp", "armor.sector", "armor.reduction"],
+    install: () =>
+      aroundDamage(
+        (t) => {
+          const saved = t.armor;
+          t.armor = Object.create(null);
+          return saved;
+        },
+        (t, saved) => {
+          t.armor = saved;
+        },
+      ),
+  },
+  HULL_DEATH: {
+    consumer: "damage.ts resolveDamage (killed = hullHp ≤ 0) → onKill: el casco nunca llega a 0 (nadie muere)",
+    fields: ["chassis.hullHp"],
+    install: () =>
+      aroundDamage(
+        (t) => {
+          t.hullHp += 1e9;
+        },
+        (t) => {
+          t.hullHp -= 1e9;
+        },
+      ),
+  },
+  VEHICLE_RADIUS: {
+    consumer: "physics.ts addVehicle: colisionador de radio fijo 1,6 m (boca del arma y perímetro siguen con el spec)",
+    fields: ["chassis.radiusM"],
+    install: () =>
+      patch(
+        PP,
+        "addVehicle",
+        (orig) =>
+          function (this: any, id: string, pos: unknown, heading: number, _r: number, mass: number) {
+            return orig.call(this, id, pos, heading, 1.6, mass);
+          },
+      ),
+  },
+  MOUNT_LOOKUP: {
+    consumer:
+      "vehicle.ts mountOf(slot): si la ranura no tiene montura, devuelve la primera del chasis (no busca por id)",
+    fields: ["chassis.slots[].id"],
+    install: () =>
+      patch(
+        VP,
+        "mountOf",
+        (orig) =>
+          function (this: any, slot: string) {
+            return orig.call(this, slot) ?? Object.values(this.spec.turretMounts ?? {})[0];
+          },
+      ),
+  },
+  TURRET_RATE: {
+    consumer: "vehicle.ts turretRate: tasa fija de 3 rad/s",
+    fields: ["chassis.slots[].mount.turretRateRads"],
+    install: () => patch(VP, "turretRate", () => () => 3),
+  },
+  TURRET_ARC: {
+    consumer: "vehicle.ts mountArcOf (lo leen turretArc → stepTurret y canFire): arco completo, no limita",
+    fields: ["chassis.slots[].mount.turretArcRad"],
+    install: () => patch(VP, "mountArcOf", () => () => Math.PI * 2),
+  },
+  COOLDOWN: {
+    consumer: "combat.ts canFire / canDeployMine (cooldown): cooldownUntilTick a 0 antes de resolver los disparos",
+    fields: ["weapon.cooldownTicks", "mine.cooldownTicks"],
+    install: () =>
+      before(BP, "resolveFiring", (self) => {
+        for (const v of self.vehicles) for (const m of v.modules.values()) m.cooldownUntilTick = 0;
+      }),
+  },
+  AMMO_STOCK: {
+    consumer: "combat.ts canFire / ammoFor (no_ammo): la munición se repone antes de resolver los disparos",
+    fields: ["ammo.rounds"],
+    install: () =>
+      before(BP, "resolveFiring", (self) => {
+        for (const v of self.vehicles) for (const m of modulesOfCat(v, "ammo")) m.ammo = 1e6;
+      }),
+  },
+  AMMO_COMPAT: {
+    consumer: "combat.ts ammoFor (acceptsAmmo): el arma acepta cualquier munición montada",
+    fields: ["weapon.acceptsAmmo"],
+    install: () =>
+      before(BP, "resolveFiring", (self) => {
+        for (const v of self.vehicles) {
+          const all = modulesOfCat(v, "ammo").map((a: any) => a.spec.moduleId.split("@")[0]);
+          for (const w of modulesOfCat(v, "weapon")) w.spec.acceptsAmmo = all;
+        }
+      }),
+  },
+  MINE_CHARGES: {
+    consumer: "combat.ts canDeployMine (no_charges): las cargas se reponen antes de resolver las siembras",
+    fields: ["mine.charges"],
+    install: () =>
+      before(BP, "resolveFiring", (self) => {
+        for (const v of self.vehicles) for (const m of modulesOfCat(v, "mine")) m.charges = 1e6;
+      }),
+  },
+  PROJECTILE_RANGE: {
+    consumer: "battle.ts resolveProjectiles (ttlTicks = alcance): ningún proyectil caduca",
+    fields: ["weapon.rangeM"],
+    install: () =>
+      before(BP, "resolveProjectiles", (self) => {
+        for (const p of self.projectiles) p.ttlTicks = 1e6;
+      }),
+  },
+  PROJECTILE_SPEED: {
+    consumer: "combat.ts fire (velocidad): todo proyectil nuevo vuela a 100 m/s (el valor por defecto)",
+    fields: ["weapon.projectileSpeedMs"],
+    install: () =>
+      onNewProjectiles((_s, p) => {
+        const k = 100 / Math.hypot(p.velocity.x, p.velocity.y);
+        p.velocity = { x: p.velocity.x * k, y: p.velocity.y * k };
+      }),
+  },
+  PROJECTILE_SPREAD: {
+    consumer: "combat.ts fire (dispersión): todo proyectil nuevo sale según la torreta, sin dispersión",
+    fields: ["weapon.spreadRad"],
+    install: () =>
+      onNewProjectiles((self, p) => {
+        const owner = self.vehicles.find((v: any) => v.id === p.ownerId);
+        const speed = Math.hypot(p.velocity.x, p.velocity.y);
+        p.velocity = { x: Math.cos(owner.turretHeading) * speed, y: Math.sin(owner.turretHeading) * speed };
+      }),
+  },
+  DIRECT_DAMAGE: {
+    consumer: "battle.ts damageVehicle (impacto directo de proyectil): importe fijo de 20",
+    fields: ["weapon.damage", "ammo.damageMultiplier"],
+    install: () =>
+      before(BP, "damageVehicle", (_s, args) => {
+        if (args[7] === "projectile") args[1] = 20;
+      }),
+  },
+  BLAST_DAMAGE: {
+    consumer: "battle.ts explode: daño fijo de 40",
+    fields: ["mine.damage"],
+    install: () =>
+      before(BP, "explode", (_s, args) => {
+        args[1] = 40;
+      }),
+  },
+  BLAST_RADIUS: {
+    consumer: "battle.ts explode: radio fijo de 2 m",
+    fields: ["mine.explosionRadiusM", "ammo.explosionRadiusM"],
+    install: () =>
+      before(BP, "explode", (_s, args) => {
+        args[2] = 2;
+      }),
+  },
+  MINE_TRIGGER: {
+    consumer: "battle.ts resolveMines (detonación): radio de activación de 2 m (el valor por defecto)",
+    fields: ["mine.triggerRadiusM"],
+    install: () =>
+      before(BP, "resolveMines", (self) => {
+        for (const m of self.mines) m.triggerRadiusM = 2;
+      }),
+  },
+  MINE_ARM: {
+    consumer: "battle.ts resolveMines (armedAtTick): toda mina está armada",
+    fields: ["mine.armDelayTicks"],
+    install: () =>
+      before(BP, "resolveMines", (self) => {
+        for (const m of self.mines) m.armedAtTick = 0;
+      }),
+  },
+  MINE_LIFETIME: {
+    consumer: "battle.ts resolveMines (expiresAtTick): ninguna mina caduca",
+    fields: ["mine.lifetimeTicks"],
+    install: () =>
+      before(BP, "resolveMines", (self) => {
+        for (const m of self.mines) m.expiresAtTick = Number.POSITIVE_INFINITY;
+      }),
+  },
+  SENSOR_TYPE: {
+    consumer: "sensors.ts buildObservation (primitiva por tipo): todo sensor se lee como de proximidad",
+    fields: ["sensor.sensorType"],
+    install: () => sensorSees({ sensorType: "proximity" }),
+  },
+  SENSOR_RANGE: {
+    consumer: "sensors.ts buildObservation (rangeM): alcance fijo de 40 m",
+    fields: ["sensor.rangeM"],
+    install: () => sensorSees({ rangeM: 40 }),
+  },
+  SENSOR_FOV: {
+    consumer: "sensors.ts buildObservation, lidar (fovRad): π/2 (el valor por defecto)",
+    fields: ["sensor.fovRad"],
+    install: () => sensorSees({ fovRad: Math.PI / 2 }),
+  },
+  SENSOR_RAYS: {
+    consumer: "sensors.ts buildObservation, lidar (rays): 16 (el valor por defecto)",
+    fields: ["sensor.rays"],
+    install: () => sensorSees({ rays: 16 }),
+  },
+  SENSOR_ERROR: {
+    consumer: "sensors.ts buildObservation, radar (errorM): 2 m (el valor por defecto)",
+    fields: ["sensor.errorM"],
+    install: () => sensorSees({ errorM: 2 }),
+  },
+  RADIO_RANGE: {
+    consumer: "sensors.ts radioDeliverableTo (rangeM del mensaje): alcance ilimitado",
+    fields: ["radio.rangeM"],
+    install: () =>
+      before(BP, "step", (self) => {
+        for (const m of self.radioQueue) m.rangeM = 1e9;
+      }),
+  },
+  RADIO_BYTES: {
+    consumer: "sensors.ts validateRadio (too_large): tamaño máximo por defecto (el techo de D8)",
+    fields: ["radio.maxMessageBytes"],
+    install: () =>
+      before(BP, "step", (self) => {
+        for (const v of self.vehicles) for (const r of modulesOfCat(v, "radio")) delete r.spec.maxMessageBytes;
+      }),
+  },
+  RADIO_RATE: {
+    consumer: "sensors.ts validateRadio (rate_limited): el contador del segundo vuelve a 0 en cada tick",
+    fields: ["radio.maxMessagesPerSecond"],
+    install: () =>
+      before(BP, "step", (self) => {
+        for (const v of self.vehicles) v.radioSentThisSecond = 0;
+      }),
+  },
+};
+
+/**
+ * Campos ACTIVE SIN ablación, con el motivo. Vacío: todo campo ACTIVE tiene un consumidor que
+ * se puede anular en el test. Si alguno entra aquí, el motivo queda en el gate.
+ */
+const NO_ABLATION: Readonly<Record<string, string>> = {};
+
+function ablationsOf(c: Case): string[] {
+  return Object.entries(ABLATIONS)
+    .filter(([, a]) => a.fields.includes(`${c.cat}.${c.field}`) || a.fields.includes(`*.${c.field}`))
+    .map(([id]) => id);
+}
+
+describe("CATALOG_CONTRACT · D4 · ablación: con el consumidor anulado cambia algún canal gobernado", () => {
+  const { list } = cases("ACTIVE");
+  it("todo caso ACTIVE tiene EXACTAMENTE una ablación de su consumidor (o un motivo en NO_ABLATION)", () => {
+    const bad: string[] = [];
+    for (const c of list) {
+      const k = `${c.cat}.${c.field}`;
+      const n = ablationsOf(c).length;
+      if (n === 0 && !NO_ABLATION[k]) bad.push(`${k}: sin ablación`);
+      if (n > 1) bad.push(`${k}: ${n} ablaciones (${ablationsOf(c).join(", ")})`);
+      if (n === 1 && NO_ABLATION[k]) bad.push(`${k}: ablación y motivo a la vez`);
+    }
+    // Ninguna ablación rancia: cada campo que nombra existe como caso ACTIVE.
+    const keys = new Set(list.flatMap((c) => [`${c.cat}.${c.field}`, `*.${c.field}`]));
+    for (const [id, a] of Object.entries(ABLATIONS))
+      for (const f of a.fields) if (!keys.has(f)) bad.push(`${id}: ${f} no es un caso ACTIVE`);
+    expect(bad).toEqual([]);
+  });
+  for (const c of list) {
+    const [id] = ablationsOf(c);
+    if (!id) continue;
+    const governs = fieldContract(c.cat, c.field)!.governs ?? [];
+    it(`ablación ${id} · ${caseName(c)}: consumidor anulado ⇒ cambia [${governs.join(", ")}]`, () => {
+      const m = mutatedCase(c);
+      const restore = ABLATIONS[id]!.install();
+      let ablated: ProbeTrace;
+      try {
+        ablated = probeTrace(m.catalog, refOf(c.target), m.loadout);
+      } finally {
+        restore();
+      }
+      const changed = changedChannels(ablated!, m.trace);
+      expect(
+        governs.filter((ch) => changed.includes(ch)),
+        `${ABLATIONS[id]!.consumer}: la sonda no ve su efecto en lo gobernado; canales que cambian: [${changed.join(", ")}]`,
+      ).not.toEqual([]);
     });
   }
 });
