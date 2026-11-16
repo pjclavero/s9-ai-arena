@@ -63,7 +63,10 @@ MUTANTS = [
      '          respawnedThisTick += 1;\n          if (respawnRearmPolicyOf(this.config.ruleset) === "all_alive_participants")\n'
      "            for (const w of this.vehicles) if (w.alive && !w.disqualified) w.rearm();\n",
      k(D_ALL, "dos reapariciones en el MISMO tick ⇒ un solo rearme, exactamente al máximo, nunca por encima"),
-     'expect(calls.get("veh_1")).toBe(1);', r"expected 2 to be 1"),
+     'expect(calls.get("veh_1")).toBe(1);', r"expected [2-9]\d* to be 1"),
+    # G5 · la guarda `respawn.enabled` del PASO 7 es REDUNDANTE con `respawnsLeft()` (0 sin respawn):
+    # quitar sólo una es un mutante equivalente (medido en bd22876: G5 de una sola guarda, VIVO).
+    # El mutante quita las DOS (ver EXTRA) para probar la garantía «sin respawn, munición finita».
     ("G5_respawn_siempre", BATTLE, "    if (this.config.ruleset.respawn.enabled) {\n      // Poses vistas por spawnFor",
      "    if (true) {\n      // Poses vistas por spawnFor",
      k(D_SELF, "sin respawn la munición sigue siendo FINITA (nadie se rearma aunque haya bajas)"),
@@ -126,6 +129,15 @@ MUTANTS = [
 ]
 
 
+# Sustituciones adicionales de un mutante (mismo criterio de ancla única; se restauran igual).
+EXTRA = {
+    "G5_respawn_siempre": [
+        (MODES, "  if (!ruleset.respawn.enabled) return 0;\n  if (!respawnLimited(ruleset)) return Number.POSITIVE_INFINITY;",
+         "  if (!respawnLimited(ruleset)) return Number.POSITIVE_INFINITY;"),
+    ],
+}
+
+
 def sh(*cmd, **kw):
     return subprocess.run(list(cmd), cwd=WT, env=ENV, **kw)
 
@@ -169,18 +181,25 @@ def main():
     for name, path, old, new, killer, assertion, reason in MUTANTS:
         if ONLY and name.split("_")[0] not in ONLY:
             continue
-        p = os.path.join(WT, path)
-        src = open(p, encoding="utf8").read()
-        n = src.count(old)
-        if n != 1:
-            out["mutants"].append({"id": name, "file": path, "error": f"ancla con {n} ocurrencias", "killed": False})
-            print(f"{name}\tERROR ancla={n}", flush=True)
+        subs = [(path, old, new), *EXTRA.get(name, [])]
+        srcs = {}
+        bad = None
+        for sp, so, _ in subs:
+            srcs.setdefault(sp, open(os.path.join(WT, sp), encoding="utf8").read())
+            if srcs[sp].count(so) != 1:
+                bad = f"ancla con {srcs[sp].count(so)} ocurrencias en {sp}"
+        if bad:
+            out["mutants"].append({"id": name, "file": path, "error": bad, "killed": False})
+            print(f"{name}\tERROR {bad}", flush=True)
             continue
-        open(p, "w", encoding="utf8").write(src.replace(old, new))
+        for sp, so, sn in subs:
+            srcs[sp] = srcs[sp].replace(so, sn)
+        for sp, txt in srcs.items():
+            open(os.path.join(WT, sp), "w", encoding="utf8").write(txt)
         try:
             rc, summ, tests = vitest(name)
         finally:
-            sh("git", "checkout", "-q", "--", path)
+            sh("git", "checkout", "-q", "--", *srcs.keys())
         kt = tests.get(killer, {"status": "missing", "msg": ""})
         msg = clean_msg(kt["msg"])
         right_reason = bool(re.search(reason, re.sub(r"\x1b\[[0-9;]*m", "", kt["msg"])))
