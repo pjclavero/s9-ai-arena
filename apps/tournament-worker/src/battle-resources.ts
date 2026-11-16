@@ -20,6 +20,15 @@
  *    ni otra batalla (no hay operaciones «globales» aquí).
  *  - NUNCA LANZA: devuelve un informe; un fallo de una liberación no impide las
  *    demás (un teardown que se rinde a la primera deja huérfanos).
+ *  - ACOTADO (G2 · MF_STOP_BOUNDED_TEARDOWN): ninguna liberación puede colgar el
+ *    teardown. Cada una corre con un plazo (`deadlineMs` del recurso o
+ *    `releaseDeadlineMs` del registro); si vence, el recurso queda `failed` (se
+ *    reintenta) y el teardown sigue. Un `release` colgado jamás bloquea el resto.
+ *  - DESPRENDIDO (G2 · MF_LAUNCH_TIMEOUT_CLEANUP): un recurso que todavía NO
+ *    existe (un lanzamiento en vuelo sin respuesta) no se marca `failed` sin
+ *    fin: su `release` devuelve `"detached"`, el registro lo suelta (paso
+ *    `detached`, `stats.detached`) y el informe NO es «limpio». Quien lo
+ *    desprende se compromete a limpiar el recurso si llega a existir.
  *
  * `scope` permite a una capa interna (containerAgents, el ejecutor) limpiar SÓLO
  * lo suyo con la MISMA función, sin tocar lo que registró la orquestación (el
@@ -63,8 +72,13 @@ export interface ResourceSpec {
   /** Tipo legible (`container`, `sandbox_host`, `timer:cpu_sampler`…). Se informa. */
   kind: string;
   phase: ResourcePhase;
-  /** Libera el recurso. Debe tolerar que ya no exista. */
-  release: () => Promise<void> | void;
+  /**
+   * Libera el recurso. Debe tolerar que ya no exista. Devuelve `"detached"` si el
+   * recurso aún no existe y su dueño se encarga de él si llega (ver «DESPRENDIDO»).
+   */
+  release: () => Promise<void | "detached"> | void | "detached";
+  /** Plazo de ESTA liberación (ms). Def. `releaseDeadlineMs` del registro. */
+  deadlineMs?: number;
   /** Capa que lo registró (`agents`, `executor`, `runner`). */
   scope?: string;
   /** Sólo en FINISHED: se libera pasado este plazo (ver «Drenaje»). */
@@ -83,7 +97,7 @@ export interface CleanupStep {
   id: number;
   kind: string;
   phase: ResourcePhase;
-  outcome: "released" | "failed" | "draining";
+  outcome: "released" | "failed" | "draining" | "detached";
   error?: string;
 }
 
@@ -95,9 +109,11 @@ export interface CleanupReport {
   /** Recursos que siguen registrados tras el teardown (excluidos los drenando). */
   remaining: { kind: string; phase: ResourcePhase; state: string }[];
   draining: number;
+  /** Recursos desprendidos en ESTE teardown (lanzamientos sin respuesta): no es «limpio». */
+  detached: number;
   /** Lo que devolvió la verificación externa (p. ej. contenedores que aún lista el proxy). */
   externalLeftovers: string[];
-  /** true ⇔ no queda NADA de esa batalla (ni registrado ni fuera), salvo drenajes. */
+  /** true ⇔ no queda NADA de esa batalla (ni registrado, ni desprendido, ni fuera), salvo drenajes. */
   clean: boolean;
 }
 
@@ -120,14 +136,29 @@ export class BattleAbort extends Error {
   }
 }
 
+/** Plazo por defecto de UNA liberación (ms): un `release` colgado nunca cuelga el teardown. */
+export const DEFAULT_RELEASE_DEADLINE_MS = 60_000;
+
+export interface RegistryOptions {
+  /** Plazo por defecto de cada liberación (ms). Def. DEFAULT_RELEASE_DEADLINE_MS. */
+  releaseDeadlineMs?: number;
+}
+
 export class BattleResourceRegistry {
   private seq = 0;
+  private readonly releaseDeadlineMs: number;
   private readonly entries = new Map<string, Map<number, Entry>>();
   private readonly aborters = new Map<string, Set<AbortController>>();
   private readonly inflight = new Map<string, Promise<unknown>>();
   private verifier: ExternalVerifier | undefined;
+  /** Desprendimientos de una batalla aún no informados en un teardown COMPLETO (sin scope). */
+  private readonly detachedOf = new Map<string, number>();
   /** Cuántas veces se ha ejecutado una liberación (observabilidad y tests). */
-  readonly stats = { releases: 0, failures: 0, cleanups: 0 };
+  readonly stats = { releases: 0, failures: 0, cleanups: 0, detached: 0, deadlineExpired: 0 };
+
+  constructor(opts: RegistryOptions = {}) {
+    this.releaseDeadlineMs = opts.releaseDeadlineMs ?? DEFAULT_RELEASE_DEADLINE_MS;
+  }
 
   /** Fija la verificación externa (contenedores que aún existen para ese battleId). */
   setVerifier(v: ExternalVerifier | undefined): void {
@@ -255,17 +286,36 @@ export class BattleResourceRegistry {
   private async releaseEntry(e: Entry): Promise<CleanupStep> {
     e.state = "releasing";
     this.stats.releases++;
+    const deadlineMs = e.deadlineMs ?? this.releaseDeadlineMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await e.release();
+      // G2 · acotado: la liberación compite con su plazo; si vence, `failed` y se sigue.
+      const out = await Promise.race([
+        Promise.resolve().then(() => e.release()),
+        new Promise<never>((_r, rej) => {
+          timer = setTimeout(() => {
+            this.stats.deadlineExpired++;
+            rej(new Error(`liberación sin respuesta en ${deadlineMs} ms`));
+          }, deadlineMs);
+          timer.unref?.();
+        }),
+      ]);
       const b = this.entries.get(e.battleId);
       b?.delete(e.id);
       if (b && b.size === 0) this.entries.delete(e.battleId);
+      if (out === "detached") {
+        this.stats.detached++;
+        this.detachedOf.set(e.battleId, (this.detachedOf.get(e.battleId) ?? 0) + 1);
+        return { id: e.id, kind: e.kind, phase: e.phase, outcome: "detached" };
+      }
       return { id: e.id, kind: e.kind, phase: e.phase, outcome: "released" };
     } catch (err) {
       this.stats.failures++;
       e.state = "failed";
       e.lastError = err instanceof Error ? err.message : String(err);
       return { id: e.id, kind: e.kind, phase: e.phase, outcome: "failed", error: e.lastError };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -313,6 +363,13 @@ export class BattleResourceRegistry {
       .filter((e) => e.state !== "draining")
       .map((e) => ({ kind: e.kind, phase: e.phase, state: e.state }));
     const draining = left.filter((e) => e.state === "draining").length;
+    // Un teardown COMPLETO (sin scope) informa también lo desprendido por una capa interna
+    // (containerAgents) de ESA batalla: la orquestación no puede llamar «limpio» a eso.
+    let detached = steps.filter((x) => x.outcome === "detached").length;
+    if (scope === null) {
+      detached = Math.max(detached, this.detachedOf.get(battleId) ?? 0);
+      this.detachedOf.delete(battleId);
+    }
     let externalLeftovers: string[] = [];
     if (scope === null && this.verifier) {
       try {
@@ -328,8 +385,9 @@ export class BattleResourceRegistry {
       steps,
       remaining,
       draining,
+      detached,
       externalLeftovers,
-      clean: remaining.length === 0 && externalLeftovers.length === 0,
+      clean: remaining.length === 0 && detached === 0 && externalLeftovers.length === 0,
     };
   }
 }
@@ -337,40 +395,74 @@ export class BattleResourceRegistry {
 /** Registro del proceso (producción). Los tests crean el suyo. */
 export const defaultBattleResources = new BattleResourceRegistry();
 
+/** El runner no contestó a la parada de un contenedor en su plazo (G2 · teardown acotado). */
+export class StopUnresponsiveError extends Error {
+  constructor(what: string, ms: number) {
+    super(`${what} sin respuesta del runner en ${ms} ms`);
+    this.name = "StopUnresponsiveError";
+  }
+}
+
+/** `p` o rechazo con StopUnresponsiveError al vencer `ms` (el temporizador nunca retiene el proceso). */
+export async function withinDeadline<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_r, rej) => {
+        timer = setTimeout(() => rej(new StopUnresponsiveError(what, ms)), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Parada en dos tiempos de UN contenedor: TERM con gracia corta (la Engine manda
  * KILL al vencer `termGraceS`); si tras eso sigue vivo —o el stop no contesta en
  * `stopDeadlineMs`—, KILL inmediato (`t=0`). Nunca KILL de entrada.
+ *
+ * G2 · MF_STOP_BOUNDED_TEARDOWN: TODA espera está acotada. El TERM por
+ * `stopDeadlineMs`, la consulta de estado por `stateDeadlineMs` (sin respuesta =
+ * estado desconocido) y el KILL por `killDeadlineMs`: si el KILL tampoco contesta
+ * se RECHAZA con `StopUnresponsiveError` (el recurso queda `failed` y el borrado
+ * forzado o el reaper lo terminan). Cota total: stop + estado + kill.
  */
 export async function terminateContainer(
   h: {
     stop(o?: { timeoutSeconds?: number }): Promise<void>;
     state?(): Promise<{ running: boolean; gone: boolean } | null>;
   },
-  opts: { termGraceS?: number; stopDeadlineMs?: number } = {},
+  opts: { termGraceS?: number; stopDeadlineMs?: number; killDeadlineMs?: number; stateDeadlineMs?: number } = {},
 ): Promise<"terminated" | "killed"> {
   const grace = opts.termGraceS ?? 5;
   const deadline = opts.stopDeadlineMs ?? (grace + 5) * 1000;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = await Promise.race([
+  const killDeadline = opts.killDeadlineMs ?? DEFAULT_KILL_DEADLINE_MS;
+  const stateDeadline = opts.stateDeadlineMs ?? DEFAULT_STATE_DEADLINE_MS;
+  const timedOut = await withinDeadline(
     h.stop({ timeoutSeconds: grace }).then(
       () => false,
       () => false,
     ),
-    new Promise<boolean>((r) => {
-      timer = setTimeout(() => r(true), deadline);
-    }),
-  ]);
-  if (timer) clearTimeout(timer);
+    deadline,
+    "stop(TERM)",
+  ).catch(() => true);
   let alive = timedOut;
   if (!alive && h.state) {
-    const st = await h.state().catch(() => null);
+    const st = await withinDeadline(h.state(), stateDeadline, "state()").catch(() => null);
     alive = !!st && st.running && !st.gone;
   }
   if (!alive) return "terminated";
-  await h.stop({ timeoutSeconds: 0 });
+  await withinDeadline(h.stop({ timeoutSeconds: 0 }), killDeadline, "stop(KILL)");
   return "killed";
 }
+
+/** Plazo del KILL (`stop` con t=0) en el teardown. */
+export const DEFAULT_KILL_DEADLINE_MS = 5_000;
+/** Plazo de una consulta de estado del contenedor en el teardown. */
+export const DEFAULT_STATE_DEADLINE_MS = 2_000;
 
 /** Clasifica el final de una batalla a partir de lo que pasó en la orquestación. */
 export function classifyEnd(input: { ok: boolean; error?: unknown; abortReason?: unknown }): BattleEndReason {

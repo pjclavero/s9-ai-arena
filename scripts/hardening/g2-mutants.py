@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""OLA 2 · G2 · Mutantes de calibración de lo que G2 añade (se ejecuta EN VM112, dentro de flock, en serie).
+"""OLA 2 · G2 · Mutantes de calibración de lo que G2 añade (se ejecuta en el laboratorio, dentro de flock, en serie).
 
 Uso: python3 scripts/hardening/g2-mutants.py <worktree> <salida.json> [G1,G2,...]
+
+(Se ejecuta en el laboratorio de pruebas, nunca en ia02; G2.4/G2.5 añaden G23-G34.)
 
 Mismo patrón que ma-mutants.py: cambio mínimo con ancla ÚNICA (un patrón ausente o repetido se
 registra como `error`, killed=false, nunca se omite), vitest sobre los tests que lo deben matar,
@@ -32,6 +34,8 @@ HUD = "apps/web/tests/g2-hud-armor-broken.test.tsx"
 PS = "apps/arena-engine/src/protocol-server.ts"
 RES = "apps/tournament-worker/src/battle-resources.ts"
 CA = "apps/tournament-worker/src/container-agents.ts"
+RESUNIT = "apps/tournament-worker/src/battle-resources.test.ts"
+V2 = "apps/arena-engine/tests/contract-pending/engine-v2-primitives.test.ts"
 
 # (nombre, fichero, patrón, reemplazo, tests, expect-opcional, ediciones-extra-opcionales)
 MUTANTS = [
@@ -73,9 +77,49 @@ MUTANTS = [
      "      this.stats.failures++;\n      e.state = \"failed\";",
      "      this.stats.failures++;\n      this.entries.get(e.battleId)?.delete(e.id);\n      e.state = \"failed\";", [WORKER], "NO es «limpio»"),
     ("G22_cleanup_marks_clean_always", RES,
-     "      clean: remaining.length === 0 && externalLeftovers.length === 0,", "      clean: true,", [WORKER], "NO es «limpio»"),
-    ("G23_launch_in_flight_not_registered", CA,
-     "            kind: \"container_launch_in_flight\",", "            kind: \"container_launch_in_flightX\",", [WORKER], None),
+     "      clean: remaining.length === 0 && detached === 0 && externalLeftovers.length === 0,", "      clean: true,",
+     [WORKER], "NO es «limpio»"),
+    # G2.5 · el lanzamiento que contesta DENTRO de la espera del teardown se para y se borra ahí.
+    ("G23_inflight_late_not_disposed", CA,
+     "              if (late && !handles.includes(late)) await disposeLate(late);",
+     "              void disposeLate;", [WORKER], "DENTRO de la espera del teardown"),
+    # ------------------------------------------- G2.4 · MF_STOP_BOUNDED_TEARDOWN (teardown acotado)
+    ("G24_kill_unbounded", RES,
+     '  await withinDeadline(h.stop({ timeoutSeconds: 0 }), killDeadline, "stop(KILL)");',
+     "  await h.stop({ timeoutSeconds: 0 });", [WORKER, RESUNIT], "un stop() que nunca resuelve no cuelga el teardown"),
+    ("G25_release_deadline_removed", RES,
+     "    const deadlineMs = e.deadlineMs ?? this.releaseDeadlineMs;", "    const deadlineMs = 2 ** 31 - 1;",
+     [RESUNIT], "un release que nunca resuelve"),
+    ("G32_remove_keeps_failed_terminate", CA,
+     "                  await h.remove!();\n                  forgetTerminate();", "                  await h.remove!();",
+     [WORKER], "stop que LANZA siempre"),
+    ("G33_state_unbounded_in_terminate", RES,
+     '    const st = await withinDeadline(h.state(), stateDeadline, "state()").catch(() => null);',
+     "    const st = await h.state().catch(() => null);", [RESUNIT], "un state() que nunca contesta"),
+    # ------------------------------------------- G2.5 · MF_LAUNCH_TIMEOUT_CLEANUP
+    ("G26_inflight_failed_not_detached", CA,
+     '                adoptLate(pending);\n                return "detached" as const;',
+     '                throw new Error("lanzamiento en vuelo sin respuesta del runner");',
+     [WORKER], "tras el teardown no queda NADA registrado"),
+    ("G27_inflight_wait_30s", CA,
+     "export const DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS = 5_000;", "export const DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS = 30_000;",
+     [WORKER], "timeout + launch parcial"),
+    ("G28_late_not_adopted", CA,
+     "              if (!late || handles.includes(late)) return;", "              return;",
+     [WORKER], "contenedor que llega TARDE"),
+    ("G29_late_cleanup_failure_not_registered", CA,
+     "              } catch {\n                res.register(battleId, {", "              } catch {\n                return;\n                res.register(battleId, {",
+     [WORKER], "cuya limpieza FALLA"),
+    ("G30_abort_not_observed_in_launch", CA,
+     "              signal,\n            );\n            forgetInFlight();", "              undefined,\n            );\n            forgetInFlight();",
+     [WORKER], "DURANTE un launch() colgado"),
+    ("G31_detached_counts_as_clean", RES,
+     "      clean: remaining.length === 0 && detached === 0 && externalLeftovers.length === 0,",
+     "      clean: remaining.length === 0 && externalLeftovers.length === 0,", [RESUNIT, WORKER], "suelta el recurso"),
+    # ------------------------------------------- REVIEW-ME-2 P2-C · campo como segmento de ruta
+    ("G34_v2_field_only_in_message", "packages/module-catalog/v2/validate.ts",
+     'this.fail(`${path}.${k}`, "obligatorio");', "this.fail(path, `${k} obligatorio`);",
+     [V2], "ninguna incidencia señala"),
     # ------------------------------------------------------ REVIEW-ME-2 P2-A / P2-B
     ("G15_hashsees_undo_broken_is_fixture_error", RDET,
      "        return [() => p.ttlTicks--, () => p.ttlTicks++];", "        return [() => p.ttlTicks--, () => p.ttlTicks];", [RDET], "FixtureError"),
@@ -90,7 +134,6 @@ MUTANTS = [
     ("G20_radio_stats_public", P + "policy.ts",
      '    "stats.radio": ownerOnly(),', '    "stats.radio": PUBLIC,', [EQP], None),
 ]
-# Los mutantes de MF en el worker se añaden con su ancla real tras medir (ver informe G2).
 EXTRA_PATH = sys.argv[4] if len(sys.argv) > 4 else None
 if EXTRA_PATH:
     MUTANTS += [tuple(m) for m in json.load(open(EXTRA_PATH))]

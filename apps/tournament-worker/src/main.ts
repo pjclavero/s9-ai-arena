@@ -155,6 +155,7 @@ const worker = new TournamentWorker({
                 released: cleanup.steps.filter((s) => s.outcome === "released").length,
                 failed: cleanup.steps.filter((s) => s.outcome === "failed").map((s) => `${s.kind}: ${s.error}`),
                 draining: cleanup.draining,
+                detached: cleanup.detached,
                 remaining: cleanup.remaining.length,
                 externalLeftovers: cleanup.externalLeftovers.length,
                 RAM_IDLE_BEFORE: memory.RAM_IDLE_BEFORE,

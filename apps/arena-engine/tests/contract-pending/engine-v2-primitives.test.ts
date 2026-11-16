@@ -142,7 +142,20 @@ async function accepts(def: unknown, label: string): Promise<void> {
   expect(issues, `${label}: el bloque válido se rechazó`).toEqual([]);
 }
 
-/** Un bloque válido mutado se rechaza y el error señala el campo roto. */
+/**
+ * Segmentos de una ruta de incidencia (`action.projectile.onImpact[0].primitive` ⇒
+ * [action, projectile, onImpact, 0, primitive]).
+ */
+function pathSegments(path: string): string[] {
+  return path.split(/[.[\]]+/).filter(Boolean);
+}
+
+/**
+ * Un bloque válido mutado se rechaza y el error señala el campo roto.
+ * G2 (REVIEW-ME-2 P2-C): el campo se exige como SEGMENTO EXACTO de la ruta de la incidencia,
+ * no como subcadena de `path + message` (laxo: «kind» casaba con cualquier mensaje que lo
+ * mencionase, «mode» con «modelo»…).
+ */
 async function rejects(valid: unknown, mutate: (d: any) => void, field: string): Promise<void> {
   await accepts(valid, "control positivo");
   const bad: any = clone(valid);
@@ -150,8 +163,8 @@ async function rejects(valid: unknown, mutate: (d: any) => void, field: string):
   const issues = (await validator())(bad);
   expect(issues.length, `el bloque inválido (${field}) se aceptó`).toBeGreaterThan(0);
   expect(
-    issues.some((i) => `${i.path} ${i.message}`.includes(field)),
-    `ninguna incidencia señala «${field}»: ${JSON.stringify(issues)}`,
+    issues.some((i) => pathSegments(i.path).includes(field)),
+    `ninguna incidencia señala «${field}» en su ruta: ${JSON.stringify(issues)}`,
   ).toBe(true);
 }
 

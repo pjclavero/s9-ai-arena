@@ -63,7 +63,23 @@ import {
 import type { AgentDriver, AgentDriverInput, AgentDriverOutput } from "./engine-executor.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
 import { containerDiagnostics, type BotContainerDiagnostics, type BotRunDiagnostics } from "./bot-diagnostics.js";
-import { BattleResourceRegistry, defaultBattleResources, terminateContainer } from "./battle-resources.js";
+import {
+  BattleResourceRegistry,
+  defaultBattleResources,
+  terminateContainer,
+  withinDeadline,
+} from "./battle-resources.js";
+
+/**
+ * G2 · MF_LAUNCH_TIMEOUT_CLEANUP · cuánto espera el teardown a un lanzamiento EN VUELO
+ * (el runner aún no devolvió el handle). Antes eran 30 s fijos y, si vencían, el recurso
+ * quedaba `failed` para siempre (el reaper volvía a esperar 30 s en cada pasada).
+ */
+export const DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS = 5_000;
+/** Plazo de la limpieza de un contenedor que llega TARDE (parar + borrar). */
+const LATE_DISPOSE_DEADLINE_MS = 30_000;
+/** Plazo del borrado forzado de un contenedor en el teardown. */
+const REMOVE_DEADLINE_MS = 15_000;
 
 /** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
 export interface BotLaunchPlan {
@@ -136,6 +152,8 @@ export interface ContainerAgentsOptions {
   resources?: BattleResourceRegistry;
   /** OLA2-MF · gracia TERM→KILL de cada contenedor en el teardown (s). Def. 5. */
   termGraceS?: number;
+  /** G2 · espera máxima del teardown a un lanzamiento en vuelo (ms). Def. DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS. */
+  launchInFlightWaitMs?: number;
 }
 
 export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
@@ -153,6 +171,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       const battleId = input.battleId;
       const SCOPE = "agents";
       const termGraceS = opts.termGraceS ?? 5;
+      const inFlightWaitMs = opts.launchInFlightWaitMs ?? DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS;
 
       let host: BattleLaunchHost;
       try {
@@ -261,35 +280,67 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
               return p;
             },
           };
+          // G2 · MF_LAUNCH_TIMEOUT_CLEANUP. Comportamiento del lanzamiento en vuelo en el teardown:
+          //  - el runner devuelve el handle dentro de `inFlightWaitMs` ⇒ se para y se borra (released);
+          //  - el lanzamiento falló ⇒ no existe nada (released);
+          //  - no contesta ⇒ el recurso se DESPRENDE (`detached`): el registro no se queda con un
+          //    `failed` eterno y el informe no es «limpio»; si el contenedor llega a existir
+          //    después, `adoptLate` lo para y lo borra, y si eso falla lo REGISTRA (`container_late`,
+          //    `failed`, reintentable por el reaper). Fuera del proceso, el reaper lo ve por labels.
+          const vid = v.vehicleId;
+          const disposeLate = async (late: ContainerHandle) => {
+            await terminateContainer(late, { termGraceS: 0, stopDeadlineMs: 5_000 }).catch(() => undefined);
+            if (late.remove) await late.remove();
+          };
+          const adoptLate = (p: Promise<ContainerHandle | null>) => {
+            void p.then(async (late) => {
+              if (!late || handles.includes(late)) return;
+              try {
+                await withinDeadline(disposeLate(late), LATE_DISPOSE_DEADLINE_MS, "limpieza del contenedor tardío");
+              } catch {
+                res.register(battleId, {
+                  kind: `container_late:${vid}`,
+                  phase: "containers",
+                  scope: SCOPE,
+                  release: () => disposeLate(late),
+                });
+              }
+            });
+          };
           const forgetInFlight = res.register(battleId, {
             kind: "container_launch_in_flight",
             phase: "cancel_jobs",
             scope: SCOPE,
+            deadlineMs: inFlightWaitMs + LATE_DISPOSE_DEADLINE_MS,
             release: async () => {
-              // Acotado: un proxy colgado no puede colgar el teardown. Si vence, el
-              // recurso queda `failed` (se reintenta) y el contenedor, si llega a
-              // existir, lleva labels de batalla: lo recoge el reaper.
+              const pending = inFlight as Promise<ContainerHandle | null> | null;
+              if (!pending) return;
+              const NO_ANSWER = Symbol("sin respuesta");
               let t: ReturnType<typeof setTimeout> | undefined;
-              const late = inFlight
-                ? await Promise.race([
-                    inFlight,
-                    new Promise<never>((_r, rej) => {
-                      t = setTimeout(() => rej(new Error("lanzamiento en vuelo sin respuesta del runner")), 30_000);
-                      t.unref?.();
-                    }),
-                  ]).finally(() => t && clearTimeout(t))
-                : null;
-              if (late && !handles.includes(late)) {
-                await terminateContainer(late, { termGraceS: 0, stopDeadlineMs: 5_000 }).catch(() => undefined);
-                if (late.remove) await late.remove();
+              const late = await Promise.race([
+                pending,
+                new Promise<typeof NO_ANSWER>((r) => {
+                  t = setTimeout(() => r(NO_ANSWER), inFlightWaitMs);
+                  t.unref?.();
+                }),
+              ]).finally(() => t && clearTimeout(t));
+              if (late === NO_ANSWER) {
+                adoptLate(pending);
+                return "detached" as const;
               }
+              if (late && !handles.includes(late)) await disposeLate(late);
             },
           });
           try {
-            handles[i] = await launchWithinStartup(instrumented, spec, timeouts, launchRequestedAt[i]);
+            // G2 · cancelación: un aborto durante el lanzamiento no espera al reloj de arranque;
+            // el lanzamiento en vuelo lo resuelve el teardown (arriba).
+            handles[i] = await untilAborted(
+              launchWithinStartup(instrumented, spec, timeouts, launchRequestedAt[i]),
+              signal,
+            );
             forgetInFlight();
             const h = handles[i]!;
-            res.register(battleId, {
+            const forgetTerminate = res.register(battleId, {
               kind: `container:${v.vehicleId}`,
               phase: "terminate",
               scope: SCOPE,
@@ -298,8 +349,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
                   await terminateContainer(h, { termGraceS });
                 } catch (err) {
                   // Si ya no corre (o ya no existe: lo borró la fase `containers`
-                  // de un teardown anterior), la parada está hecha.
-                  const st = h.state ? await h.state().catch(() => null) : null;
+                  // de un teardown anterior), la parada está hecha. G2: consulta acotada.
+                  const st = h.state ? await withinDeadline(h.state(), 2_000, "state()").catch(() => null) : null;
                   if (st && (st.gone || !st.running)) return;
                   throw err;
                 }
@@ -310,10 +361,17 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
                 kind: `container_remove:${v.vehicleId}`,
                 phase: "containers",
                 scope: SCOPE,
-                release: () => h.remove!(),
+                deadlineMs: REMOVE_DEADLINE_MS,
+                // G2 · el borrado es FORZADO (la Engine mata lo que siga vivo): si se
+                // borró, una parada que no contestó ya no es un recurso pendiente.
+                release: async () => {
+                  await h.remove!();
+                  forgetTerminate();
+                },
               });
             }
           } catch (err) {
+            if (signal?.aborted && err === signal.reason) throw err;
             const reason = err instanceof SandboxLaunchError ? err.reason : "sandbox_start_failed";
             throw new InfrastructureFailure(
               "container_unavailable",
@@ -493,4 +551,24 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       }
     },
   };
+}
+
+/** `p`, o rechazo con `signal.reason` en cuanto la batalla se aborta (sin esperar a `p`). */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
 }
