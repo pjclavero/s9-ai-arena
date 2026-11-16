@@ -352,16 +352,18 @@ describe("G2 · ronda 2 (P2-1) · la verificación externa del teardown completo
 
   it("el siguiente teardown de la MISMA batalla no queda bloqueado detrás (serializado por battleId) y, si el verificador ya contesta, limpia la marca", async () => {
     const reg = new BattleResourceRegistry({ verifyDeadlineMs: 150 });
-    let hang = true;
-    reg.setVerifier(() => (hang ? new Promise<string[]>(() => undefined) : Promise.resolve([])));
+    // La PRIMERA verificación no contesta (el verificador se llama dentro del teardown, ya en
+    // asíncrono); la segunda sí.
+    let calls = 0;
+    reg.setVerifier(() => (calls++ === 0 ? new Promise<string[]>(() => undefined) : Promise.resolve([])));
     const first = reg.cleanupBattleResources("A", "FAILED");
-    hang = false;
     const second = reg.cleanupBattleResources("A", "FAILED");
     expect(await settles(second, 3_000), "el segundo teardown quedó detrás del primero").toBe("done");
     expect((await first).clean).toBe(false);
     expect((await second).clean).toBe(true);
     expect(reg.isUnverified("A")).toBe(false);
     expect(reg.retryIds()).toEqual([]);
+    expect(calls).toBe(2);
   });
 
   it("un verificador LENTO dentro del plazo se espera y su respuesta cuenta (restos ⇒ no limpio, pero verificado)", async () => {
