@@ -111,7 +111,10 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
   // ofrece («Frozen / Inmutable») si es elegible. Si no cargan, se cae a la última
   // publicada del listado (comportamiento anterior) y decide la API.
   const [entryVersions, setEntryVersions] = useState<
-    { botId: string; status: "loading" } | { botId: string; status: "error" } | { botId: string; status: "ready"; choices: EntryChoices; items: EntryVersion[] } | null
+    | { botId: string; status: "loading" }
+    | { botId: string; status: "error" }
+    | { botId: string; status: "ready"; choices: EntryChoices; items: EntryVersion[] }
+    | null
   >(null);
   const [entryVersion, setEntryVersion] = useState("");
   useEffect(() => {
@@ -258,8 +261,8 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                   )}{" "}
                   {entryVersions?.status === "error" && entryVersions.botId === entryBot && (
                     <small className="muted" data-testid="entry-versions-unavailable">
-                      No se pudieron cargar sus versiones: se usará la última publicada y la plataforma comprobará si
-                      es elegible.
+                      No se pudieron cargar sus versiones: se usará la última publicada y la plataforma comprobará si es
+                      elegible.
                     </small>
                   )}
                   {chosenVersion?.state === "frozen" && (

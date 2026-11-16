@@ -29,7 +29,13 @@ const MUTANTS = [
   {
     id: "M1",
     name: "se rechazan todas las frozen (inscripción)",
-    edits: [{ file: T, from: ENTRY_CHECK, to: `    if (v?.state === "frozen") throw conflict("bot_not_published", "mutante");\n${ENTRY_CHECK}` }],
+    edits: [
+      {
+        file: T,
+        from: ENTRY_CHECK,
+        to: `    if (v?.state === "frozen") throw conflict("bot_not_published", "mutante");\n${ENTRY_CHECK}`,
+      },
+    ],
     tests: [API],
     kill: "FROZEN_VERSION_REUSABLE",
   },
@@ -135,7 +141,9 @@ const MUTANTS = [
   {
     id: "M6b",
     name: "una versión suspendida (revocada) cuenta como estado de competición",
-    edits: [{ file: VE, from: 'new Set(["published", "frozen"])', to: 'new Set(["published", "frozen", "suspended"])' }],
+    edits: [
+      { file: VE, from: 'new Set(["published", "frozen"])', to: 'new Set(["published", "frozen", "suspended"])' },
+    ],
     tests: [API],
     kill: "versión suspended",
   },
@@ -207,7 +215,13 @@ const MUTANTS = [
   {
     id: "M9",
     name: "cerrar B intenta volver a congelar una versión ya frozen (no idempotente)",
-    edits: [{ file: T, from: '      if (v.state === "published") {', to: '      if (v.state === "published" || v.state === "frozen") {' }],
+    edits: [
+      {
+        file: T,
+        from: '      if (v.state === "published") {',
+        to: '      if (v.state === "published" || v.state === "frozen") {',
+      },
+    ],
     tests: [API],
     kill: "cerrar B con la versión YA frozen",
   },

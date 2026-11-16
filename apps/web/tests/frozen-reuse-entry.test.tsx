@@ -118,9 +118,7 @@ describe("FROZEN-REUSE · inscribir desde el detalle del torneo", () => {
     expect(vsel.value).toBe("2");
     await user.selectOptions(vsel, "1");
     await user.click(screen.getByRole("button", { name: "Inscribir" }));
-    await waitFor(() =>
-      expect(calls.find((c) => c.method === "POST")?.body).toEqual({ botId: "bx", version: 1 }),
-    );
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ botId: "bx", version: 1 }));
   });
 
   it("frozen NO elegible: visible y deshabilitada con su motivo; no se envía nada", async () => {
@@ -147,8 +145,6 @@ describe("FROZEN-REUSE · inscribir desde el detalle del torneo", () => {
     await screen.findByTestId("entry-versions-unavailable");
     expect(screen.queryByLabelText("versión a inscribir")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Inscribir" }));
-    await waitFor(() =>
-      expect(calls.find((c) => c.method === "POST")?.body).toEqual({ botId: "bp", version: 3 }),
-    );
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ botId: "bp", version: 3 }));
   });
 });

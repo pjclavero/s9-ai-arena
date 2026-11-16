@@ -97,7 +97,10 @@ const versionRow = (botId: string, version = 1) => h.db("bot_versions").where({ 
 const versionCount = async (botId: string) =>
   Number((await h.db("bot_versions").where({ bot_id: botId }).count({ n: "*" }))[0].n);
 const auditFor = (botId: string, version = 1) =>
-  h.db("audit_log").where({ target: `bot:${botId}@${version}` }).orderBy("id", "asc");
+  h
+    .db("audit_log")
+    .where({ target: `bot:${botId}@${version}` })
+    .orderBy("id", "asc");
 
 async function openTournament(name: string) {
   const r = await request(app)
@@ -109,7 +112,8 @@ async function openTournament(name: string) {
 }
 const enter = (tok: string, t: string, botId: string, version: number) =>
   request(app).post(`/tournaments/${t}/entries`).set(as(tok)).send({ botId, version });
-const closeEntries = (t: string) => request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(orgTok)).send({});
+const closeEntries = (t: string) =>
+  request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(orgTok)).send({});
 
 /** Fila de la versión SIN cambiar nada: lo que debe seguir idéntico para siempre. */
 const immutableView = (v: Record<string, unknown>) => ({
@@ -339,7 +343,9 @@ describe("B7 · FROZEN_REMAINS_IMMUTABLE: una versión frozen no se edita ni se 
       /bot_version_immutable/,
     );
     await expect(
-      h.db("bot_versions").insert({ bot_id: X, version: 1, state: "published", runtime: "python", loadout_revision: 2 }),
+      h
+        .db("bot_versions")
+        .insert({ bot_id: X, version: 1, state: "published", runtime: "python", loadout_revision: 2 }),
     ).rejects.toThrow(/duplicate key|unique/i);
     await expect(
       h.db("bot_versions").where({ bot_id: X, version: 1 }).update({ artifact_hash: "sha256:otro" }),
