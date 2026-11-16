@@ -79,7 +79,15 @@ export const DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS = 5_000;
 /** Plazo de la limpieza de un contenedor que llega TARDE (parar + borrar). */
 const LATE_DISPOSE_DEADLINE_MS = 30_000;
 /** Plazo del borrado forzado de un contenedor en el teardown. */
-const REMOVE_DEADLINE_MS = 15_000;
+export const REMOVE_DEADLINE_MS = 15_000;
+/**
+ * Plazo de las lecturas de diagnóstico al ACABAR la batalla (última muestra de CPU, estado
+ * del contenedor al desconectarse). Van antes del teardown: sin plazo, un proxy colgado
+ * impedía llegar al `finally` que lo ejecuta. G2 · ronda 2 (P2-1).
+ */
+export const FINAL_DIAGNOSTICS_DEADLINE_MS = 2_000;
+/** Plazo de la inspección de postura de un contenedor (sin respuesta = fallo de infraestructura). */
+export const POSTURE_DEADLINE_MS = 10_000;
 
 /** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
 export interface BotLaunchPlan {
@@ -383,7 +391,11 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 
         // Postura de seguridad REAL de cada contenedor (tabla 18.2): fail closed.
         for (let i = 0; i < handles.length; i++) {
-          const posture = await handles[i]!.posture().catch((err: unknown) => {
+          const posture = await withinDeadline(
+            handles[i]!.posture(),
+            POSTURE_DEADLINE_MS,
+            "inspección de postura",
+          ).catch((err: unknown) => {
             throw new InfrastructureFailure(
               "container_unavailable",
               `no se pudo inspeccionar el contenedor: ${String(err)}`,
@@ -410,7 +422,13 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
                 signals: plans[i]!.startup!,
                 helloAt: () => server.helloAt(v.vehicleId),
                 onHello: (cb) => server.onHello((vid) => vid === v.vehicleId && cb()),
-                ...(h.state ? { containerState: () => h.state!() } : {}),
+                // G2 · ronda 2: cada consulta de estado del reloj de arranque, acotada.
+                ...(h.state
+                  ? {
+                      containerState: () =>
+                        withinDeadline(h.state!(), FINAL_DIAGNOSTICS_DEADLINE_MS, "state()").catch(() => null),
+                    }
+                  : {}),
               });
             }),
           );
@@ -518,7 +536,9 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // Última muestra (por si el contenedor aún vive) y se fija la medida.
         clearInterval(cpuSampler);
         cpuSampler = undefined;
-        await sampleCpu();
+        await withinDeadline(sampleCpu(), FINAL_DIAGNOSTICS_DEADLINE_MS, "última muestra de CPU").catch(
+          () => undefined, // muestra perdida: se queda la anterior (cota inferior)
+        );
         const cpuMsByBot = new Map<string, number | null>();
         for (let i = 0; i < handles.length; i++) cpuMsByBot.set(vehicles[i].botId, lastCpu[i]);
 
@@ -532,7 +552,15 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             schema: "bot-diagnostics/v1",
             startup: hookMissing ? { ok: true, warning: "hook_missing" } : { ok: true },
             ...(proto[vehicles[i].vehicleId] ? { protocol: proto[vehicles[i].vehicleId] } : {}),
-            ...(atDisconnect ? { container: await atDisconnect } : {}),
+            ...(atDisconnect
+              ? {
+                  container: await withinDeadline(
+                    atDisconnect,
+                    FINAL_DIAGNOSTICS_DEADLINE_MS,
+                    "estado del contenedor al desconectarse",
+                  ).catch(() => containerDiagnostics(null, true)),
+                }
+              : {}),
           });
         }
         return {

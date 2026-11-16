@@ -2,8 +2,12 @@
 /**
  * OLA 2 · Equipo ME · runner de mutantes de calibración (baseline + contratos).
  *
- * SÓLO EN VM112 (laboratorio), en un worktree desechable con el árbol COMMITEADO y
+ * SÓLO EN EL LABORATORIO (VM111/VM112), en un worktree desechable con el árbol COMMITEADO y
  * limpio, y bajo `flock -o /srv/s9-test/heavy.lock`. Nunca en ia02 ni en producción.
+ *
+ * Manifiesto versionado (`version`, `anchoredAt`, `changelog`): cada ancla debe aparecer
+ * EXACTAMENTE una vez en el árbol (ausente o repetida = ROTO, nunca se omite). Los mutantes
+ * retirados van en `retired` con su motivo y el resumen los lista (no se ejecutan).
  *
  *   node scripts/hardening/me-mutants.mjs [--manifest scripts/hardening/me-mutants.json]
  *        [--out /tmp/me-mutants] [--only ID,ID] [--dry-run]
@@ -197,7 +201,20 @@ for (const m of mutants) {
 const head = git("rev-parse", "HEAD").stdout.trim();
 writeFileSync(
   join(outDir, "resumen.json"),
-  JSON.stringify({ head, node: process.version, manifest: manifestPath, allOk, mutants: summary }, null, 2) + "\n",
+  JSON.stringify(
+    {
+      head,
+      node: process.version,
+      manifest: manifestPath,
+      manifestVersion: manifest.version ?? 1,
+      anchoredAt: manifest.anchoredAt ?? null,
+      allOk,
+      mutants: summary,
+      retired: manifest.retired ?? [],
+    },
+    null,
+    2,
+  ) + "\n",
 );
 if (!DRY && git("status", "--porcelain").stdout.trim()) {
   console.error("El árbol quedó sucio tras la batería");

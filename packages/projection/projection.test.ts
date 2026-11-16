@@ -575,6 +575,30 @@ describe("D-B4 · rotura de blindaje visible, sin valores exactos ni módulo (G2
     expect(publicVeh2(framesWith(hostile))[0]).not.toHaveProperty("armorBroken");
   });
 
+  it("G2-6 · el ORDEN de las claves de armorBroken es el canónico (front, left, right, rear), nunca derivado del blindaje interno", () => {
+    // hpMax en orden INVERSO al canónico (y el hp roto con distintos valores negativos/0) y los
+    // sectores insertados en otro orden: si las claves salieran ordenadas por hpMax, por hp o por
+    // inserción, el orden delataría el blindaje de cada sector.
+    const armor = {
+      rear: { hp: 0, hpMax: 10 },
+      right: { hp: -3, hpMax: 20 },
+      left: { hp: 0, hpMax: 300 },
+      front: { hp: 0, hpMax: 400 },
+    };
+    for (const cls of ["public_live", "broadcast", "public_replay"] as const) {
+      const v = publicVeh2(framesWith(armor), audienceKey(cls))[0];
+      expect(Object.keys(v.armorBroken ?? {}), cls).toEqual(["front", "left", "right", "rear"]);
+    }
+    // Y con sólo dos rotos de hpMax inverso: front antes que rear.
+    const two = { rear: { hp: 0, hpMax: 5 }, left: { hp: 50, hpMax: 60 }, front: { hp: 0, hpMax: 500 } };
+    expect(Object.keys(publicVeh2(framesWith(two))[0].armorBroken ?? {})).toEqual(["front", "rear"]);
+    // El orden (y el JSON) no depende de los valores internos: mismo conjunto roto ⇒ mismo texto.
+    const twoAlt = { front: { hp: 0, hpMax: 1 }, rear: { hp: 0, hpMax: 999 } };
+    expect(JSON.stringify(publicVeh2(framesWith(twoAlt))[0].armorBroken)).toBe(
+      JSON.stringify(publicVeh2(framesWith(two))[0].armorBroken),
+    );
+  });
+
   it("G2-5 · la política manda: sin fila `vehicle.armorBroken` no sale", () => {
     const fields = { ...DEFAULT_DISCLOSURE_POLICY.fields };
     delete fields["vehicle.armorBroken"];

@@ -40,9 +40,15 @@ import {
   type SandboxSpec,
 } from "../../../bot-manager/src/container-runner.js";
 import { FakeBootstrapRunner } from "../../../bot-manager/tests/fake-bootstrap-runner.js";
-import { containerAgents, type BotLaunchProvider } from "../../src/container-agents.js";
+import { REMOVE_DEADLINE_MS, containerAgents, type BotLaunchProvider } from "../../src/container-agents.js";
 import type { AgentDriverInput } from "../../src/engine-executor.js";
-import { BattleAbort, BattleResourceRegistry, classifyEnd } from "../../src/battle-resources.js";
+import {
+  BattleAbort,
+  BattleResourceRegistry,
+  classifyEnd,
+  type RegistryOptions,
+} from "../../src/battle-resources.js";
+import { reapOnce } from "../../src/battle-reaper.js";
 import { InfrastructureFailure } from "../../src/errors.js";
 
 const IMAGE = `ghcr.io/example/runtime-python@sha256:${"1a".repeat(32)}`;
@@ -73,6 +79,10 @@ interface Faults {
   /** Índice cuyo launch() devuelve el contenedor TARDE (`lateLaunchMs`), sin bot dentro. */
   lateLaunchAt?: number;
   lateLaunchMs?: number;
+  /** Índice cuya lectura de CPU (`cpuMs`) no contesta nunca (proxy colgado al acabar). */
+  hangCpuAt?: number;
+  /** Índice cuya inspección de postura no contesta nunca. */
+  hangPostureAt?: number;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -120,7 +130,8 @@ class FaultyRunner implements ContainerRunner {
     const isBroken = () => faults.brokenAt === i && this.broken.value;
     return {
       id: h.id,
-      posture: () => h.posture(),
+      posture: () => (faults.hangPostureAt === i ? new Promise<never>(() => {}) : h.posture()),
+      ...(faults.hangCpuAt === i ? { cpuMs: () => new Promise<number | null>(() => {}) } : {}),
       async state() {
         const st = await h.state!();
         return st ? { ...st, running: e.running, gone: !e.exists } : null;
@@ -207,10 +218,13 @@ async function input(battleId: string, ticks = 60): Promise<AgentDriverInput> {
   return { battleId, engine, vehicles: BOTS, ruleset, catalogVersion: CATALOG_VERSION, owner: "w:job:1" };
 }
 
-function setup(faults: Faults = {}, o: { sandboxStartupMs?: number; launchInFlightWaitMs?: number } = {}) {
+function setup(
+  faults: Faults = {},
+  o: { sandboxStartupMs?: number; launchInFlightWaitMs?: number; registry?: RegistryOptions } = {},
+) {
   const runner = new FaultyRunner(faults);
   runners.push(runner);
-  const resources = new BattleResourceRegistry();
+  const resources = new BattleResourceRegistry(o.registry);
   const agents = containerAgents({
     runner,
     provider: provider(),
@@ -440,11 +454,74 @@ describe("MF · el fallo de teardown no se oculta (verificado en el tournament-w
       0,
     );
     expect(s.runner.existing("g2-teardown-fail").length, "control: el contenedor sigue existiendo").toBe(1);
+    // G2 · ronda 2 (P3-5): el borrado forzado tiene SU plazo de producción (15 s), no el genérico (60 s).
+    const rm = s.resources.pending("g2-teardown-fail").find((x) => x.kind.startsWith("container_remove:"));
+    expect(rm, "el borrado fallido no sigue registrado").toBeDefined();
+    expect(rm!.deadlineMs, "el borrado no lleva su plazo propio").toBe(REMOVE_DEADLINE_MS);
+    expect(REMOVE_DEADLINE_MS).toBe(15_000);
     // Reintento (lo que hace el reaper cuando el proxy se recupera): ahora sí queda todo.
     s.runner.broken.value = false;
     const retry = await s.resources.cleanupBattleResources("g2-teardown-fail", "FINISHED");
     expect(retry.clean).toBe(true);
     expect(s.runner.existing("g2-teardown-fail")).toEqual([]);
     expect(s.resources.pending("g2-teardown-fail")).toEqual([]);
+  }, 60_000);
+});
+
+describe("G2 · ronda 2 (P2-1) · ninguna espera sin cota en el camino del teardown (verificado en el tournament-worker)", () => {
+  it("[G2·R2] verificador externo colgado (proxy): el teardown COMPLETO acaba en su plazo, NO es limpio y el reaper lo vuelve a verificar cuando el proxy contesta", async () => {
+    const s = setup({}, { registry: { verifyDeadlineMs: 500 } });
+    let hang = true;
+    // Como main.ts: la verificación es `runner.list()` por labels de la batalla.
+    s.resources.setVerifier(async (battleId) =>
+      hang
+        ? new Promise<string[]>(() => {})
+        : (await s.runner.list({ [LABEL_BATTLE_ID]: battleId })).map((c) => c.id),
+    );
+    const { out } = await timedRun(s, "g2-verify-hang", 30_000);
+    expect(out.hung).toBe(false);
+    expect(s.runner.existing("g2-verify-hang"), "control: la capa de agentes ya lo borró todo").toEqual([]);
+    const t0 = performance.now();
+    const full = await settlesWithin(s.resources.cleanupBattleResources("g2-verify-hang", "FINISHED"), 5_000);
+    const ms = performance.now() - t0;
+    expect(full.hung, "el teardown completo quedó esperando al verificador").toBe(false);
+    expect(ms, "la verificación no respetó su plazo").toBeLessThan(2_000);
+    const report = (full as { value: { clean: boolean; externalLeftovers: string[] } }).value;
+    expect(report.clean, "una verificación sin respuesta se dio por limpia").toBe(false);
+    expect(report.externalLeftovers.join(" ")).toMatch(/verificación externa sin respuesta en 500 ms/);
+    expect(s.resources.isUnverified("g2-verify-hang")).toBe(true);
+    // El reaper (sin BD: sólo la parte en proceso) lo reintenta; con el proxy de vuelta, verifica.
+    hang = false;
+    const db = (() => {
+      throw new Error("el reaper no debe consultar la BD sin runner");
+    }) as never;
+    const reap = await settlesWithin(reapOnce({ db, resources: s.resources }), 5_000);
+    expect(reap.hung).toBe(false);
+    expect((reap as { value: { inProcessRetried: string[] } }).value.inProcessRetried).toEqual(["g2-verify-hang"]);
+    expect(s.resources.isUnverified("g2-verify-hang"), "el reaper no reverificó la batalla").toBe(false);
+    expect(s.resources.retryIds()).toEqual([]);
+  }, 60_000);
+
+  it("[G2·R2] la última muestra de CPU no contesta (proxy colgado al acabar): la batalla acaba, se llega al teardown y no queda nada", async () => {
+    const s = setup({ hangCpuAt: 0 });
+    const { out, ms } = await timedRun(s, "g2-cpu-hang", 30_000);
+    expect(out.hung, "la batalla quedó esperando la última muestra de CPU (sin teardown)").toBe(false);
+    expect((out as { value: { result?: unknown } }).value.result, "la batalla no dio resultado").toBeDefined();
+    expect(ms).toBeLessThan(16_000);
+    expect(s.runner.existing("g2-cpu-hang")).toEqual([]);
+    expect(s.resources.pending("g2-cpu-hang")).toEqual([]);
+  }, 60_000);
+
+  it("[G2·R2] una inspección de postura que no contesta: la batalla falla por infraestructura en su plazo y lo lanzado se para y se borra", async () => {
+    const s = setup({ hangPostureAt: 0 });
+    const { out, ms } = await timedRun(s, "g2-posture-hang", 30_000);
+    expect(out.hung, "la batalla quedó esperando la inspección de postura").toBe(false);
+    const err = (out as { value: unknown }).value;
+    expect(err).toBeInstanceOf(InfrastructureFailure);
+    expect(String((err as Error).message)).toMatch(/inspección de postura sin respuesta/);
+    expect(classifyEnd({ ok: false, error: err })).toBe("FAILED");
+    expect(ms).toBeLessThan(25_000);
+    expect(s.runner.existing("g2-posture-hang")).toEqual([]);
+    expect(s.resources.pending("g2-posture-hang")).toEqual([]);
   }, 60_000);
 });

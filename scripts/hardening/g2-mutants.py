@@ -3,7 +3,7 @@
 
 Uso: python3 scripts/hardening/g2-mutants.py <worktree> <salida.json> [G1,G2,...]
 
-(Se ejecuta en el laboratorio de pruebas, nunca en ia02; G2.4/G2.5 añaden G23-G34.)
+(Se ejecuta en el laboratorio de pruebas, nunca en ia02; G2.4/G2.5 añaden G23-G34 y la ronda 2, G35-G50.)
 
 Mismo patrón que ma-mutants.py: cambio mínimo con ancla ÚNICA (un patrón ausente o repetido se
 registra como `error`, killed=false, nunca se omite), vitest sobre los tests que lo deben matar,
@@ -36,6 +36,10 @@ RES = "apps/tournament-worker/src/battle-resources.ts"
 CA = "apps/tournament-worker/src/container-agents.ts"
 RESUNIT = "apps/tournament-worker/src/battle-resources.test.ts"
 V2 = "apps/arena-engine/tests/contract-pending/engine-v2-primitives.test.ts"
+REAP = "apps/tournament-worker/src/battle-reaper.ts"
+REAPUNIT = "apps/tournament-worker/src/battle-reaper-bounded.test.ts"
+WS = "apps/api/src/spectate/g2-armor-broken-ws.test.ts"
+DMGC = "apps/arena-engine/tests/damage-contract.test.ts"
 
 # (nombre, fichero, patrón, reemplazo, tests, expect-opcional, ediciones-extra-opcionales)
 MUTANTS = [
@@ -133,6 +137,61 @@ MUTANTS = [
      '    "stats.perModule": ownerOnly(),', '    "stats.perModule": PUBLIC,', [EQP], None),
     ("G20_radio_stats_public", P + "policy.ts",
      '    "stats.radio": ownerOnly(),', '    "stats.radio": PUBLIC,', [EQP], None),
+    # ================================================================ G2 · RONDA 2
+    # ---------------------------------------- P3-1 · orden de claves de armorBroken (R3 del revisor)
+    ("G35_armor_key_order_by_hpMax", P + "project-frame.ts",
+     "    for (const s of ARMOR_SECTORS) {\n      const sec = v.armor?.[s];",
+     "    for (const s of [...ARMOR_SECTORS].sort((x, y) => (v.armor?.[x]?.hpMax ?? 0) - (v.armor?.[y]?.hpMax ?? 0))) {\n      const sec = v.armor?.[s];",
+     [PURE, WS], "ORDEN de las claves de armorBroken"),
+    # ---------------------------------------- P3-5 · plazos de producción (R6 / R7 del revisor)
+    ("G36_release_default_deadline_huge", RES,
+     "export const DEFAULT_RELEASE_DEADLINE_MS = 60_000;", "export const DEFAULT_RELEASE_DEADLINE_MS = 2 ** 31 - 1;",
+     [RESUNIT], "DEFAULT_RELEASE_DEADLINE_MS = 60 s"),
+    ("G37_remove_deadline_dropped", CA,
+     "                deadlineMs: REMOVE_DEADLINE_MS,\n", "", [WORKER], "el borrado no lleva su plazo propio"),
+    # ---------------------------------------- P2-1 · verificación externa acotada
+    ("G38_verify_unbounded", RES,
+     '        externalLeftovers = await withinDeadline(\n          Promise.resolve().then(() => verifier(battleId)),\n          this.verifyDeadlineMs,\n          "verificación externa",\n        );',
+     "        externalLeftovers = await verifier(battleId);",
+     [RESUNIT, WORKER], "verificador"),
+    ("G39_verify_default_deadline_huge", RES,
+     "export const DEFAULT_VERIFY_DEADLINE_MS = 10_000;", "export const DEFAULT_VERIFY_DEADLINE_MS = 2 ** 31 - 1;",
+     [RESUNIT], "DEFAULT_VERIFY_DEADLINE_MS = 10 s"),
+    ("G40_verify_timeout_counts_as_clean", RES,
+     "          externalLeftovers = [`verificación externa sin respuesta en ${this.verifyDeadlineMs} ms`];",
+     "          externalLeftovers = [];", [RESUNIT, WORKER], "NO es limpio"),
+    ("G41_unverified_not_marked", RES,
+     "        this.unverified.add(battleId);\n", "", [RESUNIT, REAPUNIT, WORKER], "reverific"),
+    ("G42_reaper_ignores_unverified", REAP,
+     "  for (const id of res.retryIds()) {", "  for (const id of res.battleIds()) {", [REAPUNIT, WORKER], "REPITE"),
+    ("G43_reaper_list_unbounded", REAP,
+     '      Promise.resolve().then(() => runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT })),\n      callMs,',
+     '      Promise.resolve().then(() => runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT })),\n      2 ** 31 - 1,',
+     [REAPUNIT], "listado del proxy que nunca contesta"),
+    ("G44_reaper_remove_unbounded", REAP,
+     "        Promise.resolve().then(() => runner.removeById(c.id, battleId)),\n        callMs,",
+     "        Promise.resolve().then(() => runner.removeById(c.id, battleId)),\n        2 ** 31 - 1,",
+     [REAPUNIT], "un borrado que nunca contesta"),
+    ("G45_reaper_db_unbounded", REAP,
+     '        Promise.resolve().then(() => deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by")),\n        callMs,',
+     '        Promise.resolve().then(() => deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by")),\n        2 ** 31 - 1,',
+     [REAPUNIT], "consulta a la BD que nunca contesta"),
+    ("G46_reaper_default_deadline_huge", REAP,
+     "export const DEFAULT_REAPER_CALL_DEADLINE_MS = 15_000;", "export const DEFAULT_REAPER_CALL_DEADLINE_MS = 2 ** 31 - 1;",
+     [REAPUNIT], "DEFAULT_REAPER_CALL_DEADLINE_MS = 15 s"),
+    ("G47_final_cpu_sample_unbounded", CA,
+     '        await withinDeadline(sampleCpu(), FINAL_DIAGNOSTICS_DEADLINE_MS, "última muestra de CPU").catch(',
+     "        await sampleCpu().catch(", [WORKER], "última muestra de CPU no contesta"),
+    ("G48_posture_unbounded", CA,
+     '            handles[i]!.posture(),\n            POSTURE_DEADLINE_MS,',
+     '            handles[i]!.posture(),\n            2 ** 31 - 1,', [WORKER], "inspección de postura que no contesta"),
+    # ---------------------------------------- P3-3 · projectDamageForViewer alineado con G2.2
+    ("G49_damage_projector_false_for_intact", P + "damage.ts",
+     "      if (a && Number.isFinite(a.hp) && Number.isFinite(a.hpMax) && armorBroken(a.hp, a.hpMax)) broken[s] = true;",
+     "      if (a) (broken as Record<string, boolean>)[s] = armorBroken(a.hp, a.hpMax);", [DMGC], "no deja salir hp exacto"),
+    ("G50_damage_projector_empty_object", P + "damage.ts",
+     "    if (Object.keys(broken).length > 0) out.armorBroken = broken;", "    out.armorBroken = broken;",
+     [DMGC], "sin ningún sector roto no hay clave armorBroken"),
 ]
 EXTRA_PATH = sys.argv[4] if len(sys.argv) > 4 else None
 if EXTRA_PATH:

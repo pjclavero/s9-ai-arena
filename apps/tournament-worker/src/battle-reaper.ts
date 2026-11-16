@@ -28,7 +28,14 @@ import {
   ROLE_BATTLE_BOT,
   type ManagedContainer,
 } from "../../bot-manager/src/container-runner.js";
-import { defaultBattleResources, type BattleResourceRegistry } from "./battle-resources.js";
+import { defaultBattleResources, withinDeadline, type BattleResourceRegistry } from "./battle-resources.js";
+
+/**
+ * Plazo de CADA llamada externa del reaper (listado y borrado en el proxy, consulta a la BD).
+ * G2 · ronda 2 (P2-1): el reaper va en serie y `startReaper` no solapa pasadas; una llamada
+ * colgada sin plazo lo dejaba parado para siempre.
+ */
+export const DEFAULT_REAPER_CALL_DEADLINE_MS = 15_000;
 
 export interface ReaperRunner {
   list(labels: Record<string, string>): Promise<ManagedContainer[]>;
@@ -42,6 +49,8 @@ export interface ReaperDeps {
   /** Antigüedad mínima de un contenedor de batalla no terminal para reclamarlo. Def. 120 s. */
   graceMs?: number;
   now?: () => number;
+  /** Plazo de cada llamada externa (ms). Def. DEFAULT_REAPER_CALL_DEADLINE_MS. */
+  callDeadlineMs?: number;
 }
 
 export interface ReapReport {
@@ -58,34 +67,52 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
   const now = (deps.now ?? Date.now)();
   const graceMs = deps.graceMs ?? 120_000;
   const report: ReapReport = { inProcessRetried: [], removed: [], kept: 0, errors: [] };
+  const callMs = deps.callDeadlineMs ?? DEFAULT_REAPER_CALL_DEADLINE_MS;
 
   // 1 · en proceso: lo registrado aquí es SIEMPRE de este proceso; sin ejecución
   // viva, es resto de un teardown incompleto. Se comprueba justo antes (sin await
-  // de por medio) que ningún intento nuevo haya arrancado.
-  for (const id of res.battleIds()) {
+  // de por medio) que ningún intento nuevo haya arrancado. También se repasan las
+  // batallas cuyo teardown no pudo VERIFICARSE fuera del proceso (verificador colgado
+  // o caído): el teardown completo vuelve a preguntar, con su propio plazo.
+  for (const id of res.retryIds()) {
     if (res.isActive(id)) continue;
+    const wasUnverified = res.isUnverified(id);
     const r = await res.cleanupBattleResources(id, "FAILED");
-    if (r.steps.length) report.inProcessRetried.push(id);
+    if (r.steps.length || wasUnverified) report.inProcessRetried.push(id);
     for (const s of r.steps) if (s.outcome === "failed") report.errors.push(`${id}/${s.kind}: ${s.error}`);
+    if (res.isUnverified(id)) report.errors.push(`${id}/verificación: ${r.externalLeftovers.join("; ")}`);
   }
 
   // 2 · fuera del proceso
   if (!deps.runner) return report;
+  const runner = deps.runner;
   let containers: ManagedContainer[];
   try {
-    containers = await deps.runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT });
+    containers = await withinDeadline(
+      Promise.resolve().then(() => runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT })),
+      callMs,
+      "listado del reaper",
+    );
   } catch (err) {
     report.errors.push(`listado: ${err instanceof Error ? err.message : String(err)}`);
     return report;
   }
   const ids = [...new Set(containers.map((c) => c.labels[LABEL_BATTLE_ID]).filter((x): x is string => !!x))];
-  const rows = ids.length
-    ? ((await deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by")) as {
-        id: string;
-        status: string;
-        claimed_by: string | null;
-      }[])
-    : [];
+  let rows: { id: string; status: string; claimed_by: string | null }[] = [];
+  if (ids.length) {
+    try {
+      rows = (await withinDeadline(
+        Promise.resolve().then(() => deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by")),
+        callMs,
+        "consulta de batallas del reaper",
+      )) as { id: string; status: string; claimed_by: string | null }[];
+    } catch (err) {
+      // Sin la BD no se sabe qué es de quién: no se borra NADA en esta pasada (fail-closed).
+      report.errors.push(`consulta: ${err instanceof Error ? err.message : String(err)}`);
+      report.kept += containers.length;
+      return report;
+    }
+  }
   const byId = new Map(rows.map((r) => [r.id, r]));
   for (const c of containers) {
     const battleId = c.labels[LABEL_BATTLE_ID];
@@ -116,7 +143,11 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
       continue;
     }
     try {
-      await deps.runner.removeById(c.id, battleId);
+      await withinDeadline(
+        Promise.resolve().then(() => runner.removeById(c.id, battleId)),
+        callMs,
+        "borrado del reaper",
+      );
       report.removed.push({ id: c.id, battleId, why });
     } catch (err) {
       report.errors.push(`${c.id.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);

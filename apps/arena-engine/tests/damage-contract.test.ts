@@ -548,8 +548,20 @@ describe("N20 · contrato público: hullLevel N = 20 y blindaje cuantizado", () 
       const out = projectDamageForViewer(view, ctx(aud));
       expect(Object.keys(out).sort()).toEqual(["alive", "armorBroken", "hullLevel"]);
       expect(out.hullLevel).toBe(11);
-      expect(out.armorBroken).toEqual({ front: true, rear: false });
-      expect(JSON.stringify(out)).not.toMatch(/151|300|200|37\.25|120/);
+      // G2.2: sólo los sectores ROTOS y sólo `true`; el íntegro (rear) no aparece (antes `false`).
+      expect(out.armorBroken).toEqual({ front: true });
+      expect(Object.keys(out.armorBroken!)).toEqual(["front"]);
+      expect(JSON.stringify(out)).not.toMatch(/151|300|200|37\.25|120|false/);
+    }
+  });
+
+  it("G2.2 · sin ningún sector roto no hay clave armorBroken: blindaje íntegro = sin blindaje", () => {
+    const intact = { hullHp: 151, hullHpMax: 300, alive: true, armor: { rear: { hp: 37.25, hpMax: 120 } }, modules: [] };
+    const none = { ...intact, armor: {} };
+    for (const aud of ["public_live", "broadcast", "public_replay"]) {
+      const a = projectDamageForViewer(intact, ctx(aud));
+      expect(a).not.toHaveProperty("armorBroken");
+      expect(a).toEqual(projectDamageForViewer(none, ctx(aud)));
     }
   });
 

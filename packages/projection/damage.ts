@@ -8,7 +8,8 @@
  * del contrato de daño (packages/game-rules/damage-contract.ts):
  *  - casco: `hullLevel` N = 20 (D-B5); nunca hp absoluto ni hpMax;
  *  - blindaje: sólo la rotura por sector (D-B4) si la política lo publica para esa
- *    audiencia; ni hp, ni reducción, ni material;
+ *    audiencia, y sólo los sectores ROTOS (`true`); ni hp, ni reducción, ni material, ni
+ *    qué sectores tienen blindaje íntegro;
  *  - torreta: ángulo normalizado y cuantizado (la tasa y el arco son públicos por la
  *    montura, D-B2).
  * Sin RNG, sin E/S, sin estado.
@@ -68,7 +69,7 @@ function visibility(policy: DisclosurePolicy, field: string, audience: AudienceC
 const shown = (v: FieldVisibility) => v === "PUBLIC" || v === "SANITIZED";
 
 export const projectDamageForViewer: ProjectDamageForViewer = (view: InternalDamageView, ctx): PublicDamageState => {
-  const out: { alive: boolean; hullLevel: number; armorBroken?: Partial<Record<SectorName, boolean>> } = {
+  const out: { alive: boolean; hullLevel: number; armorBroken?: Partial<Record<SectorName, true>> } = {
     alive: view.alive,
     // Sin permiso para el nivel, sólo se distingue vivo (1) de muerto (0).
     hullLevel: shown(visibility(ctx.policy, DAMAGE_FIELDS.hullLevel, ctx.audienceClass))
@@ -78,12 +79,15 @@ export const projectDamageForViewer: ProjectDamageForViewer = (view: InternalDam
         : 0,
   };
   if (shown(visibility(ctx.policy, DAMAGE_FIELDS.armorBroken, ctx.audienceClass))) {
-    const broken: Partial<Record<SectorName, boolean>> = {};
+    // G2.2 (misma regla que projectFrame): SÓLO los sectores rotos y SÓLO `true`, en orden
+    // canónico; un sector íntegro y uno inexistente son indistinguibles (antes salía
+    // `false` para los íntegros: delataba qué sectores tienen blindaje). Sin roturas, no hay clave.
+    const broken: Partial<Record<SectorName, true>> = {};
     for (const s of SECTOR_ORDER) {
       const a = view.armor[s];
-      if (a) broken[s] = armorBroken(a.hp, a.hpMax);
+      if (a && Number.isFinite(a.hp) && Number.isFinite(a.hpMax) && armorBroken(a.hp, a.hpMax)) broken[s] = true;
     }
-    out.armorBroken = broken;
+    if (Object.keys(broken).length > 0) out.armorBroken = broken;
   }
   return out;
 };

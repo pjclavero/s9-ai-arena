@@ -139,25 +139,50 @@ export class BattleAbort extends Error {
 /** Plazo por defecto de UNA liberación (ms): un `release` colgado nunca cuelga el teardown. */
 export const DEFAULT_RELEASE_DEADLINE_MS = 60_000;
 
+/**
+ * Plazo de la verificación externa del teardown completo (ms). En producción es
+ * `runner.list()` contra el docker-proxy: si el proxy cuelga, también cuelga la lista, y
+ * sin plazo colgaba el trabajo de la batalla, el siguiente teardown de esa batalla
+ * (serializado por battleId) y el reaper (en serie). G2 · ronda 2 · P2-1.
+ */
+export const DEFAULT_VERIFY_DEADLINE_MS = 10_000;
+
 export interface RegistryOptions {
   /** Plazo por defecto de cada liberación (ms). Def. DEFAULT_RELEASE_DEADLINE_MS. */
   releaseDeadlineMs?: number;
+  /** Plazo de la verificación externa (ms). Def. DEFAULT_VERIFY_DEADLINE_MS. */
+  verifyDeadlineMs?: number;
 }
 
 export class BattleResourceRegistry {
   private seq = 0;
   private readonly releaseDeadlineMs: number;
+  private readonly verifyDeadlineMs: number;
   private readonly entries = new Map<string, Map<number, Entry>>();
   private readonly aborters = new Map<string, Set<AbortController>>();
   private readonly inflight = new Map<string, Promise<unknown>>();
   private verifier: ExternalVerifier | undefined;
   /** Desprendimientos de una batalla aún no informados en un teardown COMPLETO (sin scope). */
   private readonly detachedOf = new Map<string, number>();
+  /**
+   * Batallas cuyo último teardown COMPLETO no pudo verificarse fuera del proceso (el
+   * verificador venció su plazo o lanzó). El reaper las repasa (`retryIds()`) hasta que
+   * una verificación conteste.
+   */
+  private readonly unverified = new Set<string>();
   /** Cuántas veces se ha ejecutado una liberación (observabilidad y tests). */
-  readonly stats = { releases: 0, failures: 0, cleanups: 0, detached: 0, deadlineExpired: 0 };
+  readonly stats = {
+    releases: 0,
+    failures: 0,
+    cleanups: 0,
+    detached: 0,
+    deadlineExpired: 0,
+    verifyExpired: 0,
+  };
 
   constructor(opts: RegistryOptions = {}) {
     this.releaseDeadlineMs = opts.releaseDeadlineMs ?? DEFAULT_RELEASE_DEADLINE_MS;
+    this.verifyDeadlineMs = opts.verifyDeadlineMs ?? DEFAULT_VERIFY_DEADLINE_MS;
   }
 
   /** Fija la verificación externa (contenedores que aún existen para ese battleId). */
@@ -231,13 +256,27 @@ export class BattleResourceRegistry {
     return [...this.entries.keys()];
   }
 
+  /** battleIds que el reaper debe repasar: con algo registrado o sin verificación externa. */
+  retryIds(): string[] {
+    return [...new Set([...this.entries.keys(), ...this.unverified])];
+  }
+
+  /** ¿El último teardown completo de esa batalla quedó sin verificar fuera del proceso? */
+  isUnverified(battleId: string): boolean {
+    return this.unverified.has(battleId);
+  }
+
   /** Lo registrado de una batalla (para diagnóstico, tests y gates). */
-  pending(battleId: string): { kind: string; phase: ResourcePhase; state: string; scope?: string }[] {
+  pending(
+    battleId: string,
+  ): { kind: string; phase: ResourcePhase; state: string; scope?: string; deadlineMs: number }[] {
     return [...(this.entries.get(battleId)?.values() ?? [])].map((e) => ({
       kind: e.kind,
       phase: e.phase,
       state: e.state,
       scope: e.scope,
+      // Plazo EFECTIVO de su liberación (el del recurso o el del registro).
+      deadlineMs: e.deadlineMs ?? this.releaseDeadlineMs,
     }));
   }
 
@@ -372,10 +411,27 @@ export class BattleResourceRegistry {
     }
     let externalLeftovers: string[] = [];
     if (scope === null && this.verifier) {
+      const verifier = this.verifier;
       try {
-        externalLeftovers = await this.verifier(battleId);
+        // G2 · ronda 2 (P2-1): la verificación externa también compite con su plazo. Si vence
+        // o lanza, el teardown NO es limpio y la batalla queda marcada para que el reaper
+        // la vuelva a verificar; nunca se espera sin cota.
+        externalLeftovers = await withinDeadline(
+          Promise.resolve().then(() => verifier(battleId)),
+          this.verifyDeadlineMs,
+          "verificación externa",
+        );
+        this.unverified.delete(battleId);
       } catch (err) {
-        externalLeftovers = [`verificación externa no disponible: ${err instanceof Error ? err.message : String(err)}`];
+        this.unverified.add(battleId);
+        if (err instanceof StopUnresponsiveError) {
+          this.stats.verifyExpired++;
+          externalLeftovers = [`verificación externa sin respuesta en ${this.verifyDeadlineMs} ms`];
+        } else {
+          externalLeftovers = [
+            `verificación externa no disponible: ${err instanceof Error ? err.message : String(err)}`,
+          ];
+        }
       }
     }
     return {

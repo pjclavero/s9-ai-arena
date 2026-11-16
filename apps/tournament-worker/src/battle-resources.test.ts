@@ -2,11 +2,13 @@
  * OLA2-MF · teardown único de batalla (battle-resources.ts), sin BD ni Docker.
  * Cada `it` tiene un mutante en tests/mutants/mf-lifecycle (ver informe MF).
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BATTLE_END_REASONS,
   BattleAbort,
   BattleResourceRegistry,
+  DEFAULT_RELEASE_DEADLINE_MS,
+  DEFAULT_VERIFY_DEADLINE_MS,
   PHASES,
   StopUnresponsiveError,
   classifyEnd,
@@ -311,6 +313,131 @@ describe("G2 · MF_STOP_BOUNDED_TEARDOWN · toda espera de la parada está acota
     const r = await reg.cleanupBattleResources("A", "FAILED");
     expect(performance.now() - t0).toBeLessThan(1_000);
     expect(r.steps[0]).toMatchObject({ outcome: "failed" });
+  });
+});
+
+/** Resuelve «done» o «hung» si `p` no termina en `ms` (nunca cuelga el test). */
+async function settles<T>(p: Promise<T>, ms: number): Promise<"done" | "hung"> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"hung">((r) => (t = setTimeout(() => r("hung"), ms)));
+  try {
+    return await Promise.race([p.then(() => "done" as const, () => "done" as const), hung]);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+describe("G2 · ronda 2 (P2-1) · la verificación externa del teardown completo está acotada", () => {
+  it("un verificador que NO contesta (proxy colgado): el teardown acaba en su plazo, NO es limpio y queda pendiente de reverificar", async () => {
+    const reg = new BattleResourceRegistry({ releaseDeadlineMs: 100, verifyDeadlineMs: 150 });
+    reg.setVerifier(() => new Promise<string[]>(() => undefined));
+    reg.register("A", { kind: "x", phase: "terminate", release: () => undefined });
+    const t0 = performance.now();
+    const p = reg.cleanupBattleResources("A", "FAILED");
+    expect(await settles(p, 3_000), "el teardown completo quedó esperando al verificador").toBe("done");
+    const r = await p;
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(r.clean, "una verificación sin respuesta se dio por limpia").toBe(false);
+    expect(r.externalLeftovers).toEqual(["verificación externa sin respuesta en 150 ms"]);
+    expect(reg.stats.verifyExpired).toBe(1);
+    expect(reg.isUnverified("A")).toBe(true);
+    expect(reg.retryIds(), "el reaper no vería la batalla sin verificar").toEqual(["A"]);
+  });
+
+  it("el siguiente teardown de la MISMA batalla no queda bloqueado detrás (serializado por battleId) y, si el verificador ya contesta, limpia la marca", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 150 });
+    let hang = true;
+    reg.setVerifier(() => (hang ? new Promise<string[]>(() => undefined) : Promise.resolve([])));
+    const first = reg.cleanupBattleResources("A", "FAILED");
+    hang = false;
+    const second = reg.cleanupBattleResources("A", "FAILED");
+    expect(await settles(second, 3_000), "el segundo teardown quedó detrás del primero").toBe("done");
+    expect((await first).clean).toBe(false);
+    expect((await second).clean).toBe(true);
+    expect(reg.isUnverified("A")).toBe(false);
+    expect(reg.retryIds()).toEqual([]);
+  });
+
+  it("un verificador LENTO dentro del plazo se espera y su respuesta cuenta (restos ⇒ no limpio, pero verificado)", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 2_000 });
+    reg.setVerifier(async () => {
+      await sleep(300);
+      return ["abc123"];
+    });
+    const t0 = performance.now();
+    const r = await reg.cleanupBattleResources("A", "FAILED");
+    expect(performance.now() - t0, "no se esperó al verificador lento").toBeGreaterThanOrEqual(250);
+    expect(r.externalLeftovers).toEqual(["abc123"]);
+    expect(r.clean).toBe(false);
+    expect(reg.isUnverified("A"), "una respuesta a tiempo SÍ es una verificación").toBe(false);
+    expect(reg.stats.verifyExpired).toBe(0);
+  });
+
+  it("un verificador que LANZA (síncrono o asíncrono): no limpio, motivo nombrado y pendiente de reverificar", async () => {
+    for (const verifier of [
+      (): Promise<string[]> => {
+        throw new Error("proxy caído (sync)");
+      },
+      () => Promise.reject(new Error("proxy caído (async)")),
+    ]) {
+      const reg = new BattleResourceRegistry({ verifyDeadlineMs: 500 });
+      reg.setVerifier(verifier);
+      const r = await reg.cleanupBattleResources("A", "FAILED");
+      expect(r.clean).toBe(false);
+      expect(r.externalLeftovers.join(" ")).toMatch(/verificación externa no disponible: proxy caído/);
+      expect(reg.isUnverified("A")).toBe(true);
+      expect(reg.stats.verifyExpired).toBe(0);
+    }
+  });
+
+  it("un teardown con scope (capa interna) NO verifica ni marca nada", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 50 });
+    let calls = 0;
+    reg.setVerifier(() => {
+      calls++;
+      return new Promise<string[]>(() => undefined);
+    });
+    const r = await reg.cleanupBattleResources("A", "FAILED", { scope: "agents" });
+    expect(r.clean).toBe(true);
+    expect(calls).toBe(0);
+    expect(reg.isUnverified("A")).toBe(false);
+  });
+});
+
+describe("G2 · ronda 2 (P3-5) · plazos de PRODUCCIÓN del registro (sin inyectar)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("DEFAULT_RELEASE_DEADLINE_MS = 60 s: un release colgado de un registro por defecto vence EXACTAMENTE a los 60 s", async () => {
+    vi.useFakeTimers();
+    const reg = new BattleResourceRegistry();
+    reg.register("A", { kind: "colgado", phase: "terminate", release: () => new Promise<void>(() => undefined) });
+    expect(reg.pending("A")[0]!.deadlineMs).toBe(60_000);
+    let done = false;
+    const p = reg.cleanupBattleResources("A", "FAILED").then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(done, "venció antes de 60 s").toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done, "no venció a los 60 s").toBe(true);
+    const r = await p;
+    expect(r.steps[0]).toMatchObject({ kind: "colgado", outcome: "failed" });
+    expect(r.steps[0]!.error).toMatch(/sin respuesta en 60000 ms/);
+    expect(DEFAULT_RELEASE_DEADLINE_MS).toBe(60_000);
+  });
+
+  it("DEFAULT_VERIFY_DEADLINE_MS = 10 s: un verificador colgado de un registro por defecto vence EXACTAMENTE a los 10 s", async () => {
+    vi.useFakeTimers();
+    const reg = new BattleResourceRegistry();
+    reg.setVerifier(() => new Promise<string[]>(() => undefined));
+    let done = false;
+    const p = reg.cleanupBattleResources("A", "FAILED").then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(done, "venció antes de 10 s").toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done, "no venció a los 10 s").toBe(true);
+    expect((await p).externalLeftovers).toEqual(["verificación externa sin respuesta en 10000 ms"]);
+    expect(DEFAULT_VERIFY_DEADLINE_MS).toBe(10_000);
   });
 });
 
