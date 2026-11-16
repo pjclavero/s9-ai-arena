@@ -115,7 +115,11 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
       c.on("init", (m) => m.snapshot && f.ticks.push(m.snapshot.tick));
       c.on("result", () => (f.resultAt = Date.now()));
       c.on("heartbeat", () => f.heartbeats++);
-      c.on("disconnect", () => f.disconnects++);
+      // Sólo cuentan los cortes con el feed aún vivo: tras el result, la línea temporal
+      // libera el cliente (stop() ⇒ onclose ⇒ «disconnect»), y eso no es un corte.
+      c.on("disconnect", () => {
+        if (!f.resultAt) f.disconnects++;
+      });
       c.on("reconnected", () => f.reconnects++);
       return c;
     },
@@ -227,7 +231,7 @@ describe("FIX-DIRECTOR-DELAY · director + gateway real con retardo", () => {
     for (const [id, f] of r.feeds) {
       expect(f.heartbeats, `${id}: sin latidos`).toBeGreaterThan(5);
       expect(f.reconnects, `${id}: reconectó (watchdog 400 ms < retardo 1,2 s)`).toBe(0);
-      expect(f.disconnects, `${id}: cortes del canal`).toBe(0);
+      expect(f.disconnects, `${id}: cortes del canal antes de su final`).toBe(0);
       expect(f.ticks.length, `${id}: no llegaron snapshots retrasados`).toBeGreaterThan(5);
     }
   });
