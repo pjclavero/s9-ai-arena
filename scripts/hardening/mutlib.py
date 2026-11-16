@@ -57,6 +57,10 @@ class Mutant:
     # exacto). Se reemplazan todas las apariciones; si algún recuento no cuadra, el ancla del
     # mutante cuenta como no aplicable (-1). Para mutantes que tocan varias líneas a la vez.
     also: list = field(default_factory=list)
+    # G1 ronda 4 · sustituciones literales en OTROS ficheros: (ruta, ancla, sustituto, recuento
+    # exacto). Para quitar un consumidor que vive repartido (p. ej. vehicle.ts y battle.ts). Si
+    # algún recuento no cuadra, el mutante cuenta como no aplicable (-1); se restauran todos.
+    others: list = field(default_factory=list)
 
 
 def _env() -> dict:
@@ -137,6 +141,9 @@ def run(team: str, mutants: list[Mutant], argv: list[str]) -> None:
     for m in selected:
         src = open(os.path.join(wt, m.path), encoding="utf8").read()
         anchors[m.id] = _count(src, m)
+        for path, old, _, n in m.others:
+            if open(os.path.join(wt, path), encoding="utf8").read().count(old) != n:
+                anchors[m.id] = -1
     if dry:
         bad = {k: v for k, v in anchors.items() if v != 1}
         print(json.dumps({"team": team, "matrix_sha256": matrix_sha, "anchors": anchors, "bad": bad},
@@ -171,8 +178,13 @@ def run(team: str, mutants: list[Mutant], argv: list[str]) -> None:
             src = open(p, encoding="utf8").read()
             mutated = _apply(src, m)
             open(p, "w", encoding="utf8").write(mutated)
+            for path, old, new, _ in m.others:
+                q = os.path.join(wt, path)
+                other = open(q, encoding="utf8").read().replace(old, new)
+                open(q, "w", encoding="utf8").write(other)
+                mutated += other  # el sha256 del mutante cubre todos los ficheros tocados
             rc, fails, load_error = _vitest(wt, m.tests, m.name_filter, os.path.join(logdir, f"{team}-mut-{m.id}.log"))
-            _sh(wt, ["git", "checkout", "-q", "--", m.path])
+            _sh(wt, ["git", "checkout", "-q", "--", m.path, *sorted({o[0] for o in m.others})])
             assert _clean(wt), f"{m.id}: no revirtió"
             killed = rc != 0 and not load_error and len(fails) > 0
             status = "MUERTO" if killed else ("ROJO_ERRONEO" if rc != 0 else "VIVO")

@@ -23,6 +23,16 @@ P  · ronda 3: defensa ESTRUCTURAL. Cada mutante reintroduce en la SONDA un cana
      configuración (un nivel absoluto, el valor inicial, el registro de daño, el importe de
      los eventos); el bloque D0 del gate (D0a traslación de reservas, D0b registro falseado)
      debe ponerse rojo. Calibran la defensa: sin ellos, D0 podría pasar en vacío.
+E  · ronda 4 (P2-1c): E1 y E3 de la tercera revisión (evidencia-G1-review/ronda3/
+     rev3-mutants.py), sin modificar, y sus controles E5 y E6. «El consumidor ya no limita,
+     pero el estado propio sigue cambiando»: la energía se gasta y se recarga sin limitar
+     nada (E1); el arco no limita el giro ni el disparo, pero se emite out_of_arc (E3). Mueren
+     en el D1 «gobierna» de su campo (y en su ablación D4), no en el «cambia» (observes).
+Q  · ronda 4: la misma clase, «consumidor quitado, estado intacto», en otros campos cuyo
+     `observes` era su propio estado: el casco se descuenta pero nadie muere (Q1), el blindaje
+     se desgasta pero no protege (Q2), y el estado de un módulo destruido se calcula pero el
+     módulo sigue funcionando: arma (Q3), movimiento (Q4), sensor (Q5), radio (Q6) y mina (Q7).
+     Vivos con el gate de fe138fe; mueren en el D1 «gobierna» de su campo.
 
 Uso: scripts/hardening/run-mutants.sh g1 <worktree> <salida.json> [IDS]
 """
@@ -50,6 +60,10 @@ MODULE_SUB = "m.hp = Math.max(0, m.hp - moduleBudget);"
 N2_ALSO = [(HULL_SUB, "target.hullHp = Math.max(0, target.hullHp - 10);", 1),
            (MODULE_SUB, "m.hp = Math.max(0, m.hp - 2);", 1)]
 MINE_EXPLODE = "this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team, \"deployable\", null);"
+REJECT = ('        if (rejection) {\n          this.emit({ kind: "rejected_action", slot, reason: rejection }, v.id);\n'
+          '          continue;\n        }')
+REJECT_BUT = ('        if (rejection) {\n          this.emit({ kind: "rejected_action", slot, reason: rejection }, v.id);\n'
+              '          if (rejection !== "%s") continue;\n        }')
 
 MUTANTS = [
     Mutant("G1", "mina: triggerRadiusM copiado a la mina pero la detonación usa 2 m fijos", BATTLE,
@@ -205,6 +219,67 @@ MUTANTS = [
            [GATE], name_filter="D0a",
            also=[("    for (const c of PROBE_CHANNELS) rec.ch[c].length = 0;\n", "", 1)],
            expect="D0a: los canales cambian al trasladar los valores iniciales"),
+    # ---- ronda 4 · P2-1c: E1/E3 de la tercera revisión y sus controles E5/E6 (mismas sustituciones)
+    Mutant("E1", "power.*: la energía no limita ninguna acción (sin no_energy); sólo contabilidad", COMBAT,
+           '  if (v.energyEU < cost) return "no_energy";\n', "", [GATE],
+           also=[('  if (v.energyEU < (m.spec.perActionEU ?? 0)) return "no_energy";\n', "", 1)],
+           name_filter="power\\.",
+           expect="D1 power.* «gobierna [projectiles, mines]» y D4 ENERGY_LIMIT; el «cambia [energy]» sigue verde"),
+    Mutant("E3", "turretArcRad: arco sin efecto (stepTurret 2π, dispara igual); sólo el evento out_of_arc", VEHICLE,
+           "const arc = this.turretArc();", "const arc = Math.PI * 2;", [GATE],
+           others=[(BATTLE, REJECT, REJECT_BUT % "out_of_arc", 1)],
+           name_filter="turretArcRad",
+           expect="D1 turretArcRad «gobierna [turret, projectiles]» y D4 TURRET_ARC; el «cambia [events]» sigue verde"),
+    Mutant("E5", "control: mine.charges se descuentan pero no limitan", COMBAT,
+           '  if (m.charges <= 0) return "no_charges";\n', "", [GATE],
+           name_filter="mine\\.charges",
+           expect="D1 mine.charges (cambia [mines] y gobierna [mines]); muere también en fe138fe"),
+    Mutant("E6", "control: el evento cooldown se emite pero se dispara igualmente", BATTLE,
+           REJECT, REJECT_BUT % "cooldown", [GATE],
+           name_filter="weapon\\.cooldownTicks",
+           expect="D1 weapon.cooldownTicks (cambia/gobierna [projectiles]); muere también en fe138fe"),
+    # ---- ronda 4 · Q: consumidor quitado, estado intacto (vivos en fe138fe)
+    Mutant("Q1", "chassis.hullHp: el casco se descuenta (y se recorta a 0) pero nadie muere", DAMAGE,
+           "const killed = target.hullHp <= 0 && target.alive;", "const killed = false;", [GATE],
+           name_filter="chassis\\.hullHp",
+           expect="D1 chassis.hullHp «gobierna [score]» y D4 HULL_DEATH; el «cambia [hull]» sigue verde"),
+    Mutant("Q2", "armor.reduction: el blindaje se desgasta (absorbed) pero el casco recibe el importe entero", DAMAGE,
+           "const hull = effective * profile.hullShare;", "const hull = amount * profile.hullShare;", [GATE],
+           name_filter="armor\\.reduction",
+           expect="D1 armor.reduction «gobierna [hull]» y D4 ARMOR_OFF; el «cambia [damage]» sigue verde"),
+    Mutant("Q3", "weapon.hp: el estado del arma se calcula pero el arma destruida/crítica dispara, gira y daña igual",
+           COMBAT,
+           '  if (state === "destroyed" || state === "offline") return "module_destroyed";\n'
+           '  if (!moduleActs(state, rng.next())) return "critical_failure";\n',
+           "  rng.next();\n", [GATE],
+           also=[("/ Math.max(0.25, v.performanceOf(slot)))", ")", 1),
+                 ("* v.performanceOf(slot);", ";", 1)],
+           others=[(VEHICLE, 'for (const w of this.activeModulesOf("weapon")) {\n      const mount = this.mountOf(w.spec.slot);',
+                    'for (const w of this.modulesOf("weapon")) {\n      const mount = this.mountOf(w.spec.slot);', 1),
+                   (VEHICLE, "rate = Math.max(rate, mount.turretRateRads * this.performanceOf(w.spec.slot));",
+                    "rate = Math.max(rate, mount.turretRateRads);", 1)],
+           name_filter="weapon\\.hp",
+           expect="D1 weapon.hp «gobierna [projectiles, turret]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
+    Mutant("Q4", "movement.hp: el estado del tren de rodaje se calcula pero el destruido sigue moviendo a plena prestación",
+           VEHICLE, 'const drives = this.activeModulesOf("movement");', 'const drives = this.modulesOf("movement");',
+           [GATE], also=[("const perf = this.performanceOf(d.spec.slot);", "const perf = 1;", 1)],
+           name_filter="movement\\.hp",
+           expect="D1 movement.hp «gobierna [kinematics]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
+    Mutant("Q5", "sensor.hp: el estado del sensor se calcula pero el destruido sigue observando a pleno alcance", SENSORS,
+           'for (const s of v.activeModulesOf("sensor")) {', 'for (const s of v.modulesOf("sensor")) {', [GATE],
+           also=[("    if (!moduleActs(state, rng.next())) continue;\n", "    rng.next();\n", 1),
+                 ("const perf = v.performanceOf(slot);", "const perf = 1;", 1)],
+           name_filter="sensor\\.hp",
+           expect="D1 sensor.hp «gobierna [sensors]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
+    Mutant("Q6", "radio.hp: el estado de la radio se calcula pero la destruida sigue emitiendo a pleno alcance", SENSORS,
+           'if (st === "destroyed" || st === "offline") return "no_radio";', "void st;", [GATE],
+           also=[("return (r.spec.rangeM ?? 0) * sender.performanceOf(slot);", "return r.spec.rangeM ?? 0;", 1)],
+           name_filter="radio\\.hp",
+           expect="D1 radio.hp «gobierna [radio]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
+    Mutant("Q7", "mine.hp: el estado de la bahía se calcula pero la destruida sigue sembrando", COMBAT,
+           'if (st === "destroyed" || st === "offline") return "module_destroyed";', "void st;", [GATE],
+           name_filter="mine\\.hp",
+           expect="D1 mine.hp «gobierna [mines]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
 ]
 
 if __name__ == "__main__":
