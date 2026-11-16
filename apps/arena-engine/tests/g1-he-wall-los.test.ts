@@ -257,11 +257,23 @@ function run(
   // decisión: los impactos anteriores a él tienen su hit_taken entregado, sin holgura.
   const impactSteps: number[] = [];
   let lastDecisionStep = -1;
+  // Ronda 2: un proyectil que NACE dentro del muro (tirador pegado a él) se crea y muere en el
+  // mismo tick, así que «hay menos proyectiles que antes» no lo ve. Impactos del tick =
+  // vivos antes + disparados (munición gastada por el tirador) − vivos después.
+  const ammoOf = (): number =>
+    [
+      ...b
+        .getVehicles()
+        .find((v) => v.id === "veh_0")!
+        .modules.values(),
+    ].find((m) => m.spec.category === "ammo")!.ammo;
   for (let t = 0; t < 400 && !b.isFinished(); t++) {
     if (b.isDecisionTick()) lastDecisionStep = t;
     const before = b.getInternalFrame().projectiles.length;
+    const ammoBefore = ammoOf();
     b.step();
-    if (b.getInternalFrame().projectiles.length < before) {
+    const impacts = before + (ammoBefore - ammoOf()) - b.getInternalFrame().projectiles.length;
+    for (let k = 0; k < impacts; k++) {
       wallImpacts++;
       impactSteps.push(t);
     }
@@ -426,8 +438,9 @@ describe("HE_WALL_EXPLOSION_LOS · F · origen del tramo DENTRO o SOBRE el muro 
     const hit = w.castRay(from, th, 1)!;
     expect(hit.entityId).toBe("rot");
     const s = w.impactSurface(from, th, 1, "rot", hit.point)!;
-    expect(s.normal.x).toBeCloseTo(-Math.cos(th), 12);
-    expect(s.normal.y).toBeCloseTo(-Math.sin(th), 12);
+    // La rotación del collider es f32 en Rapier: la normal coincide con la de th a ~1e-8.
+    expect(s.normal.x).toBeCloseTo(-Math.cos(th), 6);
+    expect(s.normal.y).toBeCloseTo(-Math.sin(th), 6);
     expect(s.point.x).toBeCloseTo(60 - Math.cos(th), 6);
     expect(s.point.y).toBeCloseTo(40 - Math.sin(th), 6);
     const P = s.point;

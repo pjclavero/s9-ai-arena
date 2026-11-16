@@ -7,7 +7,7 @@ G  · copias SIN efecto (la clase de defecto del P2-1 de la integración): el mo
      efecto) debe ponerse ROJO en ese campo. Con la sonda antigua (stateHash) sobrevivían.
 H  · HE_WALL_EXPLOSION_LOS (G1.5): cada pieza de la geometría de cara tiene un mutante que
      pone rojo un caso concreto de apps/arena-engine/tests/g1-he-wall-los.test.ts.
-     H7-H10 (ronda 2, P1-1): origen del tramo DENTRO del muro (boca del arma de un vehículo
+     H7-H11 (ronda 2, P1-1): origen del tramo DENTRO del muro (boca del arma de un vehículo
      pegado a él).
 R  · ronda 2 (P2-1): los mutantes R1-R6 de la revisión independiente (evidencia-G1-review/
      rev-mutants.py), «el campo se copia a la observación / al registro / al cálculo del
