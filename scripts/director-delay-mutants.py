@@ -121,7 +121,9 @@ M = [
      UT, "DELAYED_BATTLE_END"),
     ("X2e finishedAt de la API ⇒ gateway real", DIR, PROJ,
      "    const p = (b as any).finishedAt ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
-     E2E, "DELAYED_BATTLE_END"),
+     # En el e2e la cola retrasada de A empieza DESPUÉS de su fin real: el mutante nunca la pone en
+     # antena y anuncia el final en el acto («final público antes del final retrasado»).
+     E2E, "DELAYED_TOURNAMENT_END"),
     ("X2b transición por temporizador finishedAt + retardo - 5 s", DIR, PROJ,
      "    const fa = (b as any).finishedAt ? Date.parse((b as any).finishedAt) : NaN;\n"
      "    const p = Number.isFinite(fa) && Date.now() >= fa + (i.feed(b.id)?.delayMs ?? 0) - 5000 ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
