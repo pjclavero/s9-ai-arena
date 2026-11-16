@@ -64,10 +64,17 @@ MUTANTS = [
            "      if (!wantsFire && !cmd.deployMine) continue;",
            "      if (!cmd?.fire?.length || !Array.isArray(cmd.fire)) continue;\n      const wantsFire = true;\n"
            "      if (false) continue;", [MINE_NF]),
-    Mutant("M12", "la sonda deja de pisar la mina (daño/radio/armado sólo copiados a la mina)",
+    # G1: el M12 original («X no apunta a la mina») es EQUIVALENTE con la sonda por efecto: X y W
+    # pasan igualmente por la línea de minas persiguiendo a E (G2/G3 mueren: la copia no basta; y
+    # con el M12 original mine.damage sigue cambiando [damage] ⇒ las minas detonan sobre
+    # vehículos). Se endurece a lo que M12 quiere probar: NINGÚN vehículo de la sonda se acerca a
+    # las minas (X y su escolta se quedan en su lado), así que daño/radio/armado de la mina sólo
+    # quedan COPIADOS en la mina; el gate debe ponerse rojo en esos campos.
+    Mutant("M12", "la sonda deja de llevar vehículos a las minas (daño/radio/armado sólo copiados a la mina)",
            "packages/module-catalog/catalog-probe.ts",
-           "const target = mine?.position ??",
-           "const target = (false as boolean ? mine?.position : undefined) ??", [GATE]),
+           "const target = mine?.position ?? this.battle!.getPhysics().pose(\"veh_1\")?.position ?? me;",
+           "const target = { x: 110, y: me.y };", [GATE], name_filter="mine\\.",
+           expect="D1 mine.damage / mine.explosionRadiusM / mine.triggerRadiusM / armDelayTicks: sin efecto observable"),
     Mutant("X1", "el alcance deja de derivarse de rangeM (90 fijo)", COMBAT,
            "const ttl = projectileLifetimeTicks(spec.rangeM, spec.projectileSpeedMs);", "const ttl = 90;", [PRULE]),
     Mutant("X2", "reaparece la regla heredada de 90 para specs sin rangeM", COMBAT,

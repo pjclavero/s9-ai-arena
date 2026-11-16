@@ -11,7 +11,10 @@ frame interno, y el mutante era EQUIVALENTE para el hash. Ahora el ancla es el p
 proyectiles+minas del sitio del hash (única). M11 se ancla igual por coherencia.
 
 Cada mutante pone en rojo el test de md-replay-v2.test.ts que nombra su filtro (-t). Los filtros
-son los del original (M18 «cambiar la semilla», M19 «flujo RNG latency»).
+son los del original salvo M18 y M19: con los filtros originales («cambiar la semilla», «flujo RNG
+latency») AMBOS SOBREVIVEN en el árbol integrado (calibración G1 @6e91a26: rc=0), porque esos
+tests ya no dependen del componente mutado; se filtran por el test que sí lo fija (fila «flujo
+RNG combat» de LIVE_FIELDS y «latencia simulada: consume el flujo latency y NO desplaza combat»).
 M01-M03: el original (perl por línea) dejaba la línea en blanco; aquí se quita la línea entera
 (misma semántica). M04: el original no aplicaba tras prettier (cmp multilínea) y MD lo rehízo;
 aquí se ancla el cmp multilínea completo.
@@ -76,9 +79,9 @@ MUTANTS = [
     lit("M16", "hash sin teamKills", B, "teamKills: this.teamKills", "teamKills: {}", "teamKills"),
     lit("M17", "verify sin comprobación de runtime", R, "if (h.runtime !== currentRuntime()) return",
         "if (false) return", "cambio de runtime"),
-    lit("M18", "hash sin RNG", B, "rng: this.rng.getState(),", "rng: [],", "cambiar la semilla"),
+    lit("M18", "hash sin RNG", B, "rng: this.rng.getState(),", "rng: [],", "flujo RNG combat"),
     lit("M19", "latencia simulada en el flujo combat", B, 'this.rng.stream("latency").int',
-        'this.rng.stream("combat").int', "flujo RNG latency"),
+        'this.rng.stream("combat").int', "latencia simulada"),
     lit("M20", "verify no reproduce las cadencias", R, "hashEveryNTicks: h.cadences?.hashEveryNTicks,", "",
         "cadencia de hash NO"),
     lit("M21", "checkpoint: components sin validar contra el hash", R,
