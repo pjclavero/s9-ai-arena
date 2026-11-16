@@ -123,7 +123,9 @@ MUTANTS = [
      # Ronda 2 (P3-1): el test captura la excepción como `rejected: "threw: …"`, así que el mutante
      # cae en ESTA aserción (prefijo `^rules_invalid` incumplido) y no por un error sin capturar.
      "expect(String(res.rejected)).toMatch(/^rules_invalid: respawn\\.rearmPolicy desconocida/);",
-     r"expected 'threw: configFromHeader: rules_invalid: respawn\.rearmPolicy desconocida[^']*' to match"),
+     # vitest trunca el valor recibido (`rules_invali…`): la regex exige el prefijo `threw: configFromHeader:`
+     # y el patrón esperado `/^rules_invalid: respawn…/`, no un texto que el informe no muestra entero.
+     r"expected 'threw: configFromHeader: rules_inval[^']*' to match /\^rules_invalid: respawn"),
     ("G18_rearme_sin_cargas", VEHICLE, "      m.charges = m.spec.charges ?? 0;\n    }\n  }\n\n  respawn(",
      "    }\n  }\n\n  respawn(",
      k(D_RULES, "las cargas de mina también vuelven a su máximo (asignación)"),
