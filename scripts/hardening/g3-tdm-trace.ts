@@ -81,7 +81,7 @@ for (let t = 0; t < ruleset.timeLimitTicks + 10 && !b.isFinished(); t++) {
   for (const v of alive) {
     const pos = poses.get(v.id).position;
     const w = v.modulesOf("weapon")[0];
-    const st = w ? v.stateOf(w.slot) : "destroyed";
+    const st = w ? v.stateOf(w.spec.slot) : "destroyed";
     const weaponOk = !!w && st !== "destroyed" && st !== "offline";
     const cooldownReady = !!w && tick >= w.cooldownUntilTick;
     const am = w ? ammoFor(v, w.spec.acceptsAmmo ?? []) : null;
