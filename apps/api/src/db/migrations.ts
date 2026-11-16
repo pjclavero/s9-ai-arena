@@ -1101,15 +1101,15 @@ const m021_runtime_settings: Migration = {
 // cierre movía el bot de bando en el calendario y la clasificación.
 //
 // SÓLO añade una columna nullable: NO rellena las filas existentes (NULL = inscripción
-// anterior, que sigue usando `bots.team_id` como siempre vía COALESCE). ON DELETE RESTRICT:
-// un equipo con inscripciones no se borra a medias (`deleteTeam` ya traduce el 23503 a
-// `team_in_use`), el mismo criterio que `entries.bot_id`. Aditiva e independiente: entra en
+// anterior, que sigue usando `bots.team_id` como siempre vía COALESCE). FK por defecto
+// (NO ACTION): un equipo con inscripciones no se borra (23503, que `deleteTeam` ya traduce
+// a `team_in_use`; con RESTRICT PostgreSQL daría 23001 y saldría como 500). Aditiva e independiente: entra en
 // NAMED_ROLLBACK_ALLOWED. Probada en `migration-022.test.ts`.
 const m022_entries_team: Migration = {
   name: "022_entries_team",
   async up(db) {
     await db.raw(`
-      ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id) ON DELETE RESTRICT;
+      ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id);
       CREATE INDEX entries_tournament_team_idx ON entries (tournament_id, team_id) WHERE team_id IS NOT NULL;
     `);
   },

@@ -183,6 +183,18 @@ describe("#287 · positivo", () => {
   });
 });
 
+describe("#287 · equipo inscrito", () => {
+  it("T287_TEAM_IN_USE · un equipo con inscripciones no se borra ⇒ 409 team_in_use (no 500)", async () => {
+    const A = await mkTeam(4);
+    const t = await openTeamsTournament(4);
+    expect((await enterTeam(devTok, t, A.teamId, members(A.bots))).status).toBe(201);
+    const del = await request(app).delete(`/teams/${A.teamId}`).set(as(devTok));
+    expect(del.status, JSON.stringify(del.body)).toBe(409);
+    expect(del.body.error).toBe("team_in_use");
+    expect(await entriesOf(t)).toHaveLength(4);
+  });
+});
+
 describe("#287 · negativos (ninguno inscribe nada)", () => {
   it("T287_SIZE · 3 o 5 bots en un 4v4 ⇒ 409 rules_team_size", async () => {
     const { teamId, bots } = await mkTeam(5);

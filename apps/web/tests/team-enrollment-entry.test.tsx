@@ -24,7 +24,7 @@ vi.mock("../src/api.js", () => ({
 import { api } from "../src/api.js";
 import { TournamentDetailPage } from "../src/pages/TournamentDetailPage.js";
 import { TournamentsPage } from "../src/pages/TournamentsPage.js";
-import { teamRosterPlan } from "../src/tournament-entry.js";
+import { teamRosterPlan, type RosterVersions } from "../src/tournament-entry.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
 const ME = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["user", "organizer"], twoFactorEnabled: false };
@@ -99,7 +99,7 @@ async function pickTeam() {
 describe("#287 · reglas puras del roster", () => {
   it("W287_PLAN_SIZE · sin exactamente N bots no se puede inscribir (y se dice cuántos faltan)", () => {
     const bots = BASTION.bots;
-    const versions = new Map(bots.map((b) => [b.id, [pub(1)]] as const));
+    const versions = new Map<string, RosterVersions>(bots.map((b) => [b.id, [pub(1)]]));
     const three = teamRosterPlan({
       teamSize: 4,
       bots,
@@ -199,7 +199,7 @@ describe("#287 · detalle de un torneo por equipos", () => {
 
   it("W287_API_ERROR · un 409 de la API se enseña tal cual", async () => {
     mock();
-    const base = apiMock.getMockImplementation()!;
+    const base = apiMock.getMockImplementation() as (m: string, p: string, b?: unknown) => Promise<unknown>;
     apiMock.mockImplementation(async (method: string, path: string, body?: unknown) => {
       if (method === "POST" && path === "/tournaments/t1/team-entries") {
         calls.push({ method, path, body });

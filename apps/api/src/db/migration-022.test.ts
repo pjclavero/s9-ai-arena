@@ -1,7 +1,7 @@
 /**
  * #287 · Migración 022_entries_team contra PostgreSQL REAL:
  *  1. añade `entries.team_id` NULLABLE y NO rellena las inscripciones existentes;
- *  2. ON DELETE RESTRICT: un equipo con inscripciones no se borra;
+ *  2. FK (NO ACTION, 23503): un equipo con inscripciones no se borra (y la API lo dice: team_in_use);
  *  3. ROLLBACK POR NOMBRE: se va sólo la columna (y su índice), las filas se conservan.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,7 +36,7 @@ describe("migración 022_entries_team", () => {
     expect(r.rows[0].is_nullable).toBe("YES");
   });
 
-  it("no rellena filas, RESTRICT al borrar el equipo, y el rollback por nombre conserva las inscripciones", async () => {
+  it("no rellena filas, el equipo inscrito no se borra (23503), y el rollback por nombre conserva las inscripciones", async () => {
     const owner = await h.db("users").where({ email: DEV_USERS.developer }).first();
     const [team] = await h.db("teams").insert({ name: "m022-team", captain_id: owner.id }).returning("*");
     const [bot] = await h.db("bots").insert({ name: "m022-bot", owner_id: owner.id, team_id: team.id }).returning("*");
