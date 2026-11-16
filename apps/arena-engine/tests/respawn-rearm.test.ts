@@ -494,7 +494,7 @@ describe("G3 · determinismo, stateHash y replay", () => {
     const stripped = structuredClone(replay);
     delete stripped.header.ruleset.respawn.rearmPolicy;
     const bad = await verify(stripped);
-    expect(bad.rejected).toMatch(/^rules_incomplete: respawn\.rearmPolicy ausente/);
+    expect(String(bad.rejected)).toMatch(/^rules_incomplete: respawn\.rearmPolicy ausente/);
     expect(bad.matches).toBe(false);
   });
 
@@ -529,7 +529,7 @@ describe("G3 · determinismo, stateHash y replay", () => {
     const bad = structuredClone(replay);
     bad.header.ruleset.respawn.rearmPolicy = "refill_everyone";
     const res = await verify(bad);
-    expect(res.rejected).toMatch(/^rules_invalid: respawn\.rearmPolicy desconocida/);
+    expect(String(res.rejected)).toMatch(/^rules_invalid: respawn\.rearmPolicy desconocida/);
   });
 
   it("reconstrucción determinista: configFromHeader y resimulateWithEvents no rellenan la política", async () => {
