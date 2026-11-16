@@ -231,6 +231,80 @@ describe("G3 · all_alive_participants", () => {
     stepUntilRespawn(b, "veh_4");
     expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));
   });
+
+  // «vivos» de la regla (G3 ronda 2, P2-2): rearmar a un muerto cambia su estado y el
+  // stateHash; ninguna otra prueba lo fijaba (mutante R2 de g3-rearm-mutants.py).
+  it("un vehículo que MUERE en el PASO 5 del mismo tick en que reaparece otro no se rearma", () => {
+    const b = idleBattle(tdm("all_alive_participants"));
+    b.step();
+    const [v1, , v3, v4] = ["veh_1", "veh_2", "veh_3", "veh_4"].map((id) => veh(b, id));
+    spend(v1, 3);
+    spend(v3, 3);
+    kill(v4);
+    b.step();
+    expect(v4.respawnAtTick).toBeGreaterThan(0);
+    // La muerte de veh_1 ocurre DENTRO del tick de la reaparición de veh_4, en el PASO 5
+    // (daño de zona es el último sub-paso del combate), antes del PASO 7.
+    const orig = (Battle.prototype as any).resolveZoneDamage;
+    let killTick = -1;
+    vi.spyOn(Battle.prototype as any, "resolveZoneDamage").mockImplementation(function (this: any, poses: unknown) {
+      orig.call(this, poses);
+      if (killTick < 0 && this.tick >= v4.respawnAtTick) {
+        killTick = this.tick;
+        kill(v1);
+      }
+    });
+    let wasDead = false;
+    for (let t = 0; t < 200 && !v4.alive; t++) {
+      wasDead = !v4.alive;
+      b.step();
+    }
+    expect(wasDead && v4.alive).toBe(true);
+    expect(killTick).toBeGreaterThan(0);
+    expect(v1.alive).toBe(false);
+    // El PASO 7 de ESE tick vio la muerte: le programó su reaparición.
+    expect(v1.respawnAtTick).toBe(killTick + 30);
+    // Control positivo: la pasada SÍ actuó en ese tick sobre el superviviente.
+    expect(stock(v3)).toEqual(maxStock(v3));
+    // El muerto conserva su munición: no se rearma (lo hará su propio respawn()).
+    expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));
+  });
+
+  it("un muerto que espera su reaparición no se rearma cuando reaparece otro", () => {
+    const b = idleBattle(tdm("all_alive_participants"));
+    b.step();
+    const [v1, v4] = ["veh_1", "veh_4"].map((id) => veh(b, id));
+    kill(v4);
+    for (let i = 0; i < 10; i++) b.step();
+    spend(v1, 3);
+    kill(v1); // reaparecerá ~10 ticks después que veh_4
+    stepUntilRespawn(b, "veh_4");
+    expect(v1.alive).toBe(false);
+    expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));
+    // Su propio respawn() sí lo rearma.
+    stepUntilRespawn(b, "veh_1");
+    expect(stock(v1)).toEqual(maxStock(v1));
+  });
+
+  it("respawn limitado: un vehículo ELIMINADO no se rearma cuando reaparece otro", () => {
+    const b = idleBattle(
+      tdm(undefined, {
+        respawn: { enabled: true, delayTicks: 30, maxRespawns: 1, rearmPolicy: "all_alive_participants" },
+      }),
+    );
+    b.step();
+    const [v1, v3, v4] = ["veh_1", "veh_3", "veh_4"].map((id) => veh(b, id));
+    spend(v1, 3);
+    spend(v3, 3);
+    v1.respawnsUsed = 1; // sin reapariciones restantes ⇒ al morir queda eliminado
+    kill(v1);
+    kill(v4);
+    stepUntilRespawn(b, "veh_4");
+    expect(stock(v3)).toEqual(maxStock(v3)); // la pasada actuó
+    expect(v1.alive).toBe(false);
+    expect(v1.respawnAtTick).toBe(0); // eliminado: nunca se le programa reaparición
+    expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));
+  });
 });
 
 describe("G3 · reglas del rearme: asignación, idempotente, tope en el máximo, sólo munición", () => {
@@ -528,7 +602,9 @@ describe("G3 · determinismo, stateHash y replay", () => {
     const replay = await record(huntConfig("all_alive_participants"), attachHunters);
     const bad = structuredClone(replay);
     bad.header.ruleset.respawn.rearmPolicy = "refill_everyone";
-    const res = await verify(bad);
+    // verify() RECHAZA (devuelve `rejected`), no lanza: una excepción se registra como tal y
+    // cae en la misma aserción (sin el prefijo `rules_invalid:` al principio).
+    const res = await verify(bad).catch((e: Error) => ({ rejected: `threw: ${e.message}`, matches: false }));
     expect(String(res.rejected)).toMatch(/^rules_invalid: respawn\.rearmPolicy desconocida/);
   });
 

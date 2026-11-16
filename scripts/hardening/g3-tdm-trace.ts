@@ -71,9 +71,14 @@ const header =
   "nearestEnemyM,enemiesInRadarRange,obsTick,obsEnemyContacts,obsFire,projectilesInFlight";
 const rows: string[] = [header];
 let hashAt6000: string | null = null;
+let lastTick = -1;
 for (let t = 0; t < ruleset.timeLimitTicks + 10 && !b.isFinished(); t++) {
   b.step();
   const tick = b.tick;
+  // El step que cierra la batalla (PASO 9) no avanza el contador: sin esta guarda el último
+  // tick quedaría registrado dos veces (una fila por superviviente de más).
+  if (tick === lastTick) continue;
+  lastTick = tick;
   if (tick === 6000) hashAt6000 = b.stateHash();
   const poses = (b as any).poses();
   const alive = b.getVehicles().filter((v) => v.alive);

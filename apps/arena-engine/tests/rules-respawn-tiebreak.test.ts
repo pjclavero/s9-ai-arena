@@ -59,7 +59,7 @@ function runFor(b: Battle, ticks: number) {
 // tdm_4v4_norespawn llega ahora al límite de tiempo (6000) en vez de acabar por eliminación.
 // Diagnóstico G3: NO es munición (búsqueda de HunterBot, ver respawn-rearm.test.ts y game-modes.md).
 // RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
-// pasada de rearme desactivada (scripts g3-revert, VM112) vuelven EXACTAMENTE los valores anteriores.
+// pasada de rearme desactivada (script g3-revert del laboratorio) vuelven EXACTAMENTE los valores anteriores.
 // Antes de G3 (y hoy con rearmPolicy self, respawn-rearm.test.ts): tdm_1v1 df7b19ab…/3000,
 // tdm_2v2 0af19ee4…/3000, tdm_4v4 682cd1e9…/2371, ctf_1v1 960c80cc…/2000. dm_1v1 y norespawn no cambian.
 const HASHES_9AAAD79 = {

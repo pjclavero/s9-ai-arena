@@ -80,7 +80,8 @@ describe("vidas = respawns + 1 (exacto)", () => {
     // tick (misma simulación) pero NO termina la batalla y el vehículo REAPARECE una
     // 3.ª vez: es el límite el que corta. OLA2-G3: con rearmPolicy all_alive_participants el
     // artillero se rearma en cada reaparición del rival y sigue matando (antes agotaba la
-    // munición tras 3 bajas): en 600 ticks hay 3 o más muertes y 3 o más reapariciones.
+    // munición tras 3 bajas): en 600 ticks hay exactamente 4 muertes y 4 reapariciones
+    // (determinista; con `self` serían 3 y 3).
     const ctrl = run(
       loadRuleset("tdm_mvp@1", {
         ...r.engineRuleset,
@@ -91,9 +92,9 @@ describe("vidas = respawns + 1 (exacto)", () => {
       }),
       res.ticks + 600,
     );
-    expect(ctrl.deaths("veh_2")).toBeGreaterThanOrEqual(3);
+    expect(ctrl.deaths("veh_2")).toBe(4);
     expect(ctrl.b.tick).toBeGreaterThanOrEqual(res.ticks + 599); // no terminó en la 3.ª muerte
-    expect(ctrl.b.getVehicles().find((v) => v.id === "veh_2")!.respawnsUsed).toBeGreaterThanOrEqual(3);
+    expect(ctrl.b.getVehicles().find((v) => v.id === "veh_2")!.respawnsUsed).toBe(4);
     expect(ctrl.b.publicEvents.some((e: any) => e.kind === "vehicle_eliminated")).toBe(false);
     ctrl.b.free();
   });

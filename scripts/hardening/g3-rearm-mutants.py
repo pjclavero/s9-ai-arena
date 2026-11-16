@@ -34,6 +34,8 @@ T_REARM = "apps/arena-engine/tests/respawn-rearm.test.ts"
 T_TIE = "apps/arena-engine/tests/rules-respawn-tiebreak.test.ts"
 TESTS = [T_REARM, T_TIE]
 
+RULE_PASS = "        for (const v of this.vehicles) if (v.alive && !v.disqualified) v.rearm();"
+RULE_PASS_DEAD = "        for (const v of this.vehicles) if (!v.disqualified) v.rearm();"
 RULE_IF = 'if (respawnedThisTick > 0 && respawnRearmPolicyOf(this.config.ruleset) === "all_alive_participants") {'
 D_DATA = "G3 · la regla es DATOS: explícita, validada y documentada"
 D_ALL = "G3 · all_alive_participants"
@@ -118,7 +120,10 @@ MUTANTS = [
      "expect(() => configFromHeader(stripped.header)).toThrow(/rules_incomplete/);", r"to throw"),
     ("G17_verify_sin_chequeo_de_regla", REPLAY, "  const rearm = headerRearmPolicyProblem(h.ruleset);\n  if (rearm) return rearm;\n", "",
      k(D_REPLAY, "VERIFY_REPRODUCES_RULE: un valor no admitido en la cabecera se rechaza con motivo"),
-     "expect(String(res.rejected)).toMatch(/^rules_invalid: respawn\\.rearmPolicy desconocida/);", r"rules_incomplete|rules_invalid|desconocida|to match|configFromHeader"),
+     # Ronda 2 (P3-1): el test captura la excepción como `rejected: "threw: …"`, así que el mutante
+     # cae en ESTA aserción (prefijo `^rules_invalid` incumplido) y no por un error sin capturar.
+     "expect(String(res.rejected)).toMatch(/^rules_invalid: respawn\\.rearmPolicy desconocida/);",
+     r"expected 'threw: configFromHeader: rules_invalid: respawn\.rearmPolicy desconocida[^']*' to match"),
     ("G18_rearme_sin_cargas", VEHICLE, "      m.charges = m.spec.charges ?? 0;\n    }\n  }\n\n  respawn(",
      "    }\n  }\n\n  respawn(",
      k(D_RULES, "las cargas de mina también vuelven a su máximo (asignación)"),
@@ -127,6 +132,16 @@ MUTANTS = [
      "      m.cooldownUntilTick = 0;\n      m.ammo = m.spec.rounds ?? 0;\n      m.charges",
      k(D_RULES, "sólo munición: no repara módulos ni toca energía ni cooldowns"),
      "expect(mods.map((m) => ({ hp: m.hp, cd: m.cooldownUntilTick }))).toEqual(before);", EQ),
+    # --- ronda 2 (P2-2): la cláusula «vivos» de la regla. Mismo mutante, un killer por escenario.
+    ("R2_rearma_muertos_mismo_tick", BATTLE, RULE_PASS, RULE_PASS_DEAD,
+     k(D_ALL, "un vehículo que MUERE en el PASO 5 del mismo tick en que reaparece otro no se rearma"),
+     'expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));', EQ),
+    ("R2b_rearma_muertos_en_espera", BATTLE, RULE_PASS, RULE_PASS_DEAD,
+     k(D_ALL, "un muerto que espera su reaparición no se rearma cuando reaparece otro"),
+     'expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));', EQ),
+    ("R2c_rearma_eliminados_limitado", BATTLE, RULE_PASS, RULE_PASS_DEAD,
+     k(D_ALL, "respawn limitado: un vehículo ELIMINADO no se rearma cuando reaparece otro"),
+     'expect(rounds(v1)).toEqual(v1.modulesOf("ammo").map(() => 3));', EQ),
 ]
 
 

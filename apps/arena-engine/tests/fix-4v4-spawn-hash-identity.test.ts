@@ -26,7 +26,7 @@ const realMap = (): ArenaMap =>
 // y contrato de daño de MB (orden por slot, hp del blindaje = hp del módulo, turretHeading normalizado,
 // armor.profile en el estado del vehículo). Atribución: m0-atribucion.py (INTEGRACION.md).
 // RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
-// pasada de rearme desactivada (scripts g3-revert, VM112) vuelven EXACTAMENTE los valores anteriores.
+// pasada de rearme desactivada (script g3-revert del laboratorio) vuelven EXACTAMENTE los valores anteriores.
 // Antes de G3: 2v2-open e4ab04bd…, 4v4-real bc7231c2… (1v1-real y 2v2-real no cambian).
 const PRE_FIX_HASHES: Record<string, string> = {
   "1v1-real": "3f1bb8bb19304936512e7f8bfa9f52c3ab5ebb0f390c6e9ea281f63e6513ecc1",
