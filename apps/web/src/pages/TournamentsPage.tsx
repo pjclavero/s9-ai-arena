@@ -17,6 +17,8 @@ export interface Tournament {
   entryCount?: number;
   /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
   broadcast?: boolean;
+  /** #288 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
+  viewerCanManage?: boolean;
 }
 
 // UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
@@ -32,6 +34,20 @@ export function TournamentsPage(_props: { me: Me }) {
   const [broadcast, setBroadcast] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+
+  /**
+   * #288 · Cancelar la creación: no envía NADA (ni POST ni estado a medias), limpia el
+   * formulario y vuelve al listado.
+   */
+  function onCancelCreate() {
+    setName("");
+    setFormat("single_elimination");
+    setMode("deathmatch");
+    setRulesetId("mvp-default");
+    setBroadcast(false);
+    setError("");
+    window.location.hash = "#/tournaments";
+  }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault(); // envío también con Enter (ERR-VIS-10 a11y)
@@ -146,6 +162,9 @@ export function TournamentsPage(_props: { me: Me }) {
           )}
           <button type="submit" disabled={creating} data-testid="create-tournament">
             {creating ? "Creando…" : "Crear torneo"}
+          </button>{" "}
+          <button type="button" onClick={onCancelCreate} disabled={creating} data-testid="cancel-create-tournament">
+            Cancelar
           </button>
         </form>
       </div>
