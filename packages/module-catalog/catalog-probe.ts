@@ -12,20 +12,31 @@
  * lista blanca de MAGNITUDES DE EFECTO leídas campo a campo (nunca objetos enteros):
  *   kinematics  posición y rumbo de cada vehículo (física)
  *   turret      rumbo de la torreta de cada vehículo
- *   hull        nivel PÚBLICO del casco (hullLevel, D-B5) y alive de cada vehículo
+ *   hull        hp REAL del casco en valor absoluto (el que decide la muerte) y alive
  *   modules     estado (stateOf: lo que lee el rendimiento) de cada módulo, blindaje incluido
- *   energy      energía gastada y no repuesta (capacidad − almacenada) de cada vehículo
+ *   energy      flujo REAL de la energía almacenada en cada tick (almacenada(t) − almacenada(t−1):
+ *               lo que gastan las acciones y el drenaje, lo que repone la generación y lo que
+ *               corta el tope)
  *   projectiles id y posición de cada proyectil vivo (su vida = su alcance)
  *   mines       id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
- *   damage      registros exactos de daño aplicados (importe, reducción, casco, módulo)
+ *   damage      daño APLICADO: de cada registro, el efectivo, lo que va al casco y al módulo
+ *               (sin el importe ni la reducción de entrada), y la pérdida de hp medida en cada
+ *               módulo (blindaje incluido: su desgaste)
  *   events      eventos entregados a los bots (rechazos, impactos, detonaciones…)
- *   sensors     lo que devuelven los sensores en la observación de cada bot
+ *   sensors     QUÉ detecta cada sensor y DÓNDE (rayos: ángulo, distancia sólo si toca algo y
+ *               qué toca; contactos: identidad revelada y posición/velocidad medidas; rumbos)
  *   radio       los mensajes de radio que recibe cada bot
  *   score       marcador
  * Un campo que la simulación sólo COPIA en su estado, sin que ninguna de estas magnitudes
- * cambie, NO cuenta como usado. Por eso ningún canal guarda un valor que arranque como
- * copia del spec (casco, hp de módulo, energía almacenada): sólo su efecto (nivel público,
- * estado, consumo) o magnitudes que produce la simulación (posiciones, daño, eventos). `full` (todos los canales + observaciones completas +
+ * cambie, NO cuenta como usado. Ronda 2 (P2-1 de la revisión): ningún canal lleva un valor de
+ * ENTRADA, es decir, una función sólo del spec que la simulación podría copiar sin usarlo:
+ * nada de `fovRad`/`errorM` del sensor, ni de la confianza o intensidad (= 1 − d/alcance), ni
+ * de la distancia «sin impacto» del lidar (= alcance), ni del importe `base` ni la
+ * `reduction`/`absorbed` del registro de daño, ni de la capacidad de energía, ni del hp máximo
+ * como denominador del casco. El hp del casco va en absoluto porque es la variable que la
+ * simulación lee para matar; el estado del módulo sí usa su hp máximo de denominador, pero ese
+ * estado es lo que lee el rendimiento (performanceOf/moduleActs): es efecto, no copia.
+ * `full` (todos los canales + observaciones completas +
  * stateHash) sólo se usa para las comprobaciones NEGATIVAS del gate (D2/D3: «no cambia la
  * batalla»), donde ser más sensible es más estricto.
  *
@@ -53,7 +64,6 @@ import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
 import { findModule, type LoadoutInput, type LoadoutModuleEntry, type ModuleDefinition } from "./types.js";
 import { PROBE_CHANNELS, type ProbeChannel } from "./field-status.js";
-import { hullLevel } from "../game-rules/damage-contract.js";
 
 const ref = (m: ModuleDefinition): string => `${m.id}@${m.version}`;
 
@@ -143,6 +153,41 @@ export function loadoutWith(tested: ModuleDefinition, catalog: ModuleDefinition[
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
 
+/**
+ * Ronda 2 (P2-1) · Lo que los sensores DETECTAN y DÓNDE, campo a campo (lista blanca de
+ * sensors.ts buildObservation). Fuera: `fovRad` y `originHeading` del lidar, `errorM` y
+ * `confidence` del radar, `intensity` del acústico y `triggered` del de proximidad (copias del
+ * spec o derivados de él y de la distancia), y la distancia de un rayo que no toca nada (es el
+ * alcance). Un rayo sin impacto sólo dice «nada» (`hit` = "unknown": todo collider tiene id).
+ */
+function sensorEffect(sensors: any): unknown {
+  const out: unknown[] = [];
+  for (const l of sensors.lidar ?? [])
+    out.push([
+      "lidar",
+      l.slot,
+      l.rays.map((r: any) => [r.angle, r.hit === "unknown" ? null : r.distanceM, r.hit]),
+    ]);
+  for (const r of sensors.radar ?? [])
+    out.push([
+      "radar",
+      r.slot,
+      r.contacts.map((c: any) => [
+        c.entityId ?? null,
+        c.kind,
+        c.team ?? null,
+        c.position.x,
+        c.position.y,
+        c.velocity.x,
+        c.velocity.y,
+      ]),
+    ]);
+  for (const p of sensors.proximity ?? []) out.push(["proximity", p.slot, p.bearings]);
+  for (const a of sensors.acoustic ?? [])
+    out.push(["acoustic", a.slot, a.sources.map((s: any) => [s.bearing, s.kind])]);
+  return out;
+}
+
 /** Acumulador de la traza: un array por canal + las observaciones completas (sólo para `full`). */
 class Recorder {
   readonly ch = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, [] as unknown[]])) as Record<ProbeChannel, unknown[]>;
@@ -151,7 +196,7 @@ class Recorder {
     this.full.push([tag, obs]);
     // Sólo la SALIDA de los sensores y lo recibido por radio: no el autoinforme del bot
     // (hullHpMax, capacityEU… son copias del spec, no efectos).
-    if (obs.sensors !== undefined) this.ch.sensors.push([tag, obs.tick, obs.sensors]);
+    if (obs.sensors !== undefined) this.ch.sensors.push([tag, obs.tick, sensorEffect(obs.sensors)]);
     if (obs.radio !== undefined) this.ch.radio.push([tag, obs.tick, obs.radio]);
   }
   event(tag: string, e: unknown) {
@@ -266,34 +311,59 @@ export interface ProbeTrace {
 const r6 = (x: number): number => Math.round(x * 1e6) / 1e6;
 const sha = (x: unknown): string => createHash("sha256").update(JSON.stringify(x)).digest("hex");
 
+/** Valores del tick anterior para medir flujos (energía, hp de módulo). */
+type Prev = Map<string, number>;
+
+/**
+ * Valores iniciales (antes del primer paso) de lo que se mide por diferencia. El valor
+ * inicial NUNCA entra en un canal: sólo sirve de referencia para el primer flujo.
+ */
+function prevOf(battle: Battle): Prev {
+  const prev: Prev = new Map();
+  for (const v of battle.getVehicles()) {
+    prev.set(`${v.id}:energy`, v.energyEU);
+    for (const m of v.modules.values()) prev.set(`${v.id}:${m.spec.slot}:hp`, m.hp);
+  }
+  return prev;
+}
+
 /** Magnitudes de efecto del tick, campo a campo (lista blanca: nada de objetos enteros). */
-function sample(battle: Battle, rec: Recorder): void {
+function sample(battle: Battle, rec: Recorder, prev: Prev): void {
   const t = battle.tick;
   const ch = rec.ch;
   for (const v of battle.getVehicles()) {
     const p = battle.getPhysics().pose(v.id);
     ch.kinematics.push([t, v.id, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
     ch.turret.push([t, v.id, r6(v.turretHeading)]);
-    // G1.2 · contadores SIN su valor inicial (que es una copia del spec): el casco por su
-    // nivel público (D-B5) y si sigue vivo; la energía por lo gastado y no repuesto
-    // (capacidad − almacenada); los módulos por su ESTADO (lo que lee el rendimiento).
-    ch.hull.push([t, v.id, hullLevel(v.hullHp, v.spec.hullHp), v.alive]);
-    ch.energy.push([t, v.id, r6(v.energyCapacity() - v.energyEU)]);
+    // Ronda 2 (P2-1) · el casco por su hp REAL en absoluto (el que lee la simulación para
+    // matar), sin el hp máximo del spec de denominador; la energía por su FLUJO real en el
+    // tick (sin la capacidad del spec); los módulos por su ESTADO (lo que lee el rendimiento).
+    ch.hull.push([t, v.id, r6(v.hullHp), v.alive]);
+    const ek = `${v.id}:energy`;
+    ch.energy.push([t, v.id, r6(v.energyEU - prev.get(ek)!)]);
+    prev.set(ek, v.energyEU);
     ch.modules.push([t, v.id, [...v.modules.values()].map((m) => [m.spec.slot, v.stateOf(m.spec.slot)])]);
+    // Pérdida de hp APLICADA a cada módulo (blindaje incluido: su desgaste), medida en el
+    // estado, no en el registro.
+    for (const m of v.modules.values()) {
+      const hk = `${v.id}:${m.spec.slot}:hp`;
+      const lost = prev.get(hk)! - m.hp;
+      if (lost !== 0) ch.damage.push([t, v.id, "hp", m.spec.slot, r6(lost)]);
+      prev.set(hk, m.hp);
+    }
   }
   const frame = battle.getInternalFrame();
   ch.projectiles.push([t, frame.projectiles.map((p: any) => [p.id, p.position.x, p.position.y])]);
   ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
   ch.score.push([t, frame.score]);
+  // Sin `base` (importe de entrada), `reduction` (reducción de entrada) ni `absorbed`
+  // (= base − efectivo): el desgaste real del blindaje ya va arriba, medido en su hp.
   for (const d of battle.damageRecordsOfLastTick())
     ch.damage.push([
       t,
       d.target,
       d.sourceKind,
       d.type,
-      r6(d.base),
-      r6(d.reduction),
-      r6(d.absorbed),
       r6(d.effective),
       r6(d.hull),
       d.moduleSlot,
@@ -337,10 +407,11 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
   const escort = new Escort("bW", rec);
   escort.battle = battle;
   battle.attachBot("veh_4", escort);
+  const prev = prevOf(battle);
   try {
     for (let i = 0; i < PROBE_TICKS; i++) {
       battle.step();
-      sample(battle, rec);
+      sample(battle, rec, prev);
       if (i % 15 === 0) rec.full.push(["hash", battle.tick, battle.stateHash()]);
     }
     rec.full.push(["final", battle.stateHash()]);
