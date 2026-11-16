@@ -29,10 +29,11 @@ import {
 } from "../../../packages/game-rules/battle-rules.js";
 import { Battle, type Participant } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
-import { ctfArena, emptyArena, gunnerLoadout, scoutLoadout } from "../src/fixtures.js";
+import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../src/fixtures.js";
 import { HunterBot, IdleBot } from "../src/stubs.js";
 import { Vehicle } from "../src/sim/vehicle.js";
-import { record, verify } from "../src/replay.js";
+import { configFromHeader, record, resimulateWithEvents, verify } from "../src/replay.js";
+import { saveCheckpoint } from "../src/checkpoint.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -232,6 +233,57 @@ describe("G3 · all_alive_participants", () => {
   });
 });
 
+describe("G3 · reglas del rearme: asignación, idempotente, tope en el máximo, sólo munición", () => {
+  it("asignación, no suma: desde munición parcial UNA llamada deja exactamente el máximo", () => {
+    const b = idleBattle(tdm("all_alive_participants"));
+    const v1 = veh(b, "veh_1");
+    spend(v1, 3);
+    expect(rounds(v1).every((n) => n === 3)).toBe(true);
+    v1.rearm();
+    expect(stock(v1)).toEqual(maxStock(v1));
+  });
+
+  it("nunca por encima del máximo: con la munición llena, rearmar la deja igual", () => {
+    const b = idleBattle(tdm("all_alive_participants"));
+    const v1 = veh(b, "veh_1");
+    expect(stock(v1)).toEqual(maxStock(v1));
+    v1.rearm();
+    expect(stock(v1)).toEqual(maxStock(v1));
+  });
+
+  it("las cargas de mina también vuelven a su máximo (asignación)", () => {
+    const parts: Participant[] = [
+      { id: "veh_1", botId: "b1", team: "red", spec: minerLoadout() },
+      { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+    ];
+    const b = new Battle({ battleId: "g3m", seed: "g3-seed", ruleset: tdm("all_alive_participants"), map: emptyArena(), participants: parts });
+    const v1 = veh(b, "veh_1");
+    const mines = v1.modulesOf("mine");
+    expect(mines.length).toBeGreaterThan(0);
+    for (const m of mines) m.charges = 0;
+    v1.rearm();
+    expect(mines.map((m) => m.charges)).toEqual(mines.map((m) => m.spec.charges ?? 0));
+    expect(mines.every((m) => (m.spec.charges ?? 0) > 0)).toBe(true);
+  });
+
+  it("sólo munición: no repara módulos ni toca energía ni cooldowns", () => {
+    const b = idleBattle(tdm("all_alive_participants"));
+    const v1 = veh(b, "veh_1");
+    spend(v1, 3);
+    const mods = [...v1.modules.values()];
+    for (const m of mods) {
+      m.hp = Math.max(1, Math.floor(m.spec.hp / 2));
+      m.cooldownUntilTick = 999;
+    }
+    v1.energyEU = 1;
+    const before = mods.map((m) => ({ hp: m.hp, cd: m.cooldownUntilTick }));
+    v1.rearm();
+    expect(mods.map((m) => ({ hp: m.hp, cd: m.cooldownUntilTick }))).toEqual(before);
+    expect(v1.energyEU).toBe(1);
+    expect(stock(v1)).toEqual(maxStock(v1));
+  });
+});
+
 describe("G3 · self (comportamiento anterior) y sin respawn", () => {
   it("self: el superviviente NO se rearma; el que reaparece sí", () => {
     const b = idleBattle(tdm("self"));
@@ -398,7 +450,7 @@ describe("G3 · diagnóstico de tdm_4v4_norespawn (sin respawn la regla no aplic
 
 describe("G3 · determinismo, stateHash y replay", () => {
   /** 2v2 de cazadores con respawn ilimitado: hay bajas, reapariciones y rearmes reales. */
-  function huntConfig(policy: RespawnRearmPolicy) {
+  function huntConfig(policy: RespawnRearmPolicy | undefined) {
     return {
       battleId: "g3-replay",
       seed: "rules-seed",
@@ -432,10 +484,54 @@ describe("G3 · determinismo, stateHash y replay", () => {
     const ok = await verify(replay);
     expect(ok.rejected).toBeNull();
     expect(ok.matches).toBe(true);
-    // La cabecera es lo que lleva la regla: quitada, la re-simulación usa `self` y diverge.
+    // La cabecera es lo que lleva la regla: quitada, verify() NO la completa con un default.
     const stripped = structuredClone(replay);
     delete stripped.header.ruleset.respawn.rearmPolicy;
     const bad = await verify(stripped);
+    expect(bad.rejected).toMatch(/^rules_incomplete: respawn\.rearmPolicy ausente/);
     expect(bad.matches).toBe(false);
+  });
+
+  it("REPLAY_RULE_HEADER: la cabecera declara la política EFECTIVA aunque la config la deje implícita", async () => {
+    const replay = await record(huntConfig(undefined), attachHunters);
+    expect(replay.header.ruleset.respawn.rearmPolicy).toBe("self");
+    const ok = await verify(replay);
+    expect(ok.rejected).toBeNull();
+    expect(ok.matches).toBe(true);
+    // Mismo estado final que la batalla con `self` explícito: declarar no cambia el hash.
+    const explicit = await record(huntConfig("self"), attachHunters);
+    expect(replay.result.finalStateHash).toBe(explicit.result.finalStateHash);
+    // El checkpoint comparte la cabecera v2: también la declara.
+    const b = new Battle({ ...huntConfig(undefined), recordReplay: true });
+    attachHunters(b);
+    for (let t = 0; t < 10; t++) b.step();
+    expect(saveCheckpoint(b).header.ruleset.respawn.rearmPolicy).toBe("self");
+    b.free();
+  });
+
+  it("VERIFY_REPRODUCES_RULE: verify() re-simula con la política de la CABECERA (cambiada ⇒ diverge)", async () => {
+    const replay = await record(huntConfig("all_alive_participants"), attachHunters);
+    const flipped = structuredClone(replay);
+    flipped.header.ruleset.respawn.rearmPolicy = "self";
+    const res = await verify(flipped);
+    expect(res.rejected).toBeNull();
+    expect(res.matches).toBe(false);
+  });
+
+  it("VERIFY_REPRODUCES_RULE: un valor no admitido en la cabecera se rechaza con motivo", async () => {
+    const replay = await record(huntConfig("all_alive_participants"), attachHunters);
+    const bad = structuredClone(replay);
+    bad.header.ruleset.respawn.rearmPolicy = "refill_everyone";
+    const res = await verify(bad);
+    expect(res.rejected).toMatch(/^rules_invalid: respawn\.rearmPolicy desconocida/);
+  });
+
+  it("reconstrucción determinista: configFromHeader y resimulateWithEvents no rellenan la política", async () => {
+    const replay = await record(huntConfig("all_alive_participants"), attachHunters);
+    const stripped = structuredClone(replay);
+    delete stripped.header.ruleset.respawn.rearmPolicy;
+    expect(() => configFromHeader(stripped.header)).toThrow(/rules_incomplete/);
+    await expect(resimulateWithEvents(stripped, () => {})).rejects.toThrow(/rules_incomplete/);
+    expect(configFromHeader(replay.header).ruleset.respawn.rearmPolicy).toBe("all_alive_participants");
   });
 });
