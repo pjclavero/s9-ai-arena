@@ -12,6 +12,11 @@
  *
  * Regla de oro (cap. 21): esta vista consume el canal de espectador como un
  * cliente más; jamás toca motor ni tick.
+ *
+ * FIX-DIRECTOR-DELAY · el canal de espectador lo abre la LÍNEA TEMPORAL del director
+ * (SpectatorTimeline), no la pantalla en directo: el director decide inicio, fin y cambio de
+ * batalla con ese feed retrasado y LiveScreen pinta ESA MISMA conexión. Un solo reloj (el del
+ * gateway) para lo que se ve y para lo que se decide.
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BroadcastConfig } from "../broadcast/config.js";
@@ -23,6 +28,7 @@ import {
   type BroadcastScreen,
   type SourceErrorReason,
 } from "../broadcast/director.js";
+import { SpectatorTimeline, type LiveFeedSource } from "../broadcast/delayed-timeline.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { delayedWaitText } from "../viewer/delay-wait.js";
 import { LiveFeed } from "../viewer/live-feed.js";
@@ -36,19 +42,36 @@ const TICKER_ITEMS = 6;
 
 export function BroadcastPage({ config }: { config: BroadcastConfig }) {
   const [screen, setScreen] = useState<BroadcastScreen | null>(null);
+  const [timeline, setTimeline] = useState<SpectatorTimeline | null>(null);
+  // Cambios de fase del feed (p. ej. el reintento de un feed no disponible) ⇒ re-render para
+  // que la pantalla en directo tome la conexión vigente.
+  const [, setFeedVersion] = useState(0);
 
   useEffect(() => {
     if (!config.target) return;
     const api = createPublicApi();
+    // FIX-DIRECTOR-DELAY · una conexión de espectador por batalla seguida, con ticket ANÓNIMO
+    // (la vista broadcast jamás lleva sesión: cero datos privados).
+    const tl = new SpectatorTimeline({
+      createClient: (battleId) => new SpectatorClient({ getTicket: () => api.post(`/battles/${battleId}/spectate-ticket`) }),
+    });
+    const offFeed = tl.onChange(() => setFeedVersion((v) => v + 1));
+    setTimeline(tl);
     const director = new BroadcastDirector({
       target: config.target,
       fetchJson: api.get,
       onScreen: setScreen,
       pollIntervalMs: config.pollIntervalMs,
       waitScheduled: config.waitScheduled,
+      timeline: tl,
     });
     director.start();
-    return () => director.stop();
+    return () => {
+      director.stop();
+      offFeed();
+      tl.stopAll();
+      setTimeline(null);
+    };
   }, [config]);
 
   const b = config.branding;
@@ -79,7 +102,11 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
       {!config.target ? (
         <CenterCard accent={b.accentColor} title={b.eventName} subtitle="Configura ?battle=<id> o ?tournament=<id>" />
       ) : screen === null || screen.kind === "waiting" ? (
-        <WaitingScreen config={config} next={screen?.kind === "waiting" ? screen.nextBattle : null} />
+        <WaitingScreen
+          config={config}
+          next={screen?.kind === "waiting" ? screen.nextBattle : null}
+          delayNoticeMs={screen?.kind === "waiting" ? screen.delayNoticeMs : undefined}
+        />
       ) : screen.kind === "intermission" ? (
         <IntermissionScreen config={config} last={screen.lastBattle} next={screen.nextBattle} />
       ) : screen.kind === "finished" ? (
@@ -89,7 +116,7 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
       ) : screen.kind === "error" ? (
         <SourceErrorScreen config={config} reason={screen.reason} />
       ) : (
-        <LiveScreen config={config} battle={screen.battle} />
+        <LiveScreen config={config} battle={screen.battle} feed={timeline?.feed(screen.battle.id) ?? null} />
       )}
     </div>
   );
@@ -164,7 +191,18 @@ function shortId(id: string): string {
 
 // ─────────────────────────────────────────── pantallas de espera/entre batallas
 
-function WaitingScreen({ config, next }: { config: BroadcastConfig; next: BattleSummary | null }) {
+function WaitingScreen({
+  config,
+  next,
+  delayNoticeMs,
+}: {
+  config: BroadcastConfig;
+  next: BattleSummary | null;
+  delayNoticeMs?: number;
+}) {
+  // FIX-DIRECTOR-DELAY · aviso de retardo de la espera inicial (lo decide el director con el
+  // init del feed retrasado; ya no lo pinta la pantalla en directo antes de tener imagen).
+  const notice = delayNoticeMs ? delayedWaitText({ delayMs: delayNoticeMs }, false) : null;
   return (
     <section
       data-testid="broadcast-waiting"
@@ -174,6 +212,11 @@ function WaitingScreen({ config, next }: { config: BroadcastConfig; next: Battle
       <p style={{ fontSize: 36 }}>
         {next || config.target?.kind === "battle" ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}
       </p>
+      {notice && (
+        <p data-testid="broadcast-delay-wait" role="status" style={{ fontSize: 40, color: config.branding.accentColor }}>
+          {notice}
+        </p>
+      )}
       {next && (
         <p data-testid="broadcast-next" style={{ fontSize: 28, opacity: 0.9 }}>
           Próxima batalla: {participantsLine(next)} · {next.mode}
@@ -291,23 +334,33 @@ function SourceErrorScreen({ config, reason }: { config: BroadcastConfig; reason
 
 // ───────────────────────────────────────────────── batalla en directo (E8 real)
 
-export function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: BattleSummary }) {
+export function LiveScreen({
+  config,
+  battle,
+  feed,
+}: {
+  config: BroadcastConfig;
+  battle: BattleSummary;
+  /**
+   * FIX-DIRECTOR-DELAY · el feed retrasado que sigue el director para ESTA batalla (la misma
+   * conexión con la que decide inicio, fin y cambio). La pantalla no abre otra.
+   */
+  feed: LiveFeedSource | null;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
+  const [scene, setScene] = useState<ViewerScene | null>(null);
   const [live, setLive] = useState(false);
   const [tick, setTick] = useState(0);
   const [initError, setInitError] = useState<string | null>(null);
   // FIX-DELAY · directo con retardo: rótulo de espera hasta el primer snapshot diferido.
   const [delayWait, setDelayWait] = useState<string | null>(null);
 
+  // 1 · El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
   useEffect(() => {
     if (!hostRef.current) return;
     let game: { destroy: (removeCanvas: boolean) => void } | null = null;
-    let client: SpectatorClient | null = null;
     let alive = true;
-    const api = createPublicApi();
-
-    // El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
     void import("../viewer/PhaserViewer.js")
       .then(async ({ createViewerGame, waitForViewerScene }) => {
         if (!alive || !hostRef.current) return;
@@ -315,49 +368,17 @@ export function LiveScreen({ config, battle }: { config: BroadcastConfig; battle
         // renderizar a más solo quema CPU del contenedor de Chromium.
         game = createViewerGame(hostRef.current, { targetFps: 30 });
         // FC-D (D3, TD-009): esperar al READY de Phaser y al create de la escena.
-        let scene: ViewerScene;
+        let s: ViewerScene;
         try {
-          scene = await waitForViewerScene(game as any);
+          s = await waitForViewerScene(game as any);
         } catch (e) {
           if (alive) setInitError((e as Error).message);
           return;
         }
         if (!alive) return;
-        scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
-        sceneRef.current = scene;
-        // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
-        const feed = new LiveFeed(scene);
-
-        client = new SpectatorClient({
-          // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
-          getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
-        });
-        const c = client;
-        let hasSnapshot = false;
-        client.on("init", (msg) => {
-          setLive(true);
-          if (msg.snapshot) hasSnapshot = true;
-          setDelayWait(delayedWaitText(msg.spectator, hasSnapshot));
-          if (msg.meta?.world) scene.setWorld(msg.meta.world);
-          if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
-          if (msg.finished && msg.result) scene.applyResult(msg.result);
-          feed.onInit(msg);
-        });
-        client.on("snapshot", (s) => {
-          if (!hasSnapshot) {
-            hasSnapshot = true;
-            setDelayWait(null);
-          }
-          feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
-          setTick(s.tick);
-        });
-        client.on("event", (e) => feed.onEvent(e));
-        // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
-        client.on("result", (result) => scene.applyResult(result));
-        client.on("disconnect", () => setLive(false));
-        client.on("reconnected", () => setLive(true));
-        client.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`));
-        void client.connect();
+        s.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
+        sceneRef.current = s;
+        setScene(s);
       })
       .catch((e: unknown) => {
         if (alive) setInitError((e as Error).message);
@@ -365,11 +386,66 @@ export function LiveScreen({ config, battle }: { config: BroadcastConfig; battle
 
     return () => {
       alive = false;
-      client?.stop();
       game?.destroy(true);
       sceneRef.current = null;
     };
   }, [battle.id]);
+
+  // 2 · El feed retrasado del director → escena. Se suscribe y SINCRONIZA con lo que el feed
+  //     ya trajo (el director puede haberlo conectado antes de poner esta batalla en antena).
+  useEffect(() => {
+    if (!scene || !feed) return;
+    const c = feed.client;
+    // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
+    const lf = new LiveFeed(scene);
+    let hasSnapshot = false;
+    const onInit = (msg: any, connected = true) => {
+      setLive(connected);
+      if (msg.snapshot) hasSnapshot = true;
+      setDelayWait(delayedWaitText(msg.spectator, hasSnapshot));
+      if (msg.meta?.world) scene.setWorld(msg.meta.world);
+      if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+      if (msg.finished && msg.result) scene.applyResult(msg.result);
+      lf.onInit(msg);
+    };
+    const offs = [
+      c.on("init", (msg) => onInit(msg)),
+      c.on("snapshot", (s) => {
+        if (!hasSnapshot) {
+          hasSnapshot = true;
+          setDelayWait(null);
+        }
+        lf.onSnapshot(s, c.state.serverTimeMs ?? undefined);
+        setTick(s.tick);
+      }),
+      c.on("event", (e) => lf.onEvent(e)),
+      // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+      c.on("result", (result) => scene.applyResult(result)),
+      c.on("disconnect", () => setLive(false)),
+      c.on("reconnected", () => setLive(true)),
+      c.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`)),
+    ];
+    const init = feed.lastInit();
+    if (init) {
+      // Estado acumulado del feed: el último snapshot RETRASADO recibido (nunca uno vivo).
+      onInit(
+        {
+          ...init,
+          snapshot: c.state.snapshot ?? init.snapshot,
+          serverTimeMs: c.state.serverTimeMs ?? init.serverTimeMs,
+          finished: Boolean(c.state.result) || init.finished,
+          result: c.state.result ?? init.result,
+        },
+        c.state.connected,
+      );
+      if (typeof c.state.snapshot?.tick === "number") setTick(c.state.snapshot.tick);
+    }
+    const rej = feed.rejection();
+    setInitError(rej ? `directo no disponible (${rej.code ?? rej.status ?? "?"})` : null);
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [scene, feed]);
 
   const overlay = sceneRef.current?.overlay;
   const accent = config.branding.accentColor;

@@ -14,6 +14,32 @@ import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { BroadcastPage } from "../src/pages/BroadcastPage.js";
 import { parseBroadcastConfig } from "../src/broadcast/config.js";
 
+/**
+ * FIX-DIRECTOR-DELAY · el director sigue el feed retrasado de cada batalla (SpectatorTimeline):
+ * una batalla terminada que se ve al arrancar se sondea por el canal de espectador para saber
+ * si su cola retrasada sigue emitiéndose. Aquí ese feed dice que YA terminó (init con el fin
+ * vencido), que es lo que estos escenarios describen. La línea temporal en sí se prueba en
+ * director-delayed-timeline.test.ts(x).
+ */
+vi.mock("../src/viewer/spectator-client.js", () => ({
+  SpectatorClient: class {
+    state = { serverTimeMs: null, snapshot: null, result: null, connected: true };
+    private handlers = new Map<string, Set<(p: unknown) => void>>();
+    on(ev: string, cb: (p: unknown) => void) {
+      if (!this.handlers.has(ev)) this.handlers.set(ev, new Set());
+      this.handlers.get(ev)!.add(cb);
+      return () => this.handlers.get(ev)?.delete(cb);
+    }
+    async connect() {
+      queueMicrotask(() => {
+        for (const cb of this.handlers.get("init") ?? [])
+          cb({ type: "init", finished: true, result: {}, snapshot: null, spectator: { delaySeconds: 30 }, meta: {} });
+      });
+    }
+    stop() {}
+  },
+}));
+
 const fetchCalls: { url: string; init?: RequestInit }[] = [];
 
 function mockBattles(items: unknown[], tournamentState = "running") {

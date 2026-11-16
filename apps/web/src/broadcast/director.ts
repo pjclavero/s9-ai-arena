@@ -7,7 +7,14 @@
  *
  * La decisión (`decideScreen`) es una función PURA y probada; el `BroadcastDirector`
  * solo añade el sondeo con reloj/fetch inyectables.
+ *
+ * FIX-DIRECTOR-DELAY · Con línea temporal (`timeline`, siempre en la página), la API REAL
+ * sólo sirve para DESCUBRIR qué batallas existen; cada transición visible (inicio, fin,
+ * cambio de batalla, fin del torneo, marcador, cabecera) sale de la proyección retrasada
+ * (`projectDelayedTimeline`) que manda el feed retrasado del gateway:
+ *   COMPETICIÓN REAL → LÍNEA TEMPORAL PÚBLICA RETRASADA → DIRECTOR → RENDER.
  */
+import type { FeedStatus, PublicTimeline } from "./delayed-timeline.js";
 
 export interface BattleSummary {
   id: string;
@@ -40,7 +47,16 @@ export type SourceErrorReason =
   "target_not_found" | "invalid_json" | "invalid_payload" | "unreachable" | `http_${number}`;
 
 export type BroadcastScreen = (
-  | { kind: "waiting"; nextBattle: BattleSummary | null }
+  | {
+      kind: "waiting";
+      nextBattle: BattleSummary | null;
+      /**
+       * FIX-DIRECTOR-DELAY · aviso «directo con retardo de N s» (ms): sólo en la espera INICIAL
+       * (nada emitido todavía) y sólo cuando un feed seguido ya anunció su retardo y aún no
+       * trae contenido retrasado. Es el aviso aceptado de la secuencia WAITING → aviso → LIVE.
+       */
+      delayNoticeMs?: number;
+    }
   | { kind: "live"; battle: BattleSummary }
   | { kind: "intermission"; lastBattle: BattleSummary; nextBattle: BattleSummary | null }
   | { kind: "finished"; lastBattle: BattleSummary | null }
@@ -150,6 +166,130 @@ export function applyTournamentState(screen: BroadcastScreen, state: string | nu
   return { ...screen, progress };
 }
 
+// ─────────────────────────── FIX-DIRECTOR-DELAY · proyección de la línea temporal retrasada
+
+/** Estado REAL de una batalla para la proyección; `gone` = el sondeo ya no la lista (o 404). */
+export type RealBattleStatus = BattleSummary["status"] | "gone";
+
+/** Estado de una batalla en el mundo RETRASADO; `hidden` = un visitante aún no la vería. */
+export type DelayedBattleStatus = BattleSummary["status"] | "hidden";
+
+/** Una batalla terminada en el mundo retrasado se ve como la vería un visitante en ese momento. */
+function delayedEndOf(real: RealBattleStatus): DelayedBattleStatus {
+  if (real === "failed") return "failed";
+  // Ausente de la lista real (p. ej. replays públicos apagados): tampoco se vería retrasada.
+  if (real === "gone") return "hidden";
+  return "finished";
+}
+
+/**
+ * FIX-DIRECTOR-DELAY · Estado de UNA batalla en la línea temporal pública retrasada. El feed
+ * retrasado del gateway manda; el estado real de la API sólo dice qué existe:
+ *  - fin retrasado ya visto (`ended`, o feed `ended`) ⇒ terminada, AUNQUE la API aún diga
+ *    `running` (con retardo 0 el `result` del WS puede adelantarse a la fila);
+ *  - feed `playing` ⇒ en directo, AUNQUE la API ya diga `finished` o la haya retirado;
+ *  - feed `connecting`/`pending` ⇒ oculta: su contenido retrasado aún no empezó (en el mundo
+ *    retrasado todavía no ha empezado, y un visitante no ve las programadas);
+ *  - feed `unavailable` ⇒ sin canal público no hay línea temporal retrasada: en curso mientras
+ *    la API la dé `running` (el visor dice «directo no disponible», como siempre); si no, el
+ *    feed retirado implica que su cola retrasada ya terminó (el worker la retira tras el retardo);
+ *  - sin seguir: en curso real ⇒ oculta (aún no se sabe dónde va su retardo); terminada real ⇒
+ *    oculta salvo que ya estuviera resuelta al arrancar el director (`resolvedAtStart`).
+ */
+export function projectBattleStatus(
+  real: RealBattleStatus,
+  feed: FeedStatus | undefined,
+  ended: boolean,
+  resolvedAtStart: boolean,
+  retrying = false,
+): DelayedBattleStatus {
+  if (ended) return delayedEndOf(real);
+  if (real === "scheduled") return "scheduled";
+  if (feed) {
+    switch (feed.phase) {
+      case "playing":
+        return "running";
+      case "ended":
+        return delayedEndOf(real);
+      case "unavailable":
+        return real === "running" ? "running" : delayedEndOf(real);
+      case "connecting":
+        // Reintento de un feed no disponible de una batalla en curso: no se parpadea a «espera».
+        return retrying && real === "running" ? "running" : "hidden";
+      case "pending":
+        return "hidden";
+    }
+  }
+  if (resolvedAtStart) return real === "gone" ? "hidden" : real;
+  return "hidden";
+}
+
+export interface DelayedProjectionInput {
+  /**
+   * Batallas en orden de juego (orden de aparición: ASC por creación) con su estado REAL;
+   * `gone` = ya vista y el sondeo ha dejado de listarla.
+   */
+  battles: { battle: BattleSummary; real: RealBattleStatus }[];
+  /** Estado REAL del torneo. */
+  state: string | null;
+  feed: (battleId: string) => FeedStatus | undefined;
+  /** Batallas cuyo fin retrasado ya se vio. */
+  ended: ReadonlySet<string>;
+  /** Terminadas que ya lo estaban (y no eran la última) al arrancar el director. */
+  resolvedAtStart: ReadonlySet<string>;
+  retrying?: ReadonlySet<string>;
+}
+
+export interface DelayedProjection {
+  battles: BattleSummary[];
+  state: string | null;
+  /** Batallas cuyo final retrasado aún no se ha emitido (bloquean el fin público del torneo). */
+  unresolved: string[];
+}
+
+/**
+ * FIX-DIRECTOR-DELAY · Proyección PURA de la competición real a la línea temporal pública
+ * retrasada: la lista y el estado del torneo tal como los vería un visitante en
+ * `ahora − retardo`. Sobre ella se aplican las MISMAS decideScreen/applyTournamentState de
+ * siempre: la lógica de pantallas no cambia, cambia su entrada.
+ *
+ * Anti-coaching (A5): una batalla que la proyección da en curso sale SIN `result` ni
+ * `outcome` (aunque la fila real ya los tenga), y el torneo sólo está cerrado cuando no queda
+ * ninguna batalla pendiente de emitirse: ni marcador, ni ganador, ni total, ni pantalla final
+ * antes de que el feed retrasado llegue a su final.
+ */
+export function projectDelayedTimeline(i: DelayedProjectionInput): DelayedProjection {
+  const out: BattleSummary[] = [];
+  const unresolved: string[] = [];
+  for (const { battle: b, real } of i.battles) {
+    const isEnded = i.ended.has(b.id);
+    const atStart = i.resolvedAtStart.has(b.id);
+    const p = projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.retrying?.has(b.id) ?? false);
+    const settled = isEnded || atStart || real === "scheduled";
+    if (p === "hidden") {
+      const phase = i.feed(b.id)?.phase;
+      const feedOver = phase === "ended" || (phase === "unavailable" && real !== "running");
+      if (!settled && !feedOver) unresolved.push(b.id);
+      continue;
+    }
+    if (p === "running") {
+      unresolved.push(b.id);
+      out.push({
+        ...b,
+        status: "running",
+        result: undefined,
+        participants: b.participants.map(({ outcome: _outcome, ...rest }) => rest),
+      });
+      continue;
+    }
+    out.push(p === b.status ? b : { ...b, status: p });
+  }
+  const closed = i.state !== null && CLOSED_TOURNAMENT_STATES.has(i.state);
+  // Torneo cerrado en real con batallas aún por emitir ⇒ en el mundo retrasado sigue en curso.
+  const state = closed && unresolved.length > 0 ? "running" : i.state;
+  return { battles: out, state, unresolved };
+}
+
 /** FIX-BROADCAST · error de la API pública con su clase (para decidir si reintentar). */
 export class PublicApiError extends Error {
   constructor(
@@ -237,6 +377,7 @@ export function createPublicApi(base = "/api/v1", fetchImpl: typeof fetch = fetc
   };
 }
 
+
 export interface DirectorOptions {
   target: { kind: "battle"; battleId: string } | { kind: "tournament"; tournamentId: string };
   fetchJson: PublicFetch;
@@ -261,14 +402,34 @@ export interface DirectorOptions {
   onSourceError?: (err: { reason: SourceErrorReason; detail: string; consecutive: number }) => void;
   setIntervalImpl?: typeof setInterval;
   clearIntervalImpl?: typeof clearInterval;
+  /**
+   * FIX-DIRECTOR-DELAY · línea temporal pública retrasada (el feed del gateway). La página la
+   * pasa SIEMPRE: con ella toda transición visible respeta `spectatorDelay`. Sin ella el
+   * director decide con el estado real de la API; sólo lo usan los tests de esa lógica.
+   */
+  timeline?: PublicTimeline;
+  /** FIX-DIRECTOR-DELAY · feeds seguidos a la vez como máximo (en antena + siguiente). Def. 2. */
+  maxTrackedFeeds?: number;
+  /**
+   * FIX-DIRECTOR-DELAY · ms mínimos entre reintentos del feed NO disponible de una batalla que
+   * la API sigue dando en curso (p. ej. el ticket llegó antes que el `attach`). Def. 15 s.
+   */
+  feedRetryMs?: number;
 }
+
+/** Lectura REAL de la API en un ciclo de sondeo. */
+type RealView =
+  | { kind: "tournament"; battles: BattleSummary[]; state: string | null }
+  /** `battle` null = programada aún no visible (wait=scheduled); `gone` = se vio y ya no es legible. */
+  | { kind: "battle"; battle: BattleSummary | null; gone: boolean };
 
 /**
  * Sondea el estado por la API PÚBLICA (visitor: listTournamentBattles/getBattle, cap. 16)
  * y emite pantallas solo cuando cambian (`kind` o batalla). El avance automático
  * a la siguiente batalla del torneo (DoD T11.1) sale solo de aquí: cuando la
- * batalla en directo pasa a `finished`, la siguiente `running` toma el relevo
- * tras la pantalla de intermedio.
+ * batalla en directo termina, la siguiente toma el relevo tras la pantalla de
+ * intermedio. FIX-DIRECTOR-DELAY · con `timeline`, «termina» y «empieza» son los del feed
+ * RETRASADO, nunca los de la fila real.
  */
 export class BroadcastDirector {
   private readonly opts: DirectorOptions;
@@ -283,9 +444,29 @@ export class BroadcastDirector {
   /** FIX-BROADCAST (R2) · inicio de la espera de una programada (para el tope). */
   private readonly createdAt: number;
 
+  // ── FIX-DIRECTOR-DELAY · memoria de la línea temporal retrasada
+  /** Orden de los ciclos (sondeo + avisos del feed): un ciclo viejo nunca pisa a uno nuevo. */
+  private tickSeq = 0;
+  private appliedSeq = 0;
+  /** Batallas cuyo fin RETRASADO ya se vio. */
+  private readonly ended = new Set<string>();
+  /** Terminadas ya resueltas al arrancar (todas menos la última terminada visible). */
+  private resolvedAtStart: Set<string> | null = null;
+  /** Toda batalla vista, en orden de aparición (las que el sondeo deja de listar siguen aquí). */
+  private readonly seen = new Map<string, BattleSummary>();
+  /** Feeds no disponibles que se están reintentando con la batalla aún en curso. */
+  private readonly retrying = new Set<string>();
+  /** ¿Ya se emitió alguna batalla en directo? (el aviso de retardo sólo sustituye a la espera inicial) */
+  private everLive = false;
+  private unsubscribeTimeline: (() => void) | null = null;
+
   constructor(opts: DirectorOptions) {
     this.opts = opts;
     this.createdAt = (opts.now ?? Date.now)();
+    // Un cambio de fase del feed retrasado (empieza, termina) se aplica en el acto, sin
+    // esperar al siguiente sondeo: es la línea temporal la que marca el paso. Se re-lee la
+    // API (sólo para saber qué existe): con retardo 0 la secuencia es la de siempre.
+    this.unsubscribeTimeline = opts.timeline?.onChange(() => void this.tick()) ?? null;
   }
 
   start(): void {
@@ -298,15 +479,23 @@ export class BroadcastDirector {
   stop(): void {
     if (this.timer !== null) (this.opts.clearIntervalImpl ?? clearInterval)(this.timer);
     this.timer = null;
+    this.unsubscribeTimeline?.();
+    this.unsubscribeTimeline = null;
   }
 
   /** Un ciclo de sondeo. Público para poder probarlo sin relojes. */
   async tick(): Promise<void> {
+    const seq = ++this.tickSeq;
     let screen: BroadcastScreen;
     try {
-      screen = await this.computeScreen();
+      const real = await this.readReal();
+      if (seq < this.appliedSeq) return; // un ciclo posterior ya decidió con datos más nuevos
+      this.appliedSeq = seq;
+      screen = this.screenFor(real);
       this.failures = 0;
     } catch (e) {
+      if (seq < this.appliedSeq) return;
+      this.appliedSeq = seq;
       // FIX-BROADCAST · antes un `catch` vacío: un fallo PERMANENTE (la web devolviendo
       // index.html, un 404) dejaba «La batalla empieza en breve» para siempre. Ahora:
       //  - permanente ⇒ SOURCE_ERROR en el acto;
@@ -322,21 +511,156 @@ export class BroadcastDirector {
       if (!c.permanent && this.failures < (this.opts.maxTransientFailures ?? 3)) return;
       screen = { kind: "error", reason: c.reason, detail: c.detail };
     }
+    this.show(screen);
+  }
+
+  private show(screen: BroadcastScreen): void {
     this.currentBattleId = screen.kind === "live" ? screen.battle.id : null;
+    if (screen.kind === "live") this.everLive = true;
     const sub =
       screen.kind === "live"
         ? screen.battle.id
         : screen.kind === "error"
           ? screen.reason
           : ((screen as { nextBattle?: BattleSummary | null }).nextBattle?.id ?? "");
-    const key = `${screen.kind}:${sub}`;
+    let key = `${screen.kind}:${sub}`;
+    if (this.opts.timeline) {
+      // Con la línea temporal también cambian la última batalla mostrada y el aviso de retardo.
+      const last = (screen as { lastBattle?: BattleSummary | null }).lastBattle?.id ?? "";
+      const notice = screen.kind === "waiting" ? (screen.delayNoticeMs ?? "") : "";
+      key += `:${last}:${notice}`;
+    }
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.opts.onScreen(screen);
     }
   }
 
-  private async computeScreen(): Promise<BroadcastScreen> {
+  private screenFor(real: RealView): BroadcastScreen {
+    if (this.opts.timeline) return this.delayedScreenFor(real, this.opts.timeline);
+    // Sin línea temporal: decisiones con el estado real (tests de la lógica de la API).
+    if (real.kind === "battle") {
+      const b = real.gone ? this.lastSeenBattle : real.battle;
+      if (!b) return { kind: "waiting", nextBattle: null };
+      if (real.gone) return { kind: "finished", lastBattle: b.status === "failed" ? null : b };
+      if (b.status === "running") return { kind: "live", battle: b };
+      if (b.status === "scheduled") return { kind: "waiting", nextBattle: b };
+      return { kind: "finished", lastBattle: b.status === "finished" ? b : null };
+    }
+    return applyTournamentState(decideScreen(real.battles, this.currentBattleId), real.state);
+  }
+
+  // ───────────────────────────── FIX-DIRECTOR-DELAY · decisiones con la línea temporal
+
+  private delayedScreenFor(real: RealView, timeline: PublicTimeline): BroadcastScreen {
+    const visible: BattleSummary[] =
+      real.kind === "tournament" ? real.battles : real.battle && !real.gone ? [real.battle] : [];
+    if (real.kind === "battle" && real.gone && this.lastSeenBattle) this.remember(this.lastSeenBattle);
+    for (const b of visible) this.remember(b);
+    if (this.resolvedAtStart === null) {
+      // Al arrancar: las terminadas visibles ya están resueltas salvo la ÚLTIMA (su cola
+      // retrasada puede seguir emitiéndose: se sondea por el WS). En modo batalla, ninguna.
+      const done = real.kind === "tournament" ? visible.filter((b) => b.status !== "running" && b.status !== "scheduled") : [];
+      const lastFinished = [...done].reverse().find((b) => b.status === "finished");
+      this.resolvedAtStart = new Set(done.filter((b) => b !== lastFinished).map((b) => b.id));
+    }
+    const realStatus = new Map<string, RealBattleStatus>(visible.map((b) => [b.id, b.status]));
+    const statusOf = (id: string): RealBattleStatus => realStatus.get(id) ?? "gone";
+
+    // 1 · Fin retrasado: lo marca el FEED (result retrasado / init con el fin vencido). Un feed
+    //     no disponible de una batalla que la API ya no da en curso también terminó (el worker
+    //     retira la batalla del gateway sólo después del retardo).
+    const now = (this.opts.now ?? Date.now)();
+    for (const id of timeline.tracked()) {
+      const st = timeline.status(id);
+      if (!st) continue;
+      if (st.phase === "ended") {
+        this.ended.add(id);
+        this.retrying.delete(id);
+        timeline.release(id);
+      } else if (st.phase === "unavailable") {
+        if (statusOf(id) !== "running") {
+          this.ended.add(id);
+          this.retrying.delete(id);
+          timeline.release(id);
+        } else if (now - st.sinceMs >= (this.opts.feedRetryMs ?? 15_000)) {
+          this.retrying.add(id);
+          timeline.release(id);
+          timeline.track(id);
+        }
+      } else if (st.phase === "playing") {
+        this.retrying.delete(id);
+      }
+    }
+
+    // 2 · Qué feeds seguir: la batalla en antena y la siguiente candidata (la candidata se
+    //     conecta antes, SIN pintarla, para saber cuándo empieza SU contenido retrasado).
+    const max = Math.max(1, this.opts.maxTrackedFeeds ?? 2);
+    const active = timeline.tracked();
+    const unresolvedSeen = [...this.seen.values()].filter(
+      (b) => !this.ended.has(b.id) && !this.resolvedAtStart!.has(b.id) && b.status !== "scheduled",
+    );
+    const want = [
+      ...(this.currentBattleId ? [this.currentBattleId] : []),
+      ...visible.filter((b) => b.status === "running").map((b) => b.id),
+      ...unresolvedSeen.filter((b) => statusOf(b.id) !== "running").map((b) => b.id),
+    ];
+    for (const id of want) {
+      if (active.length >= max) break;
+      if (this.ended.has(id) || active.includes(id)) continue;
+      timeline.track(id);
+      active.push(id);
+    }
+
+    // 3 · Proyección retrasada y las MISMAS reglas de pantalla de siempre.
+    const feed = (id: string) => timeline.status(id);
+    // Todas las vistas, en orden de aparición: las que el sondeo ya no lista siguen en su sitio.
+    const rows = [...this.seen.values()].map((b) => ({ battle: b, real: statusOf(b.id) }));
+    const proj = projectDelayedTimeline({
+      battles: rows,
+      state: real.kind === "tournament" ? real.state : null,
+      feed,
+      ended: this.ended,
+      resolvedAtStart: this.resolvedAtStart,
+      retrying: this.retrying,
+    });
+
+    let screen: BroadcastScreen;
+    if (real.kind === "battle") {
+      const b = proj.battles[0] ?? null;
+      const target = real.battle ?? this.lastSeenBattle;
+      if (!target) screen = { kind: "waiting", nextBattle: null };
+      else if (b?.status === "running") screen = { kind: "live", battle: b };
+      else if (b?.status === "scheduled") screen = { kind: "waiting", nextBattle: b };
+      else if (this.ended.has(target.id) || b?.status === "finished" || b?.status === "failed")
+        screen = { kind: "finished", lastBattle: target.status === "failed" ? null : (b ?? target) };
+      else screen = { kind: "waiting", nextBattle: null };
+    } else {
+      screen = applyTournamentState(decideScreen(proj.battles, this.currentBattleId), proj.state);
+    }
+
+    // 4 · Aviso de retardo: sólo en la espera INICIAL, con un feed que ya anunció su retardo
+    //     y aún no trae contenido retrasado.
+    if (screen.kind === "waiting" && !this.everLive) {
+      const notice = Math.max(
+        0,
+        ...timeline
+          .tracked()
+          .map((id) => timeline.status(id))
+          .filter((st): st is FeedStatus => st?.phase === "pending")
+          .map((st) => st.delayMs ?? 0),
+      );
+      if (notice > 0) screen = { ...screen, delayNoticeMs: notice };
+    }
+    return screen;
+  }
+
+  private remember(b: BattleSummary): void {
+    // El orden de aparición se conserva (Map): la primera vez fija la posición.
+    this.seen.set(b.id, b);
+  }
+
+  private async readReal(): Promise<RealView> {
     if (this.opts.target.kind === "battle") {
       let b: unknown;
       try {
@@ -345,7 +669,7 @@ export class BroadcastDirector {
         // FIX-BROADCAST · una batalla que SE VIO y deja de ser legible (404) terminó sin
         // replay público: es el final del destino, no un error de la fuente.
         if (this.lastSeenBattle && e instanceof PublicApiError && e.kind === "http" && e.status === 404) {
-          return { kind: "finished", lastBattle: this.lastSeenBattle.status === "failed" ? null : this.lastSeenBattle };
+          return { kind: "battle", battle: null, gone: true };
         }
         // FIX-BROADCAST (R2) · 404 de una programada AÚN no visible (la API validó la espera al
         // iniciar): espera legítima, se reintenta hasta que empiece o venza el tope.
@@ -357,15 +681,13 @@ export class BroadcastDirector {
           e.status === 404 &&
           (this.opts.now ?? Date.now)() - this.createdAt < (this.opts.maxScheduledWaitMs ?? 30 * 60_000)
         ) {
-          return { kind: "waiting", nextBattle: null };
+          return { kind: "battle", battle: null, gone: false };
         }
         throw e;
       }
       if (!validBattle(b)) throw invalidPayload("/battles/{id}");
       this.lastSeenBattle = b;
-      if (b.status === "running") return { kind: "live", battle: b };
-      if (b.status === "scheduled") return { kind: "waiting", nextBattle: b };
-      return { kind: "finished", lastBattle: b.status === "finished" ? b : null };
+      return { kind: "battle", battle: b, gone: false };
     }
     // Modo torneo: `GET /tournaments/{id}/battles` (listTournamentBattles,
     // visitor) devuelve el calendario COMPLETO del torneo, ya en orden de juego
@@ -382,7 +704,7 @@ export class BroadcastDirector {
     if (!page || typeof page !== "object" || !Array.isArray(page.items) || !page.items.every(validBattle)) {
       throw invalidPayload("/tournaments/{id}/battles");
     }
-    return applyTournamentState(decideScreen(page.items, this.currentBattleId), state);
+    return { kind: "tournament", battles: page.items, state };
   }
 
   /**

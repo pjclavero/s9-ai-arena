@@ -122,6 +122,48 @@ de 30 s con reloj falso), `apps/api/src/spectate/fix-delay-heartbeat.test.ts`
 Calibración: `python3 scripts/fix-delay-mutants.py --json <salida.json>` (en el
 laboratorio, nunca en el orquestador ni en producción).
 
+### El director sigue la línea temporal retrasada (FIX-DIRECTOR-DELAY)
+
+Defecto de aceptación (C2, 2026-11-16, `delaySeconds=30`): el feed iba retrasado, pero el
+director de `/broadcast` decidía las pantallas con el estado REAL de la API. La última batalla
+terminó en real y el director anunció «Torneo terminado» con ~18 s de batalla retrasada aún por
+emitir. Cada fin o cambio de batalla cortaba igual los 30 s finales de la anterior.
+
+Ahora la API sólo sirve para DESCUBRIR qué batallas existen. Toda transición visible sale del
+propio feed retrasado del gateway (`SpectatorTimeline`, `apps/web/src/broadcast/delayed-timeline.ts`).
+Es una conexión por batalla seguida, propiedad del director, y la pantalla en directo pinta esa
+misma conexión: lo que se ve y lo que se decide comparten conexión y reloj (el del gateway). Ningún
+temporizador del navegador decide una transición.
+
+| Transición | Señal (retrasada) |
+|---|---|
+| Inicio (LIVE) | primer contenido retrasado del feed (`snapshot`, o `init` que ya lo trae) |
+| Fin de batalla | `result` retrasado (o `init.finished`); un feed retirado de una batalla que la API ya no da en curso también cuenta como fin, porque el worker la retira tras el retardo |
+| Cambio de batalla | fin retrasado de la que está en antena + primer contenido retrasado de la siguiente; entre ambos, el intermedio |
+| Fin del torneo | torneo cerrado en la API **y** ninguna batalla con su final retrasado pendiente |
+
+La proyección (`projectDelayedTimeline`) reescribe la lista real tal como la vería un visitante en
+`ahora − retardo`, y sobre ella se aplican las mismas reglas de pantalla de siempre. Una batalla en
+antena sale sin `result` ni `outcome`, y el total del torneo, el marcador y la pantalla final no
+aparecen antes de su final retrasado. Se siguen como mucho 2 feeds a la vez: el que está en antena
+y el siguiente, que se conecta antes sin pintarse para saber cuándo empieza su contenido retrasado.
+El aviso «Directo con retardo…» sólo sustituye a la espera inicial (secuencia `WAITING → aviso →
+LIVE`). Con retardo 0 todo sigue siendo inmediato.
+
+Límites conocidos:
+- Sin canal público (espectador público apagado) no hay línea temporal retrasada: el visor dice
+  «directo no disponible» y el fin se toma de la API, como antes.
+- Si el director arranca dentro de la cola retrasada de una batalla ya terminada que un anónimo no
+  ve (replays públicos apagados), esa cola no se puede sondear.
+- La API pública anónima expone en tiempo real `status`, `finishedAt`, `result` y el estado del
+  torneo. No es coaching (dentro de una batalla en curso no hay estado), pero sí un adelanto del
+  resultado de ~`delaySeconds`. Está registrado aparte.
+
+Pruebas: `apps/web/tests/director-delayed-timeline.test.ts` (escenario determinista con reloj
+virtual), `director-delayed-timeline.e2e.test.ts` (gateway y `ws` reales) y
+`director-delayed-timeline-page.test.tsx` (la página completa). Calibración:
+`python3 scripts/director-delay-mutants.py --json <salida.json>` (en el laboratorio).
+
 ## Emisión en blanco (#256)
 
 **Síntoma (producción, RC8 `b254e3d`):** sesión a YouTube en `rtmps` 1080p30 4500 kbit/s sobre
