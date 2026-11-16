@@ -190,10 +190,11 @@ export class SpectatorTimeline implements PublicTimeline {
           e.unsubs = [];
           client.stop();
           const wait = (this.opts.notLiveRetryBaseMs ?? NOT_LIVE_RETRY_BASE_MS) * 2 ** (e.notLiveRetries - 1);
-          e.retryTimer = (this.opts.setTimeoutImpl ?? setTimeout)(() => {
+          const setT = this.opts.setTimeoutImpl ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+          e.retryTimer = setT(() => {
             e.retryTimer = null;
             if (this.entries.get(battleId) === e) this.open(battleId, e);
-          }, wait);
+          }, wait) as ReturnType<typeof setTimeout>;
           return;
         }
         e.rejection = { code: r?.code, status: r?.status };
