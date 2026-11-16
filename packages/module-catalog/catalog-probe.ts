@@ -163,11 +163,7 @@ const b64 = (s: string) => Buffer.from(s).toString("base64");
 function sensorEffect(sensors: any): unknown {
   const out: unknown[] = [];
   for (const l of sensors.lidar ?? [])
-    out.push([
-      "lidar",
-      l.slot,
-      l.rays.map((r: any) => [r.angle, r.hit === "unknown" ? null : r.distanceM, r.hit]),
-    ]);
+    out.push(["lidar", l.slot, l.rays.map((r: any) => [r.angle, r.hit === "unknown" ? null : r.distanceM, r.hit])]);
   for (const r of sensors.radar ?? [])
     out.push([
       "radar",

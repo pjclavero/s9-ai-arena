@@ -320,13 +320,7 @@ export class PhysicsWorld {
   }
 
   /** Superficie de ENTRADA de la recta del proyectil en el cuboide (ver `entryOnCuboid`). */
-  private entrySurface(
-    collider: RAPIER.Collider,
-    from: Vec2,
-    dir: Vec2,
-    entityId: string,
-    point: Vec2,
-  ): ImpactSurface {
+  private entrySurface(collider: RAPIER.Collider, from: Vec2, dir: Vec2, entityId: string, point: Vec2): ImpactSurface {
     const e = this.entryOnCuboid(collider, from, dir);
     // La recta pasa por `from`, que está dentro o sobre el cuboide: siempre corta su frontera.
     // (Red de seguridad: si no, la cara más próxima al punto, como en el caso sin impacto.)
