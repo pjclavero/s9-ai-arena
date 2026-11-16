@@ -9,36 +9,49 @@
  * de MD los objetos vivos se serializan enteros, así que COPIAR un campo del catálogo a una
  * entidad (la cola de radio, la mina) cambiaba el hash sin que ningún comportamiento lo
  * leyera, y el gate lo daba por usado (mutantes M6/M12 de MC vivos). Ahora cada canal es una
- * lista blanca de MAGNITUDES DE EFECTO leídas campo a campo (nunca objetos enteros):
- *   kinematics  posición y rumbo de cada vehículo (física)
- *   turret      rumbo de la torreta de cada vehículo
- *   hull        hp REAL del casco en valor absoluto (el que decide la muerte) y alive
- *   modules     estado (stateOf: lo que lee el rendimiento) de cada módulo, blindaje incluido
- *   energy      flujo REAL de la energía almacenada en cada tick (almacenada(t) − almacenada(t−1):
- *               lo que gastan las acciones y el drenaje, lo que repone la generación y lo que
- *               corta el tope)
- *   projectiles id y posición de cada proyectil vivo (su vida = su alcance)
- *   mines       id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
- *   damage      daño APLICADO: de cada registro, el efectivo, lo que va al casco y al módulo
- *               (sin el importe ni la reducción de entrada), y la pérdida de hp medida en cada
- *               módulo (blindaje incluido: su desgaste)
- *   events      eventos entregados a los bots (rechazos, impactos, detonaciones…)
- *   sensors     QUÉ detecta cada sensor y DÓNDE (rayos: ángulo, distancia sólo si toca algo y
- *               qué toca; contactos: identidad revelada y posición/velocidad medidas; rumbos)
- *   radio       los mensajes de radio que recibe cada bot
- *   score       marcador
- * Un campo que la simulación sólo COPIA en su estado, sin que ninguna de estas magnitudes
- * cambie, NO cuenta como usado. Ronda 2 (P2-1 de la revisión): ningún canal lleva un valor de
- * ENTRADA, es decir, una función sólo del spec que la simulación podría copiar sin usarlo:
- * nada de `fovRad`/`errorM` del sensor, ni de la confianza o intensidad (= 1 − d/alcance), ni
- * de la distancia «sin impacto» del lidar (= alcance), ni del importe `base` ni la
- * `reduction`/`absorbed` del registro de daño, ni de la capacidad de energía, ni del hp máximo
- * como denominador del casco. El hp del casco va en absoluto porque es la variable que la
- * simulación lee para matar; el estado del módulo sí usa su hp máximo de denominador, pero ese
- * estado es lo que lee el rendimiento (performanceOf/moduleActs): es efecto, no copia.
- * `full` (todos los canales + observaciones completas +
- * stateHash) sólo se usa para las comprobaciones NEGATIVAS del gate (D2/D3: «no cambia la
- * batalla»), donde ser más sensible es más estricto.
+ * lista blanca de MAGNITUDES DE EFECTO leídas campo a campo (nunca objetos enteros).
+ *
+ * REGLA DE LOS CANALES (ronda 3, P2-1b, cerrada como CLASE): ningún canal registra un valor
+ * cuyo origen sea una COPIA de la configuración, ni un valor inicial copiado del spec ni el
+ * de un registro interno que refleje lo calculado sin haberlo aplicado. Un canal sólo puede
+ * registrar:
+ *   (F) FLUJOS: variaciones del estado vivo medidas entre ticks (`Recorder.flow`: el nivel
+ *       absoluto NUNCA entra en un canal; la primera medida y la restauración de una
+ *       reaparición sólo fijan la referencia, y la reaparición se anota como hecho SIN valor);
+ *   (E) EVENTOS observables con su tick y su objetivo (lista blanca de campos: sin importes
+ *       del registro de daño);
+ *   (P) POSICIONES o DETECCIONES resultantes.
+ * Canales:
+ *   kinematics  (P) posición y rumbo de cada vehículo
+ *   turret      (P) rumbo de la torreta de cada vehículo
+ *   hull        (F) hp que pierde el casco en cada tick + (E) tick de muerte y de reaparición
+ *   modules     (F) hp que pierde cada módulo (blindaje incluido) + (E) tick y estado de cada
+ *               TRANSICIÓN de estado (stateOf: lo que lee el rendimiento); su valor inicial
+ *               («ok») no depende del spec y no se registra
+ *   energy      (F) flujo de la energía almacenada en cada tick
+ *   projectiles (P) id y posición de cada proyectil vivo (su vida = su alcance)
+ *   mines       (P) id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
+ *   damage      (F) daño APLICADO medido en el ESTADO: hp que pierden casco, módulos y
+ *               blindaje en cada tick. NUNCA el registro de daño (effective/hull/
+ *               moduleDamage/base…): el registro puede decir una cosa y el estado recibir otra
+ *   events      (E) eventos entregados a los bots, campo a campo (sin el `damage` de
+ *               hit_taken/hit_dealt, que es el `effective` del registro)
+ *   sensors     (P) QUÉ detecta cada sensor y DÓNDE: por rayo, distancia y objeto SÓLO si
+ *               toca algo (sin el ángulo calculado del spec); contactos con identidad y
+ *               posición/velocidad medidas; rumbos
+ *   radio       (E) mensajes de radio que recibe cada bot (emisor, contenido, tick de envío)
+ *   score       (E) marcador
+ * La regla la hace cumplir el bloque D0 del gate (catalog-contract.test.ts), calibrado con
+ * mutantes de la propia sonda (scripts/hardening/g1-mutants.py, P1-P6):
+ *   D0a  dos sondas con specs DISTINTOS de dinámica IDÉNTICA (reservas iniciales trasladadas
+ *        donde nunca limitan: casco de quien no muere, energía de quien nunca va justo,
+ *        munición y cargas que no se agotan, hp de módulos que nadie toca) ⇒ todos los
+ *        canales idénticos. Un canal que registre un nivel copiado del spec cambia.
+ *   D0b  registro de daño y `damage` de los eventos FALSEADOS después de aplicarse (estado
+ *        intacto) ⇒ todos los canales idénticos. Un canal que lea el registro cambia.
+ * `full` (todos los canales + observaciones completas + stateHash) sólo se usa para las
+ * comprobaciones NEGATIVAS del gate (D2/D3: «no cambia la batalla»), donde ser más sensible
+ * es más estricto.
  *
  * Escenario (arena vacía 120×80, tdm):
  *  - E (rojo): avanza, retrocede soltando minas en línea, gira; barre la torreta, dispara
@@ -59,6 +72,7 @@
 import { createHash } from "node:crypto";
 import { loadRuleset } from "../game-rules/index.js";
 import { Battle, type BotAgent } from "../../apps/arena-engine/src/sim/battle.js";
+import type { Vehicle, VehicleSpec } from "../../apps/arena-engine/src/sim/vehicle.js";
 import { emptyArena } from "../../apps/arena-engine/src/fixtures.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
@@ -66,6 +80,7 @@ import { findModule, type LoadoutInput, type LoadoutModuleEntry, type ModuleDefi
 import { PROBE_CHANNELS, type ProbeChannel } from "./field-status.js";
 
 const ref = (m: ModuleDefinition): string => `${m.id}@${m.version}`;
+const r6 = (x: number): number => Math.round(x * 1e6) / 1e6;
 
 /** Loadout base de E (chasis medio con todo lo que la sonda ejercita). */
 export const PROBE_BASE: LoadoutInput = {
@@ -154,16 +169,18 @@ export function loadoutWith(tested: ModuleDefinition, catalog: ModuleDefinition[
 const b64 = (s: string) => Buffer.from(s).toString("base64");
 
 /**
- * Ronda 2 (P2-1) · Lo que los sensores DETECTAN y DÓNDE, campo a campo (lista blanca de
- * sensors.ts buildObservation). Fuera: `fovRad` y `originHeading` del lidar, `errorM` y
- * `confidence` del radar, `intensity` del acústico y `triggered` del de proximidad (copias del
- * spec o derivados de él y de la distancia), y la distancia de un rayo que no toca nada (es el
- * alcance). Un rayo sin impacto sólo dice «nada» (`hit` = "unknown": todo collider tiene id).
+ * Lo que los sensores DETECTAN y DÓNDE, campo a campo (lista blanca de sensors.ts
+ * buildObservation). Fuera: `fovRad` y `originHeading` del lidar, `errorM` y `confidence` del
+ * radar, `intensity` del acústico y `triggered` del de proximidad (copias del spec o derivados
+ * de él y de la distancia), la distancia de un rayo que no toca nada (es el alcance) y, desde
+ * la ronda 3, el ÁNGULO de cada rayo: es `heading − fov/2 + fov·t`, una función del spec que la
+ * observación puede informar sin que el rayo se lance ahí. Del rayo sólo queda lo que
+ * resulta de lanzarlo: qué toca y a qué distancia (si no toca nada, sólo «nada»).
  */
 function sensorEffect(sensors: any): unknown {
   const out: unknown[] = [];
   for (const l of sensors.lidar ?? [])
-    out.push(["lidar", l.slot, l.rays.map((r: any) => [r.angle, r.hit === "unknown" ? null : r.distanceM, r.hit])]);
+    out.push(["lidar", l.slot, l.rays.map((r: any) => (r.hit === "unknown" ? null : [r.distanceM, r.hit]))]);
   for (const r of sensors.radar ?? [])
     out.push([
       "radar",
@@ -184,20 +201,66 @@ function sensorEffect(sensors: any): unknown {
   return out;
 }
 
-/** Acumulador de la traza: un array por canal + las observaciones completas (sólo para `full`). */
+/**
+ * Campos de evento que entran en el canal `events` (lista blanca): tipo, tick, objetivo,
+ * quién (si se revela), ranura, motivo, estado nuevo del módulo, sector y posición. Fuera
+ * `damage` (hit_taken/hit_dealt): es el `effective` del REGISTRO de daño, no lo aplicado
+ * (lo aplicado se mide en el estado: canal `damage`).
+ */
+const EVENT_FIELDS = ["tick", "kind", "targetId", "sourceId", "slot", "reason", "state", "sector", "position"] as const;
+function eventEffect(e: any): unknown {
+  return EVENT_FIELDS.map((k) => {
+    const v = e?.[k];
+    if (v && typeof v === "object" && "x" in v && "y" in v) return [r6(v.x), r6(v.y)];
+    return v ?? null;
+  });
+}
+
+/**
+ * Acumulador de la traza: un array por canal + las observaciones completas (sólo para `full`).
+ * Las magnitudes de estado sólo entran por `flow` (variación medida); los niveles medidos
+ * (`level`) son la referencia del flujo y NUNCA salen a un canal.
+ */
 class Recorder {
   readonly ch = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, [] as unknown[]])) as Record<ProbeChannel, unknown[]>;
   readonly full: unknown[] = [];
+  private readonly level = new Map<string, number>();
+  /**
+   * Flujo de una magnitud de estado: registra en `channels` la variación desde la medida
+   * anterior (si no es cero). La primera medida sólo fija la referencia. `reset` = la
+   * magnitud se acaba de restaurar desde el spec (reaparición): se fija la nueva referencia
+   * y se anota el HECHO sin valor (el salto sería una copia del spec).
+   */
+  flow(channels: readonly ProbeChannel[], t: number | string, key: string, value: number, reset = false): void {
+    const prev = this.level.get(key);
+    this.level.set(key, value);
+    if (prev === undefined) return;
+    if (reset) {
+      for (const c of channels) this.ch[c].push([t, key, "reset"]);
+      return;
+    }
+    const d = r6(value - prev);
+    if (d !== 0) for (const c of channels) this.ch[c].push([t, key, d]);
+  }
+  /** Transición de un valor categórico (estado de módulo, vivo/muerto): sólo cuando cambia. */
+  private readonly cat = new Map<string, unknown>();
+  transition(channel: ProbeChannel, t: number | string, key: string, value: unknown): void {
+    const had = this.cat.has(key);
+    const prev = this.cat.get(key);
+    this.cat.set(key, value);
+    if (had && prev !== value) this.ch[channel].push([t, key, value]);
+  }
   obs(tag: string, obs: any) {
     this.full.push([tag, obs]);
     // Sólo la SALIDA de los sensores y lo recibido por radio: no el autoinforme del bot
     // (hullHpMax, capacityEU… son copias del spec, no efectos).
     if (obs.sensors !== undefined) this.ch.sensors.push([tag, obs.tick, sensorEffect(obs.sensors)]);
-    if (obs.radio !== undefined) this.ch.radio.push([tag, obs.tick, obs.radio]);
+    if (obs.radio !== undefined)
+      this.ch.radio.push([tag, obs.tick, obs.radio.map((m: any) => [m.from, m.data, m.sentTick])]);
   }
   event(tag: string, e: unknown) {
     this.full.push([`${tag}!`, e]);
-    this.ch.events.push([tag, e]);
+    this.ch.events.push([tag, eventEffect(e)]);
   }
 }
 
@@ -298,81 +361,127 @@ class Escort implements BotAgent {
 
 export const PROBE_TICKS = 450;
 
-/** Traza de la sonda: digest por canal de efecto y digest completo (sólo negativas). */
+/**
+ * Hechos de la batalla, por vehículo («main:veh_1», «durability:veh_1»). NO son canales: sólo
+ * los usa la defensa D0a del gate para saber qué reservas puede trasladar sin cambiar la
+ * dinámica (una reserva que nunca limita).
+ */
+export interface VehicleFacts {
+  /** Murió (o reapareció) en algún momento: su casco SÍ limita. */
+  died: boolean;
+  /** Su energía bajó cerca del coste de una acción o a 0: la reserva SÍ limita. */
+  energyShort: boolean;
+  /** Alguna munición llegó a 0. */
+  ammoOut: boolean;
+  /** Alguna mina se quedó sin cargas. */
+  chargesOut: boolean;
+  /** Ranuras cuyo hp cambió (su estado depende del hp máximo: no se trasladan). */
+  hitSlots: string[];
+}
+export type ProbeFacts = Record<string, VehicleFacts>;
+
+/** Opciones de la sonda que sólo usa la defensa D0 del gate. */
+export interface ProbeOptions {
+  /** Transforma el VehicleSpec resuelto de un participante («main:veh_1»…) antes de la batalla. */
+  readonly tweakSpec?: (key: string, spec: VehicleSpec) => VehicleSpec;
+}
+
+/** Traza de la sonda: digest por canal de efecto, digest completo (sólo negativas) y hechos. */
 export interface ProbeTrace {
   readonly channels: Readonly<Record<ProbeChannel, string>>;
   readonly full: string;
+  readonly facts: ProbeFacts;
 }
 
-const r6 = (x: number): number => Math.round(x * 1e6) / 1e6;
 const sha = (x: unknown): string => createHash("sha256").update(JSON.stringify(x)).digest("hex");
 
-/** Valores del tick anterior para medir flujos (energía, hp de módulo). */
-type Prev = Map<string, number>;
+/** Hechos y reapariciones vistas, por vehículo de una batalla. */
+class Watch {
+  private readonly respawns = new Map<string, number>();
+  constructor(
+    private readonly battleName: string,
+    readonly facts: ProbeFacts,
+  ) {}
+  /** ¿Reapareció `v` desde la última muestra? (el estado se restauró desde el spec). */
+  respawned(v: Vehicle): boolean {
+    const before = this.respawns.get(v.id);
+    this.respawns.set(v.id, v.respawnsUsed);
+    return before !== undefined && before !== v.respawnsUsed;
+  }
+  note(v: Vehicle): void {
+    const k = `${this.battleName}:${v.id}`;
+    const f = (this.facts[k] ??= { died: false, energyShort: false, ammoOut: false, chargesOut: false, hitSlots: [] });
+    if (!v.alive || v.respawnsUsed > 0) f.died = true;
+    let maxCost = 0;
+    for (const m of v.modules.values()) {
+      maxCost = Math.max(maxCost, m.spec.perActionEU ?? 0);
+      if (m.spec.category === "ammo" && m.ammo <= 0) f.ammoOut = true;
+      if (m.spec.category === "mine" && m.charges <= 0) f.chargesOut = true;
+      if (m.hp !== m.spec.hp && !f.hitSlots.includes(m.spec.slot)) f.hitSlots.push(m.spec.slot);
+    }
+    if (v.energyEU < 2 * maxCost + 5) f.energyShort = true;
+  }
+}
 
 /**
- * Valores iniciales (antes del primer paso) de lo que se mide por diferencia. El valor
- * inicial NUNCA entra en un canal: sólo sirve de referencia para el primer flujo.
+ * Estado de un vehículo como FLUJOS + transiciones (regla de la cabecera). `prefix` separa
+ * las batallas. `withEnergy`: la batalla de durabilidad no registra energía.
  */
-function prevOf(battle: Battle): Prev {
-  const prev: Prev = new Map();
-  for (const v of battle.getVehicles()) {
-    prev.set(`${v.id}:energy`, v.energyEU);
-    for (const m of v.modules.values()) prev.set(`${v.id}:${m.spec.slot}:hp`, m.hp);
+function sampleVehicle(
+  rec: Recorder,
+  w: Watch,
+  t: number | string,
+  prefix: string,
+  v: Vehicle,
+  withEnergy: boolean,
+): void {
+  const reset = w.respawned(v);
+  w.note(v);
+  const id = `${prefix}${v.id}`;
+  // Casco: hp que pierde en el tick (va también a `damage`: es daño aplicado) y tick de
+  // muerte / reaparición.
+  rec.flow(["hull", "damage"], t, `${id}:hull`, v.hullHp, reset);
+  rec.transition("hull", t, `${id}:alive`, v.alive);
+  if (withEnergy) rec.flow(["energy"], t, `${id}:energy`, v.energyEU, reset);
+  for (const m of v.modules.values()) {
+    // hp que pierde cada módulo, blindaje incluido (su desgaste), medido en el ESTADO.
+    rec.flow(["modules", "damage"], t, `${id}:${m.spec.slot}:hp`, m.hp, reset);
+    rec.transition("modules", t, `${id}:${m.spec.slot}:state`, v.stateOf(m.spec.slot));
   }
-  return prev;
 }
 
 /** Magnitudes de efecto del tick, campo a campo (lista blanca: nada de objetos enteros). */
-function sample(battle: Battle, rec: Recorder, prev: Prev): void {
+function sample(battle: Battle, rec: Recorder, w: Watch): void {
   const t = battle.tick;
   const ch = rec.ch;
   for (const v of battle.getVehicles()) {
     const p = battle.getPhysics().pose(v.id);
     ch.kinematics.push([t, v.id, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
     ch.turret.push([t, v.id, r6(v.turretHeading)]);
-    // Ronda 2 (P2-1) · el casco por su hp REAL en absoluto (el que lee la simulación para
-    // matar), sin el hp máximo del spec de denominador; la energía por su FLUJO real en el
-    // tick (sin la capacidad del spec); los módulos por su ESTADO (lo que lee el rendimiento).
-    ch.hull.push([t, v.id, r6(v.hullHp), v.alive]);
-    const ek = `${v.id}:energy`;
-    ch.energy.push([t, v.id, r6(v.energyEU - prev.get(ek)!)]);
-    prev.set(ek, v.energyEU);
-    ch.modules.push([t, v.id, [...v.modules.values()].map((m) => [m.spec.slot, v.stateOf(m.spec.slot)])]);
-    // Pérdida de hp APLICADA a cada módulo (blindaje incluido: su desgaste), medida en el
-    // estado, no en el registro.
-    for (const m of v.modules.values()) {
-      const hk = `${v.id}:${m.spec.slot}:hp`;
-      const lost = prev.get(hk)! - m.hp;
-      if (lost !== 0) ch.damage.push([t, v.id, "hp", m.spec.slot, r6(lost)]);
-      prev.set(hk, m.hp);
-    }
+    sampleVehicle(rec, w, t, "", v, true);
   }
   const frame = battle.getInternalFrame();
   ch.projectiles.push([t, frame.projectiles.map((p: any) => [p.id, p.position.x, p.position.y])]);
   ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
   ch.score.push([t, frame.score]);
-  // Sin `base` (importe de entrada), `reduction` (reducción de entrada) ni `absorbed`
-  // (= base − efectivo): el desgaste real del blindaje ya va arriba, medido en su hp.
-  for (const d of battle.damageRecordsOfLastTick())
-    ch.damage.push([
-      t,
-      d.target,
-      d.sourceKind,
-      d.type,
-      r6(d.effective),
-      r6(d.hull),
-      d.moduleSlot,
-      r6(d.moduleDamage),
-      d.sector,
-    ]);
+}
+
+/** Participante con su spec resuelto (y, sólo en D0a, transformado). */
+function spec(key: string, loadout: LoadoutInput, catalog: ModuleDefinition[], opts: ProbeOptions): VehicleSpec {
+  const s = resolveVehicle(loadout, catalog);
+  return opts.tweakSpec ? opts.tweakSpec(key, structuredClone(s)) : s;
 }
 
 /**
  * Traza de la batalla de sonda con `testedRef` instalado, resuelto contra `catalog`.
  * `loadout` fija el loadout de E (por defecto, loadoutWith sobre el mismo catálogo).
  */
-export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loadout?: LoadoutInput): ProbeTrace {
+export function probeTrace(
+  catalog: ModuleDefinition[],
+  testedRef: string,
+  loadout?: LoadoutInput,
+  opts: ProbeOptions = {},
+): ProbeTrace {
   const tested = findModule(catalog, testedRef);
   if (!tested) throw new Error(`sonda: ${testedRef} no está en el catálogo`);
   const map = emptyArena(120, 80);
@@ -383,16 +492,18 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
     { team: "blue", position: { x: 104, y: 44 }, heading: Math.PI },
   ];
   const rec = new Recorder();
+  const facts: ProbeFacts = {};
+  const eLoadout = loadout ?? loadoutWith(tested, catalog);
   const battle = new Battle({
     battleId: "catalog-probe",
     seed: "catalog-probe",
     ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 100000, scoreToWin: 999 }),
     map,
     participants: [
-      { id: "veh_1", botId: "bE", team: "red", spec: resolveVehicle(loadout ?? loadoutWith(tested, catalog), catalog) },
-      { id: "veh_2", botId: "bA", team: "red", spec: resolveVehicle(ALLY, catalog) },
-      { id: "veh_3", botId: "bX", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
-      { id: "veh_4", botId: "bW", team: "blue", spec: resolveVehicle(WALL_SITTER, catalog) },
+      { id: "veh_1", botId: "bE", team: "red", spec: spec("main:veh_1", eLoadout, catalog, opts) },
+      { id: "veh_2", botId: "bA", team: "red", spec: spec("main:veh_2", ALLY, catalog, opts) },
+      { id: "veh_3", botId: "bX", team: "blue", spec: spec("main:veh_3", ENEMY, catalog, opts) },
+      { id: "veh_4", botId: "bW", team: "blue", spec: spec("main:veh_4", WALL_SITTER, catalog, opts) },
     ],
   });
   const chaser = new Chaser("bX", rec);
@@ -403,20 +514,23 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
   const escort = new Escort("bW", rec);
   escort.battle = battle;
   battle.attachBot("veh_4", escort);
-  const prev = prevOf(battle);
+  const w = new Watch("main", facts);
   try {
+    // Referencia de los flujos ANTES del primer paso (no entra en ningún canal).
+    sample(battle, rec, w);
+    for (const c of PROBE_CHANNELS) rec.ch[c].length = 0;
     for (let i = 0; i < PROBE_TICKS; i++) {
       battle.step();
-      sample(battle, rec, prev);
+      sample(battle, rec, w);
       if (i % 15 === 0) rec.full.push(["hash", battle.tick, battle.stateHash()]);
     }
     rec.full.push(["final", battle.stateHash()]);
   } finally {
     battle.free();
   }
-  durability(tested, catalog, loadout ?? loadoutWith(tested, catalog), rec);
+  durability(tested, catalog, eLoadout, rec, facts, opts);
   const channels = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, sha(rec.ch[c])])) as Record<ProbeChannel, string>;
-  return { channels, full: sha([channels, rec.full]) };
+  return { channels, full: sha([channels, rec.full]), facts };
 }
 
 /** Quieto: no decide nada (el blanco de la batalla de durabilidad). */
@@ -443,14 +557,21 @@ export const DURABILITY_TICKS = 300;
  * G1.2 · Batalla de DURABILIDAD: el `hp` de un módulo sólo tiene efecto observable cuando
  * el módulo recibe daño (cambia su estado → su rendimiento). En la batalla principal el
  * daño de módulo se reparte por masa (damage.ts: `weighted` por massKg) y un módulo ligero
- * (radio, sensor, mina) casi nunca lo recibe en 450 ticks: con el canal antiguo (hp vivo,
- * que ARRANCA como copia del spec) el gate lo daba por usado sin que nada cambiara. Aquí el
- * blanco «D» lleva SÓLO el módulo bajo prueba (las entradas de su categoría en el loadout
- * de E; para un arma, con su munición), así que todo el daño de módulo va a él, y un
- * cañón le dispara a 12 m sin parar. Se registra, por tick, el ESTADO de cada módulo de D
- * (canal `modules`), no su hp.
+ * (radio, sensor, mina) casi nunca lo recibe en 450 ticks. Aquí el blanco «D» lleva SÓLO el
+ * módulo bajo prueba (las entradas de su categoría en el loadout de E; para un arma, con su
+ * munición), así que todo el daño de módulo va a él, y un cañón le dispara a 12 m sin parar.
+ * Ronda 3 · se registran, con la misma regla que la batalla principal, el hp que pierden el
+ * casco y cada módulo de D en cada tick, las transiciones de estado y el tick de muerte de D
+ * (el cañón lo lleva hasta la destrucción: así el hp del casco decide CUÁNDO muere).
  */
-function durability(tested: ModuleDefinition, catalog: ModuleDefinition[], base: LoadoutInput, rec: Recorder): void {
+function durability(
+  tested: ModuleDefinition,
+  catalog: ModuleDefinition[],
+  base: LoadoutInput,
+  rec: Recorder,
+  facts: ProbeFacts,
+  opts: ProbeOptions,
+): void {
   const catOf = (e: LoadoutModuleEntry) => findModule(catalog, e.moduleId)?.category;
   const keep = tested.category === "ammo" ? "weapon" : tested.category;
   const target: LoadoutInput = {
@@ -469,22 +590,23 @@ function durability(tested: ModuleDefinition, catalog: ModuleDefinition[], base:
     ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 100000, scoreToWin: 999 }),
     map,
     participants: [
-      { id: "veh_1", botId: "bD", team: "red", spec: resolveVehicle(target, catalog) },
-      { id: "veh_2", botId: "bP", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
+      { id: "veh_1", botId: "bD", team: "red", spec: spec("durability:veh_1", target, catalog, opts) },
+      { id: "veh_2", botId: "bP", team: "blue", spec: spec("durability:veh_2", ENEMY, catalog, opts) },
     ],
   });
   battle.attachBot("veh_1", new Sitter("bD"));
   battle.attachBot("veh_2", new Pounder("bP", { x: 40, y: 40 }));
+  const w = new Watch("durability", facts);
+  const d = () => battle.getVehicles().find((v) => v.id === "veh_1")!;
   try {
+    sampleVehicle(rec, w, "D0", "D:", d(), false);
+    w.note(battle.getVehicles().find((v) => v.id === "veh_2")!);
     for (let i = 0; i < DURABILITY_TICKS; i++) {
       battle.step();
-      const d = battle.getVehicles().find((v) => v.id === "veh_1")!;
-      rec.ch.modules.push([
-        "D",
-        battle.tick,
-        [...d.modules.values()].map((m) => [m.spec.slot, d.stateOf(m.spec.slot)]),
-      ]);
-      rec.full.push(["D", battle.tick, d.alive]);
+      sampleVehicle(rec, w, `D${battle.tick}`, "D:", d(), false);
+      // El tirador sólo aporta hechos (D0a): sus reservas no entran en ningún canal.
+      w.note(battle.getVehicles().find((v) => v.id === "veh_2")!);
+      rec.full.push(["D", battle.tick, d().alive]);
     }
     rec.full.push(["D-final", battle.stateHash()]);
   } finally {

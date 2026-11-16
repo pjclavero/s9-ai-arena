@@ -16,6 +16,10 @@
  *   D2  un campo VALIDATION_ONLY mutado no cambia el veredicto del validador, o SÍ cambia la
  *       batalla (estaría mal clasificado);
  *   D3  un metadato (nombre, descripción) cambia la batalla.
+ *   D0  (ronda 3, P2-1b) la propia SONDA registra una copia de la configuración: D0a, dos
+ *       sondas con specs distintos de dinámica idéntica (reservas iniciales trasladadas donde
+ *       nunca limitan) dan canales distintos; D0b, falsear el registro de daño y el `damage`
+ *       de los eventos DESPUÉS de aplicarse cambia algún canal.
  * D1-D3 son diferenciales sobre una batalla real (catalog-probe.ts) que pasa por
  * resolveVehicle(). G1: D1 compara CANALES DE EFECTO (listas blancas de magnitudes), no el
  * hash de estado: un campo que la frontera no copia, que el motor no lee, o que el motor
@@ -28,6 +32,8 @@ import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 import { initPhysics } from "../../apps/arena-engine/src/sim/physics.js";
+import { Battle } from "../../apps/arena-engine/src/sim/battle.js";
+import type { VehicleSpec } from "../../apps/arena-engine/src/sim/vehicle.js";
 import { DATA_DIR, loadCatalog } from "./loadCatalog.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { validateLoadout } from "./validator/index.js";
@@ -40,7 +46,7 @@ import {
   REMOVED_FIELDS,
   fieldContract,
 } from "./field-status.js";
-import { loadoutWith, probeTrace, type ProbeTrace } from "./catalog-probe.js";
+import { PROBE_BASE, loadoutWith, probeTrace, type ProbeFacts, type ProbeTrace } from "./catalog-probe.js";
 import type { LoadoutInput, LoadoutModuleEntry, ModuleCategory, ModuleDefinition } from "./types.js";
 
 const schema = JSON.parse(readFileSync(join(DATA_DIR, "..", "schema", "module.schema.json"), "utf8"));
@@ -472,6 +478,130 @@ describe("CATALOG_CONTRACT · D3 · los metadatos no cambian la batalla", () => 
     it(`${cat}: nombre y descripción (${t.id}@${t.version})`, () => {
       const both = catalog.map((m) => (m === t ? { ...m, name: "otro nombre", description: "otra" } : m));
       expect(probeTrace(both, `${t.id}@${t.version}`).full).toBe(baseTrace(t).full);
+    });
+  }
+});
+
+// ------------------------------------------------------------------ D0 · la sonda no registra copias
+
+/**
+ * Ronda 3 (P2-1b, cerrado como CLASE) · ningún canal de la sonda puede registrar un valor cuyo
+ * origen sea una COPIA de la configuración (un valor inicial copiado del spec, o el de un
+ * registro interno que refleje lo calculado sin haberlo aplicado). Dos defensas diferenciales,
+ * calibradas con los mutantes P1-P6 de scripts/hardening/g1-mutants.py (cada uno reintroduce
+ * en la sonda un canal que copia, y muere aquí):
+ *
+ * D0a · TRASLACIÓN de reservas iniciales donde nunca limitan. Si una reserva no llega nunca
+ *   a su límite en la batalla base, desplazar su valor inicial deja la dinámica IDÉNTICA:
+ *     - casco +1000 en un vehículo que no muere (la muerte es hp ≤ 0; nada más lo lee en la
+ *       sonda: el desempate por casco sólo actúa al agotar el tiempo, que es 100 000);
+ *     - capacidad de energía +500 si la energía nunca baja de 2×coste de acción + 5: arranca
+ *       llena y el tope y el suelo se trasladan igual (e+K), así que cada gasto y cada recarga
+ *       ocurren igual;
+ *     - munición +1000 / cargas +1000 si nunca se agotan;
+ *     - hp ×10 de un módulo que nadie toca (su estado es hp/hpMáx = 1 en los dos casos).
+ *   Un canal que registre un NIVEL (copia del valor inicial) cambia; uno que registre flujos,
+ *   eventos o posiciones, no. El test exige además que se haya trasladado algo de cada clase
+ *   (casco, energía, hp de módulo): no puede pasar en vacío.
+ * D0b · REGISTRO FALSEADO después de aplicarse: el registro de daño (damageRecordsOfLastTick)
+ *   y el `damage` de hit_taken/hit_dealt (el `effective` del registro) se multiplican tras
+ *   aplicar el daño al estado. El estado no cambia y los bots de la sonda no leen esos
+ *   importes, así que la dinámica es idéntica: ningún canal puede cambiar. Uno que lea el
+ *   registro, cambia.
+ * Sujetos: el chasis de la sonda (D sin módulos: muere en la durabilidad) y su arma.
+ */
+const D0_SUBJECTS = [PROBE_BASE.chassis, PROBE_BASE.modules.find((m) => m.slot === "turret_main")!.moduleId];
+
+function shiftReserves(facts: ProbeFacts, applied: string[]) {
+  return (key: string, spec: VehicleSpec): VehicleSpec => {
+    const f = facts[key];
+    if (!f) throw new Error(`D0a: sin hechos de ${key}`);
+    const s = spec as any;
+    if (!f.died) {
+      s.hullHp += 1000;
+      applied.push(`${key}:hull`);
+    }
+    const power = s.modules.find((m: any) => m.category === "power");
+    if (power && !f.energyShort) {
+      power.capacityEU = (power.capacityEU ?? 0) + 500;
+      applied.push(`${key}:energy`);
+    }
+    for (const m of s.modules) {
+      if (m.category === "ammo" && !f.ammoOut && typeof m.rounds === "number") {
+        m.rounds += 1000;
+        applied.push(`${key}:${m.slot}:rounds`);
+      }
+      if (m.category === "mine" && !f.chargesOut && typeof m.charges === "number") {
+        m.charges += 1000;
+        applied.push(`${key}:${m.slot}:charges`);
+      }
+      if (!f.hitSlots.includes(m.slot)) {
+        m.hp *= 10;
+        applied.push(`${key}:${m.slot}:hp`);
+      }
+    }
+    return spec;
+  };
+}
+
+describe("CATALOG_CONTRACT · D0 · ningún canal de la sonda registra una COPIA de la configuración", () => {
+  for (const subject of D0_SUBJECTS) {
+    it(`D0a · ${subject}: reservas iniciales trasladadas donde nunca limitan ⇒ ningún canal cambia`, () => {
+      const base = probeTrace(catalog, subject);
+      const applied: string[] = [];
+      const shifted = probeTrace(catalog, subject, undefined, { tweakSpec: shiftReserves(base.facts, applied) });
+      for (const kind of [":hull", ":energy", ":hp"])
+        expect(
+          applied.some((a) => a.endsWith(kind)),
+          `D0a en vacío: no se trasladó ninguna reserva «${kind}»`,
+        ).toBe(true);
+      expect(
+        changedChannels(shifted, base),
+        `canales que copian la configuración (trasladado: ${applied.join(" ")})`,
+      ).toEqual([]);
+    });
+
+    it(`D0b · ${subject}: registro de daño falseado DESPUÉS de aplicarse ⇒ ningún canal cambia`, () => {
+      const proto = Battle.prototype as any;
+      const emit0 = proto.emit;
+      const records0 = proto.damageRecordsOfLastTick;
+      const forge = (x: unknown) => (typeof x === "number" ? x * 7 + 1 : x);
+      let forgedEvents = 0;
+      let forgedRecords = 0;
+      proto.emit = function (ev: any, to?: string) {
+        if (ev && typeof ev.damage === "number") {
+          forgedEvents++;
+          ev = { ...ev, damage: forge(ev.damage) };
+        }
+        return emit0.call(this, ev, to);
+      };
+      proto.damageRecordsOfLastTick = function () {
+        return records0.call(this).map((r: any) => {
+          forgedRecords++;
+          return {
+            ...r,
+            base: forge(r.base),
+            reduction: forge(r.reduction),
+            absorbed: forge(r.absorbed),
+            effective: forge(r.effective),
+            hull: forge(r.hull),
+            moduleDamage: forge(r.moduleDamage),
+          };
+        });
+      };
+      let forged: ProbeTrace;
+      try {
+        forged = probeTrace(catalog, subject);
+      } finally {
+        proto.emit = emit0;
+        proto.damageRecordsOfLastTick = records0;
+      }
+      expect(forgedEvents, "D0b en vacío: ningún evento con importe de daño").toBeGreaterThan(0);
+      // `forgedRecords` sólo cuenta si la sonda LEE el registro (la sonda correcta no lo lee).
+      expect(
+        changedChannels(forged!, probeTrace(catalog, subject)),
+        `registro leído (${forgedRecords} registros)`,
+      ).toEqual([]);
     });
   }
 });
