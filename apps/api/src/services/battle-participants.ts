@@ -7,7 +7,7 @@ import type { Request } from "express";
 import type { Db } from "../db/connection.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict } from "../errors.js";
-import { assertVersionsEligible, canonicalUuid } from "./version-eligibility.js";
+import { assertVersionsEligible, canonicalUuid, isCompetitionState } from "./version-eligibility.js";
 
 export interface BattleParticipantInput {
   botId: string;
@@ -67,7 +67,7 @@ export async function assertParticipantsUsable(
       .where({ bot_id: p.botId, version: p.version })
       .first()
       .catch(() => null);
-    if (!v || !["published", "frozen"].includes(v.state)) {
+    if (!v || !isCompetitionState(v.state)) {
       throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
     }
   }

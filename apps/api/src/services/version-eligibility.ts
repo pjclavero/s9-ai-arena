@@ -319,8 +319,48 @@ export function eligibilityToJson(e: VersionEligibility) {
   };
 }
 
-/** Estados en los que una versión es seleccionable para competición (además de elegible). */
-const COMPETITION_STATES = new Set(["published", "frozen"]);
+/**
+ * Estados en los que una versión es seleccionable para competición NUEVA (batalla o
+ * torneo), además de elegible. FROZEN-REUSE (B1): `frozen` significa INMUTABLE (mismo
+ * código, hash y loadout para siempre; lo garantiza el trigger `bot_version_immutable`),
+ * NO «usada una vez»: una versión congelada al cerrar el torneo A puede inscribirse,
+ * tal cual y sin clonarla ni descongelarla, en el torneo B.
+ */
+export const COMPETITION_STATES: ReadonlySet<string> = new Set(["published", "frozen"]);
+
+/**
+ * B8 · ÚNICA regla de ESTADO para competir: la usan POST /battles, rules-check y la
+ * inscripción en torneos. Sólo el estado: la elegibilidad del loadout es aparte
+ * (`assertVersionsEligible`), y la propiedad/visibilidad la comprueba cada ruta antes.
+ */
+export function isCompetitionState(state: unknown): boolean {
+  return typeof state === "string" && COMPETITION_STATES.has(state);
+}
+
+/**
+ * B4/B8 · ¿Puede esta versión inscribirse en un torneo NUEVO? Llamar DESPUÉS de las
+ * comprobaciones de propiedad y de torneo abierto. Falla con el motivo REAL:
+ *  - 409 `bot_not_published` (con `currentState`) si no existe o su estado no es
+ *    `published` ni `frozen` (borrador, en validación, suspendida, retirada…);
+ *  - 409 `bot_version_not_eligible` si su loadout histórico no pasa hoy el validador.
+ * Sólo LEE: no cambia el estado (una `frozen` sigue `frozen`) ni crea versiones.
+ */
+export async function assertTournamentEligible(
+  db: Knex,
+  version: Record<string, unknown> | undefined | null,
+): Promise<void> {
+  if (!version || !isCompetitionState(version.state)) {
+    throw new ApiError(
+      409,
+      "bot_not_published",
+      version
+        ? `Sólo se inscriben versiones publicadas o congeladas (frozen); esta versión está en estado ${String(version.state)}`
+        : "Sólo se inscriben versiones publicadas o congeladas (frozen); la versión no existe",
+      version ? { currentState: String(version.state) } : undefined,
+    );
+  }
+  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }]);
+}
 
 /**
  * H9 · Campo aditivo `battleEligibility` para las filas de versión que devuelve la API.

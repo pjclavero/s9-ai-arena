@@ -78,7 +78,7 @@ Estados: `draft, validating, rejected, validated, published, frozen, suspended, 
 | `retire` | published | retired | dueño |
 | `suspend` | draft…frozen | suspended | `moderator` |
 
-Una versión `frozen` puede jugar batallas de práctica (`POST /battles` acepta `published|frozen`), pero **no puede inscribirse en otro torneo** (exige `published`).
+Una versión `frozen` es **inmutable**, no «usada»: puede jugar batallas de práctica y **volver a inscribirse en otros torneos** tal cual (las dos rutas aceptan `published|frozen` con la misma regla, `isCompetitionState`, y la misma elegibilidad). Inscribirla no cambia su estado y el cierre de inscripciones no la vuelve a congelar. Ninguna transición la devuelve a `published`.
 
 ## Subida del código
 
