@@ -12,9 +12,9 @@
  * lista blanca de MAGNITUDES DE EFECTO leídas campo a campo (nunca objetos enteros):
  *   kinematics  posición y rumbo de cada vehículo (física)
  *   turret      rumbo de la torreta de cada vehículo
- *   hull        casco vivo y alive de cada vehículo
- *   modules     hp vivo y estado (stateOf) de cada módulo, hp de cada sector de blindaje
- *   energy      energía almacenada de cada vehículo
+ *   hull        nivel PÚBLICO del casco (hullLevel, D-B5) y alive de cada vehículo
+ *   modules     estado (stateOf: lo que lee el rendimiento) de cada módulo, blindaje incluido
+ *   energy      energía gastada y no repuesta (capacidad − almacenada) de cada vehículo
  *   projectiles id y posición de cada proyectil vivo (su vida = su alcance)
  *   mines       id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
  *   damage      registros exactos de daño aplicados (importe, reducción, casco, módulo)
@@ -23,7 +23,9 @@
  *   radio       los mensajes de radio que recibe cada bot
  *   score       marcador
  * Un campo que la simulación sólo COPIA en su estado, sin que ninguna de estas magnitudes
- * cambie, NO cuenta como usado. `full` (todos los canales + observaciones completas +
+ * cambie, NO cuenta como usado. Por eso ningún canal guarda un valor que arranque como
+ * copia del spec (casco, hp de módulo, energía almacenada): sólo su efecto (nivel público,
+ * estado, consumo) o magnitudes que produce la simulación (posiciones, daño, eventos). `full` (todos los canales + observaciones completas +
  * stateHash) sólo se usa para las comprobaciones NEGATIVAS del gate (D2/D3: «no cambia la
  * batalla»), donde ser más sensible es más estricto.
  *
@@ -34,10 +36,9 @@
  *  - X (azul): persigue a E pasando por encima de sus minas y le dispara.
  *  - W (azul, G1): escolta a X pegada a ~3 m (sin armas ni blindaje). Cuando un proyectil de E
  *    impacta en X, W queda dentro de su ONDA: así el radio de explosión de la munición tiene
- *    efecto observable. Medido en VM112 (G1): en esta arena los impactos en MURO casi nunca
- *    dañan con la onda (el punto de impacto cae dentro del muro y la línea de visión desde él
- *    sale bloqueada: hallazgo de simulación anotado en el informe G1, no se toca aquí), y el
- *    impactado directo queda excluido de su propia onda (D-B6).
+ *    efecto observable aunque el proyectil no impacte en un muro, y el impactado directo
+ *    queda excluido de su propia onda (D-B6). (Los impactos en MURO también dañan con la
+ *    onda desde G1.5: ver apps/arena-engine/tests/g1-he-wall-los.test.ts.)
  *  - G1: E siembra durante más tiempo (hasta la decisión 120) para que las cargas y el
  *    enfriamiento de la mina limiten de verdad cuántas minas hay en el terreno.
  * Selección de módulos: por categoría y datos (slot que acepta la categoría, sector del
@@ -51,6 +52,7 @@ import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
 import { findModule, type LoadoutInput, type LoadoutModuleEntry, type ModuleDefinition } from "./types.js";
 import { PROBE_CHANNELS, type ProbeChannel } from "./field-status.js";
+import { hullLevel } from "../game-rules/damage-contract.js";
 
 const ref = (m: ModuleDefinition): string => `${m.id}@${m.version}`;
 
@@ -271,14 +273,12 @@ function sample(battle: Battle, rec: Recorder): void {
     const p = battle.getPhysics().pose(v.id);
     ch.kinematics.push([t, v.id, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
     ch.turret.push([t, v.id, r6(v.turretHeading)]);
-    ch.hull.push([t, v.id, r6(v.hullHp), v.alive]);
-    ch.energy.push([t, v.id, r6(v.energyEU)]);
-    ch.modules.push([
-      t,
-      v.id,
-      [...v.modules.values()].map((m) => [m.spec.slot, r6(m.hp), v.stateOf(m.spec.slot)]),
-      Object.entries(v.armor).map(([sec, a]) => [sec, r6(a!.hp)]),
-    ]);
+    // G1.2 · contadores SIN su valor inicial (que es una copia del spec): el casco por su
+    // nivel público (D-B5) y si sigue vivo; la energía por lo gastado y no repuesto
+    // (capacidad − almacenada); los módulos por su ESTADO (lo que lee el rendimiento).
+    ch.hull.push([t, v.id, hullLevel(v.hullHp, v.spec.hullHp), v.alive]);
+    ch.energy.push([t, v.id, r6(v.energyCapacity() - v.energyEU)]);
+    ch.modules.push([t, v.id, [...v.modules.values()].map((m) => [m.spec.slot, v.stateOf(m.spec.slot)])]);
   }
   const frame = battle.getInternalFrame();
   ch.projectiles.push([t, frame.projectiles.map((p: any) => [p.id, p.position.x, p.position.y])]);
