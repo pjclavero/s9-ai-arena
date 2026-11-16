@@ -82,6 +82,7 @@ import type {
   VehicleSpec,
 } from "../../apps/arena-engine/src/sim/vehicle.js";
 import { emptyArena } from "../../apps/arena-engine/src/fixtures.js";
+import { Rng } from "../../apps/arena-engine/src/rng.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
 import { findModule, type LoadoutInput, type LoadoutModuleEntry, type ModuleDefinition } from "./types.js";
@@ -403,10 +404,55 @@ export interface VehicleFacts {
 }
 export type ProbeFacts = Record<string, VehicleFacts>;
 
-/** Opciones de la sonda que sólo usa la defensa D0 del gate. */
+/**
+ * Ronda 5 (P2-1d) · Modo del RNG de la sonda.
+ *   - "engine": el RNG del motor tal cual (flujos xoshiro con semilla). Es el de las
+ *     comprobaciones NEGATIVAS del gate (D0, D2, D3: «no cambia nada»), donde ser más sensible
+ *     es más estricto: una tirada de más sólo puede poner esas comprobaciones en ROJO.
+ *   - "neutral": toda tirada de la batalla vale lo mismo DENTRO de un tick, y ese valor sólo
+ *     depende del tick (sucesión de Weyl, ver `neutralUint32`), nunca de cuántas tiradas se
+ *     hayan hecho antes ni de qué flujo las pida. Es el de las comprobaciones POSITIVAS (D1
+ *     «cambia», D1 «gobierna», ablación D4): mismo comportamiento observable con distinto
+ *     consumo del RNG ⇒ misma traza, así que un campo sólo puede «tener efecto» por un efecto
+ *     observable real, nunca porque cambie el número de tiradas (mutantes F1/F2 de la revisión).
+ *     La dispersión y el error del radar siguen escalando con su campo (la tirada del tick no
+ *     está centrada en 0 salvo por casualidad), y el sorteo del módulo dañado sigue variando
+ *     de un tick a otro.
+ * Se neutraliza en la SONDA (interposición temporal de `Rng.prototype.nextUint32` mientras
+ * corre la batalla de sonda), nunca en el motor: producción no cambia.
+ */
+export type ProbeRngMode = "engine" | "neutral";
+
+/** Opciones de la sonda. */
 export interface ProbeOptions {
-  /** Transforma el VehicleSpec resuelto de un participante («main:veh_1»…) antes de la batalla. */
+  /** Transforma el VehicleSpec resuelto de un participante («main:veh_1»…) antes de la batalla (D0a). */
   readonly tweakSpec?: (key: string, spec: VehicleSpec) => VehicleSpec;
+  /** Modo del RNG (por defecto "engine"; el gate pasa "neutral" en D1 y D4). */
+  readonly rng?: ProbeRngMode;
+}
+
+/** Reloj del RNG neutro: el tick de la batalla de sonda en curso (lo fija el bucle antes de cada paso). */
+const NEUTRAL_CLOCK = { tick: 0 };
+/**
+ * Tirada neutra del tick `t`: frac((t+1)·φ) en 32 bits (sucesión de Weyl: bien repartida en
+ * [0,1) de un tick a otro). Función PURA del tick: no tiene estado que una tirada avance.
+ */
+export const neutralUint32 = (t: number): number => Math.imul((t + 1) >>> 0, 0x9e3779b9) >>> 0;
+
+/** Ejecuta `fn` con el RNG en el modo pedido; el original se restaura siempre. */
+function withRngMode<T>(mode: ProbeRngMode, fn: () => T): T {
+  if (mode !== "neutral") return fn();
+  const proto = Rng.prototype as { nextUint32: () => number };
+  const orig = proto.nextUint32;
+  NEUTRAL_CLOCK.tick = 0;
+  proto.nextUint32 = function (): number {
+    return neutralUint32(NEUTRAL_CLOCK.tick);
+  };
+  try {
+    return fn();
+  } finally {
+    proto.nextUint32 = orig;
+  }
 }
 
 /** Traza de la sonda: digest por canal de efecto, digest completo (sólo negativas) y hechos. */
@@ -508,6 +554,15 @@ export function probeTrace(
   loadout?: LoadoutInput,
   opts: ProbeOptions = {},
 ): ProbeTrace {
+  return withRngMode(opts.rng ?? "engine", () => probeTraceIn(catalog, testedRef, loadout, opts));
+}
+
+function probeTraceIn(
+  catalog: ModuleDefinition[],
+  testedRef: string,
+  loadout: LoadoutInput | undefined,
+  opts: ProbeOptions,
+): ProbeTrace {
   const tested = findModule(catalog, testedRef);
   if (!tested) throw new Error(`sonda: ${testedRef} no está en el catálogo`);
   const map = emptyArena(120, 80);
@@ -546,6 +601,7 @@ export function probeTrace(
     sample(battle, rec, w);
     for (const c of PROBE_CHANNELS) rec.ch[c].length = 0;
     for (let i = 0; i < PROBE_TICKS; i++) {
+      NEUTRAL_CLOCK.tick = battle.tick;
       battle.step();
       sample(battle, rec, w);
       if (i % 15 === 0) rec.full.push(["hash", battle.tick, battle.stateHash()]);
@@ -609,7 +665,12 @@ export const DURABILITY_TICKS = 300;
  *   - el generador sólo cuenta por lo que la energía limita: lleva además el arma y la mina de
  *     E (lo que gasta energía al actuar), para que la reserva llegue a agotarse sin él;
  *   - la munición y la pieza `utility` no tienen acción propia: su hp cuenta porque, mientras
- *     viven, absorben daño de módulo que si no recibe el arma (damage.ts, candidatos con hp > 0).
+ *     viven, absorben daño de módulo que si no recibe el arma (damage.ts, candidatos con hp > 0);
+ *   - ronda 5 · el blindaje lleva además el tren de rodaje de E: D gira sobre sí mismo y el
+ *     tirador le da en TODOS los sectores. Sin él, D no se mueve, todos los impactos le llegan
+ *     por delante y un blindaje en otro sector (la mutación de armor.sector) sólo se veía en la
+ *     batalla principal cuando la dispersión del RNG hacía llegar algún impacto por ese lado:
+ *     con el RNG neutro de D1/D4 ese impacto casual desaparece.
  */
 /**
  * Ronda 4 · Sumidero inerte de D (no es contenido del catálogo: sólo existe en la sonda). Un
@@ -636,7 +697,7 @@ const DURABILITY_KIT: Readonly<Record<string, readonly EngineCategory[]>> = {
   weapon: ["weapon", "power"],
   ammo: ["weapon", "power"],
   mine: ["mine", "power"],
-  armor: ["armor"],
+  armor: ["armor", "movement"],
   radio: ["radio"],
   utility: ["utility", "weapon", "power"],
 };
@@ -686,6 +747,7 @@ function durability(
     // incluso con el módulo crítico (alcance · rendimiento).
     { team: "red", position: { x: 40, y: 56 }, heading: 0 },
   ];
+  NEUTRAL_CLOCK.tick = 0;
   const battle = new Battle({
     battleId: "catalog-probe-durability",
     seed: "catalog-probe-durability",
@@ -712,6 +774,7 @@ function durability(
     sampleVehicle(rec, w, "D0", "D:", d(), false);
     noteOthers();
     for (let i = 0; i < DURABILITY_TICKS; i++) {
+      NEUTRAL_CLOCK.tick = battle.tick;
       battle.step();
       const t = `D${battle.tick}`;
       sampleVehicle(rec, w, t, "D:", d(), false);

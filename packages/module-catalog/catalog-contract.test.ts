@@ -55,7 +55,16 @@ import {
   ownStateChannels,
   type ProbeChannel,
 } from "./field-status.js";
-import { PROBE_BASE, loadoutWith, probeTrace, type ProbeFacts, type ProbeTrace } from "./catalog-probe.js";
+import {
+  PROBE_BASE,
+  loadoutWith,
+  probeTrace,
+  type ProbeFacts,
+  type ProbeOptions,
+  type ProbeRngMode,
+  type ProbeTrace,
+} from "./catalog-probe.js";
+import { RNG_STREAM_NAMES } from "../../apps/arena-engine/src/rng.js";
 import type { LoadoutInput, LoadoutModuleEntry, ModuleCategory, ModuleDefinition } from "./types.js";
 
 const schema = JSON.parse(readFileSync(join(DATA_DIR, "..", "schema", "module.schema.json"), "utf8"));
@@ -455,11 +464,22 @@ function cases(status: "ACTIVE" | "VALIDATION_ONLY"): { list: Case[]; uncovered:
   return { list, uncovered };
 }
 
+/**
+ * Ronda 5 (P2-1d) · Las comprobaciones POSITIVAS (D1 «cambia», D1 «gobierna», D4) se evalúan
+ * SÓLO con el RNG neutro de la sonda (`rng: "neutral"`, ver ProbeRngMode en catalog-probe.ts):
+ * el valor de cada tirada depende sólo del tick, así que un consumidor quitado que deja su
+ * huella en el NÚMERO de tiradas no cambia ninguna traza. Las NEGATIVAS (D0, D2, D3: «no
+ * cambia nada») usan el RNG del motor: allí una tirada de más sólo puede ponerlas en rojo, así
+ * que la pasada normal no reabre la vía (no hay ninguna comprobación positiva con ella).
+ */
+const POSITIVE = { rng: "neutral" } as const satisfies ProbeOptions;
+const NEGATIVE = { rng: "engine" } as const satisfies ProbeOptions;
 const baseTraces = new Map<string, ProbeTrace>();
-function baseTrace(t: ModuleDefinition): ProbeTrace {
+function baseTrace(t: ModuleDefinition, mode: ProbeRngMode): ProbeTrace {
   const k = `${t.id}@${t.version}`;
-  if (!baseTraces.has(k)) baseTraces.set(k, probeTrace(catalog, k));
-  return baseTraces.get(k)!;
+  const key = `${mode}:${k}`;
+  if (!baseTraces.has(key)) baseTraces.set(key, probeTrace(catalog, k, undefined, { rng: mode }));
+  return baseTraces.get(key)!;
 }
 
 /** Canales de efecto cuya traza difiere entre dos batallas de sonda. */
@@ -485,7 +505,7 @@ function mutatedCase(c: Case): Mutated {
   const mutated = withField(catalog, c.target, c.field, after);
   // `baseLoadout`: el loadout construido con el catálogo SIN mutar (es el de baseTrace).
   const loadout = contract.baseLoadout ? loadoutWith(c.target, catalog) : undefined;
-  const out = { catalog: mutated, loadout, trace: probeTrace(mutated, refOf(c.target), loadout) };
+  const out = { catalog: mutated, loadout, trace: probeTrace(mutated, refOf(c.target), loadout, POSITIVE) };
   mutatedTraces.set(k, out);
   return out;
 }
@@ -502,7 +522,7 @@ describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la sim
     const governs = contract.governs ?? [];
     it(`${caseName(c)} cambia [${declared.join(", ")}]`, () => {
       expect(declared.length, "entrada ACTIVE sin canal de efecto declarado").toBeGreaterThan(0);
-      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target));
+      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target, "neutral"));
       // Todos los canales declarados deben cambiar. El mensaje lista los que SÍ cambiaron.
       expect(
         declared.filter((ch) => !changed.includes(ch)),
@@ -513,7 +533,7 @@ describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la sim
     // la contabilidad, las declaraciones o el estado propio del campo, su consumidor no limita.
     it(`${caseName(c)} gobierna [${governs.join(", ")}]`, () => {
       expect(governs.length, "entrada ACTIVE sin canal gobernado").toBeGreaterThan(0);
-      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target));
+      const changed = changedChannels(mutatedCase(c).trace, baseTrace(c.target, "neutral"));
       expect(
         governs.filter((ch) => changed.includes(ch)),
         `ningún canal gobernado cambia: sólo cambia estado propio o declaraciones [${changed.join(", ")}]`,
@@ -542,8 +562,8 @@ describe("CATALOG_CONTRACT · D2 · todo campo VALIDATION_ONLY cambia el veredic
       // ...y la simulación no lo lee: mismo loadout, catálogo mutado ⇒ misma batalla.
       if (!dup) {
         const ref = `${c.target.id}@${c.target.version}`;
-        expect(probeTrace(mutated, ref, loadout).full, "un campo de validación cambia la batalla").toBe(
-          baseTrace(c.target).full,
+        expect(probeTrace(mutated, ref, loadout, NEGATIVE).full, "un campo de validación cambia la batalla").toBe(
+          baseTrace(c.target, "engine").full,
         );
       }
     });
@@ -556,7 +576,7 @@ describe("CATALOG_CONTRACT · D3 · los metadatos no cambian la batalla", () => 
     if (!t) continue;
     it(`${cat}: nombre y descripción (${t.id}@${t.version})`, () => {
       const both = catalog.map((m) => (m === t ? { ...m, name: "otro nombre", description: "otra" } : m));
-      expect(probeTrace(both, `${t.id}@${t.version}`).full).toBe(baseTrace(t).full);
+      expect(probeTrace(both, `${t.id}@${t.version}`, undefined, NEGATIVE).full).toBe(baseTrace(t, "engine").full);
     });
   }
 });
@@ -1095,7 +1115,7 @@ describe("CATALOG_CONTRACT · D4 · ablación: con el consumidor anulado cambia 
       const restore = ABLATIONS[id]!.install(c);
       let ablated: ProbeTrace;
       try {
-        ablated = probeTrace(m.catalog, refOf(c.target), m.loadout);
+        ablated = probeTrace(m.catalog, refOf(c.target), m.loadout, POSITIVE);
       } finally {
         restore();
       }
@@ -1104,6 +1124,82 @@ describe("CATALOG_CONTRACT · D4 · ablación: con el consumidor anulado cambia 
         governs.filter((ch) => changed.includes(ch)),
         `${ABLATIONS[id]!.consumer}: la sonda no ve su efecto en lo gobernado; canales que cambian: [${changed.join(", ")}]`,
       ).not.toEqual([]);
+    });
+  }
+});
+
+// ------------------------------------------------------------------ D5 · neutralidad del RNG
+
+/**
+ * Ronda 5 (P2-1d, cerrado como CLASE «la huella está en el RNG») · Defensa estructural de la
+ * regla: MISMO comportamiento observable + DISTINTO consumo del RNG ⇒ MISMO resultado del gate.
+ * Se ejecuta la sonda dos veces con el RNG neutro de las comprobaciones positivas; en la segunda
+ * se INYECTAN tiradas que nadie usa: antes de cada paso, de 1 a 3 en cada flujo (combat,
+ * sensors, effects, guidance, latency), y una de combat y otra de sensors antes de cada daño.
+ * Todos los canales del gate (y la traza completa) tienen que ser idénticos.
+ * No es en vacío: con el RNG del motor, la MISMA inyección cambia algún canal (la sonda sí es
+ * sensible al desplazamiento del RNG cuando no está neutralizado), y se cuentan las tiradas.
+ * Calibrada con los mutantes U1/U2 de scripts/hardening/g1-mutants.py (U1: el modo neutro se
+ * ignora; U2: la tirada neutra avanza con cada consumo): los dos la ponen en ROJO.
+ */
+const D5_SUBJECTS = [
+  ...D0_SUBJECTS,
+  "sensor.radar@1",
+  PROBE_BASE.modules.find((m) => m.slot === "power")!.moduleId,
+  PROBE_BASE.modules.find((m) => m.slot === "mine_bay")!.moduleId,
+];
+
+/** Tiradas extra que ningún consumidor usa. Devuelve cómo deshacerlo y el recuento. */
+function injectUnusedDraws(): { restore: Restore; draws: () => number } {
+  let n = 0;
+  const draw = (self: any, stream: string) => {
+    self.rng.stream(stream).next();
+    n++;
+  };
+  const r1 = before(BP, "step", (self) => {
+    const k = (self.tick % 3) + 1;
+    for (const name of RNG_STREAM_NAMES) for (let i = 0; i < k; i++) draw(self, name);
+  });
+  const r2 = patch(
+    BP,
+    "damageVehicle",
+    (orig) =>
+      function (this: any, ...args: any[]) {
+        draw(this, "combat");
+        draw(this, "sensors");
+        return orig.apply(this, args);
+      },
+  );
+  return {
+    restore: () => {
+      r2();
+      r1();
+    },
+    draws: () => n,
+  };
+}
+
+function probeWithUnusedDraws(subject: string, opts: ProbeOptions): { trace: ProbeTrace; draws: number } {
+  const inj = injectUnusedDraws();
+  try {
+    return { trace: probeTrace(catalog, subject, undefined, opts), draws: inj.draws() };
+  } finally {
+    inj.restore();
+  }
+}
+
+describe("CATALOG_CONTRACT · D5 · mismo comportamiento con distinto consumo del RNG ⇒ mismo resultado", () => {
+  for (const subject of D5_SUBJECTS) {
+    it(`D5 · ${subject}: tiradas extra sin usar, RNG neutro ⇒ todos los canales idénticos`, () => {
+      const { trace, draws } = probeWithUnusedDraws(subject, POSITIVE);
+      expect(draws, "D5 en vacío: no se inyectó ninguna tirada").toBeGreaterThan(0);
+      const plain = probeTrace(catalog, subject, undefined, POSITIVE);
+      expect(changedChannels(trace, plain), `canales que dependen del consumo del RNG (${draws} tiradas)`).toEqual([]);
+      expect(trace.full, "la traza completa depende del consumo del RNG").toBe(plain.full);
+    });
+    it(`D5 · ${subject}: control: la misma inyección con el RNG del motor SÍ cambia algún canal`, () => {
+      const { trace } = probeWithUnusedDraws(subject, NEGATIVE);
+      expect(changedChannels(trace, probeTrace(catalog, subject, undefined, NEGATIVE))).not.toEqual([]);
     });
   }
 });
