@@ -60,7 +60,10 @@ interface Recorded {
   t0: number;
   screens: { at: number; screen: BroadcastScreen }[];
   /** Por batalla: ticks retrasados recibidos, hora del result, latidos, cortes. */
-  feeds: Map<string, { ticks: number[]; resultAt: number; heartbeats: number; disconnects: number; reconnects: number }>;
+  feeds: Map<
+    string,
+    { ticks: number[]; resultAt: number; heartbeats: number; disconnects: number; reconnects: number }
+  >;
   battles: Map<string, LiveBattle>;
   maxTracked: number;
 }
@@ -74,7 +77,16 @@ async function runTournament(delayMs: number, plan: { aEnd: number; bStart: numb
   const gw = new SpectateGateway({ heartbeatIntervalMs: 100, publicSpectateEnabled: true });
   const A = new LiveBattle(`a-${randomUUID()}`);
   const B = new LiveBattle(`b-${randomUUID()}`);
-  const rec: Recorded = { t0: Date.now(), screens: [], feeds: new Map(), battles: new Map([[A.id, A], [B.id, B]]), maxTracked: 0 };
+  const rec: Recorded = {
+    t0: Date.now(),
+    screens: [],
+    feeds: new Map(),
+    battles: new Map([
+      [A.id, A],
+      [B.id, B],
+    ]),
+    maxTracked: 0,
+  };
   const order = [A, B];
   const summary = (b: LiveBattle): BattleSummary => {
     const status = b.realStatus();

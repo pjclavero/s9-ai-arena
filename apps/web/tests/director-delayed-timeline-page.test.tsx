@@ -91,7 +91,15 @@ function stubApi() {
             tournamentId: "t1",
             status: real.battle,
             mode: "deathmatch",
-            participants: [{ botId: "r", botName: "Rojo", version: 1, team: "red", outcome: real.battle === "finished" ? "win" : undefined }],
+            participants: [
+              {
+                botId: "r",
+                botName: "Rojo",
+                version: 1,
+                team: "red",
+                outcome: real.battle === "finished" ? "win" : undefined,
+              },
+            ],
             result: real.battle === "finished" ? { score: { red: 3, blue: 0 } } : undefined,
           },
         ],
@@ -125,7 +133,9 @@ describe("FIX-DIRECTOR-DELAY · /broadcast sigue la línea temporal retrasada", 
     const A = feeds.get("A")!;
 
     // Inicio real, feed sin imagen todavía ⇒ espera con el aviso de retardo (no LIVE).
-    act(() => A.emit("init", { spectator: { delaySeconds: 30, delayMs: 30_000 }, snapshot: null, finished: false, meta: {} }));
+    act(() =>
+      A.emit("init", { spectator: { delaySeconds: 30, delayMs: 30_000 }, snapshot: null, finished: false, meta: {} }),
+    );
     await waitFor(() => expect(screen.getByTestId("broadcast-delay-wait").textContent).toMatch(/retardo de 30 s/));
     expect(stage().getAttribute("data-director-state")).toBe("WAITING_VALID");
     expect(screen.queryByTestId("broadcast-live")).toBeNull();

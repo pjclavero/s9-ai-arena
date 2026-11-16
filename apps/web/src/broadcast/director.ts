@@ -377,7 +377,6 @@ export function createPublicApi(base = "/api/v1", fetchImpl: typeof fetch = fetc
   };
 }
 
-
 export interface DirectorOptions {
   target: { kind: "battle"; battleId: string } | { kind: "tournament"; tournamentId: string };
   fetchJson: PublicFetch;
@@ -560,7 +559,8 @@ export class BroadcastDirector {
     if (this.resolvedAtStart === null) {
       // Al arrancar: las terminadas visibles ya están resueltas salvo la ÚLTIMA (su cola
       // retrasada puede seguir emitiéndose: se sondea por el WS). En modo batalla, ninguna.
-      const done = real.kind === "tournament" ? visible.filter((b) => b.status !== "running" && b.status !== "scheduled") : [];
+      const done =
+        real.kind === "tournament" ? visible.filter((b) => b.status !== "running" && b.status !== "scheduled") : [];
       const lastFinished = [...done].reverse().find((b) => b.status === "finished");
       this.resolvedAtStart = new Set(done.filter((b) => b !== lastFinished).map((b) => b.id));
     }

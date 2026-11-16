@@ -53,7 +53,8 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
     // FIX-DIRECTOR-DELAY · una conexión de espectador por batalla seguida, con ticket ANÓNIMO
     // (la vista broadcast jamás lleva sesión: cero datos privados).
     const tl = new SpectatorTimeline({
-      createClient: (battleId) => new SpectatorClient({ getTicket: () => api.post(`/battles/${battleId}/spectate-ticket`) }),
+      createClient: (battleId) =>
+        new SpectatorClient({ getTicket: () => api.post(`/battles/${battleId}/spectate-ticket`) }),
     });
     const offFeed = tl.onChange(() => setFeedVersion((v) => v + 1));
     setTimeline(tl);
@@ -213,7 +214,11 @@ function WaitingScreen({
         {next || config.target?.kind === "battle" ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}
       </p>
       {notice && (
-        <p data-testid="broadcast-delay-wait" role="status" style={{ fontSize: 40, color: config.branding.accentColor }}>
+        <p
+          data-testid="broadcast-delay-wait"
+          role="status"
+          style={{ fontSize: 40, color: config.branding.accentColor }}
+        >
           {notice}
         </p>
       )}

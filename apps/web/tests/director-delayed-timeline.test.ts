@@ -141,7 +141,10 @@ async function run(
 ): Promise<Shown[]> {
   const shown: Shown[] = [];
   const director = new BroadcastDirector({
-    target: opts.target === "battle" ? { kind: "battle", battleId: sim.battles[0].id } : { kind: "tournament", tournamentId: "t1" },
+    target:
+      opts.target === "battle"
+        ? { kind: "battle", battleId: sim.battles[0].id }
+        : { kind: "tournament", tournamentId: "t1" },
     fetchJson: sim.fetchJson,
     onScreen: (screen) => shown.push({ t: sim.t, screen }),
     onSourceError: () => undefined,
@@ -278,7 +281,8 @@ describe("FIX-DIRECTOR-DELAY · la línea temporal pública retrasada manda", ()
       const s = x.screen;
       if (s.kind === "live") {
         expect(s.battle.result, `t=${x.t}: resultado real en el directo`).toBeUndefined();
-        for (const p of s.battle.participants) expect(p.outcome, `t=${x.t}: ganador real en el directo`).toBeUndefined();
+        for (const p of s.battle.participants)
+          expect(p.outcome, `t=${x.t}: ganador real en el directo`).toBeUndefined();
       }
       if (s.kind === "intermission" || s.kind === "finished") {
         const last = s.lastBattle!;
