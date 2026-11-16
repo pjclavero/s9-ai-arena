@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "../../..");
-const EXPECTED: Record<string, number> = { mc: 17, md: 22, mb: 13, g1: 44 };
+const EXPECTED: Record<string, number> = { mc: 17, md: 22, mb: 13, g1: 53 };
 
 describe("G1.4 · anclas de las matrices de mutantes (scripts/hardening)", () => {
   for (const [matrix, count] of Object.entries(EXPECTED)) {

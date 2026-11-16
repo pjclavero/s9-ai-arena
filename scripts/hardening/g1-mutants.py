@@ -33,6 +33,17 @@ Q  · ronda 4: la misma clase, «consumidor quitado, estado intacto», en otros 
      se desgasta pero no protege (Q2), y el estado de un módulo destruido se calcula pero el
      módulo sigue funcionando: arma (Q3), movimiento (Q4), sensor (Q5), radio (Q6) y mina (Q7).
      Vivos con el gate de fe138fe; mueren en el D1 «gobierna» de su campo.
+F  · ronda 5 (P2-1d): «consumidor quitado con huella en el RNG». F1, F2 y F3 de la cuarta
+     revisión (evidencia-G1-review/ronda4/rev4-mutants.py), sin modificar: la energía no
+     limita pero su falta consume una tirada del flujo combat (F1); el error del radar es fijo
+     y errorM sólo decide cuántas tiradas de sensores se consumen (F2); F3 es el control del
+     sumidero. F4 (autor): la misma clase en ammo.rounds. F5 (autor): el ruido del radar se
+     anula con el MISMO consumo de tiradas. Mueren en el gate porque D1 y D4 se evalúan con el
+     RNG NEUTRO de la sonda. F2R/F5R: los mismos F2/F5 contra el test de comportamiento del
+     radar (apps/arena-engine/tests/g1-radar-error.test.ts), fuera del gate.
+U  · ronda 5: defensa ESTRUCTURAL de la regla «mismo comportamiento con distinto consumo del
+     RNG ⇒ mismo resultado» (bloque D5 del gate). U1: el modo neutro se ignora (la sonda usa el
+     RNG del motor); U2: la tirada neutra avanza con cada consumo. D5 debe ponerse rojo.
 
 Uso: scripts/hardening/run-mutants.sh g1 <worktree> <salida.json> [IDS]
 """
@@ -51,6 +62,11 @@ VEHICLE = "apps/arena-engine/src/sim/vehicle.ts"
 DAMAGE = "apps/arena-engine/src/sim/damage.ts"
 PROBE = "packages/module-catalog/catalog-probe.ts"
 COMBAT = "apps/arena-engine/src/sim/combat.ts"
+RADAR = "apps/arena-engine/tests/g1-radar-error.test.ts"
+F2_OLD = "const err = (s.spec.errorM ?? 2) / Math.max(0.25, perf);"
+F2_NEW = "const err = 2; for (let i = 0; i < Math.round(s.spec.errorM ?? 2); i++) rng.next();"
+F5_EX = "const ex = (rng.next() * 2 - 1) * err;"
+F5_EY = "const ey = (rng.next() * 2 - 1) * err;"
 EFFECTIVE = "const effective = Math.max(profile.minFraction * amount, amount * (1 - reduction));"
 INSIDE = "    if (h.collider.containsPoint(from)) return this.entrySurface(h.collider, from, dir, entityId, point);\n"
 TOUCH = "    if (hit && (hit.timeOfImpact <= 0 || (hit.normal.x === 0 && hit.normal.y === 0)))\n"
@@ -280,6 +296,41 @@ MUTANTS = [
            'if (st === "destroyed" || st === "offline") return "module_destroyed";', "void st;", [GATE],
            name_filter="mine\\.hp",
            expect="D1 mine.hp «gobierna [mines]» y D4 MODULE_STATE; el «cambia [modules]» sigue verde"),
+    Mutant("F1", "power.*: sin no_energy; la falta de energía sólo consume una tirada extra del RNG combat", COMBAT,
+           '  if (v.energyEU < cost) return "no_energy";\n', '  if (v.energyEU < cost) rng.next();\n', [GATE],
+           also=[('  if (v.energyEU < (m.spec.perActionEU ?? 0)) return "no_energy";\n', "", 1)],
+           name_filter="power\\.",
+           expect="D1 power.* «gobierna [projectiles, mines]» (5 campos que en b96825e pasaban por el RNG) y D4"),
+    Mutant("F2", "sensor.errorM: error fijo 2 m; errorM sólo decide cuántas tiradas del RNG se consumen", SENSORS,
+           F2_OLD, F2_NEW, [GATE], name_filter="sensor\\.errorM",
+           expect="D1 sensor.errorM «cambia/gobierna [sensors]» y D4 SENSOR_ERROR (vivo en b96825e)"),
+    Mutant("F2R", "F2 contra el test de comportamiento del radar (fuera del gate)", SENSORS,
+           F2_OLD, F2_NEW, [RADAR],
+           expect="g1-radar-error: errorM = 0 no da la posición real; el error no escala con errorM"),
+    Mutant("F3", "control: ammo.hp / utility.hp: los destruidos siguen absorbiendo daño de módulo", DAMAGE,
+           '.filter((m) => m.hp > 0 && m.spec.category !== "armor")', '.filter((m) => m.spec.category !== "armor")',
+           [GATE], name_filter="(ammo|utility)\\.hp",
+           expect="D1 ammo.hp / utility.hp «gobierna [projectiles]» y D4 MODULE_SOAK (ya moría en b96825e)"),
+    Mutant("F4", "ammo.rounds: la munición no limita; agotada, sólo consume una tirada extra del RNG combat", COMBAT,
+           '  if (!ammo || ammo.ammo <= 0) return "no_ammo";\n',
+           '  if (!ammo) return "no_ammo";\n  if (ammo.ammo <= 0) rng.next();\n', [GATE],
+           name_filter="ammo\\.rounds",
+           expect="D1 ammo.rounds «cambia/gobierna [projectiles]» y D4 AMMO_STOCK con el RNG neutro"),
+    Mutant("F5", "sensor.errorM: el ruido del radar se anula con el MISMO consumo de tiradas (errorM se sigue informando)",
+           SENSORS, F5_EX, F5_EX.replace("* err;", "* 0;"), [GATE],
+           also=[(F5_EY, F5_EY.replace("* err;", "* 0;"), 1)], name_filter="sensor\\.errorM",
+           expect="D1 sensor.errorM «cambia/gobierna [sensors]» y D4 SENSOR_ERROR"),
+    Mutant("F5R", "F5 contra el test de comportamiento del radar (fuera del gate)", SENSORS,
+           F5_EX, F5_EX.replace("* err;", "* 0;"), [RADAR],
+           also=[(F5_EY, F5_EY.replace("* err;", "* 0;"), 1)],
+           expect="g1-radar-error: con errorM > 0 la posición informada es la real"),
+    Mutant("U1", "la sonda ignora el modo neutro: D1/D4 vuelven a evaluarse con el RNG del motor", PROBE,
+           '  if (mode !== "neutral") return fn();\n', "  return fn();\n", [GATE], name_filter="D5",
+           expect="D5: las tiradas extra sin usar cambian canales con el RNG «neutro»"),
+    Mutant("U2", "la tirada neutra avanza con cada consumo (vuelve a depender del número de tiradas)", PROBE,
+           "return neutralUint32(NEUTRAL_CLOCK.tick);", "return neutralUint32(NEUTRAL_CLOCK.tick++);", [GATE],
+           name_filter="D5",
+           expect="D5: las tiradas extra sin usar cambian canales con el RNG neutro"),
 ]
 
 if __name__ == "__main__":
