@@ -24,6 +24,7 @@ import {
   type EntryChoices,
   type EntryVersion,
 } from "../tournament-entry.js";
+import { TournamentTeamEntry } from "./TournamentTeamEntry.js";
 
 export interface TournamentBattle {
   id: string;
@@ -51,6 +52,13 @@ export function entryPrivacyNote(visibility: string | undefined, broadcast: bool
 }
 
 const POLL_MS = 5000;
+
+/** #287 · Tamaño de equipo de un torneo `teams` con reglas NvN (`null`: inscripción bot a bot). */
+export function teamSizeOfTournament(t: Tournament): number | null {
+  if (t.format !== "teams") return null;
+  const n = t.rules?.params?.teamSize;
+  return typeof n === "number" && n >= 1 ? n : null;
+}
 
 /** UX-D · por NOMBRE de bot y versión exacta (antes: UUID recortado). */
 function battleLabel(b: TournamentBattle): string {
@@ -220,7 +228,21 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                   </>
                 )}
               </p>
-              {t.state === "open" && (
+              {/* #287 · torneo por equipos con tamaño: la unidad de inscripción es el EQUIPO. */}
+              {t.state === "open" && teamSizeOfTournament(t) !== null && (
+                <>
+                  <TournamentTeamEntry
+                    tournamentId={props.id}
+                    teamSize={teamSizeOfTournament(t)!}
+                    onEntered={reloadDetail}
+                    onMessage={setEntryMsg}
+                  />
+                  <button type="button" onClick={onCloseEntries}>
+                    Cerrar inscripciones
+                  </button>
+                </>
+              )}
+              {t.state === "open" && teamSizeOfTournament(t) === null && (
                 <form onSubmit={onEnter}>
                   <label>
                     Inscribir bot{" "}

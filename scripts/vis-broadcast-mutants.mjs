@@ -61,8 +61,9 @@ const MUTANTS = [
   {
     name: "cerrar el torneo pone code_public=true a las versiones inscritas",
     file: "apps/api/src/routes/tournaments.ts",
-    from: '    if (!t) throw notFound();\n    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
-    to: '    if (!t) throw notFound();\n    await db.raw("UPDATE bot_versions v SET code_public = true FROM entries e WHERE e.bot_id = v.bot_id AND e.version = v.version AND e.tournament_id = ?", [t.id]);\n    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
+    // #287 · closeEntries va ahora en una transacción con el torneo bloqueado (`trx`).
+    from: '      const t = await trx("tournaments").where({ id: pre.id }).forUpdate().first();\n      if (t.state !== "open") {',
+    to: '      const t = await trx("tournaments").where({ id: pre.id }).forUpdate().first();\n      await trx.raw("UPDATE bot_versions v SET code_public = true FROM entries e WHERE e.bot_id = v.bot_id AND e.version = v.version AND e.tournament_id = ?", [t.id]);\n      if (t.state !== "open") {',
     tests: API,
   },
   {

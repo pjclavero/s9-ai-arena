@@ -49,3 +49,81 @@ export function tournamentEntryChoices(versions: EntryVersion[]): EntryChoices {
     .map((v) => ({ version: v, reason: eligibilityReason(v.battleEligibility) }));
   return { selectable, blocked, defaultVersion: selectable[0]?.version };
 }
+
+// ------------------------------------------------------------------ #287 · por equipo
+
+/** Bot de un equipo tal como lo ve un miembro (GET /teams: `bots[]` con `mine`). */
+export interface TeamRosterBot {
+  id: string;
+  name: string;
+  mine?: boolean;
+}
+
+/** Versiones de un bot del roster: cargando, error o la lista de la API. */
+export type RosterVersions = "loading" | "error" | EntryVersion[];
+
+export interface TeamRosterRow {
+  botId: string;
+  name: string;
+  included: boolean;
+  /** Versión que se inscribiría (sólo si es inscribible). */
+  version?: number;
+  frozen?: boolean;
+  /** Por qué este miembro no se puede inscribir (sólo para los incluidos). */
+  problem?: string;
+}
+
+export interface TeamRosterPlan {
+  rows: TeamRosterRow[];
+  /** El botón «Inscribir equipo» sólo se habilita con el roster COMPLETO y válido. */
+  canSubmit: boolean;
+  /** Motivo de que no se pueda inscribir todavía. */
+  reason?: string;
+  /** Lo que se envía: exactamente N `{ botId, version }`. */
+  members: { botId: string; version: number }[];
+}
+
+/**
+ * #287 · Plan de inscripción de un equipo completo, PURO. Misma regla que la API
+ * (`enterTournamentTeam`): exactamente `teamSize` bots, todos del usuario y cada uno con una
+ * versión inscribible (`tournamentEntryChoices`: published|frozen y elegible). Si falta o
+ * sobra un bot, o alguno no se puede inscribir, se dice por qué y no se envía nada: la
+ * inscripción es todo o nada. La API sigue siendo la autoridad.
+ */
+export function teamRosterPlan(input: {
+  teamSize: number;
+  bots: TeamRosterBot[];
+  included: ReadonlySet<string>;
+  versions: ReadonlyMap<string, RosterVersions>;
+  chosen: ReadonlyMap<string, number>;
+}): TeamRosterPlan {
+  const rows: TeamRosterRow[] = input.bots.map((b) => {
+    const row: TeamRosterRow = { botId: b.id, name: b.name, included: input.included.has(b.id) };
+    if (!row.included) return row;
+    if (!b.mine) return { ...row, problem: "Es de otro miembro: sólo su dueño puede inscribirlo" };
+    const vs = input.versions.get(b.id);
+    if (vs === undefined || vs === "loading") return { ...row, problem: "Cargando sus versiones…" };
+    if (vs === "error") return { ...row, problem: "No se pudieron cargar sus versiones" };
+    const choices = tournamentEntryChoices(vs);
+    const want = input.chosen.get(b.id) ?? choices.defaultVersion;
+    const pick = choices.selectable.find((v) => v.version === want);
+    if (!pick) {
+      const why = choices.blocked[0]?.reason;
+      return { ...row, problem: `Sin versión publicada o congelada elegible${why ? ` — ${why}` : ""}` };
+    }
+    return { ...row, version: pick.version, frozen: pick.state === "frozen" };
+  });
+  const included = rows.filter((r) => r.included);
+  let reason: string | undefined;
+  if (included.length !== input.teamSize) {
+    reason = `Hacen falta exactamente ${input.teamSize} bots del equipo (elegidos: ${included.length})`;
+  } else if (included.some((r) => r.problem)) {
+    reason = "Algún miembro no se puede inscribir: corrígelo o elige otro bot";
+  }
+  return {
+    rows,
+    canSubmit: reason === undefined,
+    ...(reason ? { reason } : {}),
+    members: reason ? [] : included.map((r) => ({ botId: r.botId, version: r.version! })),
+  };
+}

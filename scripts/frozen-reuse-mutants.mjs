@@ -72,8 +72,9 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        from: '      if (v.state === "published") {\n        await applyTransition(db, req.auth, v, "freeze", {}, req.correlationId);',
-        to: '      const cur = v.state === "frozen" ? (await db("bot_versions").where({ id: v.id }).update({ state: "published" }).returning("*"))[0] : v;\n      if (cur.state === "published") {\n        await applyTransition(db, req.auth, cur, "freeze", {}, req.correlationId);',
+        // #287 · closeEntries va ahora en una transacción (`trx`, un nivel más de sangría).
+        from: '        if (v.state === "published") {\n          await applyTransition(trx, req.auth, v, "freeze", {}, req.correlationId);',
+        to: '        const cur = v.state === "frozen" ? (await trx("bot_versions").where({ id: v.id }).update({ state: "published" }).returning("*"))[0] : v;\n        if (cur.state === "published") {\n          await applyTransition(trx, req.auth, cur, "freeze", {}, req.correlationId);',
       },
     ],
     tests: [API],
@@ -218,8 +219,8 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        from: '      if (v.state === "published") {',
-        to: '      if (v.state === "published" || v.state === "frozen") {',
+        from: '        if (v.state === "published") {',
+        to: '        if (v.state === "published" || v.state === "frozen") {',
       },
     ],
     tests: [API],

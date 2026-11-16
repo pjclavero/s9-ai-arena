@@ -93,13 +93,16 @@ async function loadEntries(db: Knex, tournamentId: string): Promise<EntryInfo[]>
     .join("bots", "bots.id", "entries.bot_id")
     .where({ tournament_id: tournamentId })
     .orderBy("entries.created_at", "asc")
-    .select("entries.*", "bots.owner_id", "bots.team_id", "bots.name");
+    // #287 · equipo EFECTIVO: el de la inscripción por equipo (022) o, en las anteriores
+    // (NULL), el del bot como siempre. Un cambio de equipo tras el cierre no mueve de bando.
+    .select("entries.*", "bots.owner_id", "bots.name")
+    .select(db.raw("COALESCE(entries.team_id, bots.team_id) AS effective_team_id"));
   return rows.map((r: Record<string, unknown>) => ({
     botId: r.bot_id as string,
     version: r.version as number,
     loadoutRevision: r.loadout_revision as number,
     ownerId: r.owner_id as string,
-    teamId: (r.team_id as string) ?? null,
+    teamId: (r.effective_team_id as string) ?? null,
     name: r.name as string,
   }));
 }

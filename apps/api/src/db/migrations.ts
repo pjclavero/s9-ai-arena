@@ -1094,6 +1094,34 @@ const m021_runtime_settings: Migration = {
   },
 };
 
+// #287 · Inscripción de EQUIPOS completos en torneos `teams`. Hasta ahora el equipo de una
+// inscripción se deducía EN VIVO de `bots.team_id`, así que al cerrar no se podía comprobar
+// que cada bot siguiera en el equipo con el que se inscribió (un intercambio de bots entre
+// dos equipos inscritos conservaba los tamaños y pasaba), y un cambio de equipo tras el
+// cierre movía el bot de bando en el calendario y la clasificación.
+//
+// SÓLO añade una columna nullable: NO rellena las filas existentes (NULL = inscripción
+// anterior, que sigue usando `bots.team_id` como siempre vía COALESCE). ON DELETE RESTRICT:
+// un equipo con inscripciones no se borra a medias (`deleteTeam` ya traduce el 23503 a
+// `team_in_use`), el mismo criterio que `entries.bot_id`. Aditiva e independiente: entra en
+// NAMED_ROLLBACK_ALLOWED. Probada en `migration-022.test.ts`.
+const m022_entries_team: Migration = {
+  name: "022_entries_team",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id) ON DELETE RESTRICT;
+      CREATE INDEX entries_tournament_team_idx ON entries (tournament_id, team_id) WHERE team_id IS NOT NULL;
+    `);
+  },
+  // Vuelta atrás: se pierde a qué equipo se inscribió cada entrada (vuelve a deducirse de bots.team_id).
+  async down(db) {
+    await db.raw(`
+      DROP INDEX IF EXISTS entries_tournament_team_idx;
+      ALTER TABLE entries DROP COLUMN team_id;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1116,6 +1144,7 @@ export const MIGRATIONS: Migration[] = [
   m019_visibility_broadcast,
   m020_streaming_ingests,
   m021_runtime_settings,
+  m022_entries_team,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1188,6 +1217,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "019_visibility_broadcast",
   "020_streaming_ingests",
   "021_runtime_settings",
+  // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
+  "022_entries_team",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

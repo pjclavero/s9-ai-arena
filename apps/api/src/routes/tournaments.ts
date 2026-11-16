@@ -14,8 +14,12 @@ import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCu
 import { applyTransition } from "../services/bots.js";
 import {
   assertTournamentEligible,
+  assertVersionsEligible,
+  canonicalUuid,
+  eligibilityKey,
   entryEligibilityGate,
   excludeTournamentEntry,
+  isCompetitionState,
   replaceIneligibleEntry,
 } from "../services/version-eligibility.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -26,22 +30,58 @@ import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../bat
 import { buildTournamentRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import { ApiError } from "../errors.js";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * #287 · Tamaño de equipo de un torneo `teams` con reglas NvN (copia inmutable ADR-022), o
+ * `null` si el torneo no es por equipos o es `classic` (sin `params`: no fija tamaño).
+ */
+export function teamSizeOf(t: Record<string, unknown>): number | null {
+  if (t.format !== "teams") return null;
+  const n = rulesOf(t)?.params?.teamSize;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : null;
+}
+
 /**
  * ADR-022 · Con reglas NvN, cada equipo inscrito debe tener exactamente N bots al cerrar
  * inscripciones (las batallas del torneo enfrentan rosters completos).
+ *
+ * #287 · REVALIDACIÓN AL CIERRE. El equipo de una inscripción es el EFECTIVO:
+ * `entries.team_id` (con el que se inscribió el equipo completo) o, en inscripciones
+ * anteriores a la 022 (NULL), `bots.team_id` como siempre — el mismo que usa el scheduler.
+ * Antes del tamaño se comprueba la PERTENENCIA: un bot inscrito con su equipo que ya no está
+ * en él (o que se retiró), o una inscripción sin ningún equipo, bloquean el cierre con 409
+ * `team_roster_changed`. Sólo ids de inscripción y de equipo: el organizador no ve los bots
+ * privados ajenos.
  */
 async function assertRostersFitRules(db: Db, t: Record<string, unknown>): Promise<void> {
   const snapshot = rulesOf(t);
   if (!snapshot?.params || t.format !== "teams") return;
   const n = snapshot.params.teamSize;
-  // El equipo de cada inscripción es el del bot (el mismo que usa el scheduler).
-  const rows = await db("entries")
+  const rows = (await db("entries")
     .join("bots", "bots.id", "entries.bot_id")
-    .where({ tournament_id: t.id as string })
-    .select("bots.team_id");
+    .where({ "entries.tournament_id": t.id as string })
+    .select("entries.id", "entries.team_id as entered_team_id", "bots.team_id as bot_team_id", "bots.retired_at")) as {
+    id: string;
+    entered_team_id: string | null;
+    bot_team_id: string | null;
+    retired_at: unknown;
+  }[];
+  const changed = rows.filter((e) =>
+    e.entered_team_id ? e.bot_team_id !== e.entered_team_id || !!e.retired_at : !e.bot_team_id,
+  );
+  if (changed.length > 0) {
+    throw new ApiError(
+      409,
+      "team_roster_changed",
+      `${changed.length} inscripción(es) ya no pertenecen al equipo con el que se inscribieron (el bot salió del equipo, cambió de equipo o se retiró). El equipo debe retirarse o reinscribirse completo antes de cerrar.`,
+      { changedEntries: changed.map((e) => ({ entryId: e.id, teamId: e.entered_team_id ?? null })) },
+    );
+  }
   const rosters = new Map<string, number>();
-  for (const e of rows as { team_id: string | null }[]) {
-    if (e.team_id) rosters.set(e.team_id, (rosters.get(e.team_id) ?? 0) + 1);
+  for (const e of rows) {
+    const team = e.entered_team_id ?? e.bot_team_id;
+    if (team) rosters.set(team, (rosters.get(team) ?? 0) + 1);
   }
   const bad = [...rosters].filter(([, k]) => k !== n);
   if (bad.length > 0) {
@@ -311,6 +351,15 @@ export function tournamentRoutes(
     if (await db("entries").where({ tournament_id: t.id, bot_id: botId }).first()) {
       throw conflict("already_entered", "El bot ya está inscrito en este torneo");
     }
+    // #287 · En un torneo por equipos con tamaño (NvN) la unidad de inscripción es el EQUIPO
+    // completo (enterTournamentTeam, atómica): un bot suelto montaría equipos a medias. La
+    // sustitución de una versión pendiente no elegible (arriba) sí sigue valiendo aquí.
+    if (teamSizeOf(t) !== null) {
+      throw conflict(
+        "team_enrollment_required",
+        "En este torneo por equipos se inscribe el equipo completo (Inscribir equipo), no bot a bot",
+      );
+    }
     // Congela la COMBINACIÓN exacta código+loadout (cap. 17.2).
     const [entry] = await db("entries")
       .insert({
@@ -331,6 +380,173 @@ export function tournamentRoutes(
     });
   });
 
+  /**
+   * #287 · Inscripción de un EQUIPO COMPLETO en un torneo `teams` con reglas NvN.
+   * `{ teamId, members: [{ botId, version }] }`. TODO en UNA transacción, con el torneo
+   * bloqueado (`FOR UPDATE`: serializa con otras inscripciones y con el cierre) y los bots
+   * del roster bloqueados (un `removeTeamBot` concurrente espera): o entran los N bots o no
+   * entra ninguno. Comprobaciones, en este orden:
+   *  - torneo abierto, formato `teams` y tamaño definido por sus reglas;
+   *  - quien pide es miembro del equipo;
+   *  - exactamente N bots distintos;
+   *  - cada bot pertenece DE VERDAD al equipo (`bots.team_id`), es del solicitante (la misma
+   *    regla que la inscripción individual: «sólo el dueño inscribe su bot») y no está retirado;
+   *  - cada versión está en estado de competición (`isCompetitionState`: published|frozen) y su
+   *    loadout es elegible (`assertVersionsEligible`): la regla ÚNICA de #283, sin duplicar;
+   *  - ni el equipo ni ninguno de sus bots están ya inscritos.
+   * Cada entrada congela su combinación exacta código+loadout (cap. 17.2) y guarda el equipo
+   * (`entries.team_id`, migración 022) para revalidar la pertenencia al cerrar. No cambia la
+   * visibilidad del bot, la de su código ni su dueño.
+   */
+  defineOperation(router, "enterTournamentTeam", async (req, res) => {
+    const userId = req.auth!.userId;
+    const tournamentId = pathParam(req, "tournamentId");
+    if (!UUID_RE.test(tournamentId)) throw notFound();
+    const { teamId, members } = req.body ?? {};
+    if (typeof teamId !== "string" || !UUID_RE.test(teamId)) throw badRequest("teamId obligatorio");
+    if (
+      !Array.isArray(members) ||
+      members.length === 0 ||
+      members.length > 16 ||
+      members.some(
+        (m: unknown) =>
+          !m ||
+          typeof (m as { botId?: unknown }).botId !== "string" ||
+          !UUID_RE.test((m as { botId: string }).botId) ||
+          !Number.isInteger((m as { version?: unknown }).version),
+      )
+    ) {
+      throw badRequest("members debe ser una lista de { botId, version }");
+    }
+    const roster = (members as { botId: string; version: number }[]).map((m) => ({
+      botId: canonicalUuid(m.botId),
+      version: m.version,
+    }));
+    const ids = roster.map((m) => m.botId);
+    if (new Set(ids).size !== ids.length) throw badRequest("members repite un bot");
+
+    const out = await db.transaction(async (trx) => {
+      const t = await trx("tournaments").where({ id: tournamentId }).forUpdate().first();
+      if (!t) throw notFound();
+      if (t.state !== "open") throw conflict("entries_closed", "Las inscripciones no están abiertas");
+      if (t.format !== "teams") {
+        throw conflict("not_a_team_tournament", "La inscripción por equipos sólo existe en torneos de formato 'teams'");
+      }
+      const n = teamSizeOf(t);
+      if (n === null) {
+        throw conflict(
+          "team_size_undefined",
+          "Las reglas de este torneo no fijan un tamaño de equipo: la inscripción por equipo no está disponible",
+        );
+      }
+      const team = await trx("teams").where({ id: teamId }).first();
+      if (!team) throw notFound("Equipo no encontrado");
+      const member = await trx("team_members").where({ team_id: teamId, user_id: userId }).first();
+      if (!member) throw forbidden("Sólo un miembro del equipo puede inscribirlo");
+      if (roster.length !== n) {
+        throw new ApiError(
+          409,
+          "rules_team_size",
+          `${n} contra ${n}: el equipo debe inscribir exactamente ${n} bots (se enviaron ${roster.length})`,
+          { teamSize: n, got: roster.length },
+        );
+      }
+      const bots = (await trx("bots").whereIn("id", ids).forUpdate()) as Record<string, unknown>[];
+      const byId = new Map(bots.map((b) => [String(b.id), b]));
+      // Un bot inexistente o de otro equipo se responde igual: no se revela si existe.
+      const notMember = ids.filter((id) => byId.get(id)?.team_id !== teamId);
+      if (notMember.length > 0) {
+        throw new ApiError(409, "team_bot_not_member", "Algún bot no pertenece a este equipo", { botIds: notMember });
+      }
+      const notOwned = ids.filter((id) => byId.get(id)!.owner_id !== userId);
+      if (notOwned.length > 0) {
+        throw new ApiError(
+          403,
+          "team_bot_not_owned",
+          "Sólo el dueño inscribe su bot: algún bot del equipo es de otro miembro",
+          { botIds: notOwned },
+        );
+      }
+      const retired = ids.filter((id) => !!byId.get(id)!.retired_at);
+      if (retired.length > 0) {
+        throw new ApiError(409, "bot_retired", "Un bot retirado no se inscribe: reactívalo o elige otro", {
+          botIds: retired,
+        });
+      }
+      const vrows = (await trx("bot_versions").where((q) => {
+        for (const m of roster) q.orWhere({ bot_id: m.botId, version: m.version });
+      })) as Record<string, unknown>[];
+      const vByKey = new Map(vrows.map((v) => [eligibilityKey(String(v.bot_id), Number(v.version)), v]));
+      const notPublished = roster
+        .map((m) => ({ ...m, v: vByKey.get(eligibilityKey(m.botId, m.version)) }))
+        .filter((x) => !x.v || !isCompetitionState(x.v.state));
+      if (notPublished.length > 0) {
+        throw new ApiError(
+          409,
+          "bot_not_published",
+          "Sólo se inscriben versiones publicadas o congeladas (frozen); algún miembro no tiene esa versión",
+          {
+            notPublished: notPublished.map((x) => ({
+              botId: x.botId,
+              version: x.version,
+              ...(x.v ? { currentState: String(x.v.state) } : {}),
+            })),
+          },
+        );
+      }
+      await assertVersionsEligible(trx, roster);
+      if (await trx("entries").where({ tournament_id: t.id, team_id: teamId }).first()) {
+        throw conflict("team_already_entered", "El equipo ya está inscrito en este torneo");
+      }
+      const already = (await trx("entries").where({ tournament_id: t.id }).whereIn("bot_id", ids)) as {
+        bot_id: string;
+      }[];
+      if (already.length > 0) {
+        throw new ApiError(409, "already_entered", "Algún bot del equipo ya está inscrito en este torneo", {
+          botIds: already.map((e) => e.bot_id),
+        });
+      }
+      // Una sola sentencia: o entran las N filas o ninguna (y la transacción envuelve el resto).
+      const rows = (await trx("entries")
+        .insert(
+          roster.map((m) => ({
+            tournament_id: t.id,
+            bot_id: m.botId,
+            version: m.version,
+            loadout_revision: vByKey.get(eligibilityKey(m.botId, m.version))!.loadout_revision,
+            team_id: teamId,
+            frozen: false,
+          })),
+        )
+        .returning("*")) as Record<string, unknown>[];
+      await audit(trx, {
+        actorId: userId,
+        action: "tournament.team_entered",
+        target: `tournament:${t.id}`,
+        detail: { teamId, members: roster },
+        correlationId: req.correlationId,
+      });
+      return { t, team, rows };
+    });
+    const order = new Map(ids.map((id, i) => [id, i]));
+    res.status(201).json({
+      tournamentId: out.t.id,
+      teamId,
+      teamName: out.team.name,
+      entries: out.rows
+        .sort((a, b) => order.get(String(a.bot_id))! - order.get(String(b.bot_id))!)
+        .map((e) => ({
+          id: e.id,
+          tournamentId: out.t.id,
+          botId: e.bot_id,
+          version: e.version,
+          loadoutRevision: e.loadout_revision,
+          teamId: e.team_id,
+          frozen: e.frozen,
+        })),
+    });
+  });
+
   // ELIG · H8: excluir una inscripción pendiente (organizador: sólo no elegibles; dueño: la suya). Auditado.
   defineOperation(router, "excludeTournamentEntry", async (req, res) => {
     res.json(
@@ -346,69 +562,92 @@ export function tournamentRoutes(
   });
 
   defineOperation(router, "closeEntries", async (req, res) => {
-    const t = await db("tournaments")
+    const pre = await db("tournaments")
       .where({ id: req.params.tournamentId })
       .first()
       .catch(() => null);
-    if (!t) throw notFound();
-    if (t.state !== "open") {
-      throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
-        currentState: t.state,
-        allowedTransitions: t.state === "draft" ? ["open"] : [],
-      });
-    }
+    if (!pre) throw notFound();
+    // #287 · El cierre entero va en UNA transacción con el torneo bloqueado (`FOR UPDATE`):
+    // una inscripción concurrente (individual o de equipo) espera o ve el torneo cerrado, y
+    // un 409 tardío (p. ej. seeds_required) ya no deja entradas o versiones congeladas con el
+    // torneo abierto. Lo que se valida es exactamente lo que se congela.
+    const updated = await db.transaction(async (trx) => {
+      const t = await trx("tournaments").where({ id: pre.id }).forUpdate().first();
+      if (t.state !== "open") {
+        throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
+          currentState: t.state,
+          allowedTransitions: t.state === "draft" ? ["open"] : [],
+        });
+      }
 
-    const entries = await db("entries").where({ tournament_id: t.id });
-    await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
-    await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo
-    await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
-    // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
-    // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
-    // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
-    // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
-    for (const e of entries) {
-      const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();
-      if (v.state === "published") {
-        await applyTransition(db, req.auth, v, "freeze", {}, req.correlationId);
+      const entries = (await trx("entries").where({ tournament_id: t.id })) as Record<string, unknown>[];
+      // #287 · ESTADO de cada versión inscrita con la regla única (published|frozen): una
+      // versión suspendida o retirada después de inscribirse ya no compite.
+      const versions = new Map<string, Record<string, unknown>>();
+      for (const e of entries) {
+        versions.set(e.id as string, await trx("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first());
       }
-    }
-    // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash
-    // del lote ANTES del cierre (seedCommitment al crear el torneo), ahora
-    // debe revelar las semillas que casan con él; ambos quedan en la BD y son
-    // verificables públicamente (endpoint de auditoría). Sin compromiso
-    // previo, el servidor genera lote y compromiso juntos (auto-commit).
-    const revealed: string[] | null = Array.isArray(req.body?.seeds) ? req.body.seeds.map(String) : null;
-    let seeds: string[];
-    let commitment: string;
-    if (t.seed_commitment) {
-      if (!revealed || revealed.length === 0) {
-        throw conflict("seeds_required", "El torneo publicó un compromiso: el cierre debe revelar las semillas");
+      const notCompeting = entries.filter((e) => !isCompetitionState(versions.get(e.id as string)?.state));
+      if (notCompeting.length > 0) {
+        throw new ApiError(
+          409,
+          "entries_not_eligible",
+          `${notCompeting.length} inscripción(es) usan una versión que ya no está publicada ni congelada (suspendida o retirada). Sus dueños deben inscribir otra versión válida, o el organizador puede excluirlas, antes de cerrar.`,
+          { notEligibleEntries: notCompeting.map((e) => ({ entryId: e.id })) },
+        );
       }
-      commitment = t.seed_commitment;
-      const proof = createHash("sha256").update(revealed.join("|")).digest("hex");
-      if (proof !== commitment) {
-        throw conflict("seed_reveal_mismatch", "Las semillas reveladas no casan con el compromiso publicado");
+      await entryEligibilityGate(trx, entries); // ELIG · H8: no se cierra con versiones no elegibles
+      await assertRostersFitRules(trx, t); // ADR-022 · NvN del preset del torneo (+ #287 pertenencia)
+      await trx("entries").where({ tournament_id: t.id }).update({ frozen: true });
+      // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
+      // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
+      // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
+      // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
+      for (const e of entries) {
+        const v = versions.get(e.id as string)!;
+        if (v.state === "published") {
+          await applyTransition(trx, req.auth, v, "freeze", {}, req.correlationId);
+        }
       }
-      seeds = revealed;
-    } else {
-      seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
-      commitment = createHash("sha256").update(seeds.join("|")).digest("hex");
-    }
-    const [updated] = await db("tournaments")
-      .where({ id: t.id })
-      .update({ state: "closed", seeds_revealed: JSON.stringify(seeds), seed_commitment: commitment })
-      .returning("*");
-    await db("jobs").insert({
-      kind: "generate_schedule",
-      payload: JSON.stringify({ tournamentId: t.id, seedProof: commitment }),
-      dedupe_key: `generate_schedule:${t.id}`,
-    });
-    await audit(db, {
-      actorId: req.auth!.userId,
-      action: "tournament.entries_closed",
-      target: `tournament:${t.id}`,
-      detail: { entries: entries.length },
-      correlationId: req.correlationId,
+      // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash
+      // del lote ANTES del cierre (seedCommitment al crear el torneo), ahora
+      // debe revelar las semillas que casan con él; ambos quedan en la BD y son
+      // verificables públicamente (endpoint de auditoría). Sin compromiso
+      // previo, el servidor genera lote y compromiso juntos (auto-commit).
+      const revealed: string[] | null = Array.isArray(req.body?.seeds) ? req.body.seeds.map(String) : null;
+      let seeds: string[];
+      let commitment: string;
+      if (t.seed_commitment) {
+        if (!revealed || revealed.length === 0) {
+          throw conflict("seeds_required", "El torneo publicó un compromiso: el cierre debe revelar las semillas");
+        }
+        commitment = t.seed_commitment;
+        const proof = createHash("sha256").update(revealed.join("|")).digest("hex");
+        if (proof !== commitment) {
+          throw conflict("seed_reveal_mismatch", "Las semillas reveladas no casan con el compromiso publicado");
+        }
+        seeds = revealed;
+      } else {
+        seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
+        commitment = createHash("sha256").update(seeds.join("|")).digest("hex");
+      }
+      const [row] = await trx("tournaments")
+        .where({ id: t.id })
+        .update({ state: "closed", seeds_revealed: JSON.stringify(seeds), seed_commitment: commitment })
+        .returning("*");
+      await trx("jobs").insert({
+        kind: "generate_schedule",
+        payload: JSON.stringify({ tournamentId: t.id, seedProof: commitment }),
+        dedupe_key: `generate_schedule:${t.id}`,
+      });
+      await audit(trx, {
+        actorId: req.auth!.userId,
+        action: "tournament.entries_closed",
+        target: `tournament:${t.id}`,
+        detail: { entries: entries.length },
+        correlationId: req.correlationId,
+      });
+      return row;
     });
     res.json(tournamentToJson(updated));
   });
