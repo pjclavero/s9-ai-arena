@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OLA 2 · MD · Matriz de mutantes de replay v2 / verify / stateHash / RNG con nombre (22: M01-M22).
 
-Origen: `/srv/s9-test/md-mutants.sh` (VM112, perl -pe; no estaba en el repo) + `md-m04.sh`
+Origen: `md-mutants.sh` del equipo MD (laboratorio, perl -pe; no estaba en el repo) + `md-m04.sh`
 (M04 rehecho tras prettier) + `m0-md-m10b.sh` (M10 con ancla inequívoca, de M0). G1 lo trae
 al repo con el runner común (mutlib.py): cada ancla debe aparecer EXACTAMENTE una vez.
 
@@ -10,8 +10,13 @@ veces en battle.ts (internalFrame() y stateHashInput()); perl sustituía la prim
 frame interno, y el mutante era EQUIVALENTE para el hash. Ahora el ancla es el par
 proyectiles+minas del sitio del hash (única). M11 se ancla igual por coherencia.
 
-Cada mutante pone en rojo el test de md-replay-v2.test.ts que nombra su filtro (-t).
-Uso (VM112, dentro de flock): python3 -I scripts/hardening/md-mutants.py <worktree> <salida.json> [IDS|--dry-run]
+Cada mutante pone en rojo el test de md-replay-v2.test.ts que nombra su filtro (-t). Los filtros
+son los del original (M18 «cambiar la semilla», M19 «flujo RNG latency»).
+M01-M03: el original (perl por línea) dejaba la línea en blanco; aquí se quita la línea entera
+(misma semántica). M04: el original no aplicaba tras prettier (cmp multilínea) y MD lo rehízo;
+aquí se ancla el cmp multilínea completo.
+Uso: scripts/hardening/run-mutants.sh md <worktree> <salida.json> [IDS]
+(anclas, sin ejecutar nada: python3 -I -B scripts/hardening/md-mutants.py . /dev/null --dry-run)
 """
 import os
 import sys
@@ -71,9 +76,9 @@ MUTANTS = [
     lit("M16", "hash sin teamKills", B, "teamKills: this.teamKills", "teamKills: {}", "teamKills"),
     lit("M17", "verify sin comprobación de runtime", R, "if (h.runtime !== currentRuntime()) return",
         "if (false) return", "cambio de runtime"),
-    lit("M18", "hash sin RNG", B, "rng: this.rng.getState(),", "rng: [],", "flujo RNG combat"),
+    lit("M18", "hash sin RNG", B, "rng: this.rng.getState(),", "rng: [],", "cambiar la semilla"),
     lit("M19", "latencia simulada en el flujo combat", B, 'this.rng.stream("latency").int',
-        'this.rng.stream("combat").int', "latencia simulada"),
+        'this.rng.stream("combat").int', "flujo RNG latency"),
     lit("M20", "verify no reproduce las cadencias", R, "hashEveryNTicks: h.cadences?.hashEveryNTicks,", "",
         "cadencia de hash NO"),
     lit("M21", "checkpoint: components sin validar contra el hash", R,

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """OLA 2 · MB · Matriz de mutantes del gate DAMAGE_CONTRACT (12 + M9 de la ronda de revisión).
 
-Origen: `mb-mutants.py` del equipo MB (informes/mb-evidencias y VM112; no estaba en el repo),
-versión de 12 mutantes (M1, M2, M2b, M3, M3b, M3c, M4, M4b, M5, M6, M7, M8). El M9 de la
-ronda de revisión (turretRateRads de la montura de chassis.medium@1 de 1.0 a 2.2) NO estaba
-en ninguna copia: G1 lo RECONSTRUYE desde REVIEW-MB-2 §3 («M9: turretRateRads de
-chassis.medium@1 de 1.0 a 2.2 → rc=1, 3 tests fallan»). Total: 13.
+Origen: `mb-mutants.py` del equipo MB (evidencias del equipo; no estaba en el repo), versión de
+12 mutantes (M1, M2, M2b, M3, M3b, M3c, M4, M4b, M5, M6, M7, M8), más el M9 de la ronda de
+revisión (turretRateRads de la montura de chassis.medium@1 de 1.0 a 2.2), que estaba en una
+segunda copia suelta (`mb-mutants2.py`, ancla `"turretRateRads": 1.0`, primera aparición). Aquí
+el ancla es la línea completa de la ranura (única); el fichero mutado es idéntico. Total: 13.
 
 Todos contra apps/arena-engine/tests/damage-contract.test.ts, con el runner común (mutlib.py).
-Uso (VM112, dentro de flock): python3 -I scripts/hardening/mb-mutants.py <worktree> <salida.json> [IDS|--dry-run]
+Uso: scripts/hardening/run-mutants.sh mb <worktree> <salida.json> [IDS]
+(anclas, sin ejecutar nada: python3 -I -B scripts/hardening/mb-mutants.py . /dev/null --dry-run)
 """
 import os
 import sys
@@ -58,7 +59,7 @@ MUTANTS = [
     m("M8", "blindaje con copia propia de hp (doble fuente)", VEHICLE,
       "          get hp() {\n            return rt.hp;\n          },\n          set hp(v: number) {\n            rt.hp = v;\n          },",
       "          hp: m.hp,"),
-    # Reconstruido por G1 desde REVIEW-MB-2 §3.
+    # M9 de la ronda de revisión (copia mb-mutants2.py; ver REVIEW-MB-2 §3).
     m("M9", "montura de chassis.medium@1 a 2,2 rad/s (rebalanceo silencioso del giro)",
       "packages/module-catalog/data/chassis.medium@1.json",
       '"id": "turret_main", "accepts": ["weapon"], "maxSize": "L", "mount": { "turretRateRads": 1.0,',

@@ -11,7 +11,8 @@ Cambios de G1 respecto al original:
     `stateHash()` y el hash v2 de MD serializa la cola de radio y la mina enteras. Con la
     sonda por efecto observable (G1) deben MORIR contra el gate.
 
-Uso (VM112, dentro de flock): python3 -I scripts/hardening/mc-mutants.py <worktree> <salida.json> [IDS|--dry-run]
+Uso: scripts/hardening/run-mutants.sh mc <worktree> <salida.json> [IDS]
+(anclas, sin ejecutar nada: python3 -I -B scripts/hardening/mc-mutants.py . /dev/null --dry-run)
 """
 import os
 import sys
