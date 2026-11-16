@@ -285,8 +285,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           //  - el lanzamiento falló ⇒ no existe nada (released);
           //  - no contesta ⇒ el recurso se DESPRENDE (`detached`): el registro no se queda con un
           //    `failed` eterno y el informe no es «limpio»; si el contenedor llega a existir
-          //    después, `adoptLate` lo para y lo borra, y si eso falla lo REGISTRA (`container_late`,
-          //    `failed`, reintentable por el reaper). Fuera del proceso, el reaper lo ve por labels.
+          //    después, `adoptLate` lo para y lo borra, y si eso falla lo REGISTRA (`container_late`, vivo y
+          //    reintentable por el reaper). Fuera del proceso, el reaper lo ve por labels.
           const vid = v.vehicleId;
           const disposeLate = async (late: ContainerHandle) => {
             await terminateContainer(late, { termGraceS: 0, stopDeadlineMs: 5_000 }).catch(() => undefined);

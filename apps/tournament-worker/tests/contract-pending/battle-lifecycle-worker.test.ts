@@ -335,7 +335,7 @@ describe("G2.5 · MF_LAUNCH_TIMEOUT_CLEANUP · launch() colgado o tardío (verif
     expect(s.resources.pending("g2-late-launch")).toEqual([]);
   }, 60_000);
 
-  it("[G2] contenedor tardío cuya limpieza FALLA: queda registrado (`container_late`, failed) y el reintento lo borra", async () => {
+  it("[G2] contenedor tardío cuya limpieza FALLA: queda registrado (`container_late`, pendiente de reintento) y el reintento lo borra", async () => {
     const s = setup({ lateLaunchAt: 1, lateLaunchMs: 3_000, brokenAt: 1 }, { launchInFlightWaitMs: 200 });
     const { out } = await timedRun(s, "g2-late-broken", LAUNCH_BOUND_MS);
     expect(out.hung).toBe(false);
