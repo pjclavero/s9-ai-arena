@@ -243,9 +243,11 @@ function runVitest(files) {
   const failed = [
     ...new Set(
       out
+        // Sin colores ANSI; y NO voraz: hay nombres de test que contienen «⇒ FAIL (…)».
+        .replace(/\x1b\[[0-9;]*m/g, "")
         .split("\n")
-        .filter((l) => /FAIL .*>/.test(l))
-        .map((l) => l.replace(/^.*FAIL\s+/, "").trim()),
+        .filter((l) => /^\s*FAIL\s.*>/.test(l))
+        .map((l) => l.replace(/^\s*FAIL\s+/, "").trim()),
     ),
   ];
   return { rc: r.status, failed, out };
