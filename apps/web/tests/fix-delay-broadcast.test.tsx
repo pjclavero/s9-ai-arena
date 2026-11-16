@@ -32,20 +32,25 @@ vi.mock("../src/viewer/live-feed.js", () => ({
 }));
 let emit: (ev: string, payload: unknown) => void = () => undefined;
 let connected = false;
-vi.mock("../src/viewer/spectator-client.js", () => ({
-  SpectatorClient: class {
-    state = { serverTimeMs: null };
-    private handlers = new Map<string, (p: unknown) => void>();
+/**
+ * FIX-DIRECTOR-DELAY · LiveScreen ya no abre su propio WS: pinta el feed que sigue el
+ * director (SpectatorTimeline). Aquí el feed es un cliente falso que el test gobierna.
+ */
+function fakeFeed() {
+  const handlers = new Map<string, (p: unknown) => void>();
+  const client = {
+    state: { serverTimeMs: null, snapshot: null, result: null, connected: true },
     on(ev: string, cb: (p: unknown) => void) {
-      this.handlers.set(ev, cb);
-    }
-    async connect() {
-      emit = (ev, p) => this.handlers.get(ev)?.(p);
+      handlers.set(ev, cb);
+      emit = (e, p) => handlers.get(e)?.(p);
       connected = true;
-    }
-    stop() {}
-  },
-}));
+      return () => handlers.delete(ev);
+    },
+    async connect() {},
+    stop() {},
+  };
+  return { client, lastInit: () => null, rejection: () => null };
+}
 
 const config: BroadcastConfig = {
   target: { kind: "tournament", tournamentId: "t1" },
@@ -56,8 +61,9 @@ const config: BroadcastConfig = {
 const battle = { id: "b1", participants: [], mode: "deathmatch" } as any;
 
 async function mount() {
-  render(<LiveScreen config={config} battle={battle} />);
-  await vi.waitFor(() => expect(connected).toBe(true)); // connect() instaló el emisor
+  const feed = fakeFeed(); // identidad estable, como la que da SpectatorTimeline.feed()
+  render(<LiveScreen config={config} battle={battle} feed={feed} />);
+  await vi.waitFor(() => expect(connected).toBe(true)); // la pantalla se suscribió al feed
 }
 
 afterEach(() => {
