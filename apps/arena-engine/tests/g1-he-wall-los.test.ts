@@ -513,8 +513,8 @@ describe("HE_WALL_EXPLOSION_LOS · B · vehículo PEGADO al muro: la boca del ar
  * (ni el tirador ni nadie la recibía); ahora la onda sale de la cara de su lado, a
  * ~(R + 0,05) m del centro del tirador, dentro del radio del HE. Este bloque FIJA el
  * comportamiento actual para que la integración o el usuario decidan la regla con datos
- * (docs/technical/he-wall-explosion.md): si se decide excluir al tirador de su onda, estos
- * tests son los que deben cambiar.
+ * (docs/technical/engine.md, sección «Explosión de un HE contra un muro»): si se decide
+ * excluir al tirador de su onda, estos tests son los que deben cambiar.
  */
 describe("HE_WALL_EXPLOSION_LOS · B · fuego amigo: autodaño del tirador pegado al muro (P3-6, comportamiento fijado)", () => {
   const R = heGunnerNoSpread().radiusM;
