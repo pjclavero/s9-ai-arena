@@ -63,7 +63,7 @@ La tabla de versiones (sección **Versiones y build**) muestra para cada una su 
 | `rejected` | No superó la validación. | El motivo, y «Reenviar vN» o «Corregir el código» |
 | `validated` | Superó la validación. | «pendiente de publicar» y el botón «Publicar vN» |
 | `published` | Jugable. | `vN publicada` junto al nombre del bot |
-| `frozen` | Congelada al cerrarse las inscripciones del torneo en el que participa. Sigue pudiendo jugar. | — |
+| `frozen` | Congelada al cerrarse las inscripciones de un torneo: inmutable para siempre. Sigue pudiendo jugar y puedes inscribirla en otros torneos. | «Frozen / Inmutable» |
 | `suspended`, `retired` | Suspendida por moderación / retirada. | — |
 
 La tarjeta **«Mirando vN · estado»** resume la versión que estás mirando; cambia con «Ver vN» y refresca con **«Actualizar estado»**.
@@ -102,6 +102,6 @@ Una versión enviada, validada o publicada **no se puede modificar ni borrar**. 
 ## Usar el bot
 
 - **En una batalla de práctica**: en 1 contra 1, dos bots con versión publicada; en una batalla por equipos, hasta 4 bots por bando (4 contra 4, máximo 8 en total). Eliges qué versión juega cada uno ([Batallas](battles.md)).
-- **En un torneo**: inscribes una versión publicada ([Torneos](tournaments.md)). Al cerrarse las inscripciones, la versión inscrita queda `frozen`.
+- **En un torneo**: inscribes una versión publicada o congelada ([Torneos](tournaments.md)). Al cerrarse las inscripciones, la versión inscrita queda `frozen` (inmutable); puedes volver a inscribir esa misma versión en otro torneo sin crear una nueva.
 - En la batalla, el vehículo lo conduce **tu código** con el equipamiento de **esa versión**.
 - **En un equipo**: añade tu bot a un [equipo](teams.md).

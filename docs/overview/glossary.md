@@ -52,7 +52,7 @@ reales. Cuando el uso habitual y el del código difieren, se indica.
 ## F
 
 - **fail-closed (falla cerrado).** Ante la falta de una pieza o de una configuración, el sistema rechaza en lugar de aceptar. Por ejemplo: un build sin sandbox se rechaza; un ticket sin secreto se rechaza.
-- **frozen.** Estado de una versión de bot tras participar en un torneo. Ya no puede inscribirse en otro.
+- **frozen.** Estado de una versión de bot al cerrarse las inscripciones de un torneo. Significa **inmutable** (mismo código, hash y loadout para siempre), no «usada»: puede volver a inscribirse en otros torneos si sigue siendo elegible.
 
 ## G
 

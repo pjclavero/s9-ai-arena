@@ -93,7 +93,13 @@ info:
   # `broadcastPhase`. BroadcastUnavailableReason gana target_not_found,
   # tournament_no_content y tournament_not_started; una batalla revertida es
   # battle_not_available.
-  version: 0.19.0
+  # 0.20.0 · FROZEN-REUSE (semántica, aditivo): enterTournament acepta versiones `frozen`
+  # (congeladas por un torneo anterior: inmutables, NO «usadas una vez») con las mismas
+  # comprobaciones de elegibilidad; la versión se inscribe tal cual (ni se clona, ni se
+  # republica, ni se descongela) y closeEntries no la vuelve a tocar. `bot_not_published`
+  # pasa a significar «estado fuera de published|frozen» también aquí (como en
+  # createPracticeBattle) y lleva `currentState` con el estado real.
+  version: 0.20.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1107,13 +1113,13 @@ paths:
       responses:
         '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
-        '409': { description: 'Inscripciones cerradas, bot no publicado o suspendido, already_entered, o bot_version_not_eligible (ELIG, con `notEligible`)', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+        '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
       tags: [tournaments]
       operationId: closeEntries
-      summary: 'Cierra inscripciones, congela versiones, revela las semillas del commit-reveal y genera el calendario (E9/T9.4).'
+      summary: 'Cierra inscripciones, congela versiones (published → frozen; una ya `frozen` no se toca), revela las semillas del commit-reveal y genera el calendario (E9/T9.4).'
       x-min-role: organizer
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
@@ -2328,6 +2334,9 @@ components:
         - $ref: '#/components/schemas/Error'
         - type: object
           properties:
+            currentState:
+              $ref: '#/components/schemas/BotState'
+              description: 'FROZEN-REUSE · sólo con error=bot_not_published en enterTournament: estado real de la versión pedida (ausente si la versión no existe).'
             notEligible:
               type: array
               description: 'ELIG · sólo con error=bot_version_not_eligible: cada versión no elegible y su motivo.'

@@ -452,7 +452,8 @@ Estados posibles:
 - **Impacto:** el usuario ve errores internos con un doble clic, y las reglas de ciclo de vida son incoherentes.
 - **Solución prevista:** mapear las violaciones de unicidad a 409, hacer idempotentes las transiciones de torneo y decidir la política de `frozen`.
 - **Condición de cierre:** los tests concurrentes devuelven 409 en lugar de 500 y la política de `frozen` es coherente en batallas y torneos.
-- **Avance (DEV-B, parte batallas):** `POST /battles` con un bot repetido o `team` inválido da `400` (antes `500` por la PK de `participants`); el alta es una transacción (batalla + participantes + trabajo); doble `POST /run` = un único trabajo. **Pendiente:** la política de `frozen` (sigue aceptándose en práctica) y el resto de rutas (registro, bots, `close-entries`).
+- **Avance (DEV-B, parte batallas):** `POST /battles` con un bot repetido o `team` inválido da `400` (antes `500` por la PK de `participants`); el alta es una transacción (batalla + participantes + trabajo); doble `POST /run` = un único trabajo. **Pendiente:** el resto de rutas (registro, bots, `close-entries`).
+- **Avance (FROZEN-REUSE, rama `fix/frozen-version-reuse`):** política de `frozen` decidida y coherente: `frozen` = inmutable, NO «usada una vez». Batallas y torneos usan la misma regla de estado (`isCompetitionState`: `published|frozen`) y la misma elegibilidad; la inscripción no clona, no republica ni descongela, y `close-entries` no vuelve a congelar una versión que ya llega `frozen`. Tests en `apps/api/src/frozen-reuse.test.ts`.
 
 <a id="td-014"></a>
 ## TD-014 — Redirección 301 a http en la lista de replays

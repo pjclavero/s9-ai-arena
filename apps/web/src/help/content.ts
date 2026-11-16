@@ -142,7 +142,8 @@ export const GLOSSARY: ReadonlyArray<GlossaryEntry> = [
     id: "estados",
     definition:
       "draft (subida, sin enviar) → validating (en validación) → validated (aprobada) o rejected (rechazada, con motivo) → published (puede combatir). " +
-      "Una versión publicada antigua sigue pudiendo combatir aunque la última esté rechazada.",
+      "Una versión publicada antigua sigue pudiendo combatir aunque la última esté rechazada. " +
+      "Al cerrar las inscripciones de un torneo, sus versiones pasan a frozen (Frozen / Inmutable): ya no cambian nunca, pero siguen pudiendo combatir e inscribirse en otros torneos si son elegibles.",
   },
   {
     term: "Runtime",

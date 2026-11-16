@@ -50,9 +50,9 @@ Datos principales de `tournaments`:
 ## Ciclo de vida
 
 1. **Crear** (`POST /tournaments`, `organizer`). Se valida formato, modo, que `rulesetId` exista en la BD y el rango del presupuesto. Se inserta con `state='open'` (no pasa por `draft`).
-2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` (`409 bot_not_published`) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
+2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` **o `frozen`** (`409 bot_not_published` con `currentState` si su estado es otro) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
 3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer`). Si alguna inscripción pendiente usa una versión no elegible → `409 entries_not_eligible` con sus `entryId` (sin motivo: es del dueño) y no se congela ni se cierra nada. Si no:
-   - marca `entries.frozen=true` y pasa cada versión inscrita de `published` a `frozen`;
+   - marca `entries.frozen=true` y pasa cada versión inscrita de `published` a `frozen`; una versión que ya llegó `frozen` (de un torneo anterior) no se toca: ni transición ni auditoría;
    - aplica el commit-reveal de semillas: si el torneo publicó `seed_commitment`, el cierre debe traer `seeds` cuyo `sha256(seeds.join("|"))` coincida (`409 seeds_required` / `seed_reveal_mismatch`); si no, el servidor genera 8 semillas y su compromiso;
    - pone `state='closed'` y encola `generate_schedule`.
 4. **Calendario** (worker, `scheduler.ts`): ver [abajo](#calendario-y-batallas). Al terminar, `state='running'`.
@@ -156,7 +156,7 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 ## Errores / limitaciones
 
 - **Pool de mapas**: la web no lo configura (ni presupuesto, fechas ni series). Siempre se juega en `mvp-arena-01` ([TD-015](../roadmap/technical-debt.md#td-015)).
-- **Versiones congeladas**: tras un torneo, la versión queda `frozen` y no puede inscribirse en otro. Como el build rechaza toda versión nueva, en la práctica un bot sólo juega un torneo.
+- **Versiones congeladas (FROZEN-REUSE)**: tras un torneo, la versión queda `frozen`: **inmutable** (código, hash y loadout fijos para siempre, trigger `bot_version_immutable`), no «usada». La misma versión exacta puede inscribirse en otros torneos, sin clonarla, republicarla ni descongelarla, siempre que siga siendo elegible (`assertTournamentEligible` en `services/version-eligibility.ts`). Las inscripciones de los torneos A y B apuntan a la misma fila de `bot_versions`.
 - **Botones sin rol**: «Cerrar inscripciones» se muestra a cualquiera y sin rol responde `403 Requiere rol organizer`.
 - **Cierre concurrente**: `close-entries` en paralelo puede dar `200` + `500` ([TD-013](../roadmap/technical-debt.md#td-013)).
 - **Fallos de infraestructura**: una batalla `failed (infrastructure)` deja su serie sin cerrar. Ver [TD-015](../roadmap/technical-debt.md#td-015).
@@ -165,7 +165,7 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 
 - **FUNCIONA ACTUALMENTE**: crear, inscribir y cerrar (con `organizer`); generación del calendario; ejecución automática; cuadro; Elo; commit-reveal de semillas. Verificado de punta a punta en navegador real en un entorno aislado, con versiones publicadas forzadas en la BD (auditoría).
 - **PARCIAL**: los formatos distintos de `single_elimination` solo tienen pruebas a nivel de generador (`formats.test.ts`); una batalla `failed` bloquea el cierre ([TD-015](../roadmap/technical-debt.md#td-015)); CTF no se admite en torneos ([TD-070](../roadmap/technical-debt.md#td-070)).
-- **PENDIENTE**: selector de pool de mapas y resto de parámetros en la web, clasificación por torneo en la web, inscripción de versiones nuevas tras un torneo.
+- **PENDIENTE**: selector de pool de mapas y resto de parámetros en la web, clasificación por torneo en la web.
 
 ## Documentación relacionada
 
@@ -193,4 +193,4 @@ Verificado contra `27f70bb`.
 | La web no envía `seasonId` | CODE_VERIFIED | `apps/web/src/pages/RankingPage.tsx:38` |
 | Torneo `round_robin` completo desde la UI (organizer) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b (entorno aislado, versiones forzadas) |
 | La clasificación sale vacía en la web | RUNTIME_VERIFIED (síntoma) / CODE_VERIFIED (causa propuesta) | Auditoría B p2 §1b («Todavía no hay clasificación»); causa por los ficheros anteriores |
-| Versiones `frozen` no reinscribibles | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/tournaments.ts:184-187`; auditoría B p2 §5 |
+| Versiones `frozen` reinscribibles tal cual (FROZEN-REUSE) | CODE_VERIFIED + test | `services/version-eligibility.ts` (`assertTournamentEligible`); `apps/api/src/frozen-reuse.test.ts` |
