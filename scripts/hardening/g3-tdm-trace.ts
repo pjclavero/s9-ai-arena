@@ -34,7 +34,14 @@ for (let i = 0; i < 8; i++)
     spec: i % 3 === 2 ? scoutLoadout() : gunnerLoadout(),
   });
 const ruleset = loadRuleset("tdm_mvp@1", { respawn: { enabled: false, delayTicks: 0 }, scoreToWin: 99 });
-const b = new Battle({ battleId: "rr", seed: "rules-seed", ruleset, map: emptyArena(), participants: parts, recordReplay: true });
+const b = new Battle({
+  battleId: "rr",
+  seed: "rules-seed",
+  ruleset,
+  map: emptyArena(),
+  participants: parts,
+  recordReplay: true,
+});
 
 /** Última observación y último comando de cada bot (se envuelve decide: sólo mira). */
 const lastObs = new Map<string, { tick: number; enemyContacts: number; fire: boolean }>();
@@ -95,9 +102,25 @@ for (let t = 0; t < ruleset.timeLimitTicks + 10 && !b.isFinished(); t++) {
     const o = lastObs.get(v.id);
     rows.push(
       [
-        tick, v.id, v.team, pos.x.toFixed(2), pos.y.toFixed(2), Math.round(v.hullHp), ammo, ammoMax,
-        +weaponOk, +cooldownReady, +energyOk, +(weaponOk && cooldownReady && ammo > 0 && energyOk), radar,
-        nearest.toFixed(2), inRange, o?.tick ?? -1, o?.enemyContacts ?? -1, o ? +o.fire : -1, nProj,
+        tick,
+        v.id,
+        v.team,
+        pos.x.toFixed(2),
+        pos.y.toFixed(2),
+        Math.round(v.hullHp),
+        ammo,
+        ammoMax,
+        +weaponOk,
+        +cooldownReady,
+        +energyOk,
+        +(weaponOk && cooldownReady && ammo > 0 && energyOk),
+        radar,
+        nearest.toFixed(2),
+        inRange,
+        o?.tick ?? -1,
+        o?.enemyContacts ?? -1,
+        o ? +o.fire : -1,
+        nProj,
       ].join(","),
     );
   }
@@ -105,7 +128,9 @@ for (let t = 0; t < ruleset.timeLimitTicks + 10 && !b.isFinished(); t++) {
 writeFileSync(csvPath, rows.join("\n") + "\n");
 
 // ---------------------------------------------------------------- resumen
-const deaths = b.publicEvents.filter((e: any) => e.kind === "vehicle_destroyed").map((e: any) => ({ tick: e.tick, id: e.targetId }));
+const deaths = b.publicEvents
+  .filter((e: any) => e.kind === "vehicle_destroyed")
+  .map((e: any) => ({ tick: e.tick, id: e.targetId }));
 const lastDeath = deaths.length ? Math.max(...deaths.map((d) => d.tick)) : 0;
 const parsed = rows.slice(1).map((r) => r.split(","));
 const col = (name: string) => header.split(",").indexOf(name);
@@ -138,7 +163,8 @@ const perSurvivor = Object.fromEntries(
 const aliveByTeamAfter = { red: Infinity, blue: Infinity } as Record<string, number>;
 for (const tick of new Set(after.map((r) => r[col("tick")]))) {
   const rs = after.filter((r) => r[col("tick")] === tick);
-  for (const team of ["red", "blue"]) aliveByTeamAfter[team] = Math.min(aliveByTeamAfter[team], rs.filter((r) => r[col("team")] === team).length);
+  for (const team of ["red", "blue"])
+    aliveByTeamAfter[team] = Math.min(aliveByTeamAfter[team], rs.filter((r) => r[col("team")] === team).length);
 }
 const result = b.getResult();
 const summary = {
@@ -150,16 +176,34 @@ const summary = {
   lastDeathTick: lastDeath,
   ticksAfterLastDeath: after.length ? Number(after[after.length - 1][col("tick")]) - lastDeath : 0,
   minAliveByTeamAfterLastDeath: aliveByTeamAfter,
-  rejectedActions: { total: rejected.length, afterLastDeath: rejected.filter((r) => r.tick > lastDeath).length, byReason: rejected.reduce((a: any, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {}) },
+  rejectedActions: {
+    total: rejected.length,
+    afterLastDeath: rejected.filter((r) => r.tick > lastDeath).length,
+    byReason: rejected.reduce((a: any, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {}),
+  },
   noAmmoRejections: rejected.filter((r) => r.reason === "no_ammo").length,
-  ticksWithProjectilesAfterLastDeath: new Set(after.filter((r) => Number(r[col("projectilesInFlight")]) > 0).map((r) => r[col("tick")])).size,
+  ticksWithProjectilesAfterLastDeath: new Set(
+    after.filter((r) => Number(r[col("projectilesInFlight")]) > 0).map((r) => r[col("tick")]),
+  ).size,
   perSurvivor,
   finalPositions: Object.fromEntries(
-    b.getVehicles().filter((v) => v.alive).map((v) => [v.id, (b as any).poses().get(v.id).position]),
+    b
+      .getVehicles()
+      .filter((v) => v.alive)
+      .map((v) => [v.id, (b as any).poses().get(v.id).position]),
   ),
   arena: { widthM: (b.config.map as any).widthM, heightM: (b.config.map as any).heightM },
-  result: result ? { winner: result.winner, endReason: (result as any).endReason, ticks: result.ticks, score: (result as any).score } : null,
+  result: result
+    ? { winner: result.winner, endReason: (result as any).endReason, ticks: result.ticks, score: (result as any).score }
+    : null,
 };
 writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + "\n");
-console.log(JSON.stringify({ hashAt6000MatchesAnchor: summary.hashAt6000MatchesAnchor, lastDeath, rows: rows.length - 1, result: summary.result }));
+console.log(
+  JSON.stringify({
+    hashAt6000MatchesAnchor: summary.hashAt6000MatchesAnchor,
+    lastDeath,
+    rows: rows.length - 1,
+    result: summary.result,
+  }),
+);
 b.free();

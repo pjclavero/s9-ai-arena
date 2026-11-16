@@ -256,7 +256,13 @@ describe("G3 · reglas del rearme: asignación, idempotente, tope en el máximo,
       { id: "veh_1", botId: "b1", team: "red", spec: minerLoadout() },
       { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
     ];
-    const b = new Battle({ battleId: "g3m", seed: "g3-seed", ruleset: tdm("all_alive_participants"), map: emptyArena(), participants: parts });
+    const b = new Battle({
+      battleId: "g3m",
+      seed: "g3-seed",
+      ruleset: tdm("all_alive_participants"),
+      map: emptyArena(),
+      participants: parts,
+    });
     const v1 = veh(b, "veh_1");
     const mines = v1.modulesOf("mine");
     expect(mines.length).toBeGreaterThan(0);
