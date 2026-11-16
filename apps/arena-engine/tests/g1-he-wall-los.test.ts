@@ -190,9 +190,10 @@ class AimFireBot implements BotAgent {
   constructor(
     readonly botId: string,
     private target: Vec2,
+    private jitter: readonly number[] = AIM_JITTER_M,
   ) {}
   decide(obs: any) {
-    const j = AIM_JITTER_M[this.d++ % AIM_JITTER_M.length]!;
+    const j = this.jitter[this.d++ % this.jitter.length]!;
     return {
       forTick: obs.tick,
       turret: { targetPoint: { x: this.target.x, y: this.target.y + j } },
@@ -209,7 +210,11 @@ class RecordingBot extends IdleBot {
 
 interface Outcome {
   wallImpacts: number;
+  /** Impactos ocurridos ANTES del último tick de decisión: sus eventos privados ya se entregaron. */
+  deliveredImpacts: number;
   splash: Map<string, number>;
+  /** Daño efectivo de cada onda recibida, en orden (para comparar el centro de la onda). */
+  waves: Map<string, number[]>;
   events: Map<string, any[]>;
 }
 
@@ -219,6 +224,7 @@ function run(
   aim: Vec2,
   victims: Record<string, Vec2>,
   extraWalls: { id: string; position: Vec2; halfW: number; halfH: number }[],
+  opts: { jitter?: readonly number[] } = {},
 ): Outcome {
   const map = emptyArena();
   map.walls.push(...extraWalls);
@@ -237,25 +243,37 @@ function run(
       ...ids.map((k, i) => ({ id: `veh_${i + 1}`, botId: k, team: "blue", spec: sandbagLoadout() })),
     ],
   });
-  b.attachBot("veh_0", new AimFireBot("b0", aim));
+  b.attachBot("veh_0", new AimFireBot("b0", aim, opts.jitter));
   const bots = ids.map((k, i) => {
     const bot = new RecordingBot(k);
     b.attachBot(`veh_${i + 1}`, bot);
     return bot;
   });
   const splash = new Map(ids.map((k) => [k, 0]));
+  const waves = new Map(ids.map((k) => [k, [] as number[]]));
   let wallImpacts = 0;
+  // P3-3 (revisión): los eventos privados emitidos en un tick se entregan en el SIGUIENTE
+  // tick de decisión. Se anota en qué paso cae cada impacto y cuál fue el último paso de
+  // decisión: los impactos anteriores a él tienen su hit_taken entregado, sin holgura.
+  const impactSteps: number[] = [];
+  let lastDecisionStep = -1;
   for (let t = 0; t < 400 && !b.isFinished(); t++) {
+    if (b.isDecisionTick()) lastDecisionStep = t;
     const before = b.getInternalFrame().projectiles.length;
     b.step();
-    if (b.getInternalFrame().projectiles.length < before) wallImpacts++;
+    if (b.getInternalFrame().projectiles.length < before) {
+      wallImpacts++;
+      impactSteps.push(t);
+    }
     for (const r of b.damageRecordsOfLastTick()) {
       const i = Number(r.target.replace("veh_", "")) - 1;
       if (i < 0) continue;
       expect(r.sourceKind, `${ids[i]} sólo puede recibir la onda`).toBe("explosion");
       splash.set(ids[i]!, splash.get(ids[i]!)! + 1);
+      waves.get(ids[i]!)!.push(r.effective);
     }
   }
+  const deliveredImpacts = impactSteps.filter((s) => s < lastDecisionStep).length;
   // Ninguna víctima se ha movido (el defecto no puede esconderse en la física).
   for (const [i, k] of ids.entries()) {
     const p = b.getPhysics().pose(`veh_${i + 1}`)!.position;
@@ -263,7 +281,7 @@ function run(
   }
   const events = new Map(ids.map((k, i) => [k, bots[i]!.events]));
   b.free();
-  return { wallImpacts, splash, events };
+  return { wallImpacts, deliveredImpacts, splash, waves, events };
 }
 
 // Muro interior: x ∈ [60, 62], y ∈ [28, 52]. El artillero en (20, 40) dispara a (60, 40).
@@ -310,10 +328,9 @@ describe("HE_WALL_EXPLOSION_LOS · B · onda de un HE contra un muro, en batalla
 
   it("el hit_taken de la onda revela el origen a quien la ve (misma geometría de cara)", () => {
     const hits = out.events.get("visible")!.filter((e) => e.kind === "hit_taken");
-    // Los eventos privados se entregan en el siguiente tick de decisión: el del último
-    // impacto puede quedar sin entregar al cortar la batalla.
-    expect(hits.length).toBeGreaterThanOrEqual(out.wallImpacts - 1);
-    expect(hits.length).toBeLessThanOrEqual(out.wallImpacts);
+    // Exacto (ronda 2, P3-3): un hit_taken por cada impacto cuyo evento ya se entregó.
+    expect(out.deliveredImpacts).toBeGreaterThan(3);
+    expect(hits.length).toBe(out.deliveredImpacts);
     for (const h of hits) expect(h.sourceId).toBe("veh_0");
   });
 });
@@ -346,5 +363,114 @@ describe("HE_WALL_EXPLOSION_LOS · B · muro de borde del mapa (coplanario con e
     const out = run({ x: 80, y: 40 }, { x: 120, y: 40 }, { nearBorder: { x: 117.5, y: 42.5 } }, []);
     expect(out.wallImpacts).toBeGreaterThan(3);
     expect(out.splash.get("nearBorder")).toBe(out.wallImpacts);
+  });
+});
+
+// ------------------------------------------------------------------ ronda 2 · P1-1
+// La boca del arma está a radiusM + 0,3 m del centro (battle.ts): un vehículo pegado a un muro
+// que apunta hacia él dispara un proyectil que NACE DENTRO del sólido. Rapier da toi = 0, el
+// impacto en el propio origen y normal (0,0): sin el arreglo, la onda atravesaba el muro (la
+// revisión midió 14 ondas a una víctima totalmente oculta; la base, 0). Decisión de reglas: se
+// sigue pudiendo disparar (no se cambia canFire), y el proyectil detona en la cara por la que
+// su recta ENTRA en el muro, que es la del lado del tirador.
+
+describe("HE_WALL_EXPLOSION_LOS · F · origen del tramo DENTRO o SOBRE el muro (ronda 2, P1-1)", () => {
+  it("origen DENTRO: la superficie es la cara de entrada (x = 60), normal (-1, 0)", () => {
+    const w = worldWithWall();
+    const from = { x: 60.25, y: 40 };
+    const hit = w.castRay(from, 0, 1)!;
+    expect(hit.entityId).toBe("wall_x");
+    expect(hit.distanceM).toBe(0); // el caso del defecto: impacto en el propio origen
+    const s = w.impactSurface(from, 0, 1, "wall_x", hit.point)!;
+    expect(s.point.x).toBeCloseTo(60, 12);
+    expect(s.point.y).toBeCloseTo(40, 12);
+    expect(s.normal).toEqual({ x: -1, y: 0 });
+    expect(w.hasLineOfSightFromSurface(s, { x: 64.5, y: 40 }), "detrás del muro").toBe(false);
+    expect(w.hasLineOfSightFromSurface(s, { x: 58.5, y: 44 }), "lado del tirador").toBe(true);
+    w.free();
+  });
+
+  it("origen que JUSTO toca la cara (x = 60 exacto): misma cara y mismo veredicto", () => {
+    const w = worldWithWall();
+    const from = { x: 60, y: 40 };
+    const hit = w.castRay(from, 0, 1)!;
+    expect(hit.entityId).toBe("wall_x");
+    const s = w.impactSurface(from, 0, 1, "wall_x", hit.point)!;
+    expect(s.point.x).toBeCloseTo(60, 12);
+    expect(s.normal).toEqual({ x: -1, y: 0 });
+    expect(w.hasLineOfSightFromSurface(s, { x: 64.5, y: 40 })).toBe(false);
+    expect(w.hasLineOfSightFromSurface(s, { x: 58.5, y: 44 })).toBe(true);
+    w.free();
+  });
+
+  it("origen DENTRO con recta OBLICUA: el punto de entrada está en la cara y sobre la recta", () => {
+    const w = worldWithWall();
+    const a = 0.4;
+    const from = { x: 60.3, y: 40 };
+    const hit = w.castRay(from, a, 1)!;
+    const s = w.impactSurface(from, a, 1, "wall_x", hit.point)!;
+    expect(s.normal).toEqual({ x: -1, y: 0 });
+    expect(s.point.x).toBeCloseTo(60, 12);
+    // En la recta del proyectil, DETRÁS del origen (t < 0).
+    expect(s.point.y).toBeCloseTo(40 - 0.3 * Math.tan(a), 12);
+    expect(w.hasLineOfSightFromSurface(s, { x: 64.5, y: 41 })).toBe(false);
+    w.free();
+  });
+
+  it("origen DENTRO de un muro GIRADO: cara de entrada girada", () => {
+    const w = new PhysicsWorld();
+    const th = Math.PI / 6;
+    w.addWall("rot", { x: 60, y: 40 }, 1, 10, th);
+    // Punto 0,2 m dentro de la cara local -x, sobre el eje local x.
+    const from = { x: 60 - 0.8 * Math.cos(th), y: 40 - 0.8 * Math.sin(th) };
+    const hit = w.castRay(from, th, 1)!;
+    expect(hit.entityId).toBe("rot");
+    const s = w.impactSurface(from, th, 1, "rot", hit.point)!;
+    expect(s.normal.x).toBeCloseTo(-Math.cos(th), 12);
+    expect(s.normal.y).toBeCloseTo(-Math.sin(th), 12);
+    expect(s.point.x).toBeCloseTo(60 - Math.cos(th), 6);
+    expect(s.point.y).toBeCloseTo(40 - Math.sin(th), 6);
+    const P = s.point;
+    expect(w.hasLineOfSightFromSurface(s, { x: P.x - 3 * Math.cos(th), y: P.y - 3 * Math.sin(th) })).toBe(true);
+    expect(w.hasLineOfSightFromSurface(s, { x: P.x + 4 * Math.cos(th), y: P.y + 4 * Math.sin(th) })).toBe(false);
+    w.free();
+  });
+});
+
+describe("HE_WALL_EXPLOSION_LOS · B · vehículo PEGADO al muro: la boca del arma nace dentro (ronda 2, P1-1)", () => {
+  const R = heGunnerNoSpread().radiusM;
+  // A 5 cm de la cara oeste (x = 60), apuntando al este: la boca (R + 0,3) queda ~0,25 m DENTRO.
+  const HUG = { x: 60 - R - 0.05, y: 40 };
+  const SAME_SIDE = { x: 58.5, y: 44 };
+  const NO_JITTER = [0];
+
+  it("el escenario ejerce el caso: la boca del arma está DENTRO del muro", () => {
+    const muzzleX = HUG.x + R + 0.3;
+    expect(muzzleX).toBeGreaterThan(60);
+    expect(muzzleX).toBeLessThan(62);
+  });
+
+  it("víctima TOTALMENTE oculta tras el muro: nada", () => {
+    const out = run(HUG, { x: 75, y: 40 }, { behindWall: { x: 64.5, y: 40 } }, [WALL]);
+    expect(out.wallImpacts).toBeGreaterThan(3);
+    expect(out.splash.get("behindWall")).toBe(0);
+  });
+
+  it("víctima en el MISMO lado que el tirador: recibe la onda en cada impacto", () => {
+    const out = run(HUG, { x: 75, y: 40 }, { sameSide: SAME_SIDE, behindWall: { x: 64.5, y: 40 } }, [WALL]);
+    expect(out.wallImpacts).toBeGreaterThan(3);
+    expect(out.splash.get("sameSide")).toBe(out.wallImpacts);
+    expect(out.splash.get("behindWall")).toBe(0);
+  });
+
+  it("la onda sale de la CARA: cada onda daña lo mismo que la de un disparo lejano al mismo punto", () => {
+    const hug = run(HUG, { x: 75, y: 40 }, { sameSide: SAME_SIDE }, [WALL], { jitter: NO_JITTER });
+    const far = run({ x: 20, y: 40 }, { x: 60, y: 40 }, { sameSide: SAME_SIDE }, [WALL], { jitter: NO_JITTER });
+    const a = hug.waves.get("sameSide")!;
+    const b = far.waves.get("sameSide")!;
+    const n = Math.min(a.length, b.length);
+    expect(n).toBeGreaterThan(3);
+    // Con el centro en la boca (0,25 m dentro del muro) la caída con la distancia daría ~2 % menos.
+    for (let i = 0; i < n; i++) expect(Math.abs(a[i]! - b[i]!), `onda ${i}`).toBeLessThan(1e-4 * b[i]!);
   });
 });
