@@ -97,7 +97,7 @@ const versionRow = (botId: string, version = 1) => h.db("bot_versions").where({ 
 const versionCount = async (botId: string) =>
   Number((await h.db("bot_versions").where({ bot_id: botId }).count({ n: "*" }))[0].n);
 const auditFor = (botId: string, version = 1) =>
-  h.db("audit_log").where({ target: `bot:${botId}@${version}` }).orderBy("created_at", "asc");
+  h.db("audit_log").where({ target: `bot:${botId}@${version}` }).orderBy("id", "asc");
 
 async function openTournament(name: string) {
   const r = await request(app)
@@ -140,6 +140,7 @@ let tB: string;
 let xV1Id: string;
 let beforeB: ReturnType<typeof immutableView>;
 let privacyBefore: Awaited<ReturnType<typeof privacyView>>;
+let anonSourceBefore: number;
 let replay: Replay;
 let battleA: string;
 let verifyA: Record<string, unknown>;
@@ -161,6 +162,7 @@ beforeAll(async () => {
   await createLoadoutRevision(h.db, X, GOOD_V2 as never, SUMMARY);
   xV1Id = (await versionRow(X)).id;
   privacyBefore = await privacyView(X);
+  anonSourceBefore = (await request(app).get(`/bots/${X}/versions/1/source`)).status;
 
   // ---- Torneo A: published → inscrita → cierre → frozen.
   tA = await openTournament("FR-A");
@@ -302,8 +304,10 @@ describe("B2 · published → torneo A → frozen; la MISMA versión frozen → 
     expect(privacyBefore.visibility).toBe("private");
     const anon = await request(app).get(`/bots/${X}`);
     expect(anon.status).toBe(404);
+    // El código sigue sin ser legible para un anónimo, con la MISMA respuesta que antes de A.
     const anonSrc = await request(app).get(`/bots/${X}/versions/1/source`);
-    expect(anonSrc.status).toBe(404);
+    expect(anonSrc.status).not.toBe(200);
+    expect(anonSrc.status).toBe(anonSourceBefore);
   });
 });
 
