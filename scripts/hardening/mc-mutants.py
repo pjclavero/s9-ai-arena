@@ -6,7 +6,8 @@ anclas re-verificadas sobre el árbol integrado de hardening/contracts y el runn
 (mutlib.py: ancla única, control, rc real, árbol limpio).
 
 Cambios de G1 respecto al original:
-  · M10 re-anclado: la entrada de `armor.reduction` declara ahora `observes` (canal de efecto).
+  · M10 re-anclado: la entrada de `armor.reduction` declara ahora `observes` (canal de efecto)
+    y, desde G1 ronda 4, `governs` (canal gobernado); el mutante sigue quitando sólo `perturb`.
   · M6 y M12 sobrevivían en el HEAD integrado (P2-1 de INTEGRACION): la sonda del gate medía
     `stateHash()` y el hash v2 de MD serializa la cola de radio y la mina enteras. Con la
     sonda por efecto observable (G1) deben MORIR contra el gate.
@@ -57,8 +58,9 @@ MUTANTS = [
            "packages/module-catalog/validator/index.ts",
            r"if \(([^\n]*maxLoadKg[^\n]*)\)", "if (false)", [GATE], regex=True),
     Mutant("M10", "una entrada ACTIVE sin mutación (sin perturb)", FS,
-           'reduction: A("combat.ts applyDamage", scale(0.2), ["damage"]),',
-           'reduction: { status: "ACTIVE", consumer: "combat.ts applyDamage", observes: ["damage"] },', [GATE]),
+           'reduction: A("vehicle.ts armor.profile → damage.ts resolveDamage (efectivo)", scale(0.2), ["damage"], ["hull"]),',
+           'reduction: { status: "ACTIVE", consumer: "damage.ts resolveDamage", observes: ["damage"], governs: ["hull"] },',
+           [GATE]),
     Mutant("M11", "deployMine vuelve a exigir fire en el mismo comando", "apps/arena-engine/src/sim/battle.ts",
            "      if (!cmd) continue;\n      const wantsFire = Array.isArray(cmd.fire) && cmd.fire.length > 0;\n"
            "      if (!wantsFire && !cmd.deployMine) continue;",
