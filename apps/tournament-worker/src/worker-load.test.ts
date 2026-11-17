@@ -132,6 +132,17 @@ describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga",
     expect(s.last[0]).toBe(3000);
   });
 
+  it("stop() limpia el temporizador y es idempotente (N4: stop sin clearInterval)", () => {
+    vi.useFakeTimers();
+    const s = new ContainerCpuSampler([handle(async () => 1)]);
+    s.start();
+    expect(vi.getTimerCount()).toBe(1);
+    s.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    s.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("la muestra final reutiliza la que está en vuelo y fija el valor", async () => {
     let llamadas = 0;
     const s = new ContainerCpuSampler([handle(async () => (++llamadas, 777))]);
@@ -141,14 +152,18 @@ describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga",
     expect(s.last[0]).toBe(777);
   });
 
-  it("sólo contenedores vivos: handles nulos o ya terminados no generan peticiones (M-C9)", async () => {
+  it("sólo contenedores vivos: handles nulos o CONFIRMADOS terminados no generan peticiones (M-C9)", async () => {
     let vivo = 0;
     let muerto = 0;
     const lecturas = [900, 0, 0];
+    const terminado = { running: false, exitCode: 0, oomKilled: false, gone: false };
     const s = new ContainerCpuSampler([
       null,
       handle(async () => (vivo++, 5000)),
-      handle(async () => (muerto++, lecturas[Math.min(muerto - 1, 2)])),
+      {
+        cpuMs: async () => (muerto++, lecturas[Math.min(muerto - 1, 2)]),
+        state: async () => terminado,
+      } as unknown as ContainerHandle,
     ]);
     for (let i = 0; i < 6; i++) {
       s.tick();
@@ -156,10 +171,151 @@ describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga",
       await dormir(5);
     }
     expect(vivo).toBe(6);
-    expect(muerto).toBe(3); // 900, 0, 0 ⇒ terminado: ya no se consulta
+    expect(muerto).toBe(2); // 900, luego 0 + inspect «!running» ⇒ terminado: ya no se consulta
     expect(s.last[0]).toBeNull();
     expect(s.last[2]).toBe(900);
     await s.final();
-    expect(muerto).toBe(3);
+    expect(muerto).toBe(2);
+  });
+
+  it("P3-2 · un contenedor que muere ANTES de dar una lectura positiva también se deja de muestrear", async () => {
+    let n = 0;
+    const s = new ContainerCpuSampler([
+      { cpuMs: async () => (n++, null), state: async () => ({ running: false, exitCode: 1, oomKilled: false, gone: true }) } as unknown as ContainerHandle,
+    ]);
+    for (let i = 0; i < 5; i++) {
+      s.tick();
+      await dormir(5);
+    }
+    expect(n).toBe(1);
+  });
+});
+
+describe("ContainerCpuSampler · fallo transitorio ≠ contenedor terminado (P2-1)", () => {
+  it("positiva, 2+ nulos con el contenedor VIVO, luego lecturas crecientes: last sigue creciendo (M-D1: null = muerte)", async () => {
+    const lecturas: (number | null)[] = [1000, null, null, null, 2000, 3000];
+    let estado = 0;
+    const s = new ContainerCpuSampler([
+      {
+        cpuMs: async () => lecturas.shift() ?? null,
+        state: async () => (estado++, { running: true, exitCode: null, oomKilled: false, gone: false }),
+      } as unknown as ContainerHandle,
+    ]);
+    const vistos: (number | null)[] = [];
+    for (let i = 0; i < 6; i++) {
+      s.tick();
+      await dormir(5);
+      vistos.push(s.last[0]);
+    }
+    expect(vistos).toEqual([1000, 1000, 1000, 1000, 2000, 3000]);
+    expect(estado).toBe(3);
+  });
+
+  it("si el inspect también falla (null o excepción) NO se da por terminado (M-D2: inspect null = muerte)", async () => {
+    const lecturas: (number | null)[] = [500, null, null, null, 900];
+    let k = 0;
+    const s = new ContainerCpuSampler([
+      {
+        cpuMs: async () => lecturas.shift() ?? null,
+        state: async () => {
+          if (k++ % 2) throw new Error("proxy 502");
+          return null;
+        },
+      } as unknown as ContainerHandle,
+    ]);
+    for (let i = 0; i < 5; i++) {
+      s.tick();
+      await dormir(5);
+    }
+    expect(s.last[0]).toBe(900);
+  });
+
+  it("con 404/`gone` o `!running` SÍ se da por terminado (M-D3: nunca marca terminado)", async () => {
+    for (const st of [
+      { running: false, exitCode: 0, oomKilled: false, gone: true },
+      { running: false, exitCode: 137, oomKilled: true, gone: false },
+    ]) {
+      let n = 0;
+      const s = new ContainerCpuSampler([
+        { cpuMs: async () => (n++, n === 1 ? 700 : null), state: async () => st } as unknown as ContainerHandle,
+      ]);
+      for (let i = 0; i < 5; i++) {
+        s.tick();
+        await dormir(5);
+      }
+      expect(n).toBe(2);
+      expect(s.last[0]).toBe(700);
+    }
+  });
+});
+
+describe("ContainerCpuSampler · vencimiento de la petición (P2-2)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("un cpuMs que nunca resuelve: tras el vencimiento (2×intervalo) el sampler vuelve a pedir (M-D4: sin vencimiento)", async () => {
+    vi.useFakeTimers();
+    let llamadas = 0;
+    const s = new ContainerCpuSampler([
+      { cpuMs: () => (llamadas++, new Promise<number | null>(() => {})) } as unknown as ContainerHandle,
+    ]);
+    s.start();
+    await vi.advanceTimersByTimeAsync(3_900); // < 2×2000 desde la 1ª petición (t=2000 ⇒ vence 6000)
+    expect(llamadas).toBe(1);
+    await vi.advanceTimersByTimeAsync(6_000);
+    s.stop();
+    expect(llamadas).toBeGreaterThan(1);
+    expect(s.stats.timeouts).toBeGreaterThan(0);
+  });
+
+  it("un state() colgado tras una lectura vacía también vence", async () => {
+    vi.useFakeTimers();
+    let llamadas = 0;
+    const s = new ContainerCpuSampler([
+      { cpuMs: async () => (llamadas++, null), state: () => new Promise(() => {}) } as unknown as ContainerHandle,
+    ]);
+    s.start();
+    await vi.advanceTimersByTimeAsync(12_000);
+    s.stop();
+    expect(llamadas).toBeGreaterThan(1);
+  });
+
+  it("final() con una petición colgada vuelve en ≤ 2×intervalo", async () => {
+    vi.useFakeTimers();
+    const s = new ContainerCpuSampler([
+      { cpuMs: () => new Promise<number | null>(() => {}) } as unknown as ContainerHandle,
+    ]);
+    s.tick();
+    let listo = false;
+    void s.final().then(() => (listo = true));
+    await vi.advanceTimersByTimeAsync(s.timeoutMs + 1);
+    expect(listo).toBe(true);
+  });
+
+  it("una respuesta tardía de una petición abandonada no libera la petición vigente", async () => {
+    vi.useFakeTimers();
+    let resolverViejo: (v: number) => void = () => {};
+    let vuelo = 0;
+    let max = 0;
+    let k = 0;
+    const s = new ContainerCpuSampler([
+      {
+        cpuMs: () => {
+          vuelo++;
+          max = Math.max(max, vuelo);
+          k++;
+          if (k === 1) return new Promise<number>((r) => (resolverViejo = (v) => (vuelo--, r(v))));
+          return new Promise<number>((r) => setTimeout(() => (vuelo--, r(4000)), 100_000));
+        },
+      } as unknown as ContainerHandle,
+    ]);
+    s.start();
+    await vi.advanceTimersByTimeAsync(9_000); // 1ª vence a los 6000 ⇒ 2ª en vuelo (≤ 8000)
+    expect(k).toBe(2);
+    resolverViejo(10);
+    await vi.advanceTimersByTimeAsync(10);
+    const antes = k;
+    await vi.advanceTimersByTimeAsync(400); // la 2ª sigue en vuelo (vence ≥ 10000) ⇒ no se abre otra
+    expect(k).toBe(antes);
+    s.stop();
   });
 });

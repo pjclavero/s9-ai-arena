@@ -21,7 +21,11 @@
  *  - intervalo por defecto 2 s, acotado a [1 s, 10 s] (`boundedCpuSampleMs`);
  *  - como mucho UNA petición en vuelo por contenedor: si la anterior no ha vuelto,
  *    ese contenedor se salta en ese tick (se cuenta en `stats.skipped`);
- *  - la muestra FINAL reutiliza la que esté en vuelo en vez de abrir otra.
+ *  - cada petición vence a los 2 intervalos: una colgada (proxy/dockerd atascado) no
+ *    deja al contenedor sin muestrear el resto de la batalla;
+ *  - la muestra FINAL reutiliza la que esté en vuelo en vez de abrir otra;
+ *  - un contenedor sólo se da por terminado si `state()` lo confirma (`gone`/`!running`),
+ *    nunca por lecturas vacías: dos fallos transitorios seguidos no lo apagan.
  *
  * QUÉ SE PIERDE. Resolución: la cota inferior puede quedarse corta como mucho en lo
  * que el bot consuma entre la última muestra positiva y su salida, ≤ intervalo ×
@@ -65,9 +69,6 @@ export function cpuSampleMsFromEnv(env: Record<string, string | undefined>): num
   return n;
 }
 
-/** Lecturas vacías consecutivas (tras una positiva) con las que se da el contenedor por terminado. */
-export const DEAD_AFTER = 2;
-
 export interface CpuSamplerStats {
   /** Ticks del temporizador. */
   ticks: number;
@@ -75,17 +76,31 @@ export interface CpuSamplerStats {
   requests: number;
   /** Contenedores saltados en un tick porque su muestra anterior seguía en vuelo. */
   skipped: number;
+  /** Peticiones que no volvieron en `timeoutMs` y se abandonaron para liberar el hueco. */
+  timeouts: number;
 }
 
-/** Muestreador de UNA batalla. `handles` se lee en cada tick (los lanzamientos lo van llenando). */
+/** Múltiplo del intervalo tras el cual una petición sin respuesta se abandona (libera `inFlight`). */
+export const REQUEST_TIMEOUT_FACTOR = 2;
+
+/**
+ * Muestreador de UNA batalla. `handles` se lee en cada tick (los lanzamientos lo van llenando).
+ *
+ * «Terminado» ≠ «falló»: una lectura vacía (`null`/0) puede ser un fallo transitorio
+ * (dockerd lento, 5xx, vencimiento) o un contenedor que acabó. Sólo se deja de muestrear
+ * cuando `state()` (inspect) lo CONFIRMA: `gone` (404) o `!running`. Si el inspect también
+ * falla (`null`/excepción), se sigue muestreando.
+ */
 export class ContainerCpuSampler {
   /** Última lectura positiva y creciente de cada contenedor (ms de CPU), o null. */
   readonly last: (number | null)[];
-  readonly stats: CpuSamplerStats = { ticks: 0, requests: 0, skipped: 0 };
+  readonly stats: CpuSamplerStats = { ticks: 0, requests: 0, skipped: 0, timeouts: 0 };
   readonly intervalMs: number;
+  /** Vencimiento de cada petición (ms). */
+  readonly timeoutMs: number;
   private readonly inFlight: (Promise<void> | null)[];
-  /** Lecturas no positivas seguidas tras haber leído una positiva (contenedor terminado). */
-  private readonly deadStreak: number[];
+  /** Contenedor confirmado como terminado: no se vuelve a consultar. */
+  private readonly terminated: boolean[];
   private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
@@ -93,14 +108,14 @@ export class ContainerCpuSampler {
     intervalMs?: number,
   ) {
     this.intervalMs = boundedCpuSampleMs(intervalMs);
+    this.timeoutMs = this.intervalMs * REQUEST_TIMEOUT_FACTOR;
     this.last = handles.map(() => null);
     this.inFlight = handles.map(() => null);
-    this.deadStreak = handles.map(() => 0);
+    this.terminated = handles.map(() => false);
   }
 
-  /** Un contenedor que ya dio CPU y luego devuelve DEAD_AFTER lecturas vacías seguidas terminó: no se vuelve a consultar. */
   private isDead(i: number): boolean {
-    return this.deadStreak[i] >= DEAD_AFTER;
+    return this.terminated[i];
   }
 
   /** Arranca el temporizador y lo devuelve (para registrarlo en el teardown). */
@@ -130,35 +145,50 @@ export class ContainerCpuSampler {
   }
 
   /**
-   * Muestra final: para el temporizador y espera una lectura de cada contenedor
-   * (la que ya esté en vuelo, o una nueva). Nunca rechaza; el llamador la acota.
+   * Muestra final: espera una lectura de cada contenedor (la que ya esté en vuelo, o una
+   * nueva). NO para el temporizador (el llamador llama a `stop()` antes). Nunca rechaza;
+   * cada petición vence a los `timeoutMs`, y el llamador la acota además con su plazo.
    */
   async final(): Promise<void> {
-    this.stop();
     await Promise.all(
       this.handles.map((_h, i) => this.inFlight[i] ?? (this.isDead(i) ? Promise.resolve() : this.sampleOne(i))),
     );
+  }
+
+  /** Lectura + (si vino vacía) comprobación de si el contenedor terminó. Nunca rechaza. */
+  private async read(i: number, h: ContainerHandle): Promise<void> {
+    try {
+      const v = (await h.cpuMs!()) ?? null;
+      if (typeof v === "number" && v > 0) {
+        if (this.last[i] === null || v > this.last[i]!) this.last[i] = v;
+        return;
+      }
+      // Lectura vacía: ¿terminó o falló? Sólo `gone`/`!running` confirmado lo da por terminado.
+      const st = await h.state?.();
+      if (st && (st.gone || !st.running)) this.terminated[i] = true;
+    } catch {
+      /* muestra perdida: se queda la anterior (cota inferior) y se sigue muestreando */
+    }
   }
 
   private sampleOne(i: number): Promise<void> {
     const h = this.handles[i];
     if (!h?.cpuMs) return Promise.resolve();
     this.stats.requests++;
-    const p = (async () => {
-      try {
-        const v = (await h.cpuMs!()) ?? null;
-        if (typeof v === "number" && v > 0) {
-          this.deadStreak[i] = 0;
-          if (this.last[i] === null || v > this.last[i]!) this.last[i] = v;
-        } else if (this.last[i] !== null) {
-          this.deadStreak[i]++;
-        }
-      } catch {
-        /* muestra perdida: se queda la anterior (cota inferior) */
-      } finally {
-        this.inFlight[i] = null;
-      }
-    })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expiry = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        this.stats.timeouts++;
+        resolve();
+      }, this.timeoutMs);
+      timer.unref?.();
+    });
+    const p = Promise.race([this.read(i, h), expiry]).finally(() => {
+      if (timer) clearTimeout(timer);
+      // Una petición abandonada que responde tarde NO vuelve a pasar por aquí (la carrera
+      // ya se resolvió): el hueco lo ocupa la siguiente petición, no se libera dos veces.
+      this.inFlight[i] = null;
+    });
     this.inFlight[i] = p;
     return p;
   }
