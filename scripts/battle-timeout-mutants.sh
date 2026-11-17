@@ -26,7 +26,7 @@ SAL=$(mktemp -d)
 
 limpio() { [ -z "$(git status --porcelain --untracked-files=no)" ]; }
 correr() { # $1 = fichero de salida ; rc EXPLÍCITO
-  timeout 900 npx vitest run "${SUITES[@]}" > "$1" 2>&1
+  NO_COLOR=1 FORCE_COLOR=0 timeout 900 npx vitest run --reporter=verbose "${SUITES[@]}" > "$1" 2>&1
   return $?
 }
 
@@ -64,10 +64,10 @@ PY
   correr "$SAL/m.txt"; rc=$?
   git checkout -- "$f"
   if [ "$rc" = "0" ]; then echo "SOBREVIVE · $nombre"; fallos=$((fallos+1)); continue; fi
-  if grep -E "^ *(FAIL|×)" "$SAL/m.txt" | grep -qF "$expect"; then
+  if grep -E "(FAIL|×)" "$SAL/m.txt" | grep -qF "$expect"; then
     echo "MUERE     · $nombre · por «$expect»"
   else
-    echo "MUERE POR OTRO MOTIVO · $nombre · se esperaba «$expect»"; grep -E "^ *(FAIL|×)" "$SAL/m.txt" | head -5
+    echo "MUERE POR OTRO MOTIVO · $nombre · se esperaba «$expect»"; grep -E "(FAIL|×)" "$SAL/m.txt" | head -5
     fallos=$((fallos+1))
   fi
 done
