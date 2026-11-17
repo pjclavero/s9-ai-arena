@@ -181,7 +181,7 @@ describe("T9.2 · torneo eliminatorio de 8 bots de principio a fin", () => {
     ).toBe(404);
     const idx = await request(app).get(`/replays/${battles[0].id}/index`).set("Authorization", `Bearer ${organizer}`);
     expect(idx.status).toBe(200);
-    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v2");
     const replay = await request(app).get(`/replays/${battles[0].id}`).set("Authorization", `Bearer ${admin}`);
     expect(replay.status).toBe(200);
     expect(replay.body.length).toBeGreaterThan(0);

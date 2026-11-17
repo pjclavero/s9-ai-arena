@@ -19,7 +19,7 @@ Alcances, campos de visión, costes y consumo de cada sensor: [Catálogo de equi
 
 ```json
 "radar": [ { "slot": "sensor_a", "contacts": [
-  { "entityId": "veh_3", "kind": "vehicle", "position": {"x": 78.4, "y": 41.9},
+  { "entityId": "v_3", "kind": "vehicle", "position": {"x": 78.4, "y": 41.9},
     "velocity": {"x": -6.1, "y": 0.2}, "errorM": 2, "confidence": 0.62 }
 ] } ]
 ```

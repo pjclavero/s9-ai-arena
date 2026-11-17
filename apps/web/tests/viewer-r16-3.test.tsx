@@ -91,19 +91,19 @@ describe("hud-model R16.3: resumen táctico por equipo (derivado, sin campos de 
     const model = buildHudModel(tacticalOverlay());
     const red = model.teams.find((t) => t.team === "red")!;
     // vivos: 0.8 y 0.4 -> media 0.6 -> 60%. El muerto (hpRatio 0) NO entra en la media.
-    expect(red.tactical).toEqual({ botsAlive: 2, botsTotal: 3, hpPercent: 60, modulesOffline: 2 });
+    expect(red.tactical).toEqual({ botsAlive: 2, botsTotal: 3, hpPercent: 60 });
   });
 
   it("equipo entero muerto: vivos 0, HP% 0 (sin división por cero)", () => {
     const model = buildHudModel(tacticalOverlay());
     const blue = model.teams.find((t) => t.team === "blue")!;
-    expect(blue.tactical).toEqual({ botsAlive: 0, botsTotal: 1, hpPercent: 0, modulesOffline: 1 });
+    expect(blue.tactical).toEqual({ botsAlive: 0, botsTotal: 1, hpPercent: 0 });
   });
 
   it("equipo de un solo bot vivo: HP% es su propio hpRatio, módulos caídos de ese bot", () => {
     const model = buildHudModel(tacticalOverlay());
     const green = model.teams.find((t) => t.team === "green")!;
-    expect(green.tactical).toEqual({ botsAlive: 1, botsTotal: 1, hpPercent: 50, modulesOffline: 1 });
+    expect(green.tactical).toEqual({ botsAlive: 1, botsTotal: 1, hpPercent: 50 });
   });
 
   it("es DETERMINISTA: el mismo overlay produce el mismo resumen táctico", () => {
@@ -122,7 +122,7 @@ describe("HudOverlay R16.3 (jsdom): el resumen táctico se pinta con los valores
     const redRow = redTeam.querySelector('[data-testid="hud-team-tactical"]')!;
     expect(redRow.querySelector('[data-testid="hud-team-tactical-alive"]')!.textContent).toBe("vivos 2/3");
     expect(redRow.querySelector('[data-testid="hud-team-tactical-hp"]')!.textContent).toBe("HP 60%");
-    expect(redRow.querySelector('[data-testid="hud-team-tactical-modules"]')!.textContent).toBe("2 módulos caídos");
+    expect(redRow.querySelector('[data-testid="hud-team-tactical-modules"]')).toBeNull(); // recuento privado
   });
 
   it("equipo sin módulos caídos NO pinta la celda de módulos (nada que anunciar)", () => {

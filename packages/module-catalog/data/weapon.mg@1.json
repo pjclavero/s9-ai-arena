@@ -13,8 +13,6 @@
   "cooldownTicks": 6,
   "projectileSpeedMs": 200,
   "spreadRad": 0.05,
-  "rangeM": 55,
-  "acceptsAmmo": ["ammo.standard"],
-  "turretArcRad": 6.2832,
-  "turretRateRads": 2.2
+  "rangeM": 600,
+  "acceptsAmmo": ["ammo.standard"]
 }

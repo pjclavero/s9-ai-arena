@@ -94,6 +94,8 @@ export function damageVisualFor(v: VehicleOverlay): DamageVisual {
       else if (kind === "movement") mobilityCrippled = true;
     }
   }
+  // D-B4 · el frame público trae la rotura por sector (`armorBroken`); `modules` no llega.
+  if ((v.armorBrokenSectors?.length ?? 0) > 0) armorBroken = true;
   destroyed.sort();
   const hullRatio = v.hullHpMax > 0 ? Math.max(0, Math.min(1, v.hullHp / v.hullHpMax)) : 0;
   return {

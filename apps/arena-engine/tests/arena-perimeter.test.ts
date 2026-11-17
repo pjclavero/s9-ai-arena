@@ -267,7 +267,7 @@ describe("UX-07 · perímetro implícito de la arena", () => {
     let outside = 0;
     for (let i = 0; i < 600; i++) {
       battle.step();
-      for (const p of battle.getPublicSnapshot().projectiles ?? []) {
+      for (const p of battle.getInternalFrame().projectiles ?? []) {
         seen++;
         const { x, y } = p.position;
         if (x < -TOLERANCE_M || x > map.widthM + TOLERANCE_M || y < -TOLERANCE_M || y > map.heightM + TOLERANCE_M) {

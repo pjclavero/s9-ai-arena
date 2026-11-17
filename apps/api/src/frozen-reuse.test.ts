@@ -374,6 +374,10 @@ describe("B4 · ELIGIBILITY_RULES_PRESERVED: frozen reutilizable NO salta ningun
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("bot_version_not_eligible");
     expect(r.body.notEligible[0]).toMatchObject({ botId: Z, version: 1, eligible: false, category: "INVALID_AMMO" });
+    // OLA 2 (EQUIPMENT_PRIVATE) · quien inscribe es el DUEÑO: ve el motivo real de su
+    // loadout (violaciones), no el veredicto genérico que recibe un tercero.
+    expect(r.body.notEligible[0].violations.length).toBeGreaterThan(0);
+    expect(r.body.message).not.toMatch(/la versión no es elegible\./);
     expect(await h.db("entries").where({ tournament_id: t, bot_id: Z }).first()).toBeUndefined();
     expect((await versionRow(Z)).state).toBe("frozen");
   });

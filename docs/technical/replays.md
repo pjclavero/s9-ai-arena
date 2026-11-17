@@ -109,7 +109,7 @@ Nadie más: ni `organizer`, ni un participante con rivales, ni un miembro de equ
 | Recurso | Con crudo | Sin crudo (lector autorizado) |
 |---|---|---|
 | `GET /replays/{id}` | fichero comprimido | 404 uniforme |
-| `GET /replays/{id}/index` | índice de almacén + mundo + nómina | índice proyectado (`projection: "s9.replay.public-competition.v1"`) |
+| `GET /replays/{id}/index` | índice de almacén + mundo + nómina | índice proyectado (`projection: "s9.replay.public-competition.v2"`) |
 | `GET /replays/{id}/segment` | segmento tal cual (comandos sólo con `debugOpen`) | segmento proyectado, sin comandos |
 | `POST /replays/{id}/verify` | booleano y hashes | igual (no entrega contenido) |
 | `GET /public/replays/{id}/download` | — (ruta pública) | documento JSON proyectado completo, para todos (admin incluido) |

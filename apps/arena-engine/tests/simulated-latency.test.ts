@@ -62,12 +62,15 @@ function runBattle(seed: string, extra: Partial<BattleConfig> = {}) {
  * cualquier divergencia de la ruta "latencia ausente" lo pone rojo.
  * Valores anteriores: final 698a73c6…c78f, primeros 2f1afefc…/cab1982f…/42226433….
  */
-const PRE_N2_FINAL_HASH = "54c447a2c73b0f186281335bb68d93b681a8d4c81b8cba2e54063edece0e1193";
+// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
+// Integración OLA2 (M0-I, MD+MB) · regenerado: contrato de daño de MB (orden por slot, hp del blindaje =
+// hp del módulo, turretHeading normalizado, armor.profile en el estado). MD: final e559098f….
+const PRE_N2_FINAL_HASH = "22b1365aab9a8345fb1548dd7e38c95e59df187e9244319e7f5670a2da756620";
 const PRE_N2_HASH_COUNT = 20;
 const PRE_N2_FIRST_HASHES = [
-  "e935fc4b8748585f577c2e1fcbe3ffbde8fd2f8860cd49ead2809cd38d5ff39e",
-  "d04f0aa3676ad928afabe0c438d34efa6c0f0b8dce0b869f49d6b09c05b780b6",
-  "9309491ea3975101f3a577618c9ed2f18f0052fc1716eb558d49efd12cf3cf5d",
+  "27cc106b8478e59ff2031b83d33bc30900d6c7652e39e02bc04c99512454bd0e",
+  "41657ca974f7f12f9f5812083d5387688cd7020510f8b36220064c04f9cfe51f",
+  "5015b0109c5a49f5619e7a4a3fac0037b294074a3c17d673735d1d87f101ec86",
 ];
 
 describe("N2 · latencia simulada — garantía de cero regresión (latencia OFF)", () => {

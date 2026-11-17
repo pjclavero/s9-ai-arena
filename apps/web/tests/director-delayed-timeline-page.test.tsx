@@ -93,7 +93,9 @@ function stubApi() {
   vi.stubGlobal("fetch", async (url: unknown, init?: { method?: string }) => {
     const u = String(url);
     const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response;
-    const ticket = /^\/api\/v1\/battles\/([^/]+)\/spectate-ticket$/.exec(u);
+    // OLA 2 · MA · la conexión del director pide la audiencia `broadcast` firmada: otra ruta
+    // (sin la audiencia) cae en «ruta inesperada» y el test falla.
+    const ticket = /^\/api\/v1\/battles\/([^/?]+)\/spectate-ticket\?audience=broadcast$/.exec(u);
     if (init?.method === "POST" && ticket) return json({ ticket: "t", wsUrl: `/spectate/${ticket[1]}` });
     if (u === "/api/v1/tournaments/t1") return json({ id: "t1", state: real.tournament });
     if (u === "/api/v1/tournaments/t1/battles")

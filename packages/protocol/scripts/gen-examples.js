@@ -42,7 +42,7 @@ const valid = {
   // ---------------- WELCOME
   "welcome-ctf": env("WELCOME", {
     battleId: "btl_2026_07_13_0001",
-    selfId: "veh_3",
+    selfId: "v_3",
     team: "red",
     timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
     rules: {
@@ -97,9 +97,9 @@ const valid = {
         { team: "blue", position: { x: 112, y: 40 } },
       ],
     },
-    teammates: ["veh_4"],
+    teammates: ["v_4"],
     versions: {
-      engine: "0.4.0",
+      engine: "0.5.0",
       physics: "rapier2d-compat@0.14.0+sha256:ab12",
       rules: "ctf_mvp@1",
       catalog: "mvp@1",
@@ -108,7 +108,7 @@ const valid = {
   }),
   "welcome-deathmatch-minimal": env("WELCOME", {
     battleId: "btl_practice",
-    selfId: "veh_1",
+    selfId: "v_1",
     team: "solo",
     timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
     rules: { mode: "deathmatch", rulesetId: "dm_practice@1" },
@@ -125,11 +125,11 @@ const valid = {
       widthM: 60,
       heightM: 40,
     },
-    versions: { engine: "0.4.0", rules: "dm_practice@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "dm_practice@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
   "welcome-custom-budget": env("WELCOME", {
     battleId: "btl_skirmish_low_budget",
-    selfId: "veh_1",
+    selfId: "v_1",
     team: "red",
     timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
     rules: {
@@ -151,11 +151,11 @@ const valid = {
       widthM: 120,
       heightM: 80,
     },
-    versions: { engine: "0.4.0", rules: "skirmish_low@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "skirmish_low@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
   "welcome-blind-mode": env("WELCOME", {
     battleId: "btl_blind",
-    selfId: "veh_2",
+    selfId: "v_2",
     team: "blue",
     timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
     rules: { mode: "zone_control", rulesetId: "zc_blind@1", sharedTeamVision: true },
@@ -172,7 +172,7 @@ const valid = {
       widthM: 100,
       heightM: 100,
     },
-    versions: { engine: "0.4.0", rules: "zc_blind@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "zc_blind@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
 
   // ---------------- OBSERVATION
@@ -211,7 +211,7 @@ const valid = {
           },
         ],
       },
-      radio: [{ from: "veh_4", data: "ZW5lbXkgd2VzdA==", sentTick: 297 }],
+      radio: [{ from: "v_4", data: "ZW5lbXkgd2VzdA==", sentTick: 297 }],
       score: { red: 1, blue: 0 },
       objectives: [
         { kind: "flag", team: "red", state: "at_base", position: { x: 8, y: 40 } },
@@ -288,7 +288,7 @@ const valid = {
   // ---------------- EVENT
   "event-hit-taken": env(
     "EVENT",
-    { tick: 310, kind: "hit_taken", sector: "front", damage: 45, sourceId: "veh_7" },
+    { tick: 310, kind: "hit_taken", sector: "front", damage: 45, sourceId: "v_7" },
     { tick: 310 },
   ),
   "event-rejected-action": env(
@@ -407,7 +407,7 @@ const invalid = {
       seq: 2,
       payload: {
         battleId: "b",
-        selfId: "veh_1",
+        selfId: "v_1",
         team: "red",
         timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
         rules: { mode: "deathmatch", rulesetId: "r" },
@@ -435,7 +435,7 @@ const invalid = {
       seq: 2,
       payload: {
         battleId: "b",
-        selfId: "veh_1",
+        selfId: "v_1",
         team: "red",
         timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
         rules: { mode: "deathmatch", rulesetId: "r" },
@@ -458,7 +458,7 @@ const invalid = {
       seq: 2,
       payload: {
         battleId: "b",
-        selfId: "veh_1",
+        selfId: "v_1",
         team: "red",
         timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
         rules: { mode: "deathmatch", rulesetId: "r", budgetCredits: 50 },
@@ -487,7 +487,7 @@ const invalid = {
       seq: 2,
       payload: {
         battleId: "b",
-        selfId: "veh_1",
+        selfId: "v_1",
         team: "red",
         timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
         rules: { mode: "battle_royale", rulesetId: "r" },
@@ -551,7 +551,7 @@ const invalid = {
           energy: { storedEU: 0, capacityEU: 1 },
           modules: [],
         },
-        allEntities: [{ id: "veh_9", x: 100, y: 10 }],
+        allEntities: [{ id: "v_9", x: 100, y: 10 }],
       },
     },
   },
