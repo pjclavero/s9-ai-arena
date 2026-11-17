@@ -278,9 +278,149 @@ export function clasificarNpmAudit(obs) {
   const relevantes = SEVERIDADES.slice(desde < 0 ? 0 : desde).reduce((n, s) => n + (recuentos[s] ?? 0), 0);
   const total = SEVERIDADES.reduce((n, s) => n + (recuentos[s] ?? 0), 0);
   if (relevantes > 0) {
-    return res(ESTADO_SCAN.FINDINGS, `npm audit: ${relevantes} vulnerabilidad(es) de severidad >= ${umbral}`);
+    const exc = aplicarExcepcionesNpmAudit(informe, {
+      umbral,
+      excepciones: obs?.excepciones,
+      lockPackages: obs?.lockPackages,
+      hoy: obs?.hoy,
+    });
+    if (exc.error) return res(ESTADO_SCAN.SCAN_ERROR, exc.error);
+    if (exc.aplicadas.length > 0 && exc.restantes === 0) {
+      return res(
+        ESTADO_SCAN.CLEAN,
+        `npm audit: 0 de severidad >= ${umbral} sin excepción (${total} en total; ${relevantes} cubiertas por ` +
+          `excepción declarada: ${exc.aplicadas.map((e) => `${e.ghsa} ${e.paquete} [dev] hasta ${e.caduca}`).join(", ")}), ` +
+          `informe completo leído`,
+      );
+    }
+    const nota = exc.notas.length > 0 ? ` (${exc.notas.join("; ")})` : "";
+    return res(ESTADO_SCAN.FINDINGS, `npm audit: ${relevantes} vulnerabilidad(es) de severidad >= ${umbral}${nota}`);
   }
   return res(ESTADO_SCAN.CLEAN, `npm audit: 0 de severidad >= ${umbral} (${total} en total), informe completo leído`);
+}
+
+/**
+ * EXCEPCIONES DECLARADAS DE `npm audit` (deps/npm-audit-2026-11-17).
+ *
+ * Motivo: un aviso SIN versión corregida publicada (GHSA-fc5q-39xc-vjpf,
+ * picomatch <= 4.0.7) dejó el `scan` rojo en `main` sin que exista cambio de
+ * dependencias capaz de arreglarlo. La salida no puede ser bajar el umbral ni
+ * auditar sólo producción: eso silenciaría TODO lo de desarrollo, también lo
+ * que sí tiene arreglo. Una excepción es por AVISO y PAQUETE concretos, y sólo
+ * se aplica si se cumplen TODAS estas condiciones (si falta cualquiera, el
+ * hallazgo cuenta y el scan sigue rojo — fail-closed):
+ *
+ *   1. El fichero de excepciones es válido (si no, SCAN_ERROR: una excepción
+ *      ilegible no puede leerse como «no hay excepciones» ni como «todo vale»).
+ *   2. La excepción no ha caducado (`caduca` >= hoy, UTC). Caducada, no exime.
+ *   3. `alcance` es `dev` y TODOS los nodos del paquete en el `package-lock.json`
+ *      están marcados `dev: true`. Si el paquete entra en dependencias de
+ *      producción, la excepción deja de aplicarse sola.
+ *   4. Una vulnerabilidad del informe sólo queda cubierta si TODOS los avisos
+ *      >= umbral que la alcanzan (siguiendo la cadena `via`) están exceptuados.
+ *      Un aviso nuevo en el mismo paquete o en su cadena vuelve a contar.
+ *
+ * @returns {{error?: string, aplicadas: object[], restantes: number, notas: string[]}}
+ */
+export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepciones, lockPackages, hoy } = {}) {
+  const sinNada = { aplicadas: [], restantes: Infinity, notas: [] };
+  if (excepciones === undefined || excepciones === null) return sinNada;
+  const invalida = validarExcepcionesNpmAudit(excepciones);
+  if (invalida) return { ...sinNada, error: `excepciones de npm audit no válidas: ${invalida}` };
+  if (excepciones.length === 0) return sinNada;
+
+  const notas = [];
+  const fecha = typeof hoy === "string" && /^\d{4}-\d{2}-\d{2}$/.test(hoy) ? hoy : new Date().toISOString().slice(0, 10);
+  const vulns = informe?.vulnerabilities;
+  if (vulns === null || typeof vulns !== "object" || Array.isArray(vulns)) {
+    return { ...sinNada, notas: ["informe sin detalle de vulnerabilidades: no se puede aplicar ninguna excepción"] };
+  }
+  if (lockPackages === null || typeof lockPackages !== "object") {
+    return { ...sinNada, notas: ["sin package-lock.json legible: no se puede comprobar el alcance dev de las excepciones"] };
+  }
+
+  const soloDev = (paquete) => {
+    const nodos = vulns[paquete]?.nodes;
+    if (!Array.isArray(nodos) || nodos.length === 0) return false;
+    return nodos.every((n) => lockPackages[n]?.dev === true);
+  };
+
+  const vigentes = [];
+  for (const e of excepciones) {
+    if (e.caduca < fecha) {
+      notas.push(`excepción ${e.ghsa} caducada el ${e.caduca}: no exime`);
+      continue;
+    }
+    if (!soloDev(e.paquete)) {
+      notas.push(`excepción ${e.ghsa} no aplicable: ${e.paquete} no es sólo de desarrollo en el lockfile`);
+      continue;
+    }
+    vigentes.push(e);
+  }
+
+  const desde = SEVERIDADES.indexOf(umbral);
+  const relevante = (sev) => SEVERIDADES.indexOf(sev) >= (desde < 0 ? 0 : desde);
+  const ghsaDe = (aviso) => String(aviso?.url ?? "").match(/GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}/)?.[0] ?? null;
+  const exceptuado = (aviso) => {
+    const ghsa = ghsaDe(aviso);
+    return ghsa !== null && vigentes.some((e) => e.ghsa === ghsa && e.paquete === aviso?.name);
+  };
+
+  // Avisos (objetos) >= umbral que alcanzan a `nombre` siguiendo `via`.
+  const avisosQueAlcanzan = (nombre) => {
+    const vistos = new Set();
+    const avisos = [];
+    const pila = [nombre];
+    while (pila.length > 0) {
+      const n = pila.pop();
+      if (vistos.has(n)) continue;
+      vistos.add(n);
+      const v = vulns[n];
+      if (!v || !Array.isArray(v.via)) {
+        avisos.push(null); // cadena rota: no se puede afirmar que esté cubierta
+        continue;
+      }
+      for (const via of v.via) {
+        if (typeof via === "string") pila.push(via);
+        else if (via && typeof via === "object") {
+          if (relevante(via.severity)) avisos.push(via);
+        } else avisos.push(null);
+      }
+    }
+    return avisos;
+  };
+
+  const usadas = new Set();
+  let restantes = 0;
+  for (const [nombre, v] of Object.entries(vulns)) {
+    if (!relevante(v?.severity)) continue;
+    const avisos = avisosQueAlcanzan(nombre);
+    const cubierta = avisos.length > 0 && avisos.every((a) => a !== null && exceptuado(a));
+    if (!cubierta) {
+      restantes += 1;
+      continue;
+    }
+    for (const a of avisos) usadas.add(ghsaDe(a));
+  }
+  const aplicadas = vigentes.filter((e) => usadas.has(e.ghsa));
+  for (const e of vigentes) {
+    if (!usadas.has(e.ghsa)) notas.push(`excepción ${e.ghsa} sin uso en este informe: retirarla`);
+  }
+  return { aplicadas, restantes, notas };
+}
+
+/** Devuelve el motivo por el que el fichero de excepciones NO es válido, o null. */
+export function validarExcepcionesNpmAudit(excepciones) {
+  if (!Array.isArray(excepciones)) return "no es una lista";
+  for (const [i, e] of excepciones.entries()) {
+    if (e === null || typeof e !== "object") return `entrada ${i} no es un objeto`;
+    if (!/^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/.test(String(e.ghsa ?? ""))) return `entrada ${i}: ghsa inválido`;
+    if (typeof e.paquete !== "string" || e.paquete.trim() === "") return `entrada ${i}: falta paquete`;
+    if (e.alcance !== "dev") return `entrada ${i}: sólo se admite alcance "dev"`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(e.caduca ?? ""))) return `entrada ${i}: caduca debe ser AAAA-MM-DD`;
+    if (typeof e.motivo !== "string" || e.motivo.trim().length < 20) return `entrada ${i}: falta un motivo explícito`;
+  }
+  return null;
 }
 
 /**

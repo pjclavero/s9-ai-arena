@@ -92,7 +92,37 @@ function esperar(ms) {
  *     retirada, se anota como warning para que no se descubra el día que deje
  *     de responder.
  */
+export const FICHERO_EXCEPCIONES_NPM = join(RAIZ, "infrastructure", "npm-audit-excepciones.json");
+
+/**
+ * Carga las excepciones declaradas y el lockfile que las acota. Un fichero de
+ * excepciones AUSENTE significa «ninguna»; uno PRESENTE pero ilegible es un
+ * error (se devuelve el valor tal cual para que el contrato lo rechace como
+ * SCAN_ERROR, nunca como «sin excepciones»).
+ */
+export function cargarContextoExcepciones({
+  fichero = FICHERO_EXCEPCIONES_NPM,
+  lock = join(RAIZ, "package-lock.json"),
+} = {}) {
+  let excepciones;
+  if (existsSync(fichero)) {
+    try {
+      excepciones = JSON.parse(readFileSync(fichero, "utf8"));
+    } catch {
+      excepciones = "ilegible";
+    }
+  }
+  let lockPackages = null;
+  try {
+    lockPackages = JSON.parse(readFileSync(lock, "utf8")).packages ?? null;
+  } catch {
+    lockPackages = null;
+  }
+  return { excepciones, lockPackages, hoy: new Date().toISOString().slice(0, 10) };
+}
+
 export function ejecutarNpmAudit({ umbral = "high", reintentos = REINTENTOS, esperaMs = ESPERA_MS } = {}) {
+  const contexto = cargarContextoExcepciones();
   let ultimo = null;
   for (let intento = 1; intento <= Math.max(1, reintentos); intento += 1) {
     const obs = correr("npm", ["audit", "--json", `--audit-level=${umbral}`]);
@@ -101,8 +131,12 @@ export function ejecutarNpmAudit({ umbral = "high", reintentos = REINTENTOS, esp
         "::warning::npm sigue anunciando la retirada del endpoint de auditoría (`use the bulk advisory endpoint instead`): revisar ADR-018 antes de que deje de responder.",
       );
     }
-    ultimo = clasificarNpmAudit({ ...obs, umbral });
+    ultimo = clasificarNpmAudit({ ...obs, umbral, ...contexto });
     ultimo.intentos = intento;
+    if (/excepci[oó]n/.test(ultimo.detalle)) {
+      // Una excepción aplicada nunca es silenciosa: se anota en el job.
+      console.log(`::warning::npm audit · ${ultimo.detalle}`);
+    }
     if (ultimo.estado !== ESTADO_SCAN.SOURCE_UNAVAILABLE) return ultimo;
     // Sólo se reintenta la fuente caída, y se dice en voz alta que se está
     // reintentando: un reintento silencioso es otra forma de no comprobar.

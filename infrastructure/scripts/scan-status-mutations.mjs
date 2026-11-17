@@ -97,6 +97,31 @@ const MUTACIONES = {
       ],
     ],
   },
+  M9: {
+    desc: "una excepción exime aunque el paquete haya llegado a producción en el lockfile",
+    fichero: CONTRATO,
+    cambios: [["    return nodos.every((n) => lockPackages[n]?.dev === true);", "    return true;"]],
+  },
+  M10: {
+    desc: "una excepción caducada sigue eximiendo",
+    fichero: CONTRATO,
+    cambios: [["    if (e.caduca < fecha) {", "    if (false) {"]],
+  },
+  M11: {
+    desc: "basta con que UN aviso de la cadena esté exceptuado para dar la vulnerabilidad por cubierta",
+    fichero: CONTRATO,
+    cambios: [
+      [
+        "    const cubierta = avisos.length > 0 && avisos.every((a) => a !== null && exceptuado(a));",
+        "    const cubierta = avisos.some((a) => a !== null && exceptuado(a));",
+      ],
+    ],
+  },
+  M12: {
+    desc: "un fichero de excepciones mal formado se lee como válido",
+    fichero: CONTRATO,
+    cambios: [["  if (invalida) return { ...sinNada, error:", "  if (false) return { ...sinNada, error:"]],
+  },
 };
 
 function correrSuites() {
