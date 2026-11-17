@@ -72,9 +72,9 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        // #287 · closeEntries va ahora en una transacción (`trx`, un nivel más de sangría).
-        from: '        if (v.state === "published") {\n          await applyTransition(trx, req.auth, v, "freeze", {}, req.correlationId);',
-        to: '        const cur = v.state === "frozen" ? (await trx("bot_versions").where({ id: v.id }).update({ state: "published" }).returning("*"))[0] : v;\n        if (cur.state === "published") {\n          await applyTransition(trx, req.auth, cur, "freeze", {}, req.correlationId);',
+        // #288 ronda 2: el cierre va en una transacción y el freeze es condicional (H-1).
+        from: '        const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();\n        if (v.state !== "published") continue;',
+        to: '        const v0 = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();\n        const v = v0.state === "frozen" ? (await db("bot_versions").where({ id: v0.id }).update({ state: "published" }).returning("*"))[0] : v0;\n        if (v.state !== "published") continue;',
       },
     ],
     tests: [API],
@@ -206,8 +206,9 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        from: "        loadout_revision: v.loadout_revision,\n        frozen: false,",
-        to: '        loadout_revision: (await db("bot_loadouts").where({ bot_id: botId }).max("revision as m").first()).m,\n        frozen: false,',
+        // #287 ronda 2: el alta individual va en una transacción (un nivel más de sangría).
+        from: "          loadout_revision: v.loadout_revision,\n          frozen: false,",
+        to: '          loadout_revision: (await db("bot_loadouts").where({ bot_id: botId }).max("revision as m").first()).m,\n          frozen: false,',
       },
     ],
     tests: [API],
@@ -217,11 +218,13 @@ const MUTANTS = [
     id: "M9",
     name: "cerrar B intenta volver a congelar una versión ya frozen (no idempotente)",
     edits: [
+      // #288 ronda 2: el freeze ya es condicional (H-1); el mutante quita AMBAS barreras.
       {
         file: T,
-        from: '        if (v.state === "published") {',
-        to: '        if (v.state === "published" || v.state === "frozen") {',
+        from: '        if (v.state !== "published") continue;',
+        to: '        if (v.state !== "published" && v.state !== "frozen") continue;',
       },
+      { file: T, from: '          .where({ id: v.id, state: "published" })', to: "          .where({ id: v.id })" },
     ],
     tests: [API],
     kill: "cerrar B con la versión YA frozen",

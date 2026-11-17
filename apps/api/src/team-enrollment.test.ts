@@ -226,22 +226,28 @@ describe("#287 · negativos (ninguno inscribe nada)", () => {
     expect(await entriesOf(t)).toHaveLength(0);
   });
 
-  it("T287_OWNER · un bot del equipo de OTRO dueño ⇒ 403 team_bot_not_owned", async () => {
+  it("T287_OWNER · un bot del equipo de OTRO dueño sin su autorización ⇒ 409 team_consent_required", async () => {
     const A = await mkTeam(3, [userId]);
     const theirs = await mkBot(userId, A.teamId);
     const t = await openTeamsTournament(4);
     const r = await enterTeam(devTok, t, A.teamId, members([...A.bots, theirs]));
-    expect(r.status).toBe(403);
-    expect(r.body.error).toBe("team_bot_not_owned");
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("team_consent_required");
     expect(r.body.botIds).toEqual([theirs]);
     expect(await entriesOf(t)).toHaveLength(0);
   });
 
-  it("T287_NOT_TEAM_MEMBER · quien no es miembro del equipo no lo inscribe ⇒ 403", async () => {
-    const A = await mkTeam(4);
+  it("T287_NOT_TEAM_MEMBER · quien no es miembro del equipo no lo inscribe ⇒ 403 forbidden (aunque los bots sean suyos)", async () => {
+    // Bots del user dentro de un equipo del que NO es miembro (estado alcanzable sólo por BD):
+    // la comprobación de miembro es la ÚNICA que lo para (sin sobredeterminar el 403).
+    const A = await mkTeam(0);
+    const own: string[] = [];
+    for (let i = 0; i < 4; i++) own.push(await mkBot(userId, A.teamId));
     const t = await openTeamsTournament(4);
-    const r = await enterTeam(userTok, t, A.teamId, members(A.bots));
+    const r = await enterTeam(userTok, t, A.teamId, members(own));
     expect(r.status).toBe(403);
+    expect(r.body.error).toBe("forbidden");
+    expect(r.body.message).toMatch(/miembro del equipo/);
     expect(await entriesOf(t)).toHaveLength(0);
   });
 
@@ -544,5 +550,339 @@ describe("#287 · torneos individuales sin regresión", () => {
       .set(as(devTok))
       .send({ botId: A.bots[0], version: 1 });
     expect(e.status, JSON.stringify(e.body)).toBe(201);
+  });
+});
+
+// ------------------------------------------------------------------ ronda 2 (revisión)
+
+const indTournament = async (format = "round_robin") => {
+  const r0 = await request(app)
+    .post("/tournaments")
+    .set(as(orgTok))
+    .send({ name: `T287-ind-${++seq}`, format, mode: "deathmatch", rulesetId: "mvp-default" });
+  expect(r0.status).toBe(201);
+  return r0.body.id as string;
+};
+const enterOne = (tok: string, t: string, botId: string, version = 1) =>
+  request(app).post(`/tournaments/${t}/entries`).set(as(tok)).send({ botId, version });
+const exclude = (tok: string, t: string, entryId: string) =>
+  request(app).post(`/tournaments/${t}/entries/${entryId}/actions/exclude`).set(as(tok)).send({ reason: "t287" });
+const consent = (tok: string, t: string, teamId: string, botId: string, version = 1) =>
+  request(app).put(`/tournaments/${t}/team-consents/${botId}`).set(as(tok)).send({ teamId, version });
+const revoke = (tok: string, t: string, botId: string) =>
+  request(app).delete(`/tournaments/${t}/team-consents/${botId}`).set(as(tok));
+const addV2 = async (botId: string) => {
+  await h.db("bot_versions").insert({
+    bot_id: botId,
+    version: 2,
+    state: "published",
+    runtime: "python",
+    loadout_revision: 1,
+    source: Buffer.from("# v2\n"),
+    source_filename: "bot.py",
+    artifact_hash: `sha256:${botId}-v2`,
+    code_public: false,
+    published_at: h.db.fn.now(),
+  });
+};
+/** Equipo de DOS dueños: capitán = developer (bot propio), miembro = user (bot propio). */
+async function mkMultiOwnerTeam(): Promise<{ teamId: string; mine: string; theirs: string }> {
+  const A = await mkTeam(1, [userId]);
+  const theirs = await mkBot(userId, A.teamId);
+  return { teamId: A.teamId, mine: A.bots[0], theirs };
+}
+
+describe("#287 ronda 2 · H1 · alta individual concurrente con el cierre", () => {
+  it("T287_RACE_IND · la inscripción que espera al cierre ve el torneo cerrado (409) y no queda nada sin congelar", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    const c = await mkBot(devId, null);
+    for (const id of [a, b]) expect((await enterOne(devTok, t, id)).status).toBe(201);
+    await h.db.raw(`
+      CREATE OR REPLACE FUNCTION t287_slow() RETURNS trigger AS $$
+      BEGIN IF NEW.kind = 'generate_schedule' THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER t287_slow BEFORE INSERT ON jobs FOR EACH ROW EXECUTE FUNCTION t287_slow();`);
+    try {
+      const pClose = closeEntries(t).then((r) => r);
+      await new Promise((r) => setTimeout(r, 700));
+      const enr = await enterOne(devTok, t, c);
+      const cl = await pClose;
+      expect(cl.status).toBe(200);
+      expect(enr.status).toBe(409);
+      expect(enr.body.error).toBe("entries_closed");
+      const rows = await entriesOf(t);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((e: { frozen: boolean }) => e.frozen)).toBe(true);
+    } finally {
+      await h.db.raw(`DROP TRIGGER t287_slow ON jobs; DROP FUNCTION t287_slow();`);
+    }
+  });
+});
+
+describe("#287 ronda 2 · H3 · freeze condicional (REV-1 de #289)", () => {
+  async function waitLockWaiters(n: number, timeoutMs = 10_000): Promise<number> {
+    const t0 = Date.now();
+    for (;;) {
+      const r = await h.db.raw(
+        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      const got = r.rows[0].n as number;
+      if (got >= n || Date.now() - t0 > timeoutMs) return got;
+      await new Promise((res) => setTimeout(res, 25));
+    }
+  }
+
+  it("T287_FREEZE_ONCE · dos cierres concurrentes con la misma versión: UNA sola auditoría de freeze", async () => {
+    const shared = await mkBot(devId, null);
+    const t1 = await indTournament("single_elimination");
+    const t2 = await indTournament("single_elimination");
+    for (const t of [t1, t2]) {
+      await h
+        .db("entries")
+        .insert({ tournament_id: t, bot_id: shared, version: 1, loadout_revision: 1, frozen: false });
+    }
+    // Retiene el INSERT del job de t1 (dedupe_key única): el cierre 1 queda bloqueado DESPUÉS
+    // de congelar la versión, sin commit.
+    const holder = await h.db.transaction();
+    await holder("jobs").insert({ kind: "generate_schedule", payload: "{}", dedupe_key: `generate_schedule:${t1}` });
+    const c1 = closeEntries(t1).then((r) => r);
+    expect(await waitLockWaiters(1)).toBeGreaterThanOrEqual(1);
+    const c2 = closeEntries(t2).then((r) => r);
+    await waitLockWaiters(2, 3000);
+    await holder.rollback();
+    const [r1, r2] = await Promise.all([c1, c2]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const audits = await h.db("audit_log").where({ action: "bot.version.freeze", target: `bot:${shared}@1` });
+    expect(audits).toHaveLength(1);
+  });
+});
+
+describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede desbloquear", () => {
+  it("T287_UNBLOCK_RETIRED_IND · versión retirada tras inscribirse (individual): el organizador la excluye y el torneo cierra", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    const ea = await enterOne(devTok, t, a);
+    expect(ea.status).toBe(201);
+    expect((await enterOne(devTok, t, b)).status).toBe(201);
+    expect((await request(app).post(`/bots/${a}/versions/1/actions/retire`).set(as(devTok)).send({})).status).toBe(200);
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error).toBe("entries_not_eligible");
+    expect(c1.body.message).toMatch(/organizador puede excluirlas/);
+    const ex = await exclude(orgTok, t, ea.body.id);
+    expect(ex.status, JSON.stringify(ex.body)).toBe(200);
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("T287_UNBLOCK_REPLACE_IND · …o su dueño la sustituye por otra versión válida", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    expect((await enterOne(devTok, t, a)).status).toBe(201);
+    expect((await enterOne(devTok, t, b)).status).toBe(201);
+    expect((await request(app).post(`/bots/${a}/versions/1/actions/retire`).set(as(devTok)).send({})).status).toBe(200);
+    await addV2(a);
+    const re = await enterOne(devTok, t, a, 2);
+    expect(re.status, JSON.stringify(re.body)).toBe(200);
+    expect(re.body.replacedVersion).toBe(1);
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("T287_UNBLOCK_SUSPENDED_TEAM · un miembro suspendido: el organizador excluye ese y luego el resto del equipo (a medias), y cierra", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const ra = await enterTeam(devTok, t, A.teamId, members(A.bots));
+    expect(ra.status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const sus = await request(app)
+      .post(`/bots/${A.bots[0]}/versions/1/actions/suspend`)
+      .set(as(adminTok))
+      .send({ reason: "t287" });
+    expect(sus.status, JSON.stringify(sus.body)).toBe(200);
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error).toBe("entries_not_eligible");
+    const statuses: number[] = [];
+    for (const e of ra.body.entries) statuses.push((await exclude(orgTok, t, e.id)).status);
+    expect(statuses).toEqual([200, 200]);
+    // Un miembro de un equipo COMPLETO y válido no lo excluye el organizador.
+    const okEntry = (await entriesOf(t))[0];
+    expect((await exclude(orgTok, t, okEntry.id)).body.error).toBe("entry_eligible");
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("T287_CLOSE_RETIRED · un bot retirado tras inscribirse con su equipo bloquea el cierre (team_roster_changed) y se puede excluir", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const ra = await enterTeam(devTok, t, A.teamId, members(A.bots));
+    expect(ra.status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    await h.db("bots").where({ id: A.bots[1] }).update({ retired_at: h.db.fn.now() });
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error).toBe("team_roster_changed");
+    expect(c1.body.notEligibleEntries).toEqual([{ entryId: ra.body.entries[1].id }]);
+    expect((await exclude(orgTok, t, ra.body.entries[1].id)).status).toBe(200);
+  });
+
+  it("T287_TEAMLESS_LEGACY · inscripción sin equipo (anterior a la 022) en un NvN: bloquea el cierre, el organizador la excluye (auditada) y cierra", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    expect((await enterTeam(devTok, t, A.teamId, members(A.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const lone = await mkBot(userId, null);
+    const [e] = await h
+      .db("entries")
+      .insert({ tournament_id: t, bot_id: lone, version: 1, loadout_revision: 1, frozen: false })
+      .returning("*");
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error).toBe("team_roster_changed");
+    expect(c1.body.notEligibleEntries).toEqual([{ entryId: e.id }]);
+    expect((await exclude(orgTok, t, e.id)).status).toBe(200);
+    // No se pierde nada: la inscripción excluida queda entera en audit_log.
+    const a = await h.db("audit_log").where({ action: "tournament.entry.excluded", target: `tournament:${t}` });
+    expect(a).toHaveLength(1);
+    expect(a[0].detail.botId).toBe(lone);
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("T287_LEGACY_NVN · inscripciones antiguas (team_id NULL) con bots en equipo: cierran como antes", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    for (const id of [...A.bots, ...B.bots]) {
+      await h.db("entries").insert({ tournament_id: t, bot_id: id, version: 1, loadout_revision: 1, frozen: false });
+    }
+    const c = await closeEntries(t);
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+  });
+
+  it("T287_REPLACE_TEAM · el dueño sustituye la versión de un miembro que ya no compite: conserva el equipo y renueva la autorización", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    expect((await enterTeam(devTok, t, A.teamId, members(A.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    await h.db("bot_versions").where({ bot_id: A.bots[0], version: 1 }).update({ state: "suspended" });
+    await addV2(A.bots[0]);
+    const re = await enterOne(devTok, t, A.bots[0], 2);
+    expect(re.status, JSON.stringify(re.body)).toBe(200);
+    const row = await h.db("entries").where({ tournament_id: t, bot_id: A.bots[0] }).first();
+    expect(row.team_id).toBe(A.teamId);
+    expect(row.version).toBe(2);
+    expect((await h.db("team_entry_consents").where({ tournament_id: t, bot_id: A.bots[0] }).first()).version).toBe(2);
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+});
+
+describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización explícita", () => {
+  it("T287_MO_FULL · con la autorización del otro dueño, el equipo multi-dueño entra completo y cierra", async () => {
+    const M = await mkMultiOwnerTeam();
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const g = await consent(userTok, t, M.teamId, M.theirs);
+    expect(g.status, JSON.stringify(g.body)).toBe(200);
+    const r = await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const rows = await h.db("entries").where({ tournament_id: t, team_id: M.teamId });
+    expect(rows).toHaveLength(2);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("T287_MO_NO_CONSENT · sin la autorización de un dueño no entra nadie (ni el capitán ni el otro miembro)", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    const r1 = await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]));
+    expect(r1.status).toBe(409);
+    expect(r1.body.error).toBe("team_consent_required");
+    expect(r1.body.botIds).toEqual([M.theirs]);
+    const r2 = await enterTeam(userTok, t, M.teamId, members([M.mine, M.theirs]));
+    expect(r2.body.error).toBe("team_consent_required");
+    expect(r2.body.botIds).toEqual([M.mine]);
+    expect(await entriesOf(t)).toHaveLength(0);
+  });
+
+  it("T287_MO_WRONG_VERSION · el capitán no puede usar una versión ajena distinta de la autorizada", async () => {
+    const M = await mkMultiOwnerTeam();
+    await addV2(M.theirs);
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs, 1)).status).toBe(200);
+    const r = await enterTeam(devTok, t, M.teamId, [
+      { botId: M.mine, version: 1 },
+      { botId: M.theirs, version: 2 },
+    ]);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("team_consent_required");
+    expect(await entriesOf(t)).toHaveLength(0);
+  });
+
+  it("T287_MO_FOREIGN_CONSENT · nadie autoriza un bot ajeno, y sólo los miembros ven las autorizaciones", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    const g = await consent(devTok, t, M.teamId, M.theirs);
+    expect(g.status).toBe(404);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(0);
+    const outsider = await request(app).get(`/tournaments/${t}/team-consents?teamId=${M.teamId}`).set(as(orgTok));
+    expect(outsider.status).toBe(403);
+  });
+
+  it("T287_MO_REVOKED · retirar la autorización antes del cierre saca al equipo ENTERO (y el cierre no lo congela)", async () => {
+    const M = await mkMultiOwnerTeam();
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    expect((await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]))).status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const rv = await revoke(userTok, t, M.theirs);
+    expect(rv.status, JSON.stringify(rv.body)).toBe(200);
+    expect(rv.body.withdrawnEntries).toBe(2);
+    expect(await h.db("entries").where({ tournament_id: t, team_id: M.teamId })).toHaveLength(0);
+    expect((await closeEntries(t)).status).toBe(200);
+    expect((await h.db("bot_versions").where({ bot_id: M.theirs }).first()).state).toBe("published");
+  });
+
+  it("T287_MO_CLOSE_CONSENT_GONE · una inscripción de equipo sin autorización vigente no compite al cerrar", async () => {
+    const M = await mkMultiOwnerTeam();
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    expect((await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]))).status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    await h.db("team_entry_consents").where({ tournament_id: t, bot_id: M.theirs }).del();
+    const c = await closeEntries(t);
+    expect(c.status).toBe(409);
+    expect(c.body.error).toBe("team_roster_changed");
+    expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("open");
+  });
+
+  it("T287_MO_PRIVACY · autorizar e inscribir no cambia visibilidad, code_public ni dueño; la lista sólo da bot y versión", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    const before = await privacyView([M.mine, M.theirs]);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    expect((await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]))).status).toBe(201);
+    expect(await privacyView([M.mine, M.theirs])).toEqual(before);
+    const list = await request(app).get(`/tournaments/${t}/team-consents?teamId=${M.teamId}`).set(as(devTok));
+    expect(list.status).toBe(200);
+    for (const c of list.body.items) expect(Object.keys(c).sort()).toEqual(["botId", "mine", "version"]);
+    expect(list.body.items.find((c: { botId: string }) => c.botId === M.theirs).mine).toBe(false);
+  });
+});
+
+describe("#287 ronda 2 · H7", () => {
+  it("T287_UPPER_UUID · un teamId en MAYÚSCULAS se normaliza", async () => {
+    const A = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const r = await enterTeam(devTok, t, A.teamId.toUpperCase(), members(A.bots));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.teamId).toBe(A.teamId);
   });
 });

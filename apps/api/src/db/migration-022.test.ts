@@ -2,7 +2,8 @@
  * #287 · Migración 022_entries_team contra PostgreSQL REAL:
  *  1. añade `entries.team_id` NULLABLE y NO rellena las inscripciones existentes;
  *  2. FK (NO ACTION, 23503): un equipo con inscripciones no se borra (y la API lo dice: team_in_use);
- *  3. ROLLBACK POR NOMBRE: se va sólo la columna (y su índice), las filas se conservan.
+ *  3. ROLLBACK POR NOMBRE: se van sólo la columna (y su índice) y la tabla
+ *     `team_entry_consents` (ronda 2, H5); las inscripciones se conservan.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
@@ -12,6 +13,11 @@ import { createLoadoutRevision } from "../services/bots.js";
 
 let h: TestDbHandle;
 const NAME = "022_entries_team";
+
+async function hasConsentsTable(): Promise<boolean> {
+  const r = await h.db.raw(`SELECT to_regclass('public.team_entry_consents') AS t`);
+  return r.rows[0].t !== null;
+}
 
 async function entryColumns(): Promise<string[]> {
   const r = await h.db.raw(`SELECT column_name FROM information_schema.columns WHERE table_name = 'entries'`);
@@ -34,6 +40,7 @@ describe("migración 022_entries_team", () => {
       `SELECT is_nullable FROM information_schema.columns WHERE table_name = 'entries' AND column_name = 'team_id'`,
     );
     expect(r.rows[0].is_nullable).toBe("YES");
+    expect(await hasConsentsTable()).toBe(true);
   });
 
   it("no rellena filas, el equipo inscrito no se borra (23503), y el rollback por nombre conserva las inscripciones", async () => {
@@ -73,9 +80,11 @@ describe("migración 022_entries_team", () => {
     const before = (await entryColumns()).filter((c) => c !== "team_id");
     await rollbackNamed(h.db, NAME);
     expect(await entryColumns()).toEqual(before);
+    expect(await hasConsentsTable()).toBe(false);
     expect(await h.db("entries").where({ id: legacy.id }).first()).toBeTruthy();
     await migrateNamed(h.db, NAME);
     expect(await entryColumns()).toContain("team_id");
+    expect(await hasConsentsTable()).toBe(true);
     expect((await h.db("entries").where({ id: legacy.id }).first()).team_id).toBeNull();
   });
 });

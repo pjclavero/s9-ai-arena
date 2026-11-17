@@ -36,6 +36,7 @@ let calls: { method: string; path: string; body?: unknown }[];
 let versionsByBot: Record<string, unknown>;
 let tournament: Record<string, unknown>;
 let teams: Record<string, unknown>[];
+let consents: { botId: string; version: number; mine?: boolean }[];
 
 const TEAMS_4V4 = {
   id: "t1",
@@ -66,6 +67,8 @@ function mock() {
     if (path === "/tournaments/t1/battles") return { items: [] };
     if (path.startsWith("/bots?ownerId=")) return { items: [] };
     if (path === "/teams?limit=100") return { items: teams };
+    if (method === "GET" && path.startsWith("/tournaments/t1/team-consents?teamId=")) return { items: consents };
+    if (method === "PUT" && path.startsWith("/tournaments/t1/team-consents/")) return {};
     const m = /^\/bots\/([^/]+)\/versions$/.exec(path);
     if (method === "GET" && m) return versionsByBot[m[1]] ?? [];
     if (method === "POST" && path === "/tournaments/t1/team-entries") return { entries: [] };
@@ -80,6 +83,7 @@ beforeEach(() => {
   calls = [];
   tournament = TEAMS_4V4;
   teams = [BASTION, { id: "tm2", name: "Ajeno", isMember: false }];
+  consents = [];
   versionsByBot = {
     b1: [pub(4)],
     b2: [pub(2)],
@@ -134,7 +138,7 @@ describe("#287 · reglas puras del roster", () => {
     });
     expect(p.canSubmit).toBe(false);
     expect(p.rows.find((r) => r.botId === "b3")?.problem).toMatch(/Sin versión publicada o congelada elegible/);
-    expect(p.rows.find((r) => r.botId === "x")?.problem).toMatch(/otro miembro/);
+    expect(p.rows.find((r) => r.botId === "x")?.problem).toMatch(/autorización de su dueño/);
   });
 });
 
@@ -213,6 +217,65 @@ describe("#287 · detalle de un torneo por equipos", () => {
     );
     await user.click(screen.getByRole("button", { name: "Inscribir equipo" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Algún bot no pertenece a este equipo");
+  });
+});
+
+describe("#287 ronda 2 · equipo de varios dueños", () => {
+  const MIXED = {
+    id: "tm1",
+    name: "Bastión",
+    isMember: true,
+    bots: [
+      { id: "b1", name: "Bastión-Apoyo", mine: true },
+      { id: "b2", name: "Bastión-Asalto", mine: true },
+      { id: "b3", name: "Bastión-Defensor", mine: true },
+      { id: "x9", name: "Bastión-Ajeno", mine: false },
+    ],
+  };
+
+  it("W287_MULTI_OWNER · el bot de otro miembro entra con la versión que autorizó su dueño", async () => {
+    teams = [MIXED];
+    consents = [{ botId: "x9", version: 7, mine: false }];
+    mock();
+    const user = await pickTeam();
+    expect((await screen.findByTestId("roster-authorized-x9")).textContent).toMatch(/v7 · autorizado por su dueño/);
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Inscribir equipo" }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    await user.click(screen.getByRole("button", { name: "Inscribir equipo" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "POST")?.body).toEqual({
+        teamId: "tm1",
+        members: [
+          { botId: "b1", version: 4 },
+          { botId: "b2", version: 2 },
+          { botId: "b3", version: 1 },
+          { botId: "x9", version: 7 },
+        ],
+      }),
+    );
+  });
+
+  it("W287_NO_CONSENT · sin la autorización del otro dueño: motivo visible y nada se envía", async () => {
+    teams = [MIXED];
+    mock();
+    await pickTeam();
+    expect((await screen.findByTestId("roster-problem-x9")).textContent).toMatch(/Falta la autorización/);
+    expect((screen.getByRole("button", { name: "Inscribir equipo" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(calls.filter((c) => c.method === "POST")).toEqual([]);
+  });
+
+  it("W287_GRANT · el dueño autoriza su propio bot con la versión elegida", async () => {
+    mock();
+    const user = await pickTeam();
+    await user.click(await screen.findByRole("button", { name: "Autorizar a mi equipo (v4)" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT")).toEqual({
+        method: "PUT",
+        path: "/tournaments/t1/team-consents/b1",
+        body: { teamId: "tm1", version: 4 },
+      }),
+    );
   });
 });
 

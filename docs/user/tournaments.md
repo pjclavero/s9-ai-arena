@@ -61,7 +61,9 @@ En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → el
 En un torneo **Por equipos** con tamaño (por ejemplo, 4 vs 4) no se inscriben bots sueltos: se inscribe el **equipo completo**. En el detalle del torneo, **«Inscribir equipo»** → elige uno de tus equipos → la web enseña su plantilla con la **versión** de cada bot (puedes cambiarla) → **«Inscribir equipo»**.
 
 - Se inscriben **exactamente** tantos bots como marque el tamaño; si el equipo tiene más, desmarca los que no juegan.
-- Cada bot tiene que ser **del equipo** y **tuyo**, no estar retirado, y tener una versión **publicada o congelada («Frozen / Inmutable») y elegible**, como en la inscripción individual.
+- Cada bot tiene que ser **del equipo**, no estar retirado, y tener una versión **publicada o congelada («Frozen / Inmutable») y elegible**, como en la inscripción individual.
+- **Equipos de varios jugadores**: un bot de otro miembro sólo entra si **su dueño lo autoriza** para ese torneo con una versión concreta. El dueño lo hace en el mismo formulario con **«Autorizar a mi equipo (vN)»**; quien inscribe ve «vN · autorizado por su dueño» y no puede elegir otra versión. Tus propios bots quedan autorizados al inscribir. La autorización sólo muestra bot y versión, nunca el código.
+- Si un dueño **retira su autorización** («Retirar autorización») con el equipo ya inscrito, el equipo **sale entero** de la inscripción.
 - Si falta o sobra un bot, o alguno no tiene versión elegible, el botón queda **deshabilitado** y la web dice por qué.
 - Es **todo o nada**: o entra el equipo completo o no entra ningún bot.
 - Inscribir el equipo **no cambia** la visibilidad de los bots, la de su código ni su dueño.
@@ -70,11 +72,11 @@ En un torneo **Por equipos** con tamaño (por ejemplo, 4 vs 4) no se inscriben b
 |---|---|
 | «Equipo X inscrito (N bots)» | Correcto. |
 | «Hacen falta exactamente N bots del equipo» | Marca justo N bots. |
-| «Es de otro miembro: sólo su dueño puede inscribirlo» | Ese bot es de otro jugador del equipo. |
+| «Falta la autorización de su dueño para este torneo» | Ese bot es de otro jugador del equipo y aún no lo ha autorizado (o autorizó otra versión). |
 | «El equipo ya está inscrito en este torneo» | Ya inscrito. |
 | «Algún bot no pertenece a este equipo» | El bot salió del equipo mientras elegías. |
 
-Al **cerrar las inscripciones** la plataforma vuelve a comprobarlo todo: si un bot inscrito salió de su equipo, cambió de equipo o se retiró, o su versión dejó de ser elegible (o fue suspendida), el cierre se rechaza y no se congela nada hasta que se corrija. Los torneos por equipos creados sin tamaño (anteriores a esta función) siguen inscribiéndose bot a bot.
+Al **cerrar las inscripciones** la plataforma vuelve a comprobarlo todo: si un bot inscrito salió de su equipo, cambió de equipo o se retiró, su dueño retiró la autorización, o su versión dejó de ser elegible (o fue suspendida o retirada), el cierre se rechaza y no se congela nada. Siempre hay salida: el **organizador puede excluir** esas inscripciones (y, si un equipo queda a medias, también el resto de ese equipo), y el dueño puede retirarla o inscribir otra versión válida. Los torneos por equipos creados sin tamaño (anteriores a esta función) siguen inscribiéndose bot a bot.
 
 ## Cerrar inscripciones (organizadores)
 

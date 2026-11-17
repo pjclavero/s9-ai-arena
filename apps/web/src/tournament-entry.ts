@@ -69,6 +69,8 @@ export interface TeamRosterRow {
   /** Versión que se inscribiría (sólo si es inscribible). */
   version?: number;
   frozen?: boolean;
+  /** Bot de otro miembro con la autorización de su dueño (versión fijada por él). */
+  authorized?: boolean;
   /** Por qué este miembro no se puede inscribir (sólo para los incluidos). */
   problem?: string;
 }
@@ -85,8 +87,9 @@ export interface TeamRosterPlan {
 
 /**
  * #287 · Plan de inscripción de un equipo completo, PURO. Misma regla que la API
- * (`enterTournamentTeam`): exactamente `teamSize` bots, todos del usuario y cada uno con una
- * versión inscribible (`tournamentEntryChoices`: published|frozen y elegible). Si falta o
+ * (`enterTournamentTeam`): exactamente `teamSize` bots, cada uno propio con una versión
+ * inscribible (`tournamentEntryChoices`: published|frozen y elegible) o de otro miembro con la
+ * autorización de su dueño (y entonces con la versión que él autorizó). Si falta o
  * sobra un bot, o alguno no se puede inscribir, se dice por qué y no se envía nada: la
  * inscripción es todo o nada. La API sigue siendo la autoridad.
  */
@@ -96,11 +99,18 @@ export function teamRosterPlan(input: {
   included: ReadonlySet<string>;
   versions: ReadonlyMap<string, RosterVersions>;
   chosen: ReadonlyMap<string, number>;
+  /** #287 (ronda 2) · autorizaciones vigentes de los dueños (botId → versión autorizada). */
+  consents?: ReadonlyMap<string, number>;
 }): TeamRosterPlan {
   const rows: TeamRosterRow[] = input.bots.map((b) => {
     const row: TeamRosterRow = { botId: b.id, name: b.name, included: input.included.has(b.id) };
     if (!row.included) return row;
-    if (!b.mine) return { ...row, problem: "Es de otro miembro: sólo su dueño puede inscribirlo" };
+    if (!b.mine) {
+      // Bot de otro miembro: entra SÓLO con la versión que su dueño autorizó (nunca otra).
+      const v = input.consents?.get(b.id);
+      if (v === undefined) return { ...row, problem: "Falta la autorización de su dueño para este torneo" };
+      return { ...row, version: v, authorized: true };
+    }
     const vs = input.versions.get(b.id);
     if (vs === undefined || vs === "loading") return { ...row, problem: "Cargando sus versiones…" };
     if (vs === "error") return { ...row, problem: "No se pudieron cargar sus versiones" };

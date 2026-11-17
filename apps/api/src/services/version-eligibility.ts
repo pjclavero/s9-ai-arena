@@ -37,6 +37,7 @@ import { getCatalog } from "./catalog.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import { BUDGET_CREDITS_MVP } from "../../../../packages/game-rules/index.js";
+import { rulesOf } from "./battle-rules.js";
 
 /** Sube cuando cambie la tabla de clases o el criterio: invalida la caché. */
 export const ELIGIBILITY_RULES_VERSION = "elig-1";
@@ -506,6 +507,158 @@ export async function buildEligibilityInventory(db: Knex, opts: { summaryOnly?: 
 // ------------------------------------------------------------------- torneos
 
 /**
+ * #287 · Tamaño de equipo de un torneo `teams` con reglas NvN (copia inmutable ADR-022), o
+ * `null` si el torneo no es por equipos o es `classic` (sin `params`: no fija tamaño).
+ */
+export function teamSizeOf(t: Record<string, unknown>): number | null {
+  if (t.format !== "teams") return null;
+  const n = rulesOf(t)?.params?.teamSize;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+/** Motivos ESTABLES por los que una inscripción pendiente no compite (sólo para el servidor). */
+export type EntryIssue =
+  | "version_not_competing" // estado fuera de published|frozen (suspendida, retirada…)
+  | "loadout_not_eligible" // su loadout no pasa hoy el validador
+  | "not_in_team" // inscrita con un equipo del que el bot ya no forma parte
+  | "bot_retired" // bot retirado tras inscribirse con su equipo
+  | "no_team" // torneo NvN e inscripción sin equipo efectivo (alta anterior a la 022)
+  | "consent_missing" // inscripción de equipo sin la autorización vigente del dueño del bot
+  | "team_incomplete"; // su equipo (efectivo) no tiene exactamente N inscripciones
+
+/**
+ * #287 (ronda 2, H2/H4) · PREDICADO ÚNICO «compite»: una inscripción PENDIENTE compite si su
+ * versión está en estado de competición (`isCompetitionState`), su loadout es elegible
+ * (`evaluateVersionsEligibility`) y, en un torneo `teams` con tamaño, el bot sigue en el equipo
+ * con el que se inscribió, no está retirado y su dueño mantiene la autorización (H5), o — alta
+ * anterior a la 022 (`team_id` NULL) — el bot tiene equipo. Lo usan el cierre (no cierra si
+ * alguna no compite), la exclusión por el organizador (sólo puede excluir las que no compiten)
+ * y la sustitución de versión por el dueño (sólo sustituye una que no compite): así lo que
+ * bloquea el cierre es SIEMPRE desbloqueable. Sólo LEE. Devuelve los motivos por id.
+ */
+export async function entryCompetitionIssues(
+  db: Knex,
+  tournament: Record<string, unknown>,
+  entries: Record<string, unknown>[],
+): Promise<Map<string, EntryIssue[]>> {
+  const out = new Map<string, EntryIssue[]>();
+  if (entries.length === 0) return out;
+  const refs = entries.map((e) => ({ botId: String(e.bot_id), version: Number(e.version) }));
+  const versions = (await db("bot_versions").where((q) => {
+    for (const r of refs) q.orWhere({ bot_id: r.botId, version: r.version });
+  })) as Record<string, unknown>[];
+  const stateOf = new Map(versions.map((v) => [eligibilityKey(String(v.bot_id), Number(v.version)), v.state]));
+  const elig = await evaluateVersionsEligibility(db, refs);
+  const teamSized = teamSizeOf(tournament) !== null;
+  const ids = [...new Set(refs.map((r) => r.botId))];
+  const bots = teamSized ? ((await db("bots").whereIn("id", ids)) as Record<string, unknown>[]) : [];
+  const botById = new Map(bots.map((b) => [String(b.id), b]));
+  const consents = teamSized
+    ? ((await db("team_entry_consents").where({ tournament_id: tournament.id }).whereIn("bot_id", ids)) as Record<
+        string,
+        unknown
+      >[])
+    : [];
+  const consentByBot = new Map(consents.map((c) => [String(c.bot_id), c]));
+  // Tamaño de cada equipo EFECTIVO sobre TODAS las inscripciones del torneo (no sólo las
+  // evaluadas): si se excluye un miembro, el resto de su equipo deja de competir y también
+  // se puede excluir — nada queda bloqueado por un equipo a medias.
+  const teamCount = new Map<string, number>();
+  if (teamSized) {
+    const all = (await db("entries")
+      .join("bots", "bots.id", "entries.bot_id")
+      .where({ "entries.tournament_id": tournament.id })
+      .select(db.raw("COALESCE(entries.team_id, bots.team_id) AS effective_team_id"))) as {
+      effective_team_id: string | null;
+    }[];
+    for (const r of all) {
+      if (r.effective_team_id) teamCount.set(r.effective_team_id, (teamCount.get(r.effective_team_id) ?? 0) + 1);
+    }
+  }
+  const n = teamSizeOf(tournament);
+  for (const e of entries) {
+    const ref = { botId: String(e.bot_id), version: Number(e.version) };
+    const issues: EntryIssue[] = [];
+    if (!isCompetitionState(stateOf.get(eligibilityKey(ref.botId, ref.version)))) issues.push("version_not_competing");
+    if (!eligibilityOf(elig, ref).eligible) issues.push("loadout_not_eligible");
+    if (teamSized) {
+      const bot = botById.get(ref.botId);
+      if (e.team_id) {
+        if (!bot || bot.team_id !== e.team_id) issues.push("not_in_team");
+        if (bot?.retired_at) issues.push("bot_retired");
+        const c = consentByBot.get(ref.botId);
+        if (!c || c.team_id !== e.team_id || Number(c.version) !== ref.version || c.owner_id !== bot?.owner_id) {
+          issues.push("consent_missing");
+        }
+      } else if (!bot?.team_id) {
+        issues.push("no_team");
+      }
+      const effective = (e.team_id as string | null) ?? (bot?.team_id as string | null) ?? null;
+      if (effective && teamCount.get(effective) !== n) issues.push("team_incomplete");
+    }
+    out.set(String(e.id), issues);
+  }
+  return out;
+}
+
+const ROSTER_ISSUES: ReadonlySet<EntryIssue> = new Set(["not_in_team", "bot_retired", "no_team", "consent_missing"]);
+const UNBLOCK =
+  "Para cerrar, el organizador puede excluirlas (POST …/entries/{entryId}/actions/exclude), o sus dueños retirarlas o inscribir otra versión válida.";
+
+/**
+ * #287 (ronda 2) · Cierre: si alguna inscripción pendiente NO compite (predicado único de
+ * arriba), no se cierra ni se congela nada. Tres códigos, por orden, todos con los ids de
+ * inscripción (sin el motivo ni datos del bot: el organizador no ve bots privados ajenos):
+ *  - 409 `entries_not_eligible`: versión fuera de published|frozen o loadout no elegible;
+ *  - 409 `team_roster_changed`: el bot salió de su equipo, se retiró, no tiene equipo o su
+ *    dueño retiró la autorización;
+ *  - 409 `rules_team_size` (ADR-022): algún equipo no tiene exactamente N inscripciones.
+ * El mensaje dice la verdad: TODAS se pueden excluir por el organizador (mismo predicado).
+ */
+export async function entryCompetitionGate(
+  db: Knex,
+  tournament: Record<string, unknown>,
+  entries: Record<string, unknown>[],
+): Promise<void> {
+  const issues = await entryCompetitionIssues(db, tournament, entries);
+  const of = (e: Record<string, unknown>) => issues.get(String(e.id)) ?? [];
+  const ids = (xs: Record<string, unknown>[]) => xs.map((e) => ({ entryId: e.id }));
+  const badVersion = entries.filter((e) =>
+    of(e).some((i) => i === "version_not_competing" || i === "loadout_not_eligible"),
+  );
+  if (badVersion.length > 0) {
+    throw new ApiError(
+      409,
+      "entries_not_eligible",
+      `${badVersion.length} inscripción(es) usan una versión que ya no compite (no está publicada ni congelada, o su loadout ya no es elegible); se conserva para el histórico. ${UNBLOCK}`,
+      { notEligibleEntries: ids(badVersion) },
+    );
+  }
+  const badRoster = entries.filter((e) => of(e).some((i) => ROSTER_ISSUES.has(i)));
+  if (badRoster.length > 0) {
+    throw new ApiError(
+      409,
+      "team_roster_changed",
+      `${badRoster.length} inscripción(es) ya no pertenecen a su equipo (el bot salió o cambió de equipo, se retiró, no tiene equipo o su dueño retiró la autorización). ${UNBLOCK}`,
+      {
+        notEligibleEntries: ids(badRoster),
+        changedEntries: badRoster.map((e) => ({ entryId: e.id, teamId: (e.team_id as string | null) ?? null })),
+      },
+    );
+  }
+  const incomplete = entries.filter((e) => of(e).includes("team_incomplete"));
+  if (incomplete.length > 0) {
+    const n = teamSizeOf(tournament);
+    throw new ApiError(
+      409,
+      "rules_team_size",
+      `${n} contra ${n}: ${incomplete.length} inscripción(es) son de equipos que no tienen exactamente ${n} bots inscritos. ${UNBLOCK}`,
+      { teamSize: n, notEligibleEntries: ids(incomplete) },
+    );
+  }
+}
+
+/**
  * Inscripción (H8). Primero exige que la versión pedida sea elegible (409
  * `bot_version_not_eligible`). Después, si el bot YA tenía una inscripción PENDIENTE
  * (sin congelar) con una versión que hoy no es elegible, la cambia por la pedida y lo
@@ -529,7 +682,10 @@ export async function replaceIneligibleEntry(
     botId,
     version: Number(entry.version),
   });
-  if (prev.eligible) return null;
+  // #287 (ronda 2, H2) · el MISMO predicado que el cierre: sólo se sustituye una inscripción
+  // que no compite (estado, loadout o equipo), nunca una válida.
+  const issues = (await entryCompetitionIssues(db, tournament, [entry])).get(String(entry.id)) ?? [];
+  if (issues.length === 0) return null;
   // Cambio y rastro de auditoría juntos: o las dos cosas o ninguna.
   const updated = await db.transaction(async (trx) => {
     const [row] = await trx("entries")
@@ -537,6 +693,14 @@ export async function replaceIneligibleEntry(
       .update({ version: n, loadout_revision: version.loadout_revision })
       .returning("*");
     if (!row) return null;
+    // #287 (H5) · en una inscripción de equipo, el dueño que cambia su versión renueva con
+    // ella su autorización (la del equipo es por versión).
+    if (entry.team_id) {
+      await trx("team_entry_consents")
+        .insert({ tournament_id: tournament.id, bot_id: botId, team_id: entry.team_id, version: n, owner_id: actorId })
+        .onConflict(["tournament_id", "bot_id"])
+        .merge({ team_id: entry.team_id, version: n, owner_id: actorId });
+    }
     await trx("audit_log").insert({
       actor_id: actorId,
       action: "tournament.entry.version_replaced",
@@ -548,6 +712,7 @@ export async function replaceIneligibleEntry(
         toVersion: n,
         reason: prev.reason,
         category: prev.category,
+        issues,
       }),
       correlation_id: correlationId ?? null,
     });
@@ -630,8 +795,11 @@ export async function excludeTournamentEntry(
   }
   const ref = { botId: String(entry.bot_id), version: Number(entry.version) };
   const e = eligibilityOf(await evaluateVersionsEligibility(db, [ref]), ref);
-  if (!byOwner && e.eligible) {
-    throw new ApiError(409, "entry_eligible", "La inscripción es elegible: sólo su dueño puede retirarla");
+  // #287 (ronda 2, H2/H4) · el organizador excluye lo que NO COMPITE con el MISMO predicado
+  // que bloquea el cierre (estado, loadout o equipo): nada bloquea el cierre sin salida.
+  const issues = (await entryCompetitionIssues(db, t, [entry])).get(String(entry.id)) ?? [];
+  if (!byOwner && issues.length === 0) {
+    throw new ApiError(409, "entry_eligible", "La inscripción compite: sólo su dueño puede retirarla");
   }
   await db.transaction(async (trx) => {
     // TOCTOU · se bloquea la fila y se comprueba que sigue siendo LA MISMA inscripción
@@ -667,6 +835,7 @@ export async function excludeTournamentEntry(
         reason: reason.trim(),
         eligible: e.eligible,
         category: e.category,
+        issues,
       }),
       correlation_id: correlationId ?? null,
     });

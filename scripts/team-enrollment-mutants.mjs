@@ -12,6 +12,7 @@
  * Uso (en el laboratorio, nunca en el orquestador):
  *   node scripts/team-enrollment-mutants.mjs            # todos
  *   node scripts/team-enrollment-mutants.mjs M1 M3a     # sólo esos
+ *   node scripts/team-enrollment-mutants.mjs --dry      # sólo comprueba los patrones
  * Sale con 0 sólo si la base está verde y TODOS los mutantes dan ROJO-OK.
  */
 import { spawnSync, execFileSync } from "node:child_process";
@@ -23,6 +24,7 @@ const T = "apps/api/src/routes/tournaments.ts";
 const WTE = "apps/web/src/tournament-entry.ts";
 const SCH = "apps/tournament-worker/src/scheduler.ts";
 const RES = "apps/tournament-worker/src/results.ts";
+const VE = "apps/api/src/services/version-eligibility.ts";
 
 const NO_TRX_OPEN = {
   file: T,
@@ -123,24 +125,18 @@ const MUTANTS = [
   {
     id: "M4",
     name: "no revalida la pertenencia al cerrar",
-    edits: [
-      {
-        file: T,
-        from: "  const changed = rows.filter((e) =>\n",
-        to: "  const changed = rows.filter((e) => false &&\n",
-      },
-    ],
+    edits: [{ file: VE, from: '        if (!bot || bot.team_id !== e.team_id) issues.push("not_in_team");\n', to: "" }],
     tests: [API],
     kill: "T287_CLOSE_SWAP",
   },
   {
     id: "M4b",
-    name: "no revalida el estado de las versiones al cerrar",
+    name: "no revalida el estado de las versiones al cerrar (ni al excluir)",
     edits: [
       {
-        file: T,
-        from: "const notCompeting = entries.filter((e) => !isCompetitionState(versions.get(e.id as string)?.state));",
-        to: "const notCompeting = entries.filter(() => false);",
+        file: VE,
+        from: '    if (!isCompetitionState(stateOf.get(eligibilityKey(ref.botId, ref.version)))) issues.push("version_not_competing");\n',
+        to: "",
       },
     ],
     tests: [API],
@@ -152,13 +148,93 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        from: "    const updated = await db.transaction(async (trx) => {",
-        to: "    const updated = await (async (trx: typeof db) => {",
+        from: "    const updated = await db.transaction(async (db) => {",
+        to: "    const updated = await (async (db: Db) => {",
       },
-      { file: T, from: "      return row;\n    });\n", to: "      return row;\n    })(db);\n" },
+      {
+        file: T,
+        from: "      return updated;\n    });\n    res.json(tournamentToJson(updated));",
+        to: "      return updated;\n    })(db);\n    res.json(tournamentToJson(updated));",
+      },
     ],
     tests: [API],
     kill: "T287_CLOSE_ATOMIC",
+  },
+  {
+    id: "RM4",
+    name: "no comprueba que el solicitante sea miembro del equipo (revisor)",
+    edits: [
+      {
+        file: T,
+        from: '      if (!member) throw forbidden("Sólo un miembro del equipo puede inscribirlo");',
+        to: '      if (false && !member) throw forbidden("x");',
+      },
+    ],
+    tests: [API],
+    kill: "T287_NOT_TEAM_MEMBER",
+  },
+  {
+    id: "RM6",
+    name: "el cierre no revalida el bot retirado (revisor)",
+    edits: [{ file: VE, from: '        if (bot?.retired_at) issues.push("bot_retired");\n', to: "" }],
+    tests: [API],
+    kill: "T287_CLOSE_RETIRED",
+  },
+  {
+    id: "RM7",
+    name: "el cierre ignora inscripciones sin equipo efectivo (revisor)",
+    edits: [{ file: VE, from: '        issues.push("no_team");\n', to: "" }],
+    tests: [API],
+    kill: "T287_TEAMLESS_LEGACY",
+  },
+  {
+    id: "H1",
+    name: "alta individual sin bloquear el torneo (carrera con el cierre)",
+    edits: [
+      {
+        file: T,
+        from: "        .where({ id: req.params.tournamentId })\n        .forUpdate()\n",
+        to: "        .where({ id: req.params.tournamentId })\n",
+      },
+    ],
+    tests: [API],
+    kill: "T287_RACE_IND",
+  },
+  {
+    id: "H2a",
+    name: "el organizador sólo excluye por loadout (no por el predicado único)",
+    edits: [{ file: VE, from: "  if (!byOwner && issues.length === 0) {", to: "  if (!byOwner && e.eligible) {" }],
+    tests: [API],
+    kill: "T287_UNBLOCK_RETIRED_IND",
+  },
+  {
+    id: "H2b",
+    name: "el dueño sólo sustituye por loadout (no por el predicado único)",
+    edits: [{ file: VE, from: "  if (issues.length === 0) return null;", to: "  if (prev.eligible) return null;" }],
+    tests: [API],
+    kill: "T287_UNBLOCK_REPLACE_IND",
+  },
+  {
+    id: "H2c",
+    name: "un equipo a medias no deja de competir (el resto no se puede excluir)",
+    edits: [
+      {
+        file: VE,
+        from: '      if (effective && teamCount.get(effective) !== n) issues.push("team_incomplete");\n',
+        to: "",
+      },
+    ],
+    tests: [API],
+    kill: "T287_UNBLOCK_SUSPENDED_TEAM",
+  },
+  {
+    id: "H3",
+    name: "freeze incondicional (doble auditoría con cierres concurrentes)",
+    edits: [
+      { file: T, from: '          .where({ id: v.id, state: "published" })', to: "          .where({ id: v.id })" },
+    ],
+    tests: [API],
+    kill: "T287_FREEZE_ONCE",
   },
   {
     id: "M5",
@@ -215,16 +291,70 @@ const MUTANTS = [
   },
   {
     id: "M7",
-    name: "no comprueba el dueño de cada bot",
+    name: "inscribe bots de otro dueño sin su autorización",
+    edits: [{ file: T, from: "      if (unauthorized.length > 0) {", to: "      if (false) {" }],
+    tests: [API],
+    kill: "T287_MO_NO_CONSENT",
+  },
+  {
+    id: "M7b",
+    name: "la autorización no ata la versión",
+    edits: [{ file: T, from: " || Number(c.version) !== m.version || ", to: " || " }],
+    tests: [API],
+    kill: "T287_MO_WRONG_VERSION",
+  },
+  {
+    id: "M7c",
+    name: "el cierre no revalida la autorización",
+    edits: [{ file: VE, from: '          issues.push("consent_missing");\n', to: "" }],
+    tests: [API],
+    kill: "T287_MO_CLOSE_CONSENT_GONE",
+  },
+  {
+    id: "M7d",
+    name: "retirar la autorización no saca al equipo",
+    edits: [{ file: T, from: "      if (entry?.team_id) {", to: "      if (false) {" }],
+    tests: [API],
+    kill: "T287_MO_REVOKED",
+  },
+  {
+    id: "M7e",
+    name: "cualquiera autoriza un bot ajeno",
     edits: [
       {
         file: T,
-        from: "const notOwned = ids.filter((id) => byId.get(id)!.owner_id !== userId);",
-        to: "const notOwned = ids.filter(() => false);",
+        from: '      if (!bot || bot.owner_id !== userId) throw notFound("Bot no encontrado entre los tuyos");',
+        to: '      if (!bot) throw notFound("Bot no encontrado entre los tuyos");',
       },
     ],
     tests: [API],
-    kill: "T287_OWNER",
+    kill: "T287_MO_FOREIGN_CONSENT",
+  },
+  {
+    id: "M7w",
+    name: "la web deja entrar un bot ajeno sin autorización",
+    edits: [
+      {
+        file: WTE,
+        from: '      if (v === undefined) return { ...row, problem: "Falta la autorización de su dueño para este torneo" };',
+        to: "      if (v === undefined) return { ...row, version: 1 };",
+      },
+    ],
+    tests: [WEB],
+    kill: "W287_NO_CONSENT",
+  },
+  {
+    id: "H7",
+    name: "teamId sin normalizar",
+    edits: [
+      {
+        file: T,
+        from: "MAYÚSCULAS como uuid).\n    const teamId = canonicalUuid(rawTeamId);",
+        to: "MAYÚSCULAS como uuid).\n    const teamId = rawTeamId;",
+      },
+    ],
+    tests: [API],
+    kill: "T287_UPPER_UUID",
   },
   {
     id: "M8",
@@ -307,8 +437,29 @@ function locate(src, e) {
   return { ok: true, at: base + first };
 }
 
-const only = new Set(process.argv.slice(2));
+const dry = process.argv.includes("--dry");
+const only = new Set(process.argv.slice(2).filter((a) => a !== "--dry"));
 const selected = MUTANTS.filter((m) => only.size === 0 || only.has(m.id));
+
+// `--dry`: sólo comprueba que cada patrón existe y es único (sin vitest, sin tocar el árbol).
+if (dry) {
+  let bad = 0;
+  for (const m of selected) {
+    const cur = new Map();
+    for (const e of m.edits) {
+      const src = cur.get(e.file) ?? readFileSync(e.file, "utf8");
+      const loc = locate(src, e);
+      if (!loc.ok) {
+        bad++;
+        console.log(`ROTO · ${m.id} · ${e.file}: ${loc.why}`);
+        break;
+      }
+      cur.set(e.file, src.slice(0, loc.at) + e.to + src.slice(loc.at + e.from.length));
+    }
+  }
+  console.log(`DRY · ${selected.length - bad}/${selected.length} patrones OK`);
+  process.exit(bad === 0 ? 0 : 1);
+}
 
 if (treeDirty()) {
   console.error(`ÁRBOL SUCIO: commitea antes de calibrar (los mutantes restauran desde memoria).\n${treeDirty()}`);
