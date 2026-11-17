@@ -408,7 +408,8 @@ describe("pre-0.5 competitive reset · dry-run y guardas", () => {
     expect(r.replayManifest!.battles).toBe(4);
     expect(r.historical!["audit_log.target battle:<id> sin batalla"]).toBe(1);
     // P2-1 · lista de torneos que se borran, con entries y batallas.
-    expect(r.tournaments!.map((t) => [t.name, t.state, t.entries, t.battles, t.terminal, t.stuck])).toEqual([
+    const listed = [...r.tournaments!].sort((a, b) => a.name.localeCompare(b.name));
+    expect(listed.map((t) => [t.name, t.state, t.entries, t.battles, t.terminal, t.stuck])).toEqual([
       ["T1", "finished", 2, 1, true, false],
       ["T2", "open", 1, 0, false, false],
       ["T3", "cancelled", 0, 0, true, false],

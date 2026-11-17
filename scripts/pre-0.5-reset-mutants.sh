@@ -50,7 +50,7 @@ mut() {
 mut M1_hash_sin_bytea 's/const exprs = cols\.map\(/const exprs = cols.filter((c) => c.data_type !== "bytea").map(/'
 mut M2_dryrun_commit 's/if \(opts\.mode !== "apply"\) \{\n(\s*)await trx\.rollback\(\);/if (opts.mode !== "apply") {\n$1await trx.commit();/'
 mut M3_running_mal_escrito "s/FROM battles WHERE status = 'running'\`/FROM battles WHERE status = 'runing'\`/"
-mut M4_replay_sin_uuid 's/if \(ids\.some\(\(id\) => !UUID\.test\(id\)\)\)/if (false)/'
+mut M4_replay_sin_uuid 's/const badIds = ids\.some\(\(id\) => !UUID\.test\(id\)\);/const badIds = false;/'
 mut M5_postcommit_exit1 's/report\.status = "POST_COMMIT_FAILED";\n(\s*)report\.exitCode = 4;/report.status = "POST_COMMIT_FAILED";\n$1report.exitCode = 1;/'
 mut M6_sin_guarda_torneo_vivo 's/if \(t\.liveBattles \|\| t\.activeJobs\) \{/if (false) {/'
 mut M7_sin_lock 's/if \(lockable\.length\) await trx\.raw/if (false) await trx.raw/'

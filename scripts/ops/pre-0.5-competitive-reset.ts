@@ -998,8 +998,10 @@ export async function replayFiles(
   else if (marks[0].detail?.replayManifestSha256 !== sha)
     rep.refusals.push("el sha256 del manifiesto no es el del reset");
   const ids: string[] = (manifest.battles ?? []).map((b: { id: string }) => b.id);
-  if (ids.some((id) => !UUID.test(id))) rep.refusals.push("ids de batalla no UUID en el manifiesto");
-  if (ids.length) {
+  // Un id que no es UUID (p. ej. «../x») se rechaza ANTES de usarlo en ninguna consulta ni ruta.
+  const badIds = ids.some((id) => !UUID.test(id));
+  if (badIds) rep.refusals.push("ids de batalla no UUID en el manifiesto");
+  if (ids.length && !badIds) {
     const [{ n }] = (await db("battles").whereIn("id", ids).count({ n: "*" })) as { n: string | number }[];
     if (Number(n) !== 0) rep.refusals.push(`${n} batalla(s) del manifiesto siguen en la BD`);
   }
