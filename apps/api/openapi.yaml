@@ -99,7 +99,7 @@ info:
   # republica, ni se descongela) y closeEntries no la vuelve a tocar. `bot_not_published`
   # pasa a significar «estado fuera de published|frozen» también aquí (como en
   # createPracticeBattle) y lleva `currentState` con el estado real.
-  # 0.21.0 · OLA 2 (motor 0.5.0, ADR-024) integrada en main: createSpectateTicket gana el
+  # 0.21.0 · OLA 2 (motor 0.5.0, ADR-024) integrada en main: getSpectateTicket gana el
   # query `audience` (public_live|broadcast, FIRMADA en el ticket); el replay público pasa a
   # `s9.replay.public-competition.v2` (proyección pública, ids públicos); EQUIPMENT_PRIVATE:
   # `damageDealt`/`damageTaken` absolutos y las cifras de composición de bots ajenos sólo

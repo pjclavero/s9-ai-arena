@@ -175,6 +175,9 @@ describe("FIX-DELAY · directo con retardo de 30 s y watchdog de 10 s (gateway y
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ev.snapshots.length, "nunca llegó el primer snapshot").toBeGreaterThan(20);
     expect(ev.snapshots[0].tick).toBe(1);
+    // 1a ronda 2 (REVIEW-1a F-3) · los eventos TAMBIÉN llegan tras el retardo (uno por
+    // segundo): sin esto, un proyector que los descartara dejaría el anti-coaching en vacío.
+    expect(ev.events.length, "nunca llegó un evento retrasado").toBeGreaterThanOrEqual(3);
     for (const s of [...ev.snapshots, ...ev.events]) {
       const lag = s.at - producedAt.get(s.tick)!;
       expect(lag, `ANTI_COACHING: tick ${s.tick} con ${lag} ms`).toBeGreaterThanOrEqual(DELAY_MS);

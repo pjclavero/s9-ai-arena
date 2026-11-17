@@ -226,3 +226,89 @@ describe("PUBLIC_PROJECTION_BOUNDARY · directo y broadcast sólo por projectFra
     expect(code).toBe(4401);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────────────────
+// 1a · Ronda 2 (REVIEW-1a F-1/F-2) · la MISMA frontera con RETARDO: historial por audiencia
+// (#282/EQ5), feed retrasado, result retrasado y un espectador que llega TARDE (su init sale
+// de dueSnapshot/dueResult/meta de SU audiencia). Calibración: ma-mutants.py MD1–MD6 (feed
+// retrasado con snapshot/evento/result crudos, init retrasado con meta o result crudos, init
+// retrasado con el snapshot de la audiencia `staff`).
+function checkDelayed(label: string, msgs: any[]) {
+  expect(msgs[0]?.type, label).toBe("init");
+  expect(
+    strings(msgs).filter((s) => INTERNAL_ID.test(s)),
+    `${label}: ids internos`,
+  ).toEqual([]);
+  const keys = keysDeep(msgs);
+  for (const k of EQUIPMENT_KEYS) expect(keys.has(k), `${label}: clave «${k}»`).toBe(false);
+  expect(JSON.stringify(msgs), `${label}: meta fuera de la lista blanca`).not.toContain("no-sale");
+  for (const m of msgs) if (m.type === "snapshot") expect(m.snapshot.deployables, label).toEqual([]);
+}
+
+/** Casco CUANTIZADO público (D-B5): hullLevel entero en [0, 20] y nunca hp exacto. */
+function checkQuantized(label: string, snapshot: any) {
+  expect(snapshot?.vehicles?.length, `${label}: sin vehículos`).toBeGreaterThan(0);
+  for (const v of snapshot.vehicles) {
+    expect(Number.isInteger(v.hullLevel), `${label}: hullLevel entero`).toBe(true);
+    expect(v.hullLevel).toBeGreaterThanOrEqual(0);
+    expect(v.hullLevel).toBeLessThanOrEqual(20);
+    expect(v.hullHp, `${label}: hp exacto`).toBeUndefined();
+  }
+}
+
+describe("PUBLIC_PROJECTION_BOUNDARY · con retardo (historial e init retrasado por audiencia)", () => {
+  it("DELAYED_PROJECTION_BOUNDARY · feed retrasado + init tardío: nada sale crudo ni de otra audiencia", async () => {
+    const id = "ma-delay";
+    const b = await battle(id);
+    const gw = new SpectateGateway({ publicSpectateEnabled: true });
+    cleanups.push(() => gw.close());
+    gw.attachBattle(id, b, {
+      pollIntervalMs: 5,
+      spectator: { delaySeconds: 0.4 },
+      roster: [
+        { id: "veh_1", botId: "bot-gunner", team: "red", chassis: "chassis.medium@2" },
+        { id: "veh_2", botId: "bot-miner", team: "blue", chassis: "chassis.light@2" },
+      ],
+      meta: { mode: "deathmatch", secretThing: "no-sale" },
+    });
+    const live = await connect(gw, id, "public_live");
+    const bcast = await connect(gw, id, "broadcast");
+    while (!b.isFinished()) {
+      for (let i = 0; i < 6 && !b.isFinished(); i++) b.step();
+      await sleep(2);
+    }
+    await sleep(900); // pasa el retardo: llega todo, incluido el result retrasado
+    const late = await connect(gw, id, "public_live"); // init desde dueSnapshot/dueResult
+    await sleep(300);
+    for (const [label, c] of [
+      ["public_live", live],
+      ["broadcast", bcast],
+      ["late", late],
+    ] as const) {
+      checkDelayed(label, c.got);
+      const snaps = c.got.filter((m) => m.type === "snapshot").length + (c.got[0].snapshot ? 1 : 0);
+      expect(snaps, `${label}: hubo estado`).toBeGreaterThan(0);
+    }
+    expect(
+      live.got.some((m) => m.type === "result"),
+      "live: result retrasado",
+    ).toBe(true);
+    expect(
+      live.got.some((m) => m.type === "event"),
+      "live: eventos retrasados",
+    ).toBe(true);
+    expect(late.got[0].finished, "late: init con el fin vencido").toBe(true);
+    expect(late.got[0].result, "late: init con result").toBeTruthy();
+    expect(late.got[0].snapshot, "late: init con snapshot vencido").toBeTruthy();
+    expect(late.got[0].mappingId).toBe(live.got[0].mappingId);
+    expect(late.got[0].mappingId).not.toBe(bcast.got[0].mappingId);
+    // F-2 · el init retrasado sale de SU audiencia: es exactamente el último snapshot público
+    // que vio el directo (mismo mapper), con el casco cuantizado; y el result del init es el
+    // mismo result proyectado que llegó por el feed.
+    const lastLive = live.got.filter((m) => m.type === "snapshot").at(-1)!.snapshot;
+    checkQuantized("live", lastLive);
+    checkQuantized("late", late.got[0].snapshot);
+    expect(late.got[0].snapshot, "late: init = último snapshot público").toEqual(lastLive);
+    expect(late.got[0].result).toEqual(live.got.find((m) => m.type === "result")!.result);
+  }, 30_000);
+});
