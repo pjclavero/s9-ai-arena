@@ -53,7 +53,7 @@ describe("TournamentWorker respeta la concurrencia configurada", () => {
         return { rows: [] };
       },
     };
-    const w = new TournamentWorker({ db, handlers: {}, pollMs: 60_000, ...(concurrency ? { concurrency } : {}) } as any);
+    const w = new TournamentWorker({ db, handlers: {}, pollMs: 1000, ...(concurrency ? { concurrency } : {}) } as any);
     vivos.push(w);
     w.start();
     await dormir(300);
