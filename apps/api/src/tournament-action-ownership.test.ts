@@ -174,7 +174,7 @@ describe("TAO-C · closeEntries: dueño o staff", () => {
     const before = await footprint(id);
     const r = await close(id, tok.otherOrganizer);
     expect(r.status, JSON.stringify(r.body)).toBe(403);
-    expect(r.body.code).toBe("forbidden");
+    expect(r.body.error).toBe("forbidden");
     expect(await footprint(id)).toEqual(before);
     expect(before.state).toBe("open");
     // El dueño sigue pudiendo cerrarlo después.
