@@ -145,7 +145,7 @@ describe("presets 1v1", () => {
       timeoutTiebreak: ["alive", "lives", "kills"],
     });
     expect(rules.catalogVersion).toBeTruthy();
-    expect(rules.engineVersion).toBe("0.4.0");
+    expect(rules.engineVersion).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     expect(rules.schema).toBe(2);
     expect(r.body.rules.summary).toContain("Reaparición: Sin reaparición (1 vida)");
     expect(r.body.rules.tiebreak.steps).toEqual([

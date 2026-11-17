@@ -229,7 +229,7 @@ describe("POST /tournaments · copia inmutable de reglas", () => {
     expect(r.body.rules.engine.timeoutTiebreak).toEqual(["score", "kills"]);
     const row = await h.db("tournaments").where({ id: r.body.id }).first();
     expect(row.rules.engineRuleset.rulesetId).toBe("team_deathmatch@1");
-    expect(row.rules.engineVersion).toBe("0.4.0");
+    expect(row.rules.engineVersion).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     // Retardo anti-coaching del directo en torneos (escalado EQ5); no toca la simulación.
     expect(row.rules.engineRuleset.spectator).toEqual({ delaySeconds: 30 });
   });

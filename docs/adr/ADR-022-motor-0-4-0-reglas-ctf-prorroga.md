@@ -113,3 +113,4 @@ Migración `016_battle_rules` (numerada 015 en el encargo; renumerada al integra
 - MB (contrato de daño) y MC (`weapon.rangeM` real, sin la regla fija de 90 ticks) cambian la trayectoria: los replays 0.3.0 con armas ya no se re-simulan idénticos.
 - Se retiran `apps/replay-service/tests/engine-0.3.0-compat.test.ts`, `review-4v4-engine-0.2.0` y sus fixtures.
 - En producción, los replays 0.2.0, 0.3.0 y 0.4.0 anteriores al contrato dejan de reproducirse: se archivan o se borran (decisión al desplegar).
+- **Versión:** la OLA 2 sube el motor a **0.5.0** en una sola vez ([ADR-024](ADR-024-motor-0-5-0-ola2.md)). Las reglas, los desempates y la prórroga de este ADR siguen vigentes.

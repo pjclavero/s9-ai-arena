@@ -65,7 +65,7 @@ export function rulesDocJson() {
     schema: RULES_DOC_SCHEMA,
     $comment:
       "GENERADO desde packages/game-rules/battle-rules.ts (npx tsx scripts/generate-rules-doc.ts). No editar a mano.",
-    engineVersion: "0.4.0",
+    engineVersion: "0.5.0",
     respawn: {
       definition:
         "maxRespawns es el número de veces que un bot puede REAPARECER después de morir. Vidas totales = maxRespawns + 1.",
@@ -146,7 +146,7 @@ export function rulesDocMarkdown(): string {
   out.push("# Reglas de batalla, modos y desempates");
   out.push("");
   out.push(
-    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0**. Datos estructurados: [`rules.json`](rules.json).",
+    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.5.0**. Datos estructurados: [`rules.json`](rules.json).",
   );
   out.push("");
   out.push("## Reapariciones (`maxRespawns`)");

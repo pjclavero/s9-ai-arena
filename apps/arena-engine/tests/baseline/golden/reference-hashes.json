@@ -4,7 +4,7 @@
   "stateHashesDigest": "d7b3cd8e3d6a0251dab6aecc38d7a17bef717505b9a3317a21fbb960a9275bc5",
   "snapshotsDigest": "6753d3ef5c99dc2ea66b7b2beeb860ce8645a37fd11c9ef25cec9d3e0936bdec",
   "versions": {
-    "engine": "0.4.0",
+    "engine": "0.5.0",
     "physics": "@dimforge/rapier2d-compat@0.19.3",
     "rules": "dm_practice@1",
     "protocol": "arena/1"
