@@ -37,7 +37,7 @@ mut() {
     rc=$(run "$name")
     if [ "$rc" != 0 ]; then
       killed=$((killed + 1))
-      echo "$name MUERTO (rc=$rc) por: $(grep -E '^ +(×|✗|FAIL) ' "$OUT/$name.out" | head -3 | sed -E 's/ +/ /g' | tr '\n' '|')"
+      echo "$name MUERTO (rc=$rc) por: $(sed 's/\x1b\[[0-9;]*m//g' "$OUT/$name.out" | grep -E '^ FAIL ' | sed -E 's/^ FAIL +[^>]*> //' | sort -u | head -4 | tr '\n' '|')"
     else
       survived=$((survived + 1))
       echo "$name VIVE (rc=0)"
