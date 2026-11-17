@@ -403,7 +403,8 @@ export function tournamentRoutes(
           { teamSize: n, got: roster.length },
         );
       }
-      const bots = (await trx("bots").whereIn("id", ids).forUpdate()) as Record<string, unknown>[];
+      // R3-2 · orden de id: el orden común de bloqueo de bots (cierre, equipos).
+      const bots = (await trx("bots").whereIn("id", ids).orderBy("id").forUpdate()) as Record<string, unknown>[];
       const byId = new Map(bots.map((b) => [String(b.id), b]));
       // Un bot inexistente o de otro equipo se responde igual: no se revela si existe.
       const notMember = ids.filter((id) => byId.get(id)?.team_id !== teamId);

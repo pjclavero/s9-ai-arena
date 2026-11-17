@@ -343,6 +343,32 @@ const MUTANTS = [
     kill: "T287_CONSENT_OTHER_TEAM",
   },
   {
+    id: "R31",
+    name: "transición de estado sin condición (frozen→retired con un retire concurrente al cierre, R3-1)",
+    edits: [
+      {
+        file: "apps/api/src/services/bots.ts",
+        from: "    .where({ id: version.id, state: version.state })\n    .update({ state: to, ...patch })",
+        to: "    .where({ id: version.id })\n    .update({ state: to, ...patch })",
+      },
+    ],
+    tests: [API],
+    kill: "T287_CLOSE_RETIRE_RACE",
+  },
+  {
+    id: "R32",
+    name: "removeTeamMember sin bloquear sus bots en orden de id (deadlock con el cierre, R3-2)",
+    edits: [
+      {
+        file: "apps/api/src/routes/teams.ts",
+        from: '      await trx("bots").where({ team_id: team.id, owner_id: target }).orderBy("id").forUpdate();\n',
+        to: "",
+      },
+    ],
+    tests: [API],
+    kill: "T287_DEADLOCK_RTM",
+  },
+  {
     id: "M7",
     name: "inscribe bots de otro dueño sin su autorización",
     edits: [{ file: T, from: "      if (unauthorized.length > 0) {", to: "      if (false) {" }],

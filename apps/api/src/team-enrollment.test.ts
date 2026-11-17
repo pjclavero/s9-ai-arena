@@ -1000,7 +1000,7 @@ describe("#287 ronda 3 · R2-3 · cambios de equipo o de versión durante el cie
     );
   });
 
-  it("T287_CLOSE_SUSPEND_RACE · un suspend durante el cierre espera: la versión se congela (auditada) y después se suspende", async () => {
+  it("T287_CLOSE_SUSPEND_RACE · un suspend durante el cierre espera y, como la versión ya es otra (frozen), da 409; reintentado, frozen→suspended", async () => {
     const A = await mkTeam(2);
     const B = await mkTeam(2);
     const t = await openTeamsTournament(2);
@@ -1017,10 +1017,122 @@ describe("#287 ronda 3 · R2-3 · cambios de equipo o de versión durante el cie
     await release();
     const [cl, sus] = await Promise.all([pClose, pSus]);
     expect(cl.status, JSON.stringify(cl.body)).toBe(200);
-    expect(sus.status).toBe(200);
+    // R3-1 · la suspensión se validó contra `published`; al desbloquearse la versión es
+    // `frozen`: transición condicional ⇒ 409 con el estado real, sin tocar nada.
+    expect(sus.status).toBe(409);
+    expect(sus.body.error).toBe("illegal_transition");
+    expect(sus.body.currentState).toBe("frozen");
     const target = `bot:${A.bots[0]}@1`;
-    const freeze = await auditId("bot.version.freeze", target);
-    expect(freeze).toBeGreaterThan(0);
-    expect(await auditId("bot.version.suspend", target)).toBeGreaterThan(freeze);
+    expect(await auditId("bot.version.freeze", target)).toBeGreaterThan(0);
+    expect(await auditId("bot.version.suspend", target)).toBe(0);
+    expect((await h.db("bot_versions").where({ bot_id: A.bots[0], version: 1 }).first()).state).toBe("frozen");
+    // Reintentada sobre el estado real, frozen→suspended es legal.
+    const again = await request(app)
+      .post(`/bots/${A.bots[0]}/versions/1/actions/suspend`)
+      .set(as(adminTok))
+      .send({ reason: "t287" });
+    expect(again.status).toBe(200);
+  });
+
+  it("T287_CLOSE_RETIRE_RACE · un retire durante el cierre espera y da 409: la versión queda frozen (nunca frozen→retired)", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    const ea = await enterOne(devTok, t, a);
+    expect(ea.status).toBe(201);
+    const eb = await enterOne(devTok, t, b);
+    expect(eb.status).toBe(201);
+    const { pClose, release } = await closeStuck(t, eb.body.id);
+    const pRet = request(app)
+      .post(`/bots/${a}/versions/1/actions/retire`)
+      .set(as(devTok))
+      .send({})
+      .then((r) => r);
+    await lockWaiters(2, 1500);
+    await release();
+    const [cl, ret] = await Promise.all([pClose, pRet]);
+    expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    expect(ret.status).toBe(409);
+    expect(ret.body.error).toBe("illegal_transition");
+    expect(ret.body.currentState).toBe("frozen");
+    expect((await h.db("bot_versions").where({ bot_id: a, version: 1 }).first()).state).toBe("frozen");
+    expect(await h.db("audit_log").where({ action: "bot.version.freeze", target: `bot:${a}@1` })).toHaveLength(1);
+    expect(await h.db("audit_log").where({ action: "bot.version.retire", target: `bot:${a}@1` })).toHaveLength(0);
+  });
+
+  it("T287_PUBLISH_SUSPEND_RACE · publish y suspend concurrentes sobre la misma versión validada: gana uno, el otro 409, una sola auditoría", async () => {
+    const a = await mkBot(devId, null, { state: "validated" });
+    // Retiene el primer UPDATE de esa versión (la publicación) con su bloqueo de fila.
+    await h.db.raw(`
+      CREATE OR REPLACE FUNCTION t287_hold_pub() RETURNS trigger AS $$
+      BEGIN IF NEW.bot_id = '${a}'::uuid AND NEW.state = 'published' THEN PERFORM pg_sleep(1); END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER t287_hold_pub BEFORE UPDATE ON bot_versions FOR EACH ROW EXECUTE FUNCTION t287_hold_pub();`);
+    try {
+      const pPub = request(app)
+        .post(`/bots/${a}/versions/1/actions/publish`)
+        .set(as(devTok))
+        .send({})
+        .then((r) => r);
+      await new Promise((r) => setTimeout(r, 300));
+      const pSus = request(app)
+        .post(`/bots/${a}/versions/1/actions/suspend`)
+        .set(as(adminTok))
+        .send({ reason: "t287" })
+        .then((r) => r);
+      const [pub, sus] = await Promise.all([pPub, pSus]);
+      expect(pub.status, JSON.stringify(pub.body)).toBe(200);
+      expect(sus.status).toBe(409);
+      expect(sus.body.error).toBe("illegal_transition");
+      expect(sus.body.currentState).toBe("published");
+    } finally {
+      await h.db.raw(`DROP TRIGGER IF EXISTS t287_hold_pub ON bot_versions; DROP FUNCTION IF EXISTS t287_hold_pub();`);
+    }
+    expect((await h.db("bot_versions").where({ bot_id: a, version: 1 }).first()).state).toBe("published");
+    expect(await h.db("audit_log").where({ action: "bot.version.suspend", target: `bot:${a}@1` })).toHaveLength(0);
+    expect(await h.db("audit_log").where({ action: "bot.version.publish", target: `bot:${a}@1` })).toHaveLength(1);
+  });
+});
+
+describe("#287 ronda 4 · R3-2 · orden común de bloqueo de bots", () => {
+  it("T287_DEADLOCK_RTM · removeTeamMember (2 bots, orden físico inverso al de id) contra el cierre: sin deadlock ni 500", async () => {
+    // bFirst (insertado antes) con id MAYOR que bSecond: el UPDATE recorre (bFirst, bSecond)
+    // en orden físico y el cierre bloquea por id (bSecond, bFirst).
+    let teamId = "";
+    let bFirst = "";
+    let bSecond = "";
+    for (let k = 0; k < 40; k++) {
+      const [team] = await h
+        .db("teams")
+        .insert({ name: `T287-dl-${++seq}`, captain_id: userId })
+        .returning("*");
+      await h.db("team_members").insert([
+        { team_id: team.id, user_id: userId, role: "captain" },
+        { team_id: team.id, user_id: devId, role: "member" },
+      ]);
+      teamId = team.id as string;
+      bFirst = await mkBot(devId, teamId);
+      bSecond = await mkBot(devId, teamId);
+      if (bFirst > bSecond) break;
+    }
+    expect(bFirst > bSecond).toBe(true);
+    const t = await indTournament();
+    for (const id of [bFirst, bSecond]) expect((await enterOne(devTok, t, id)).status).toBe(201);
+    await h.db.raw(`
+      CREATE OR REPLACE FUNCTION t287_hold_bot() RETURNS trigger AS $$
+      BEGIN IF NEW.id = '${bFirst}'::uuid AND NEW.team_id IS NULL THEN PERFORM pg_sleep(1.5); END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER t287_hold_bot BEFORE UPDATE ON bots FOR EACH ROW EXECUTE FUNCTION t287_hold_bot();`);
+    try {
+      const pRm = request(app)
+        .delete(`/teams/${teamId}/members/${devId}`)
+        .set(as(adminTok))
+        .then((r) => r);
+      await new Promise((r) => setTimeout(r, 400));
+      const pClose = closeEntries(t).then((r) => r);
+      const [rm, cl] = await Promise.all([pRm, pClose]);
+      expect(rm.status, JSON.stringify(rm.body)).toBe(204);
+      expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    } finally {
+      await h.db.raw(`DROP TRIGGER IF EXISTS t287_hold_bot ON bots; DROP FUNCTION IF EXISTS t287_hold_bot();`);
+    }
   });
 });
