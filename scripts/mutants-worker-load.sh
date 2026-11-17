@@ -8,6 +8,7 @@ case "$(hostname)" in ia-server) echo "STOP: sólo en VM111"; exit 1;; esac
 cd "$(dirname "$0")/.."
 D=apps/tournament-worker/src
 FILES="$D/worker-load.test.ts $D/load-config.test.ts $D/container-agents-load.test.ts"
+export NO_COLOR=1 FORCE_COLOR=0
 RUN="npx vitest run $FILES --reporter=verbose"
 [ -z "$(git status --porcelain)" ] || { echo "árbol sucio"; exit 2; }
 $RUN >/tmp/mut-base.log 2>&1 || { echo "BASE ROJA"; tail -30 /tmp/mut-base.log; exit 3; }
@@ -41,7 +42,7 @@ mut M-C9 $C 's/if \(this\.isDead\(i\)\) continue;//' "sólo contenedores vivos"
 # --- ronda 2 · P2-1 (fallo transitorio ≠ terminado), P2-2 (vencimiento)
 mut M-D1 $C 's/if \(st && \(st\.gone \|\| !st\.running\)\) this\.terminated\[i\] = true;/this.terminated[i] = true;/' "positiva, 2+ nulos"
 mut M-D2 $C 's/if \(st && \(st\.gone \|\| !st\.running\)\)/if (!st || st.gone || !st.running)/' "si el inspect también falla"
-mut M-D3 $C 's/this\.terminated\[i\] = true;//' "con 404/"
+mut M-D3 $C 's/this\.terminated\[i\] = true;/void 0;/' "con 404/"
 mut M-D4 $C 's/\}, this\.timeoutMs\);/}, 1e12);/' "nunca resuelve"
 mut M-D5 $C 's/this\.inFlight\[i\] = null;$/this.inFlight[i] = this.inFlight[i];/' "nunca resuelve"
 # --- ronda 2 · P2-3 (cableado)

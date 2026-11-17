@@ -80,7 +80,7 @@ describe("intervalo de muestreo acotado", () => {
   it("el entorno: válido pasa, fuera de rango o basura falla (no vuelve al 500 ms en silencio)", () => {
     expect(cpuSampleMsFromEnv({})).toBe(2000);
     expect(cpuSampleMsFromEnv({ TOURNAMENT_WORKER_CPU_SAMPLE_MS: "1000" })).toBe(1000);
-    for (const v of ["500", "10001", "2s", "-5"]) {
+    for (const v of ["500", "10001", "2s", "-5", "1500.5"]) {
       expect(() => cpuSampleMsFromEnv({ TOURNAMENT_WORKER_CPU_SAMPLE_MS: v }), v).toThrow(/CPU_SAMPLE_MS/);
     }
   });
