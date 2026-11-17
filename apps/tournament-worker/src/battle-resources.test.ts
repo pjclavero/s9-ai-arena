@@ -2,12 +2,15 @@
  * OLA2-MF · teardown único de batalla (battle-resources.ts), sin BD ni Docker.
  * Cada `it` tiene un mutante en tests/mutants/mf-lifecycle (ver informe MF).
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BATTLE_END_REASONS,
   BattleAbort,
   BattleResourceRegistry,
+  DEFAULT_RELEASE_DEADLINE_MS,
+  DEFAULT_VERIFY_DEADLINE_MS,
   PHASES,
+  StopUnresponsiveError,
   classifyEnd,
   terminateContainer,
 } from "./battle-resources.js";
@@ -225,6 +228,245 @@ describe("terminateContainer · TERM → timeout corto → KILL sólo si no resp
     );
     expect(out).toBe("killed");
     expect(calls).toEqual([1, 0]);
+  });
+});
+
+describe("G2 · MF_STOP_BOUNDED_TEARDOWN · toda espera de la parada está acotada", () => {
+  it("un KILL (stop t=0) que tampoco contesta RECHAZA en su plazo (antes colgaba el teardown sin límite)", async () => {
+    const calls: (number | undefined)[] = [];
+    const t0 = performance.now();
+    const p = terminateContainer(
+      {
+        stop(o) {
+          calls.push(o?.timeoutSeconds);
+          return new Promise<void>(() => undefined);
+        },
+      },
+      { termGraceS: 1, stopDeadlineMs: 50, killDeadlineMs: 80 },
+    );
+    await expect(p).rejects.toBeInstanceOf(StopUnresponsiveError);
+    expect(performance.now() - t0, "fuera de la cota stop+kill").toBeLessThan(1_000);
+    expect(calls).toEqual([1, 0]);
+  });
+
+  it("un stop(TERM) que LANZA con el contenedor vivo escala a KILL; si el KILL lanza, se propaga (no se oculta)", async () => {
+    const calls: (number | undefined)[] = [];
+    const p = terminateContainer(
+      {
+        async stop(o) {
+          calls.push(o?.timeoutSeconds);
+          throw new Error("proxy caído");
+        },
+        async state() {
+          return { running: true, gone: false };
+        },
+      },
+      { termGraceS: 1 },
+    );
+    await expect(p).rejects.toThrow(/proxy caído/);
+    expect(calls).toEqual([1, 0]);
+  });
+
+  it("un state() que nunca contesta no cuelga la parada (estado desconocido ⇒ no se inventa KILL)", async () => {
+    const t0 = performance.now();
+    const out = await terminateContainer(
+      { stop: async () => undefined, state: () => new Promise(() => undefined) },
+      { termGraceS: 1, stateDeadlineMs: 60 },
+    );
+    expect(out).toBe("terminated");
+    expect(performance.now() - t0).toBeLessThan(1_000);
+  });
+
+  it("un release que nunca resuelve queda `failed` en su plazo, el resto del teardown sigue y el reintento lo libera", async () => {
+    const reg = new BattleResourceRegistry({ releaseDeadlineMs: 80 });
+    let hang = true;
+    const seen: string[] = [];
+    reg.register("A", {
+      kind: "colgado",
+      phase: "terminate",
+      release: () => (hang ? new Promise<void>(() => undefined) : undefined),
+    });
+    reg.register("A", { kind: "siguiente", phase: "containers", release: () => void seen.push("siguiente") });
+    const t0 = performance.now();
+    const r = await reg.cleanupBattleResources("A", "FAILED");
+    expect(performance.now() - t0, "el teardown esperó a un release colgado").toBeLessThan(1_000);
+    expect(r.clean).toBe(false);
+    expect(r.steps.find((x) => x.kind === "colgado")).toMatchObject({ outcome: "failed" });
+    expect(r.steps.find((x) => x.kind === "colgado")!.error).toMatch(/sin respuesta en 80 ms/);
+    expect(seen).toEqual(["siguiente"]);
+    expect(reg.pending("A").map((x) => `${x.kind}:${x.state}`)).toEqual(["colgado:failed"]);
+    expect(reg.stats.deadlineExpired).toBe(1);
+    hang = false;
+    expect((await reg.cleanupBattleResources("A", "FAILED")).clean).toBe(true);
+    expect(reg.pending("A")).toEqual([]);
+  });
+
+  it("`deadlineMs` del recurso manda sobre el del registro", async () => {
+    const reg = new BattleResourceRegistry({ releaseDeadlineMs: 10_000 });
+    reg.register("A", {
+      kind: "x",
+      phase: "terminate",
+      deadlineMs: 50,
+      release: () => new Promise<void>(() => undefined),
+    });
+    const t0 = performance.now();
+    const r = await reg.cleanupBattleResources("A", "FAILED");
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(r.steps[0]).toMatchObject({ outcome: "failed" });
+  });
+});
+
+/** Resuelve «done» o «hung» si `p` no termina en `ms` (nunca cuelga el test). */
+async function settles<T>(p: Promise<T>, ms: number): Promise<"done" | "hung"> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"hung">((r) => (t = setTimeout(() => r("hung"), ms)));
+  try {
+    return await Promise.race([
+      p.then(
+        () => "done" as const,
+        () => "done" as const,
+      ),
+      hung,
+    ]);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+describe("G2 · ronda 2 (P2-1) · la verificación externa del teardown completo está acotada", () => {
+  it("un verificador que NO contesta (proxy colgado): el teardown acaba en su plazo, NO es limpio y queda pendiente de reverificar", async () => {
+    const reg = new BattleResourceRegistry({ releaseDeadlineMs: 100, verifyDeadlineMs: 150 });
+    reg.setVerifier(() => new Promise<string[]>(() => undefined));
+    reg.register("A", { kind: "x", phase: "terminate", release: () => undefined });
+    const t0 = performance.now();
+    const p = reg.cleanupBattleResources("A", "FAILED");
+    expect(await settles(p, 3_000), "el teardown completo quedó esperando al verificador").toBe("done");
+    const r = await p;
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(r.clean, "una verificación sin respuesta se dio por limpia").toBe(false);
+    expect(r.externalLeftovers).toEqual(["verificación externa sin respuesta en 150 ms"]);
+    expect(reg.stats.verifyExpired).toBe(1);
+    expect(reg.isUnverified("A")).toBe(true);
+    expect(reg.retryIds(), "el reaper no vería la batalla sin verificar").toEqual(["A"]);
+  });
+
+  it("el siguiente teardown de la MISMA batalla no queda bloqueado detrás (serializado por battleId) y, si el verificador ya contesta, limpia la marca", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 150 });
+    // La PRIMERA verificación no contesta (el verificador se llama dentro del teardown, ya en
+    // asíncrono); la segunda sí.
+    let calls = 0;
+    reg.setVerifier(() => (calls++ === 0 ? new Promise<string[]>(() => undefined) : Promise.resolve([])));
+    const first = reg.cleanupBattleResources("A", "FAILED");
+    const second = reg.cleanupBattleResources("A", "FAILED");
+    expect(await settles(second, 3_000), "el segundo teardown quedó detrás del primero").toBe("done");
+    expect((await first).clean).toBe(false);
+    expect((await second).clean).toBe(true);
+    expect(reg.isUnverified("A")).toBe(false);
+    expect(reg.retryIds()).toEqual([]);
+    expect(calls).toBe(2);
+  });
+
+  it("un verificador LENTO dentro del plazo se espera y su respuesta cuenta (restos ⇒ no limpio, pero verificado)", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 2_000 });
+    reg.setVerifier(async () => {
+      await sleep(300);
+      return ["abc123"];
+    });
+    const t0 = performance.now();
+    const r = await reg.cleanupBattleResources("A", "FAILED");
+    expect(performance.now() - t0, "no se esperó al verificador lento").toBeGreaterThanOrEqual(250);
+    expect(r.externalLeftovers).toEqual(["abc123"]);
+    expect(r.clean).toBe(false);
+    expect(reg.isUnverified("A"), "una respuesta a tiempo SÍ es una verificación").toBe(false);
+    expect(reg.stats.verifyExpired).toBe(0);
+  });
+
+  it("un verificador que LANZA (síncrono o asíncrono): no limpio, motivo nombrado y pendiente de reverificar", async () => {
+    for (const verifier of [
+      (): Promise<string[]> => {
+        throw new Error("proxy caído (sync)");
+      },
+      () => Promise.reject(new Error("proxy caído (async)")),
+    ]) {
+      const reg = new BattleResourceRegistry({ verifyDeadlineMs: 500 });
+      reg.setVerifier(verifier);
+      const r = await reg.cleanupBattleResources("A", "FAILED");
+      expect(r.clean).toBe(false);
+      expect(r.externalLeftovers.join(" ")).toMatch(/verificación externa no disponible: proxy caído/);
+      expect(reg.isUnverified("A")).toBe(true);
+      expect(reg.stats.verifyExpired).toBe(0);
+    }
+  });
+
+  it("un teardown con scope (capa interna) NO verifica ni marca nada", async () => {
+    const reg = new BattleResourceRegistry({ verifyDeadlineMs: 50 });
+    let calls = 0;
+    reg.setVerifier(() => {
+      calls++;
+      return new Promise<string[]>(() => undefined);
+    });
+    const r = await reg.cleanupBattleResources("A", "FAILED", { scope: "agents" });
+    expect(r.clean).toBe(true);
+    expect(calls).toBe(0);
+    expect(reg.isUnverified("A")).toBe(false);
+  });
+});
+
+describe("G2 · ronda 2 (P3-5) · plazos de PRODUCCIÓN del registro (sin inyectar)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("DEFAULT_RELEASE_DEADLINE_MS = 60 s: un release colgado de un registro por defecto vence EXACTAMENTE a los 60 s", async () => {
+    vi.useFakeTimers();
+    const reg = new BattleResourceRegistry();
+    reg.register("A", { kind: "colgado", phase: "terminate", release: () => new Promise<void>(() => undefined) });
+    expect(reg.pending("A")[0]!.deadlineMs).toBe(60_000);
+    let done = false;
+    const p = reg.cleanupBattleResources("A", "FAILED").then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(done, "venció antes de 60 s").toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done, "no venció a los 60 s").toBe(true);
+    const r = await p;
+    expect(r.steps[0]).toMatchObject({ kind: "colgado", outcome: "failed" });
+    expect(r.steps[0]!.error).toMatch(/sin respuesta en 60000 ms/);
+    expect(DEFAULT_RELEASE_DEADLINE_MS).toBe(60_000);
+  });
+
+  it("DEFAULT_VERIFY_DEADLINE_MS = 10 s: un verificador colgado de un registro por defecto vence EXACTAMENTE a los 10 s", async () => {
+    vi.useFakeTimers();
+    const reg = new BattleResourceRegistry();
+    reg.setVerifier(() => new Promise<string[]>(() => undefined));
+    let done = false;
+    const p = reg.cleanupBattleResources("A", "FAILED").then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(done, "venció antes de 10 s").toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done, "no venció a los 10 s").toBe(true);
+    expect((await p).externalLeftovers).toEqual(["verificación externa sin respuesta en 10000 ms"]);
+    expect(DEFAULT_VERIFY_DEADLINE_MS).toBe(10_000);
+  });
+});
+
+describe("G2 · MF_LAUNCH_TIMEOUT_CLEANUP · recurso desprendido", () => {
+  it("un release que devuelve `detached` suelta el recurso (no `failed`), lo informa y el teardown NO es limpio", async () => {
+    const reg = new BattleResourceRegistry();
+    reg.register("A", { kind: "en_vuelo", phase: "cancel_jobs", scope: "agents", release: () => "detached" as const });
+    const scoped = await reg.cleanupBattleResources("A", "FAILED", { scope: "agents" });
+    expect(scoped.steps).toEqual([expect.objectContaining({ kind: "en_vuelo", outcome: "detached" })]);
+    expect(scoped.detached).toBe(1);
+    expect(scoped.clean).toBe(false);
+    expect(reg.pending("A")).toEqual([]);
+    expect(reg.battleIds(), "el reaper no debe volver a esperar a lo desprendido").toEqual([]);
+    // El teardown COMPLETO de la orquestación lo sigue informando (una vez).
+    const full = await reg.cleanupBattleResources("A", "FAILED");
+    expect(full.detached).toBe(1);
+    expect(full.clean).toBe(false);
+    const again = await reg.cleanupBattleResources("A", "FAILED");
+    expect(again.detached).toBe(0);
+    expect(again.clean).toBe(true);
+    expect(reg.stats.detached).toBe(1);
   });
 });
 

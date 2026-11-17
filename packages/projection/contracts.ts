@@ -269,8 +269,8 @@ export interface PublicDamageState {
   /** ceil(N·hullHp/hullHpMax); nunca hp absoluto ni hpMax. */
   readonly hullLevel: number;
   readonly capabilities?: Readonly<Partial<Record<"mobility" | "weapons" | "sensors", "ok" | "degraded" | "lost">>>;
-  /** Sólo si D-B4 = visual pública. */
-  readonly armorBroken?: Readonly<Partial<Record<"front" | "left" | "right" | "rear", boolean>>>;
+  /** D-B4 (G2.2): sólo los sectores ROTOS, siempre `true`; ausente si no hay ninguno. */
+  readonly armorBroken?: Readonly<Partial<Record<"front" | "left" | "right" | "rear", true>>>;
 }
 
 /** Pista pública de torreta calculada por el motor (derivada, fuera del hash). */

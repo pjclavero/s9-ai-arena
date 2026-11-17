@@ -99,7 +99,9 @@ function hashSees(b: Battle, mutate: () => void, undo: () => void): boolean {
   mutate();
   const h1 = b.stateHash();
   undo();
-  expect(b.stateHash()).toBe(h0); // la sonda no deja rastro
+  // G2 (REVIEW-ME-2 P2-A): un undo que no restaura es un fallo del FIXTURE (FixtureError), nunca una
+  // AssertionError que contaría como «rojo correcto» de un contrato pendiente.
+  fixtureGuard(b.stateHash() === h0, "la sonda dejó rastro: el undo no restauró el estado exacto");
   return h1 !== h0;
 }
 

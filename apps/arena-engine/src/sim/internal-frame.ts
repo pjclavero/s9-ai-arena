@@ -53,6 +53,13 @@ export function captureInternalFrame(s: InternalFrameSource): InternalFrame {
         carryingFlag: v.carryingFlag,
         juggernaut: v.juggernaut,
         ...(s.respawnsLeft ? { respawnsLeft: s.respawnsLeft(v) } : {}),
+        // D-B4 · blindaje EXACTO por sector (la proyección lo cuantiza a «roto»).
+        armor: Object.fromEntries(
+          (["front", "left", "right", "rear"] as const).flatMap((sec) => {
+            const a = v.armor[sec];
+            return a ? [[sec, { hp: round6(a.hp), hpMax: a.hpMax }]] : [];
+          }),
+        ),
         modules: [...v.modules.values()].map((m) => ({ slot: m.spec.slot, state: v.stateOf(m.spec.slot) })),
       };
     }),

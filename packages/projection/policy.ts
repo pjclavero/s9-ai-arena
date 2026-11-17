@@ -38,7 +38,7 @@ export const STATS_HITS_STEP = 5;
 export const STATS_ACCURACY_N = HULL_LEVEL_N;
 
 /** Versión del algoritmo de proyección (entra en `mappingId` y en la clave de caché). */
-export const PROJECTION_VERSION = "2.0.0";
+export const PROJECTION_VERSION = "2.1.0";
 
 /** Marca de formato de los cuerpos proyectados. */
 export const PUBLIC_FRAME_FORMAT = "s9.projection.public.v2";
@@ -97,6 +97,9 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "vehicle.turretHeading": PUBLIC,
     // D-B4/D-B5 · casco exacto en lo interno, cuantizado en lo público (hullLevel).
     "vehicle.hullHp": all("SANITIZED"),
+    // D-B4 · la ROTURA de un sector del blindaje es visible (sólo el booleano «roto» y sólo
+    // los sectores rotos; ni hp, ni reducción, ni qué módulo ni qué sectores tienen blindaje).
+    "vehicle.armorBroken": all("SANITIZED"),
     "vehicle.hullHpMax": PRIVATE, // revela el chasis
     "vehicle.modules": PRIVATE, // ranuras + estado = loadout
     "vehicle.carryingFlag": PUBLIC,

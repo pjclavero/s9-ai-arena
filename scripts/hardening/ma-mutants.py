@@ -73,8 +73,10 @@ MUTANTS = [
      "    EPOCH_LEAK.n++;\n    const canon = [...components].sort();", [BOUNDARY],
      # mutación compuesta: el contador global entra en stateHash()
      [(P + "visibility.ts", "interface Slot {", "export const EPOCH_LEAK = { n: 0 };\n(globalThis as any).__EPOCH_LEAK = EPOCH_LEAK;\n\ninterface Slot {"),
-      ("apps/arena-engine/src/sim/battle.ts", "      tick: this.tick,\n      rng: this.rng.getState(),",
-       "      tick: this.tick,\n      ep: (globalThis as any).__EPOCH_LEAK?.n ?? 0,\n      rng: this.rng.getState(),")]),
+      # G2 · ronda 2: dentro de un componente del contrato (botRefs). Una clave de primer nivel
+      # la rechaza el guardia de claves exactas de MD con un Error que no es aserción.
+      ("apps/arena-engine/src/sim/battle.ts", "      botRefs: {},",
+       "      botRefs: { ep: (globalThis as any).__EPOCH_LEAK?.n ?? 0 },")]),
     ("M_ticket_without_view_accepted", "apps/api/src/auth/tokens.ts",
      "    if (!SPECTATOR_VIEWS.includes(p.view as SpectatorView)) return null;",
      "    if (!SPECTATOR_VIEWS.includes(p.view as SpectatorView)) p.view = \"public_live\";", [BOUNDARY]),

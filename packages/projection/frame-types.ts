@@ -33,6 +33,14 @@ export interface InternalVehicleState {
   readonly carryingFlag: string | null;
   readonly juggernaut: boolean;
   readonly respawnsLeft?: number;
+  /**
+   * Blindaje por sector, EXACTO (hp y hpMax): lo cuantiza la proyección a «roto / no roto»
+   * (D-B4, `armorBroken`). Un sector sin blindaje no aparece. Revela el equipamiento
+   * (EQUIPMENT_PRIVATE): nunca sale tal cual.
+   */
+  readonly armor?: Readonly<
+    Partial<Record<"front" | "left" | "right" | "rear", { readonly hp: number; readonly hpMax: number }>>
+  >;
   /** Ranuras y estado: revelan el loadout (EQUIPMENT_PRIVATE). */
   readonly modules: readonly { readonly slot: string; readonly state: string }[];
 }

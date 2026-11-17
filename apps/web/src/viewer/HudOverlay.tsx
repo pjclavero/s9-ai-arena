@@ -248,7 +248,7 @@ function BotRow({ bot }: { bot: HudBot }) {
       <div style={{ height: 5, background: "rgba(255,255,255,0.15)", borderRadius: 3, overflow: "hidden" }}>
         <div style={{ width: `${bot.hpPercent}%`, height: "100%", background: barColor }} />
       </div>
-      {/* Iconos de estado (arma/blindaje/movilidad): sólo si el frame los trae (hoy no: EQUIPMENT_PRIVATE; lo decide MB, D-B4). Sin recuento de módulos. */}
+      {/* Iconos de estado: el blindaje roto (D-B4) llega en el frame público (`armorBroken`, sólo sectores rotos). Arma y movilidad sólo si el frame trae módulos (público: no, EQUIPMENT_PRIVATE). Sin recuento de módulos. */}
       <div style={{ fontSize: "0.85em", opacity: 0.85 }}>
         {bot.turretLocked ? "🔫✖ " : ""}
         {bot.armorBroken ? "🛡✖ " : ""}
