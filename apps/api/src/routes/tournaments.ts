@@ -11,7 +11,7 @@ import { battleToJson, loadParticipants } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
-import { applyTransition, isStaff } from "../services/bots.js";
+import { isStaff } from "../services/bots.js";
 import {
   assertTournamentEligible,
   entryEligibilityGate,
@@ -390,10 +390,26 @@ export function tournamentRoutes(
       // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
       // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
       // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
+      // #288 (ronda 2, H-1) · El freeze es CONDICIONAL (`WHERE state='published'`) y sólo se
+      // audita si de verdad transicionó: con el cierre en una transacción, otro cierre
+      // concurrente de OTRO torneo que comparta la versión puede haberla congelado ya (la
+      // lectura de arriba es MVCC); al desbloquearse, el UPDATE re-evalúa el WHERE y no
+      // toca nada. Así una versión ya `frozen` nunca deja una segunda auditoría (#283).
       for (const e of entries) {
         const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();
-        if (v.state === "published") {
-          await applyTransition(db, req.auth, v, "freeze", {}, req.correlationId);
+        if (v.state !== "published") continue;
+        const [frozen] = await db("bot_versions")
+          .where({ id: v.id, state: "published" })
+          .update({ state: "frozen" })
+          .returning("id");
+        if (frozen) {
+          await audit(db, {
+            actorId: req.auth?.userId ?? null,
+            action: "bot.version.freeze",
+            target: `bot:${v.bot_id}@${v.version}`,
+            detail: { from: "published", to: "frozen" },
+            correlationId: req.correlationId,
+          });
         }
       }
       // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash

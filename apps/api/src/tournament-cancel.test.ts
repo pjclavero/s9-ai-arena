@@ -408,6 +408,46 @@ describe("TC-R · carrera cancel vs close-entries (concurrencia real)", () => {
   });
 });
 
+describe("TC-F · FROZEN-REUSE con cierres concurrentes (ronda 2, H-1)", () => {
+  it("TC-F1 dos close-entries concurrentes de torneos distintos con la MISMA versión: UNA sola auditoría de freeze", async () => {
+    // Reproductor REV-1 del revisor independiente: con el cierre en una transacción, el
+    // segundo cierre lee la versión `published` (MVCC) mientras el primero ya la congeló
+    // sin commit; sin el freeze condicional, al desbloquearse la reaplicaba (frozen → frozen)
+    // con una segunda auditoría `bot.version.freeze`, contra el invariante de #283.
+    const shared = await createPublishedBot(h.db, `tc288-${++botSeq}`);
+    const t1 = await createTournament(tok.owner, "Compartida A");
+    const t2 = await createTournament(tok.owner, "Compartida B");
+    for (const t of [t1, t2]) {
+      await h.db("entries").insert({
+        tournament_id: t,
+        bot_id: shared.botId,
+        version: shared.version,
+        loadout_revision: shared.loadoutRevision,
+        frozen: false,
+      });
+    }
+    // Retiene el INSERT del job de t1 (dedupe_key única): el cierre 1 queda bloqueado
+    // DESPUÉS de congelar la versión y antes de su commit.
+    const holder = await h.db.transaction();
+    await holder("jobs").insert({ kind: "generate_schedule", payload: "{}", dedupe_key: `generate_schedule:${t1}` });
+    const c1 = close(t1).then((r) => r);
+    expect(await waitLockWaiters(1)).toBeGreaterThanOrEqual(1);
+    const c2 = close(t2).then((r) => r);
+    await waitLockWaiters(2, 3000); // el cierre 2 espera a la fila de la versión
+    await holder.rollback();
+    const [r1, r2] = await Promise.all([c1, c2]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const audits = await h
+      .db("audit_log")
+      .where({ action: "bot.version.freeze", target: `bot:${shared.botId}@${shared.version}` });
+    expect(audits.length).toBe(1);
+    expect(audits[0].detail).toEqual({ from: "published", to: "frozen" });
+    const v = await h.db("bot_versions").where({ bot_id: shared.botId, version: shared.version }).first();
+    expect(v.state).toBe("frozen");
+  });
+});
+
 describe("TC-V · detalle: viewerCanManage", () => {
   it("TC-V1 dueño y staff true; ajeno, usuario y anónimo false; nunca en caché compartida", async () => {
     const id = await createTournament();

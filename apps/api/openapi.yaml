@@ -104,6 +104,7 @@ info:
   # tournament.cancelled, idempotente; `closed|running|finished` → 409
   # tournament_not_cancellable. No borra nada. closeEntries pasa a ser atómico frente a
   # la cancelación (409 illegal_transition si el torneo ya no está `open`).
+  # El 409 de cancelTournament usa su propio esquema TournamentNotCancellableError.
   version: 0.21.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -1158,7 +1159,7 @@ paths:
         '400': { description: reason inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: 'tournament_not_cancellable (currentState: closed, running o finished; allowedTransitions vacío)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '409': { description: 'tournament_not_cancellable (currentState: closed, running o finished; allowedTransitions vacío)', content: { application/json: { schema: { $ref: '#/components/schemas/TournamentNotCancellableError' } } } }
 
   /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
     post:
@@ -2381,6 +2382,15 @@ components:
                     properties:
                       botId: { type: string }
                       version: { type: integer }
+
+    TournamentNotCancellableError:
+      description: '#288 · 409 de cancelTournament: el estado actual no admite cancelación.'
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState: { enum: [closed, running, finished] }
+            allowedTransitions: { type: array, items: { type: string }, maxItems: 0 }
 
     EntriesNotEligibleError:
       allOf:
