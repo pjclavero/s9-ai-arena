@@ -54,6 +54,30 @@ async function assertRostersFitRules(db: Db, t: Record<string, unknown>): Promis
   }
 }
 
+/**
+ * B (0.5.0, hallazgo 5) · Mínimo de participantes para cerrar inscripciones: ≥2 inscritos (≥2
+ * EQUIPOS con algún bot inscrito en formato `teams`). Antes sólo lo comprobaba el worker y el
+ * torneo se quedaba `closed` para siempre. Helper aparte y llamada de UNA línea al comienzo de
+ * `closeEntries`: el PR #290 reescribe esa función y el solape debe quedar en esa línea.
+ */
+async function assertMinimumParticipants(db: Db, t: Record<string, unknown>): Promise<void> {
+  const rows = (await db("entries")
+    .join("bots", "bots.id", "entries.bot_id")
+    .where({ "entries.tournament_id": t.id as string })
+    .select("bots.team_id")) as { team_id: string | null }[];
+  const isTeams = t.format === "teams";
+  const count = isTeams ? new Set(rows.filter((r) => r.team_id).map((r) => r.team_id)).size : rows.length;
+  if (count < 2) {
+    throw conflict(
+      "not_enough_participants",
+      isTeams
+        ? "Un torneo por equipos necesita al menos 2 equipos con bots inscritos para cerrar inscripciones"
+        : "Un torneo necesita al menos 2 inscritos para cerrar inscripciones",
+      { required: 2, current: count, unit: isTeams ? "teams" : "entries" },
+    );
+  }
+}
+
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
 
@@ -359,6 +383,7 @@ export function tournamentRoutes(
       });
     }
 
+    await assertMinimumParticipants(db, t); // B · ≥2 inscritos (≥2 equipos en `teams`)
     const entries = await db("entries").where({ tournament_id: t.id });
     await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
     await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo

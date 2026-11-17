@@ -14,7 +14,8 @@ import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { startWorkerRuntimeSettings } from "./runtime-settings-wiring.js";
-import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
+import { makeRunBattleHandler } from "./battle-runner.js";
+import { onBattleJobExhausted, startTournamentRescue } from "./battle-failure.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
 import { startupTimeoutsFromEnv } from "../../bot-manager/src/startup-clock.js";
@@ -191,11 +192,17 @@ const worker = new TournamentWorker({
         : "Redis no disponible: el worker degrada a polling de la BD",
       { err: err === null ? undefined : String(err), ...estado },
     ),
-  onExhausted: (job, ctx) => markBattleForReview(ctx.db, job),
+  onExhausted: onBattleJobExhausted,
 });
 
 // OLA2-MF · verificación del teardown contra el proxy (¿queda algún contenedor
 // de esa batalla?) y REAPER como segunda barrera (cada 60 s).
+// B (0.5.0) · rescate idempotente de torneos `running` sin batallas vivas (atascados por batallas
+// `failed`): al arrancar y cada 5 min.
+const stopRescue = startTournamentRescue(db, (touched, err) => {
+  if (err) log("tournament_rescue_error", { err: String(err) });
+  else if (touched.length) log("tournament_rescue", { tournaments: touched });
+});
 let stopReaper: (() => void) | undefined;
 if (proxyRunner) {
   const runner = proxyRunner;
@@ -230,6 +237,7 @@ async function shutdown(sig: string): Promise<void> {
   log(`${sig}: parando`);
   clearInterval(heartbeat);
   stopReaper?.();
+  stopRescue();
   // OLA2-MF · las batallas vivas se abortan (WORKER_ERROR): cada una pasa por su
   // teardown en el finally del handler y vuelve a `scheduled` para otro worker.
   const aborted = defaultBattleResources.abortAll("WORKER_ERROR", sig);

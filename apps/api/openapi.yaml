@@ -1133,7 +1133,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
-        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots) · not_enough_participants (B/0.5.0: menos de 2 inscritos, o menos de 2 equipos con bots inscritos en formato `teams`; con `required`, `current` y `unit`; no se congela ni cierra nada)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
     post:

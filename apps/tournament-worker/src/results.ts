@@ -70,6 +70,9 @@ export function seriesOutcome(
   let homeScore = 0;
   let awayScore = 0;
   for (const b of battles) {
+    // B (ciclo de vida) · un juego `failed` (agotado por infraestructura) no tiene resultado:
+    // no cuenta ni como victoria ni como puntuación; la serie se resuelve con los demás.
+    if (b.status === "failed") continue;
     const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
     if (isTechnicalLimit(result)) continue; // ADR-022 · sin resultado deportivo
     const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
@@ -105,7 +108,7 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
   const db = mctx.db;
   const finished = (await db("matches").where({ tournament_id: mctx.tournament.id, slot: finishedSlot }).first()) as
     MatchRow | undefined;
-  if (!finished || finished.state !== "finished") return;
+  if (!finished || !isClosedMatch(finished.state)) return;
   const fp = pairingOf(finished);
   const isTeams = mctx.tournament.format === "teams";
   const winner = isTeams ? finished.winner_team_id : finished.winner_bot_id;
@@ -220,7 +223,10 @@ async function swissStandings(
 async function maybeScheduleNextSwissRound(mctx: MaterializeContext): Promise<boolean> {
   const db = mctx.db;
   const t = mctx.tournament;
-  const unfinished = await db("matches").where({ tournament_id: t.id }).whereNot({ state: "finished" }).first();
+  const unfinished = await db("matches")
+    .where({ tournament_id: t.id })
+    .whereNotIn("state", [...CLOSED_MATCH_STATES])
+    .first();
   if (unfinished) return false; // la ronda actual no ha terminado
   const { standings, played, rounds } = await swissStandings(db, t.id);
   const total = recommendedSwissRounds(standings.length);
@@ -257,9 +263,14 @@ async function computeChampion(db: Knex, tournamentId: string, isTeams: boolean)
   const finalMatch = (await db("matches").where({ tournament_id: tournamentId, final: true }).first()) as
     MatchRow | undefined;
   if (finalMatch?.state === "finished") return isTeams ? finalMatch.winner_team_id : finalMatch.winner_bot_id;
+  // B · una final SIN RESULTADO (todas sus batallas `failed`) no corona a nadie: el torneo
+  // termina sin campeón antes que coronar por una partida que no se jugó.
+  if (finalMatch?.state === "failed") return null;
 
   const table = await leagueTable(db, tournamentId, isTeams);
-  return table[0]?.id ?? null;
+  // B · si ningún enfrentamiento llegó a puntuar (todo `failed`), no hay campeón.
+  if (!table[0] || table[0].wins + table[0].draws + table[0].losses === 0) return null;
+  return table[0].id;
 }
 
 export interface TableRow {
@@ -386,25 +397,48 @@ export async function leagueTableDetailed(
 
 // --------------------------------------------------------------- handler
 
+/** Estados de match TERMINALES: `finished` (con resultado) y `failed` (sin resultado, B). */
+export const CLOSED_MATCH_STATES = ["finished", "failed"] as const;
+function isClosedMatch(state: string): boolean {
+  return (CLOSED_MATCH_STATES as readonly string[]).includes(state);
+}
+/** Estados de batalla TERMINALES (no volverán a cambiar sin intervención). */
+const CLOSED_BATTLE_STATES = ["finished", "failed"];
+
 /**
- * Handler de `process_result` (uno por batalla terminada). Idempotente: si el
- * match ya está cerrado, solo re-verifica el estado del torneo.
+ * POLÍTICA DE BATALLA `failed` DEFINITIVA (release 0.5.0, B).
+ *
+ * Una batalla `failed` es TERMINAL (la dejó así `markBattleForReview` tras agotar los
+ * reintentos de infraestructura). El match se cierra en cuanto TODOS sus juegos son terminales:
+ *  - con al menos un juego `finished`: la serie se resuelve con los juegos jugados (los
+ *    `failed` no cuentan), igual que la salvaguarda técnica;
+ *  - con TODOS los juegos `failed`: el match queda `failed` = «sin resultado». No puntúa, no
+ *    mueve el Elo (sólo se calcula con batallas `finished`), no cuenta en V-D-E.
+ *      · liga / RR / suizo / equipos: sin ganador, sin puntos para nadie;
+ *      · eliminatorias: avanza el mejor seed (el lado `home`), la misma regla que ya
+ *        desempata una serie igualada; queda anotado en `winner_*`. Si es la FINAL, el torneo
+ *        termina sin campeón.
+ * El torneo llega siempre a un estado terminal (`finished`): nunca queda `running` por ello.
+ * Sin migración: `matches.state` ya admite `failed` desde la 001.
  */
-export async function handleProcessResult(job: JobRow, ctx: HandlerContext): Promise<void> {
-  const db = ctx.db;
-  const battleId = String(job.payload.battleId ?? "");
-  const battle = await db("battles").where({ id: battleId }).first();
-  if (!battle) throw new Error(`process_result: batalla ${battleId} inexistente`);
-  if (!battle.match_id || !battle.tournament_id) return; // batalla de práctica: nada que avanzar
-
-  const mctx = await buildMaterializeContext(db, battle.tournament_id);
+async function settleMatch(mctx: MaterializeContext, match: MatchRow): Promise<boolean> {
+  if (isClosedMatch(match.state)) return false;
+  const db = mctx.db;
   const isTeams = mctx.tournament.format === "teams";
-  const match = (await db("matches").where({ id: battle.match_id }).first()) as MatchRow;
+  const games = (await db("battles").where({ match_id: match.id })) as Record<string, any>[];
+  if (games.length === 0) return false; // aún sin materializar: no hay nada que cerrar
+  if (games.some((g) => !CLOSED_BATTLE_STATES.includes(g.status))) return false; // la serie sigue en juego
   const p = pairingOf(match);
-
-  if (match.state !== "finished") {
-    const pendingGames = await db("battles").where({ match_id: match.id }).whereNotIn("status", ["finished"]).first();
-    if (pendingGames) return; // la serie sigue en juego
+  if (games.every((g) => g.status === "failed")) {
+    const advances = p.bracket !== "main" ? p.home : null; // eliminatoria: mejor seed
+    await db("matches")
+      .where({ id: match.id })
+      .update({
+        state: "failed",
+        winner_bot_id: !isTeams ? advances : null,
+        winner_team_id: isTeams ? advances : null,
+      });
+  } else {
     const series = await resolveSeries(db, match, p);
     await db("matches")
       .where({ id: match.id })
@@ -413,32 +447,134 @@ export async function handleProcessResult(job: JobRow, ctx: HandlerContext): Pro
         winner_bot_id: !isTeams && series.winner ? series.winner : null,
         winner_team_id: isTeams && series.winner ? series.winner : null,
       });
-    await resolveDependents(mctx, match.slot);
   }
+  await resolveDependents(mctx, match.slot);
+  return true;
+}
 
-  if (mctx.tournament.format === "swiss") await maybeScheduleNextSwissRound(mctx);
-
-  // 19.1: actualización de clasificación tras cada resultado verificado.
-  await enqueueJob(
-    db,
-    "update_standings",
-    { tournamentId: battle.tournament_id, battleId },
-    { dedupeKey: `update_standings:${battleId}` },
-  );
-
-  // ¿Torneo completo? (ningún match sin terminar y ninguna batalla pendiente)
+/** ¿Torneo completo? (todo match y toda batalla en estado terminal) → `finished`. */
+async function finishTournamentIfDone(mctx: MaterializeContext): Promise<void> {
+  const db = mctx.db;
+  const tournamentId = mctx.tournament.id;
+  const isTeams = mctx.tournament.format === "teams";
   const openMatch = await db("matches")
-    .where({ tournament_id: battle.tournament_id })
-    .whereNot({ state: "finished" })
+    .where({ tournament_id: tournamentId })
+    .whereNotIn("state", [...CLOSED_MATCH_STATES])
     .first();
   const openBattle = await db("battles")
-    .where({ tournament_id: battle.tournament_id })
-    .whereNotIn("status", ["finished"])
+    .where({ tournament_id: tournamentId })
+    .whereNotIn("status", CLOSED_BATTLE_STATES)
     .first();
-  if (!openMatch && !openBattle) {
-    const champion = await computeChampion(db, battle.tournament_id, isTeams);
-    await db("tournaments")
-      .where({ id: battle.tournament_id })
-      .update({ state: "finished", champion_bot_id: isTeams ? null : champion });
+  if (openMatch || openBattle) return;
+  const champion = await computeChampion(db, tournamentId, isTeams);
+  // Idempotente y sólo desde `running`: un torneo cancelado no resucita.
+  await db("tournaments")
+    .where({ id: tournamentId, state: "running" })
+    .update({ state: "finished", champion_bot_id: isTeams ? null : champion });
+}
+
+/** Cerrojo por torneo: serializa «último resultado» y «otra batalla que falla». */
+async function lockTournament(trx: Knex, tournamentId: string): Promise<void> {
+  await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`tournament-settle:${tournamentId}`]);
+}
+
+/**
+ * Handler de `process_result` (uno por batalla terminada). Idempotente: si el
+ * match ya está cerrado, solo re-verifica el estado del torneo.
+ */
+export async function handleProcessResult(job: JobRow, ctx: HandlerContext): Promise<void> {
+  const battleId = String(job.payload.battleId ?? "");
+  await settleBattle(ctx.db, battleId, { standings: true });
+}
+
+/**
+ * Cierra el match de la batalla (si todos sus juegos son terminales) y comprueba el fin del
+ * torneo. Lo comparten `process_result` (batalla `finished`) y `settleFailedBattle` (batalla
+ * `failed`). Todo dentro de UNA transacción con cerrojo por torneo.
+ */
+async function settleBattle(db: Knex, battleId: string, o: { standings: boolean }): Promise<void> {
+  const battle = await db("battles").where({ id: battleId }).first();
+  if (!battle) throw new Error(`process_result: batalla ${battleId} inexistente`);
+  if (!battle.match_id || !battle.tournament_id) return; // batalla de práctica: nada que avanzar
+
+  await db.transaction(async (trx) => {
+    await lockTournament(trx, battle.tournament_id);
+    const mctx = await buildMaterializeContext(trx, battle.tournament_id);
+    const match = (await trx("matches").where({ id: battle.match_id }).first()) as MatchRow;
+    await settleMatch(mctx, match);
+
+    if (mctx.tournament.format === "swiss") await maybeScheduleNextSwissRound(mctx);
+
+    // 19.1: actualización de clasificación tras cada resultado verificado.
+    if (o.standings) {
+      await enqueueJob(
+        trx,
+        "update_standings",
+        { tournamentId: battle.tournament_id, battleId },
+        { dedupeKey: `update_standings:${battleId}` },
+      );
+    }
+    await finishTournamentIfDone(mctx);
+  });
+}
+
+/**
+ * Una batalla ha quedado `failed` de forma DEFINITIVA (tras `markBattleForReview`): avanza el
+ * match y el torneo. Idempotente; no encola Elo ni standings (no hay resultado).
+ */
+export async function settleFailedBattle(db: Knex, battleId: string): Promise<void> {
+  const battle = await db("battles").where({ id: battleId }).first();
+  if (!battle || battle.status !== "failed") return; // sólo una batalla terminada en `failed`
+  await settleBattle(db, battleId, { standings: false });
+}
+
+/**
+ * RESCATE idempotente de torneos atascados: `running` SIN batallas vivas (`scheduled` o
+ * `running`). Cierra los matches cuyos juegos ya son todos terminales, avanza brackets/suizo y
+ * termina el torneo si procede. Cada torneo se trata en su transacción y con su cerrojo;
+ * ejecutarlo dos veces no cambia nada la segunda. Devuelve los ids de torneos modificados.
+ */
+export async function rescueStuckTournaments(db: Knex): Promise<string[]> {
+  const stuck = (await db("tournaments")
+    .where({ state: "running" })
+    .whereNotExists(function () {
+      this.select(db.raw("1"))
+        .from("battles")
+        .whereRaw("battles.tournament_id = tournaments.id")
+        .whereIn("battles.status", ["scheduled", "running"]);
+    })
+    .select("id")) as { id: string }[];
+  const touched: string[] = [];
+  for (const { id } of stuck) {
+    await db.transaction(async (trx) => {
+      await lockTournament(trx, id);
+      const t = await trx("tournaments").where({ id }).first();
+      if (!t || t.state !== "running") return; // otro trabajo ya lo resolvió
+      const mctx = await buildMaterializeContext(trx, id);
+      let changed = false;
+      // Cada cierre puede materializar batallas nuevas (brackets/suizo): se itera hasta fijo.
+      for (let i = 0; i < 1000; i++) {
+        const open = (await trx("matches")
+          .where({ tournament_id: id })
+          .whereNotIn("state", [...CLOSED_MATCH_STATES])
+          .orderBy("round", "asc")) as MatchRow[];
+        let progressed = false;
+        for (const m of open) {
+          if (await settleMatch(mctx, m)) {
+            progressed = true;
+            changed = true;
+            break; // el bracket pudo cambiar: se relee
+          }
+        }
+        if (!progressed) break;
+      }
+      if (mctx.tournament.format === "swiss") {
+        if (await maybeScheduleNextSwissRound(mctx)) changed = true;
+      }
+      await finishTournamentIfDone(mctx);
+      const after = await trx("tournaments").where({ id }).first();
+      if (changed || after?.state !== "running") touched.push(id);
+    });
   }
+  return touched;
 }
