@@ -267,6 +267,8 @@ describe("replays (T2.6)", () => {
       "turretHeading",
       "hullHp",
       "hullHpMax",
+      // G2 (D-B4): blindaje EXACTO por sector en el frame INTERNO; la proyección lo cuantiza a «roto».
+      "armor",
       "carryingFlag",
       "juggernaut",
       "modules",

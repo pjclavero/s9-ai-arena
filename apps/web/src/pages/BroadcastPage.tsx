@@ -52,9 +52,13 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
     const api = createPublicApi();
     // FIX-DIRECTOR-DELAY · una conexión de espectador por batalla seguida, con ticket ANÓNIMO
     // (la vista broadcast jamás lleva sesión: cero datos privados).
+    // OLA 2 · MA · audiencia `broadcast` FIRMADA en el ticket (proyector, mapper de ids e
+    // historial del retardo propios): es la conexión que sigue el director y la que pinta.
     const tl = new SpectatorTimeline({
       createClient: (battleId) =>
-        new SpectatorClient({ getTicket: () => api.post(`/battles/${battleId}/spectate-ticket`) }),
+        new SpectatorClient({
+          getTicket: () => api.post(`/battles/${battleId}/spectate-ticket?audience=broadcast`),
+        }),
     });
     const offFeed = tl.onChange(() => setFeedVersion((v) => v + 1));
     setTimeline(tl);

@@ -167,7 +167,9 @@ function controlledBattle() {
         tick,
         vehicles: [{ id: "v_red", team: "red", position: { x: 1000 + tick, y: 2000 + tick }, hp: 777 - tick }],
       });
-      if (tick % 5 === 0) battle.publicEvents.push({ type: "vehicle_destroyed", tick, vehicleId: "v_blue" });
+      // OLA 2 · MA · evento INTERNO del motor (`kind`): el gateway lo proyecta por lista
+      // blanca (con `type` se descartaba y el stream se quedaba sin eventos).
+      if (tick % 5 === 0) battle.publicEvents.push({ kind: "vehicle_destroyed", tick, targetId: "v_blue" });
     }, PRODUCE_EVERY_MS);
   };
   const finish = () => {
@@ -179,6 +181,14 @@ function controlledBattle() {
     if (timer) clearInterval(timer);
   });
   return { battle, start, finish };
+}
+
+/**
+ * OLA 2 · MA · los clientes viven en la audiencia de su ticket (`feed.audiences`): todas
+ * las conexiones de una batalla, sea cual sea su audiencia.
+ */
+function clientsOf(feed: any): any[] {
+  return [...feed.audiences.values()].flatMap((a: any) => [...a.clients]);
 }
 
 /** Batalla con vehículos (posición + hp) y eventos: lo que un latido NO debe llevar. */
@@ -193,7 +203,7 @@ function liveBattle() {
       tick,
       vehicles: [{ id: "v_red", team: "red", position: { x: 1000 + tick, y: 2000 + tick }, hp: 777 - tick }],
     });
-    if (tick % 5 === 0) battle.publicEvents.push({ type: "vehicle_destroyed", tick, vehicleId: "v_blue" });
+    if (tick % 5 === 0) battle.publicEvents.push({ kind: "vehicle_destroyed", tick, targetId: "v_blue" });
   }, PRODUCE_EVERY_MS);
   cleanups.push(() => clearInterval(timer));
   return { battle, producedAt };
@@ -750,7 +760,7 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     gw.attachBattle("b-side", battle, { spectator: { delaySeconds: DELAY_MS / 1000 }, pollIntervalMs: 10 });
     const { ws, got } = await connect(gw, "b-side");
     const feed = (gw as any).feeds.get("b-side");
-    const [conn] = [...feed.clients];
+    const [conn] = clientsOf(feed);
 
     // Fase A · OCIOSA: la batalla no ha producido nada ⇒ nada retenido.
     const aFrom = Date.now();
@@ -899,11 +909,11 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
     const { ws } = await connect(gw, "b-close");
     await sleep(300);
     const feed = (gw as any).feeds.get("b-close");
-    const [conn] = [...feed.clients];
+    const [conn] = clientsOf(feed);
     expect(conn.heartbeat).not.toBeNull();
     ws.close();
     await sleep(200);
-    expect(feed.clients.size).toBe(0);
+    expect(clientsOf(feed)).toHaveLength(0);
     expect(conn.heartbeat).toBeNull();
   }, 10_000);
 

@@ -74,7 +74,7 @@ const examples = {
         cooldownTicks: 30,
         projectileSpeedMs: 120,
         spreadRad: 0.01,
-        rangeM: 60,
+        rangeM: 360,
         acceptsAmmo: ["ammo.ap", "ammo.he"],
         turretArcRad: 6.2832,
         turretRateRads: 1.0,

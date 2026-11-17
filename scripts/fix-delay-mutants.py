@@ -95,12 +95,15 @@ M = [
      "      const beat = () => conn.timers.size > 0 && this.sendTo(conn, heartbeatMessage(conn.delayMs), /*immediate*/ true);",
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("P3 el latido se apaga al terminar la batalla real (socket abierto)", GW,
-     '      this.broadcast(feed, { type: "result", result: battle.getResult() });',
-     '      this.broadcast(feed, { type: "result", result: battle.getResult() });\n'
-     "      for (const c of feed.clients) {\n"
-     "        if (c.heartbeat) clearInterval(c.heartbeat);\n"
-     "        c.heartbeat = null;\n"
-     "      }",
+     # OLA 2 · reanclado: el result sale por audiencia (proyectado); MISMA mutación: tras
+     # emitir el result se apaga el latido de TODOS los clientes (de todas las audiencias).
+     '        this.broadcast(feed, af, { type: "result", result: af.projector.projectResult(result) });\n      }\n',
+     '        this.broadcast(feed, af, { type: "result", result: af.projector.projectResult(result) });\n      }\n'
+     "      for (const a of feed.audiences.values())\n"
+     "        for (const c of a.clients) {\n"
+     "          if (c.heartbeat) clearInterval(c.heartbeat);\n"
+     "          c.heartbeat = null;\n"
+     "        }\n",
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("P4 el id del latido es un número derivado de timers.size", GW, HB_CALL,
      "{ ...heartbeatMessage(conn.delayMs), id: 1_000_000 + conn.timers.size * 7919 }, /*immediate*/ true);",
@@ -178,7 +181,8 @@ M = [
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("K7 al ver el fin real se reinicia el intervalo del latido (sin latido extra)", GW, [
         (REV_BEAT, REV_A + "\n      beat();\n      conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs);\n      (conn as any).restartHb = () => { if (conn.heartbeat) clearInterval(conn.heartbeat); conn.heartbeat = setInterval(beat, this.heartbeatIntervalMs); };"),
-        (REV_FIN, REV_FIN + "      for (const c of feed.clients) (c as any).restartHb?.();\n")], None,
+        # OLA 2 · reanclado: clientes por audiencia; MISMA mutación (reinicio en todos).
+        (REV_FIN, REV_FIN + "      for (const a of feed.audiences.values()) for (const c of a.clients) (c as any).restartHb?.();\n")], None,
      GWT, "HEARTBEAT_SIDE_CHANNELS"),
     ("I4 sendTo reasigna msg del latido con id v4 propio (Math.random) cuya variante codifica retenidos", GW,
      [(REV_PAY,
@@ -223,7 +227,8 @@ M = [
      "...(true ? { delayMs",
      E30, "DELAY_ZERO_REGRESSION"),
     ("G6 la reconexión reinicia el retardo (sin backlog del feed)", GW,
-     "      backlog = [...feed.history];",
+     # OLA 2 · reanclado: historial del retardo por audiencia; MISMA mutación.
+     "      backlog = [...af.history];",
      "      backlog = [];",
      GWT, "reconectar NO reinicia"),
     ("G7 snapshots antes de tiempo (anti-coaching saltado)", GW,

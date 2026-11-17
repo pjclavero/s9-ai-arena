@@ -4,8 +4,9 @@
  * Vive DELIBERADAMENTE fuera de `src/sim/`: usa `node:http` y el reloj de pared
  * (uptime) para responder peticiones, cosas prohibidas dentro del núcleo determinista
  * (lo bloquea `scripts/lint-determinism.mjs`). No expone nada mutable: solo lectura
- * del snapshot público que ya sirve el propio motor (`Battle.getPublicSnapshot()`),
- * el mismo que ven los replays y el protocolo de bots. Nunca toca `battle.config`,
+ * de la PROYECCIÓN pública (`packages/projection`, audiencia `public_live`) del último
+ * frame interno del motor: lo mismo que ve un espectador (OLA 2 · MA: el motor ya no
+ * fabrica un snapshot público; nunca se sirve el frame interno crudo). Nunca toca `battle.config`,
  * `battle.stateHash()`, el RNG, ni el estado oculto (minas, seed, energía, velocidad).
  *
  * R13.2 (hardening) · Sin CORS ni autenticación — es DELIBERADO, no un olvido:
@@ -19,6 +20,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { AudienceProjector, audienceKey, projectFrame } from "../../../packages/projection/index.js";
 import type { Battle } from "./sim/battle.js";
 
 export interface InspectorOptions {
@@ -61,6 +63,27 @@ function sendJson(res: ServerResponse, status: number, body: unknown, extraHeade
  */
 export function createInspector(opts: InspectorOptions): Promise<Inspector> {
   const { battle } = opts;
+  // Un proyector por audiencia, alimentado EN ORDEN con los frames internos del motor.
+  const newProjector = () =>
+    new AudienceProjector({
+      battleId: battle.config.battleId,
+      audience: audienceKey("public_live"),
+      roster: battle.config.participants.map((p) => ({ id: p.id, botId: p.botId, team: p.team })),
+      mapEntityIds: [
+        ...battle.config.map.walls.map((w) => w.id),
+        ...battle.config.map.destructibles.map((d) => d.id),
+        ...battle.config.map.zones.map((z) => z.id),
+      ],
+    });
+  const projector = newProjector();
+  let advanced = 0;
+  const publicSnapshot = (): unknown => {
+    while (advanced < battle.snapshots.length) projector.advance(battle.snapshots[advanced++]);
+    const last = battle.snapshots.at(-1);
+    if (last) return projectFrame(last, projector.ctx).body;
+    // Antes del primer frame: proyección de un frame bajo demanda con un proyector propio.
+    return newProjector().project(battle.getInternalFrame()).body;
+  };
   const host = opts.host ?? "127.0.0.1";
   const requestedPort = opts.port ?? 0;
   const startedAt = Date.now();
@@ -98,7 +121,7 @@ export function createInspector(opts: InspectorOptions): Promise<Inspector> {
       }
 
       if (url.pathname === "/snapshot") {
-        const snapshot = battle.getPublicSnapshot();
+        const snapshot = publicSnapshot();
         if (method === "HEAD") {
           res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
           res.end();

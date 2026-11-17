@@ -591,7 +591,7 @@ describe("§19/§20 · casos A–E y no revelar existencia", () => {
     // fichero crudo (semilla, comandos, loadouts) no sale a un visitante.
     const idx = await get(`/replays/${BAT.tbFinPriv}/index`);
     expect(idx.status).toBe(200);
-    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v2");
     expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(404);
   });
 

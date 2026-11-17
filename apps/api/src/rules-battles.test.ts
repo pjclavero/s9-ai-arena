@@ -145,7 +145,7 @@ describe("presets 1v1", () => {
       timeoutTiebreak: ["alive", "lives", "kills"],
     });
     expect(rules.catalogVersion).toBeTruthy();
-    expect(rules.engineVersion).toBe("0.4.0");
+    expect(rules.engineVersion).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     expect(rules.schema).toBe(2);
     expect(r.body.rules.summary).toContain("Reaparición: Sin reaparición (1 vida)");
     expect(r.body.rules.tiebreak.steps).toEqual([
@@ -160,7 +160,11 @@ describe("presets 1v1", () => {
 
   it("Combate ⇒ respawn ilimitado 5 s y 5 bajas", async () => {
     const { rules } = await accepted(duel({ preset: "combat", teamSize: 1 }));
-    expect(rules.engineRuleset.respawn).toEqual({ enabled: true, delayTicks: 150 });
+    expect(rules.engineRuleset.respawn).toEqual({
+      enabled: true,
+      delayTicks: 150,
+      rearmPolicy: "all_alive_participants",
+    });
     expect(rules.engineRuleset.scoreToWin).toBe(5);
   });
 
@@ -200,7 +204,12 @@ describe("presets por equipos (2v2, 3v3, 4v4)", () => {
   for (const n of [2, 3, 4]) {
     it(`Respawn limitado ${n}v${n} ⇒ maxRespawns 2 (3 vidas)`, async () => {
       const { rules } = await accepted(team(n, { preset: "team_limited_respawn", teamSize: n }));
-      expect(rules.engineRuleset.respawn).toEqual({ enabled: true, delayTicks: 150, maxRespawns: 2 });
+      expect(rules.engineRuleset.respawn).toEqual({
+        enabled: true,
+        delayTicks: 150,
+        maxRespawns: 2,
+        rearmPolicy: "all_alive_participants",
+      });
       expect(rules.params.teamSize).toBe(n);
     });
   }

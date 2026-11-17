@@ -381,6 +381,11 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
   replays 0.4.0. Revertir la 016 (`rollback:name 016_battle_rules`; ya no es la última) borra las
   copias de reglas (no resultados ni replays).
 
+- **Motor 0.5.0 (OLA 2, ADR-024, sin migración):**
+  - **Antes de desplegar:** que no haya batallas `running`, porque un checkpoint no se reanuda entre versiones. Decidir qué se hace con los replays `formatVersion: 1` de producción (archivar o borrar): el motor 0.5.0 no los lee y dan `format_version_mismatch`, que no es «manipulado».
+  - **Tras desplegar:** las batallas nuevas graban `engine: "0.5.0"`. Las copias de reglas que ya existían conservan `engineVersion: "0.4.0"`: es sólo un metadato, y se juegan con 0.5.0 y `rearmPolicy` `self` si no la declaran.
+  - **Vuelta atrás:** el motor anterior no re-simula los replays 0.5.0. Antes, vaciar las batallas `scheduled` con copia de reglas (procedimiento de 0.4.0, arriba).
+
 - **Administración de streaming (ADR-023, migración 017):**
   - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
     `streamer_control_secret.txt` y el par `stream_secrets_private.pem` / `stream_secrets_public.pem`.

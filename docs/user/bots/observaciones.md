@@ -7,7 +7,7 @@ En cada ciclo de decisión recibes una **observación** (`OBSERVATION`): tu esta
   "tick": 120,
   "self": { "position": {"x": 41.2, "y": 40.0}, "heading": 0.1, "velocity": {"x": 7.8, "y": 0.4}, "hullHp": 300, "...": "..." },
   "sensors": { "radar": [ { "slot": "sensor_a", "contacts": [ ... ] } ] },
-  "radio": [ { "from": "veh_2", "data": "AAEAAg==", "sentTick": 117 } ],
+  "radio": [ { "from": "v_2", "data": "AAEAAg==", "sentTick": 117 } ],
   "score": { "red": 1, "blue": 0 },
   "objectives": [ { "kind": "flag", "team": "red", "state": "at_base" } ]
 }
