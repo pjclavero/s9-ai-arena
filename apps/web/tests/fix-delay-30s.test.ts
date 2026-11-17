@@ -104,7 +104,9 @@ function liveBattle() {
     tick++;
     producedAt.set(tick, Date.now());
     battle.snapshots.push({ tick, vehicles: [{ id: "v_red", position: { x: tick, y: tick }, hp: 1000 - tick }] });
-    if (tick % 10 === 0) battle.publicEvents.push({ type: "score", tick, team: "red" });
+    // OLA 2 · MA · evento INTERNO (`kind`): el gateway lo proyecta por lista blanca.
+    if (tick % 10 === 0)
+      battle.publicEvents.push({ kind: "score_changed", tick, team: "red", score: { red: tick / 10 } });
   }, 100);
   return { battle, producedAt, tick: () => tick };
 }
