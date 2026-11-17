@@ -141,6 +141,15 @@ const MUTANTS = [
     kill: "frozen INVÁLIDA",
   },
   {
+    // 1a (ola2-into-main) · EQUIPMENT_PRIVATE: la inscripción la hace el DUEÑO y debe ver el
+    // motivo real; sin `viewer` recibe el 409 genérico (violations: []).
+    id: "M6v",
+    name: "la inscripción no pasa el viewer del dueño (409 genérico para el propio dueño)",
+    edits: [{ file: T, from: ENTRY_CHECK, to: "    await assertTournamentEligible(db, v);\n" }],
+    tests: [API],
+    kill: "frozen INVÁLIDA",
+  },
+  {
     id: "M6b",
     name: "una versión suspendida (revocada) cuenta como estado de competición",
     edits: [

@@ -105,6 +105,11 @@ M = [
     ("P2 LiveScreen ignora el feed del director", BP,
      "    if (!scene || !feed) return;", "    if (!scene || !feed || true) return;",
      PG, "DELAYED_TOURNAMENT_END"),
+    # 1a (ola2-into-main) · la conexión del director es la ÚNICA de /broadcast: debe pedir la
+    # audiencia `broadcast` firmada de la OLA 2 (MA). Sin ella el ticket sale `public_live`.
+    ("P3 el director no pide la audiencia broadcast (OLA 2)", BP,
+     "spectate-ticket?audience=broadcast`", "spectate-ticket`",
+     PG, "DELAYED_TOURNAMENT_END"),
     # ── Retardo 0 ────────────────────────────────────────────────────────────────────
     ("Z1 con retardo 0 el feed no cuenta (nada sale en directo)", DIR, PLAYING,
      '      case "playing":\n        return feed.delayMs ? "running" : "hidden";',
