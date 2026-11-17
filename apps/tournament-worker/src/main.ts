@@ -26,7 +26,8 @@ import { RedisSignal } from "./redis-signal.js";
 import { handleGenerateSchedule, handleTournamentDryRun } from "./scheduler.js";
 import { handleProcessResult } from "./results.js";
 import { handleUpdateStandings } from "./standings.js";
-import { TournamentWorker } from "./worker.js";
+import { TournamentWorker, concurrencyFromEnv, computeConcurrency } from "./worker.js";
+import { cpuSampleMsFromEnv } from "./cpu-sampler.js";
 import { defaultBattleResources } from "./battle-resources.js";
 import { startReaper } from "./battle-reaper.js";
 import { LABEL_BATTLE_ID, LABEL_ROLE, ROLE_BATTLE_BOT } from "../../bot-manager/src/container-runner.js";
@@ -113,6 +114,7 @@ async function buildExecutor() {
         // TD-034 · dos relojes del arranque (SANDBOX_STARTUP_TIMEOUT_MS /
         // BOT_EXECUTION_TIMEOUT_MS); valor inválido ⇒ el worker no ejecuta batallas y lo anuncia.
         timeouts: startupTimeoutsFromEnv(process.env),
+        cpuSampleMs: cpuSampleMsFromEnv(process.env),
       }),
     });
     return { executor, reason: undefined };
@@ -137,8 +139,14 @@ if (process.env.REDIS_URL) {
   });
 }
 
+// Valor inválido ⇒ lanza aquí y el worker no arranca (no se degrada al defecto).
+const workerConcurrency = concurrencyFromEnv(process.env);
+const cpuSampleMs = cpuSampleMsFromEnv(process.env);
+log("worker_load_config", { concurrency: workerConcurrency ?? computeConcurrency(), concurrencyFromEnv: workerConcurrency !== undefined, cpuSampleMs });
+
 const worker = new TournamentWorker({
   db,
+  ...(workerConcurrency !== undefined ? { concurrency: workerConcurrency } : {}),
   handlers: {
     ...(executor
       ? {

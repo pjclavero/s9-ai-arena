@@ -78,6 +78,29 @@ export function computeConcurrency(env: { cpuCount?: number; memMb?: number } = 
   return Math.max(1, Math.min(cpuCount - 1, Math.floor(memMb / 2048)));
 }
 
+/** Variable de entorno del número de batallas simultáneas por worker. */
+export const CONCURRENCY_ENV = "TOURNAMENT_WORKER_CONCURRENCY";
+/** Tope de la concurrencia configurada: más allá es un error de configuración, no una petición razonable. */
+export const MAX_CONFIGURED_CONCURRENCY = 16;
+
+/**
+ * Lee `TOURNAMENT_WORKER_CONCURRENCY`: ausente o vacía ⇒ `undefined` (el worker usa
+ * `computeConcurrency`). Presente ⇒ entero decimal en [1, MAX_CONFIGURED_CONCURRENCY];
+ * cualquier otra cosa es un ERROR (no se sustituye en silencio: el worker no arranca).
+ */
+export function concurrencyFromEnv(env: Record<string, string | undefined>): number | undefined {
+  const raw = env[CONCURRENCY_ENV]?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`);
+  }
+  const n = Number(raw);
+  if (n < 1 || n > MAX_CONFIGURED_CONCURRENCY) {
+    throw new Error(`${CONCURRENCY_ENV} fuera de rango (${n}): entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`);
+  }
+  return n;
+}
+
 /** Promesa con vencimiento: ni un `await` del bucle puede durar para siempre. */
 export async function conVencimiento<T>(promesa: Promise<T>, ms: number, motivo: string): Promise<T> {
   let temporizador: ReturnType<typeof setTimeout> | undefined;
