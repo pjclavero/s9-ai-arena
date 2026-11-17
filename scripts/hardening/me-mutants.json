@@ -1,10 +1,11 @@
 {
   "description": "OLA 2 · ME · mutantes de calibración. kill = el test indicado debe ponerse ROJO por una ASERCIÓN en un test cuyo nombre case con `expect`; identity = debe SOBREVIVIR (control del runner). Runner: scripts/hardening/me-mutants.mjs (sólo en el laboratorio).",
-  "version": 2,
-  "anchoredAt": "G2 ronda 2 sobre hardening/g2-public-contracts (las anclas se comprueban únicas en cada ejecución: ausente o repetida = ROTO)",
+  "version": 3,
+  "anchoredAt": "Integración OLA 2 (G1+G2+G3 en hardening/contracts, ADR-024) (las anclas se comprueban únicas en cada ejecución: ausente o repetida = ROTO)",
   "changelog": [
     "v1 (ME, BASE_SHA f07ff6f): 34 mutantes (19 K, 2 I, 13 F «fix» con S9_CONTRACT_ENFORCE).",
-    "v2 (G2 ronda 2): 12 anclas K/I reancladas al árbol integrado; K11 reformulado para caer por aserción; los 13 «fix» quedan obsoletos (todos los contratos son `it` y se cumplen): 12 reconvertidos a kill y 1 retirado (F06). 33 mutantes."
+    "v2 (G2 ronda 2): 12 anclas K/I reancladas al árbol integrado; K11 reformulado para caer por aserción; los 13 «fix» quedan obsoletos (todos los contratos son `it` y se cumplen): 12 reconvertidos a kill y 1 retirado (F06). 33 mutantes.",
+    "v3 (integración OLA 2): K05 y F07 reanclados. G1.5 (d0660d2f) añadió el argumento `surface` a explode() y la llamada pasó a varias líneas; v2 se ancló sobre G2 sin G1 y las dos anclas quedaron ausentes (ROTO). Misma mutación: el blanco directo deja de excluirse de la onda. 33 mutantes."
   ],
   "retired": [
     {
@@ -97,11 +98,11 @@
       "edits": [
         {
           "file": "apps/arena-engine/src/sim/battle.ts",
-          "from": "\"explosion\", directTarget);",
-          "to": "\"explosion\", null);"
+          "from": "\"explosion\",\n            directTarget,\n            surface,",
+          "to": "\"explosion\",\n            null,\n            surface,"
         }
       ],
-      "anchoredAt": "ronda2",
+      "anchoredAt": "integracion-ola2",
       "note": "REANCLADO Y REORIENTADO: la baseline ya no caracteriza el doble daño (MB lo corrigió: el impactado directo queda fuera de su onda). El mutante REINTRODUCE el defecto (onda sin excluir al blanco directo) y la baseline «corregido (MB): … daña UNA vez» debe ponerse roja."
     },
     {
@@ -508,11 +509,11 @@
       "edits": [
         {
           "file": "apps/arena-engine/src/sim/battle.ts",
-          "from": "\"explosion\", directTarget);",
-          "to": "\"explosion\", null);"
+          "from": "\"explosion\",\n            directTarget,\n            surface,",
+          "to": "\"explosion\",\n            null,\n            surface,"
         }
       ],
-      "anchoredAt": "ronda2",
+      "anchoredAt": "integracion-ola2",
       "note": "RECONVERTIDO fix→kill: la onda excluye al blanco directo (D-B6); el mutante deja de excluirlo.",
       "team": "MB"
     },

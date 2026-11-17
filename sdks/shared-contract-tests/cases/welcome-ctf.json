@@ -133,7 +133,7 @@
         "v_4"
       ],
       "versions": {
-        "engine": "0.4.0",
+        "engine": "0.5.0",
         "physics": "rapier2d-compat@0.14.0+sha256:ab12",
         "rules": "ctf_mvp@1",
         "catalog": "mvp@1",

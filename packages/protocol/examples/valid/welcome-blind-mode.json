@@ -44,7 +44,7 @@
       "heightM": 100
     },
     "versions": {
-      "engine": "0.4.0",
+      "engine": "0.5.0",
       "rules": "zc_blind@1",
       "catalog": "mvp@1",
       "protocol": "arena/1"

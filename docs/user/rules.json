@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "$comment": "GENERADO desde packages/game-rules/battle-rules.ts (npx tsx scripts/generate-rules-doc.ts). No editar a mano.",
-  "engineVersion": "0.4.0",
+  "engineVersion": "0.5.0",
   "respawn": {
     "definition": "maxRespawns es el número de veces que un bot puede REAPARECER después de morir. Vidas totales = maxRespawns + 1.",
     "table": [

@@ -99,7 +99,7 @@ const valid = {
     },
     teammates: ["v_4"],
     versions: {
-      engine: "0.4.0",
+      engine: "0.5.0",
       physics: "rapier2d-compat@0.14.0+sha256:ab12",
       rules: "ctf_mvp@1",
       catalog: "mvp@1",
@@ -125,7 +125,7 @@ const valid = {
       widthM: 60,
       heightM: 40,
     },
-    versions: { engine: "0.4.0", rules: "dm_practice@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "dm_practice@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
   "welcome-custom-budget": env("WELCOME", {
     battleId: "btl_skirmish_low_budget",
@@ -151,7 +151,7 @@ const valid = {
       widthM: 120,
       heightM: 80,
     },
-    versions: { engine: "0.4.0", rules: "skirmish_low@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "skirmish_low@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
   "welcome-blind-mode": env("WELCOME", {
     battleId: "btl_blind",
@@ -172,7 +172,7 @@ const valid = {
       widthM: 100,
       heightM: 100,
     },
-    versions: { engine: "0.4.0", rules: "zc_blind@1", catalog: "mvp@1", protocol: "arena/1" },
+    versions: { engine: "0.5.0", rules: "zc_blind@1", catalog: "mvp@1", protocol: "arena/1" },
   }),
 
   // ---------------- OBSERVATION

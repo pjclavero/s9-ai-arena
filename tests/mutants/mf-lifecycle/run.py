@@ -16,8 +16,9 @@ MUTANTS = [
      "    for (const phase of [...PHASES].reverse()) {\n      const bucket = this.entries.get(battleId);",
      "apps/tournament-worker/src/battle-resources.test.ts"),
     ("M2-idempotencia", "apps/tournament-worker/src/battle-resources.ts",
-     "      await e.release();\n      const b = this.entries.get(e.battleId);\n      b?.delete(e.id);",
-     "      await e.release();\n      e.state = \"live\";\n      const b = this.entries.get(e.battleId);",
+     # Integración OLA 2: reanclado tras G2 (releaseEntry compite con su plazo en un Promise.race).
+     "      ]);\n      const b = this.entries.get(e.battleId);\n      b?.delete(e.id);",
+     "      ]);\n      e.state = \"live\";\n      const b = this.entries.get(e.battleId);",
      "apps/tournament-worker/src/battle-resources.test.ts"),
     ("M3-aislamiento", "apps/tournament-worker/src/battle-resources.ts",
      "    const inScope = (e: Entry) => scope === null || e.scope === scope;",
@@ -32,8 +33,9 @@ MUTANTS = [
      "if (e.drainMs && e.drainMs > 0 && !opts.flushDrains) {",
      "apps/tournament-worker/src/battle-resources.test.ts"),
     ("M6-sin-KILL", "apps/tournament-worker/src/battle-resources.ts",
-     "  if (!alive) return \"terminated\";\n  await h.stop({ timeoutSeconds: 0 });",
-     "  if (!alive || true) return \"terminated\";\n  await h.stop({ timeoutSeconds: 0 });",
+     # Integración OLA 2: reanclado tras G2 (el KILL va acotado con withinDeadline).
+     "  if (!alive) return \"terminated\";\n  await withinDeadline(h.stop({ timeoutSeconds: 0 })",
+     "  if (!alive || true) return \"terminated\";\n  await withinDeadline(h.stop({ timeoutSeconds: 0 })",
      "apps/tournament-worker/src/mf-battle-teardown.test.ts"),
     ("M7-sin-borrado-contenedor", "apps/tournament-worker/src/container-agents.ts",
      "            if (h.remove) {",
@@ -89,8 +91,9 @@ MUTANTS = [
      "infrastructure/tests/mf-backup-init.test.ts"),
     # Contrato BATTLE_FINISHED != STREAM_SESSION_FINISHED: el reaper sólo puede ver contenedores de batalla.
     ("M20-reaper-lista-sin-rol", "apps/tournament-worker/src/battle-reaper.ts",
-     "containers = await deps.runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT });",
-     "containers = await deps.runner.list({});",
+     # Integración OLA 2: reanclado tras G2 (el listado va acotado con withinDeadline).
+     "runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT })",
+     "runner.list({})",
      "apps/tournament-worker/src/mf-stream-session-survives.test.ts"),
     ("M22-remove-409-en-curso-falla", "apps/bot-manager/src/docker-proxy.ts",
      "    if (res.status === 409 && /removal of container",

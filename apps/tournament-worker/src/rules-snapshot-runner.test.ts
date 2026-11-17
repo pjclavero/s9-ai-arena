@@ -192,7 +192,7 @@ describe("torneo · copia inmutable de reglas (ADR-022)", () => {
       const replay = fromJsonl(out.replayJsonl);
       expect(replay.header.ruleset).toEqual(JSON.parse(JSON.stringify(snapshot!.engineRuleset)));
       expect(replay.header.ruleset.timeoutTiebreak).toEqual(["alive", "lives", "kills"]);
-      expect(replay.header.versions.engine).toBe("0.4.0");
+      expect(replay.header.versions.engine).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
       expect(out.versions.rulesetEngine).toBe("duel@1");
       expect(replay.header.ruleset.spectator).toEqual({ delaySeconds: 30 });
     } finally {
