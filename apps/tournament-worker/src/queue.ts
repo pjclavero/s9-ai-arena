@@ -21,7 +21,7 @@
  *    manual). Las derrotas deportivas terminan el trabajo en `done`.
  */
 import type { Knex } from "knex";
-import { classifyFailure, type FailureCode } from "./errors.js";
+import { classifyFailure, retryPolicyFor, type FailureCode } from "./errors.js";
 
 export type JobKind = "generate_schedule" | "run_battle" | "process_result" | "update_standings" | "tournament_dry_run";
 
@@ -163,8 +163,10 @@ export async function failJobInfrastructure(
     );
   }
   const now = opts.now ?? new Date();
-  const parked = job.attempts >= job.max_attempts;
-  const backoffMs = opts.backoffMs ?? Math.min(60_000, 1000 * 2 ** job.attempts);
+  const policy = retryPolicyFor(code);
+  const maxAttempts = Math.min(job.max_attempts, policy.maxAttempts ?? job.max_attempts);
+  const parked = job.attempts >= maxAttempts;
+  const backoffMs = opts.backoffMs ?? policy.backoffMs(job.attempts);
   await db("jobs")
     .where({ id: job.id })
     .update({

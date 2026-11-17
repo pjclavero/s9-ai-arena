@@ -35,9 +35,11 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocketServer } from "ws";
 import {
+  BATTLE_GUARD_FACTOR,
   CONTAINER_BATTLE_GRACE_MS,
   DEFAULT_TICK_INTERVAL_MS,
   maxBattleTicks,
+  proportionalBattleGuardMs,
 } from "../../../packages/game-rules/index.js";
 import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
@@ -152,8 +154,13 @@ export interface ContainerAgentsOptions {
    * señales (producción) no se usa: mandan `timeouts`.
    */
   connectTimeoutMs?: number;
-  /** Margen del guard global sobre la duración teórica. Def. 15 s. */
+  /** Margen FIJO de arranque/cierre del guard global. Def. 15 s. */
   graceMs?: number;
+  /**
+   * Factor PROPORCIONAL del guard sobre la duración teórica (`ticks × ms`), calculada
+   * con las reglas reales del modo (`maxBattleTicks`). Def. BATTLE_GUARD_FACTOR (1,25).
+   */
+  guardFactor?: number;
   /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
   cpuSampleMs?: number;
   /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
@@ -516,12 +523,19 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         });
 
         server.start();
-        const overallMs =
-          maxBattleTicks(engine.config.ruleset) * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
+        const overallMs = proportionalBattleGuardMs(
+          maxBattleTicks(engine.config.ruleset),
+          tickIntervalMs,
+          opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS,
+          opts.guardFactor ?? BATTLE_GUARD_FACTOR,
+        );
         const result = await Promise.race([
           server.waitForResult(),
           new Promise<never>((_r, reject) => {
-            guard = setTimeout(() => reject(new Error(`timeout global de la batalla tras ${overallMs} ms`)), overallMs);
+            guard = setTimeout(
+              () => reject(battleGuardFailure(overallMs, engine.tick, maxBattleTicks(engine.config.ruleset))),
+              overallMs,
+            );
             res.registerTimer(battleId, "battle_guard", guard, SCOPE);
           }),
           new Promise<never>((_r, reject) => {
@@ -579,6 +593,24 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       }
     },
   };
+}
+
+/**
+ * Fallo del guard global. Si el motor llegó a avanzar (`tick > 0`) la batalla ARRANCÓ y
+ * jugó: es `battle_timeout`, no un fallo de arranque. Sin ningún tick jugado es lo que
+ * el nombre dice, `engine_start_failure`. El texto conserva «timeout global» (lo usa
+ * la clasificación del final y los diagnósticos).
+ */
+export function battleGuardFailure(overallMs: number, tick: number, maxTicks: number): InfrastructureFailure {
+  return tick > 0
+    ? new InfrastructureFailure(
+        "battle_timeout",
+        `timeout global de la batalla tras ${overallMs} ms (jugó ${tick}/${maxTicks} ticks)`,
+      )
+    : new InfrastructureFailure(
+        "engine_start_failure",
+        `timeout global de la batalla tras ${overallMs} ms sin ningún tick jugado`,
+      );
 }
 
 /** `p`, o rechazo con `signal.reason` en cuanto la batalla se aborta (sin esperar a `p`). */

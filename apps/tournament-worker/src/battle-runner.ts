@@ -44,7 +44,7 @@ import { administrativeDisqualifications } from "../../bot-manager/src/suspensio
 import { eligibilityOf, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
-import { InfrastructureFailure, SportingFailure } from "./errors.js";
+import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
@@ -460,8 +460,7 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         }
         // Fallo técnico: la batalla vuelve a scheduled (si sigue siendo nuestra) y la cola decide el reintento.
         await releaseBattleClaim(db, battleId, owner);
-        if (err instanceof InfrastructureFailure) throw err;
-        throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
+        throw toInfrastructureFailure(err, "engine_start_failure");
       }
 
       if (aborter.signal.aborted) {

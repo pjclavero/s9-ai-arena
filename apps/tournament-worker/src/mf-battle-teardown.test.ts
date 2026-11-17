@@ -184,7 +184,7 @@ function setup(
   per: (i: number) => FakeBootstrapBehaviour = () => ({}),
   extra?: (i: number) => { ignoreTerm?: boolean; stopThrows?: boolean; noRemove?: boolean },
   p: BotLaunchProvider = provider(),
-  more: { graceMs?: number } = {},
+  more: { graceMs?: number; guardFactor?: number } = {},
 ) {
   const runner = new LedgerRunner(per, extra);
   runners.push(runner);
@@ -199,6 +199,7 @@ function setup(
     resources,
     termGraceS: 1,
     ...(more.graceMs !== undefined ? { graceMs: more.graceMs } : {}),
+    ...(more.guardFactor !== undefined ? { guardFactor: more.guardFactor } : {}),
   });
   return { runner, resources, agents };
 }
@@ -239,12 +240,47 @@ describe("OLA2-MF · teardown tras cada final", () => {
     await expectNothingLeft(s, "mf-bto");
   }, 30_000);
 
-  it("timeout GLOBAL de la batalla → error y nada queda", async () => {
-    const inp = await input("mf-gto", 600);
-    const s = setup(() => ({}), undefined, provider(), { graceMs: 300 - maxBattleTicks(inp.ruleset) * 5 });
+  it("timeout GLOBAL de la batalla (estancada, el motor jugó) → battle_timeout y nada queda", async () => {
+    // Bots quietos y 3000 ticks × 5 ms = 15 s teóricos; guard de 300 ms (factor 1: la
+    // fórmula exacta es ticks × ms × factor + gracia, de ahí la gracia negativa).
+    const inp = await input("mf-gto", 3000);
+    const s = setup((): FakeBootstrapBehaviour => ({ idle: true }), undefined, provider(), {
+      guardFactor: 1,
+      graceMs: 300 - maxBattleTicks(inp.ruleset) * 5,
+    });
     const err = await s.agents.run(inp).catch((e) => e);
-    expect(String(err?.message ?? err)).toMatch(/timeout global/);
+    expect(err).toBeInstanceOf(InfrastructureFailure);
+    expect(err.code).toBe("battle_timeout"); // NO engine_start_failure: la batalla arrancó y jugó
+    expect(String(err.message)).toMatch(/timeout global de la batalla tras 300 ms \(jugó [1-9]\d*\/3000 ticks\)/);
     await expectNothingLeft(s, "mf-gto");
+  }, 30_000);
+
+  it("el factor del guard se APLICA: con factor 2 el plazo es ticks × ms × 2 + gracia", async () => {
+    // Mismo guard de 300 ms que arriba, pero llegando a él con factor 2: 2 × 15 000 + gracia.
+    const inp = await input("mf-gfx", 3000);
+    const grace = 300 - 2 * maxBattleTicks(inp.ruleset) * 5;
+    const s = setup((): FakeBootstrapBehaviour => ({ idle: true }), undefined, provider(), {
+      guardFactor: 2,
+      graceMs: grace,
+    });
+    const err = await s.agents.run(inp).catch((e) => e);
+    expect(err.code).toBe("battle_timeout");
+    expect(String(err.message)).toMatch(/tras 300 ms/);
+    await expectNothingLeft(s, "mf-gfx");
+  }, 30_000);
+
+  it("batalla larga DENTRO del margen: acaba por límite de ticks sin que salte el guard", async () => {
+    // 600 ticks × 5 ms = 3 s teóricos, con un guard de factor 3 (9 s). Acabar a los ~3 s
+    // es lo normal: el motor pierde un poco de ritmo por tick y por eso el guard
+    // exacto al teórico (margen cero) era un fallo esperando a ocurrir.
+    const inp = await input("mf-long", 600);
+    const s = setup((): FakeBootstrapBehaviour => ({ idle: true }), undefined, provider(), {
+      guardFactor: 3,
+      graceMs: 0,
+    });
+    const out = await s.agents.run(inp);
+    expect(out.result.ticks).toBe(600);
+    await expectNothingLeft(s, "mf-long");
   }, 30_000);
 
   it("cancelación (MANUAL_ABORT a mitad) → aborta y nada queda", async () => {
