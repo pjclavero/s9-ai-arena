@@ -13,6 +13,7 @@ import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { createLoadoutRevision } from "./services/bots.js";
+import { ROLE_RANK } from "./openapi.js";
 import { canonicalUuid, excludeTournamentEntry } from "./services/version-eligibility.js";
 
 let h: TestDbHandle;
@@ -302,7 +303,7 @@ describe("R11 · exclusión de inscripciones", () => {
         return Reflect.apply(target as never, thisArg, args);
       },
     }) as unknown as Knex;
-    const out = await excludeTournamentEntry(racy, { userId: orgId, isOrganizer: true }, t, e, "carrera").then(
+    const out = await excludeTournamentEntry(racy, { userId: orgId, rank: ROLE_RANK.organizer }, t, e, "carrera").then(
       () => "borrada",
       (err: { status?: number }) => `rechazada ${err.status}`,
     );
