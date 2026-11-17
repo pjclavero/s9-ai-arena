@@ -138,6 +138,7 @@ const privacyView = async (botId: string) => {
 };
 
 // ---------------------------------------------------------------- escenario
+let R: string; // rival (B): un torneo no cierra con menos de 2 inscritos
 let X: string; // bot del developer: v1 published → frozen en A → reutilizada en B
 let tA: string;
 let tB: string;
@@ -162,6 +163,7 @@ beforeAll(async () => {
   userId = (await h.db("users").where({ email: DEV_USERS.user }).first()).id;
 
   X = await mkBot("FR-X", devId, "published", GOOD);
+  R = await mkBot("FR-R", devId, "published", GOOD);
   // Revisión de loadout POSTERIOR a la versión: la versión sigue anclada a la 1.
   await createLoadoutRevision(h.db, X, GOOD_V2 as never, SUMMARY);
   xV1Id = (await versionRow(X)).id;
@@ -172,6 +174,7 @@ beforeAll(async () => {
   tA = await openTournament("FR-A");
   const eA = await enter(devTok, tA, X, 1);
   expect(eA.status, JSON.stringify(eA.body)).toBe(201);
+  expect((await enter(devTok, tA, R, 1)).status).toBe(201); // B · mínimo 2 inscritos
   const cA = await closeEntries(tA);
   expect(cA.status, JSON.stringify(cA.body)).toBe(200);
 
@@ -261,6 +264,7 @@ describe("B2 · published → torneo A → frozen; la MISMA versión frozen → 
 
   it("B3 · cerrar B con la versión YA frozen ⇒ 200; no se transita, no se audita, la fila no cambia", async () => {
     const auditBefore = (await auditFor(X)).length;
+    expect((await enter(devTok, tB, R, 1)).status).toBe(201); // B · mínimo 2 inscritos (R ya frozen por A)
     const c = await closeEntries(tB);
     expect(c.status, JSON.stringify(c.body)).toBe(200);
     const after = immutableView(await versionRow(X));
