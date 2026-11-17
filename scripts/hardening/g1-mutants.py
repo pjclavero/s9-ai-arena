@@ -44,6 +44,14 @@ F  · ronda 5 (P2-1d): «consumidor quitado con huella en el RNG». F1, F2 y F3 
 U  · ronda 5: defensa ESTRUCTURAL de la regla «mismo comportamiento con distinto consumo del
      RNG ⇒ mismo resultado» (bloque D5 del gate). U1: el modo neutro se ignora (la sonda usa el
      RNG del motor); U2: la tirada neutra avanza con cada consumo. D5 debe ponerse rojo.
+I  · ronda 6 (P2-1e): «consumidor quitado con huella en un CONTADOR interno» (ids de entidad).
+     RH1 = el H1 de la quinta revisión (evidencia-G1-review/ronda5/rev5-mutants.py; se renombra
+     porque H1 ya es un mutante HE de esta matriz), sin modificar: la
+     energía no limita y, cuando falta, se gasta un id de entidad antes de disparar o sembrar.
+     I1 (autor): la misma clase sólo al sembrar minas (mine.power.perActionEU). Mueren en el
+     gate porque los canales projectiles/mines registran la etiqueta observable, no el id.
+W  · ronda 6: defensa ESTRUCTURAL D6 (ids de entidad gastados de más ⇒ mismos canales).
+     W1/W2: los canales projectiles / mines vuelven a registrar el id crudo. D6 debe ponerse rojo.
 
 Uso: scripts/hardening/run-mutants.sh g1 <worktree> <salida.json> [IDS]
 """
@@ -67,6 +75,10 @@ F2_OLD = "const err = (s.spec.errorM ?? 2) / Math.max(0.25, perf);"
 F2_NEW = "const err = 2; for (let i = 0; i < Math.round(s.spec.errorM ?? 2); i++) rng.next();"
 F5_EX = "const ex = (rng.next() * 2 - 1) * err;"
 F5_EY = "const ey = (rng.next() * 2 - 1) * err;"
+FIRE_SEQ = 'const p = fire(v, slot, this.tick, muzzle, this.rng.stream("combat"), this.entitySeq++);'
+MINE_REJ = ('        if (rej) {\n          this.emit({ kind: "rejected_action", slot: cmd.deployMine.slot, reason: rej }, v.id);\n'
+            '        } else {')
+MINE_SPEND = "\n          if (v.energyEU < (v.modules.get(cmd.deployMine.slot)?.spec.perActionEU ?? 0)) this.entitySeq++;"
 EFFECTIVE = "const effective = Math.max(profile.minFraction * amount, amount * (1 - reduction));"
 INSIDE = "    if (h.collider.containsPoint(from)) return this.entrySurface(h.collider, from, dir, entityId, point);\n"
 TOUCH = "    if (hit && (hit.timeOfImpact <= 0 || (hit.normal.x === 0 && hit.normal.y === 0)))\n"
@@ -331,6 +343,26 @@ MUTANTS = [
            "return neutralUint32(NEUTRAL_CLOCK.tick);", "return neutralUint32(NEUTRAL_CLOCK.tick++);", [GATE],
            name_filter="D5",
            expect="D5: las tiradas extra sin usar cambian canales con el RNG neutro"),
+    Mutant("RH1", "power.*: sin no_energy; la falta de energía sólo gasta un id de entidad (entitySeq)", COMBAT,
+           '  if (v.energyEU < cost) return "no_energy";\n', "", [GATE],
+           also=[('  if (v.energyEU < (m.spec.perActionEU ?? 0)) return "no_energy";\n', "", 1)],
+           others=[(BATTLE, FIRE_SEQ,
+                    "if (v.energyEU < (v.modules.get(slot)?.spec.perActionEU ?? 0)) this.entitySeq++;\n        "
+                    + FIRE_SEQ, 1),
+                   (BATTLE, MINE_REJ, MINE_REJ + MINE_SPEND, 1)],
+           name_filter="power\\.",
+           expect="D1 power.* «gobierna [projectiles, mines]» y D4 ENERGY_LIMIT (vivo en 28f9b06: 52/52)"),
+    Mutant("I1", "mine.power.perActionEU: la mina siembra sin energía; si falta, sólo gasta un id de entidad", COMBAT,
+           '  if (v.energyEU < (m.spec.perActionEU ?? 0)) return "no_energy";\n', "", [GATE],
+           others=[(BATTLE, MINE_REJ, MINE_REJ + MINE_SPEND, 1)],
+           name_filter="mine\\.power\\.perActionEU",
+           expect="D1 mine.power.perActionEU «gobierna [projectiles, mines]» y D4 ENERGY_LIMIT"),
+    Mutant("W1", "la sonda vuelve a registrar el id crudo de cada proyectil", PROBE,
+           '[labels.of("p", p.id, p.ownerId), p.position.x', "[p.id, p.position.x", [GATE], name_filter="D6",
+           expect="D6: gastar ids de entidad cambia el canal projectiles"),
+    Mutant("W2", "la sonda vuelve a registrar el id crudo de cada mina", PROBE,
+           '[labels.of("m", m.id, m.ownerId), r6(m.position.x)', "[m.id, r6(m.position.x)", [GATE], name_filter="D6",
+           expect="D6: gastar ids de entidad cambia el canal mines"),
 ]
 
 if __name__ == "__main__":
