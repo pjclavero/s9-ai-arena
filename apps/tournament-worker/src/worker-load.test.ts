@@ -181,7 +181,10 @@ describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga",
   it("P3-2 · un contenedor que muere ANTES de dar una lectura positiva también se deja de muestrear", async () => {
     let n = 0;
     const s = new ContainerCpuSampler([
-      { cpuMs: async () => (n++, null), state: async () => ({ running: false, exitCode: 1, oomKilled: false, gone: true }) } as unknown as ContainerHandle,
+      {
+        cpuMs: async () => (n++, null),
+        state: async () => ({ running: false, exitCode: 1, oomKilled: false, gone: true }),
+      } as unknown as ContainerHandle,
     ]);
     for (let i = 0; i < 5; i++) {
       s.tick();

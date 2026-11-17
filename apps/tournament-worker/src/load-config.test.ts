@@ -54,7 +54,11 @@ function walk(n: unknown, f: (x: N) => void): void {
 }
 const name = (c: unknown): string => {
   const n = c as N;
-  return n.type === "Identifier" ? String(n.name) : n.type === "MemberExpression" ? `${name(n.object)}.${name(n.property)}` : n.type;
+  return n.type === "Identifier"
+    ? String(n.name)
+    : n.type === "MemberExpression"
+      ? `${name(n.object)}.${name(n.property)}`
+      : n.type;
 };
 /** ¿El objeto de la llamada/`new` a `callee` esparce `spreadFn(arg)`? (también dentro de anidados). */
 function callSpreads(ast: N, callee: string, spreadFn: string, arg: string): boolean {
