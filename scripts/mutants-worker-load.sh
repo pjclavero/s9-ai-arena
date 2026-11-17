@@ -43,7 +43,7 @@ mut M-C9 $C 's/if \(this\.isDead\(i\)\) continue;//' "sólo contenedores vivos"
 mut M-D1 $C 's/if \(st && \(st\.gone \|\| !st\.running\)\) this\.terminated\[i\] = true;/this.terminated[i] = true;/' "positiva, 2+ nulos"
 mut M-D2 $C 's/if \(st && \(st\.gone \|\| !st\.running\)\)/if (!st || st.gone || !st.running)/' "si el inspect también falla"
 mut M-D3 $C 's/this\.terminated\[i\] = true;/void 0;/' "con 404/"
-mut M-D4 $C 's/\}, this\.timeoutMs\);/}, 1e12);/' "nunca resuelve"
+mut M-D4 $C 's/\}, this\.timeoutMs\);/}, 2e9);/' "nunca resuelve"
 mut M-D5 $C 's/this\.inFlight\[i\] = null;$/this.inFlight[i] = this.inFlight[i];/' "nunca resuelve"
 # --- ronda 2 · P2-3 (cableado)
 mut M-E1 $L 's/return cfg\.concurrency !== undefined \? \{ concurrency: cfg\.concurrency \} : \{\};/return {};/' "con variables"
