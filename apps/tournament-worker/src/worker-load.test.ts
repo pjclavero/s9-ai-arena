@@ -123,7 +123,7 @@ describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga",
 
   it("conserva la cota inferior: una lectura menor o nula no la rebaja (M-C8)", async () => {
     vi.useFakeTimers();
-    const lecturas = [3000, null, 0, 10];
+    const lecturas = [3000, 10, null, 5];
     const s = new ContainerCpuSampler([handle(async () => lecturas.shift() ?? null)]);
     for (let i = 0; i < 4; i++) {
       s.tick();
