@@ -439,7 +439,8 @@ export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?:
         update_standings: handleUpdateStandings,
         tournament_dry_run: handleTournamentDryRun,
       },
-      onExhausted: (db: import("knex").Knex, job: import("./queue.js").JobRow) => onBattleJobExhausted(job, { db, workerId: "exhausted" }),
+      onExhausted: (db: import("knex").Knex, job: import("./queue.js").JobRow) =>
+        onBattleJobExhausted(job, { db, workerId: "exhausted" }),
     };
   });
 }

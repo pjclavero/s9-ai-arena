@@ -29,13 +29,7 @@ const M = {
     '        state: "finished",\n        winner_bot_id: !isTeams ? advances : null,',
     "[M2]",
   ],
-  M3: [
-    "se quita el mínimo de participantes de close-entries",
-    API,
-    "if (count < 2) {",
-    "if (count < 0) {",
-    "[M3]",
-  ],
+  M3: ["se quita el mínimo de participantes de close-entries", API, "if (count < 2) {", "if (count < 0) {", "[M3]"],
   M4: [
     "el rescate no es idempotente (vuelve a procesar torneos ya terminados)",
     RES,
@@ -94,13 +88,18 @@ for (const [id, [desc, f, de, a, tag]] of Object.entries(M)) {
     const estado = rc !== 0 && muerePorSuTest ? "MUERE" : rc === 0 ? "SOBREVIVE" : "MUERE_POR_OTRO_TEST";
     if (estado !== "MUERE") vivos++;
     res[id] = { desc, estado, rc, tag, mataron: fallos.slice(0, 4), total: fallos.length };
-    console.log(`${id} rc=${rc} ${estado} (${fallos.length} fallos) ${desc}\n     <- ${fallos.slice(0, 3).join(" || ")}`);
+    console.log(
+      `${id} rc=${rc} ${estado} (${fallos.length} fallos) ${desc}\n     <- ${fallos.slice(0, 3).join(" || ")}`,
+    );
   } finally {
     writeFileSync(f, orig);
     if (extra) writeFileSync(extra[0], origExtra);
   }
 }
-const st = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: R, encoding: "utf8" }).stdout.trim();
+const st = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+  cwd: R,
+  encoding: "utf8",
+}).stdout.trim();
 console.log(`vivos=${vivos} arbol_limpio=${st === ""}`);
 writeFileSync(OUT, JSON.stringify({ vivos, arbol_limpio: st === "", res }, null, 1));
 process.exit(vivos === 0 && st === "" ? 0 : 1);

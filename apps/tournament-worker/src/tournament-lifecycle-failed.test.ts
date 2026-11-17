@@ -124,7 +124,10 @@ async function schedule(format: string, count: number, rounds = 1): Promise<stri
   const tid = await createTournament(format, rounds);
   await enter(tid, bots.slice(0, count));
   expect((await closeEntries(tid)).status).toBe(200);
-  const job = await h.db("jobs").where({ dedupe_key: `generate_schedule:${tid}` }).first();
+  const job = await h
+    .db("jobs")
+    .where({ dedupe_key: `generate_schedule:${tid}` })
+    .first();
   await handleGenerateSchedule(job as JobRow, { db: h.db, workerId: "lc-sched" });
   return tid;
 }
@@ -132,7 +135,11 @@ async function schedule(format: string, count: number, rounds = 1): Promise<stri
 async function snapshot(tid: string) {
   return {
     t: await h.db("tournaments").where({ id: tid }).first(),
-    m: await h.db("matches").where({ tournament_id: tid }).orderBy("slot").select("id", "slot", "state", "winner_bot_id"),
+    m: await h
+      .db("matches")
+      .where({ tournament_id: tid })
+      .orderBy("slot")
+      .select("id", "slot", "state", "winner_bot_id"),
     b: await h.db("battles").where({ tournament_id: tid }).orderBy("id").select("id", "status"),
   };
 }
@@ -280,10 +287,13 @@ describe("concurrencia: el último resultado y otra batalla que falla a la vez",
       // 2 bots, serie de 2 juegos: el juego 1 termina bien y el 2 falla definitivamente.
       const tid = await schedule("round_robin", 2, 2);
       const [g1, g2] = await h.db("battles").where({ tournament_id: tid }).orderBy("game_index");
-      await h.db("battles").where({ id: g1.id }).update({
-        status: "finished",
-        result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }),
-      });
+      await h
+        .db("battles")
+        .where({ id: g1.id })
+        .update({
+          status: "finished",
+          result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }),
+        });
       await h.db("battles").where({ id: g2.id }).update({ status: "failed", failure_kind: "infrastructure" });
       const job = { kind: "process_result", payload: { battleId: g1.id } } as unknown as JobRow;
       const order = i % 2 === 0;
@@ -305,10 +315,13 @@ describe("concurrencia: el último resultado y otra batalla que falla a la vez",
     const bs = await h.db("battles").where({ tournament_id: tid }).orderBy("id");
     // Dos matches terminan; el tercero queda en juego hasta que su batalla falla.
     for (const b of bs.slice(0, 2)) {
-      await h.db("battles").where({ id: b.id }).update({
-        status: "finished",
-        result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }),
-      });
+      await h
+        .db("battles")
+        .where({ id: b.id })
+        .update({
+          status: "finished",
+          result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }),
+        });
     }
     await handleProcessResult({ payload: { battleId: bs[0].id } } as unknown as JobRow, { db: h.db, workerId: "c" });
     await handleProcessResult({ payload: { battleId: bs[1].id } } as unknown as JobRow, { db: h.db, workerId: "c" });
@@ -389,8 +402,14 @@ describe("close-entries exige al menos 2 participantes (hallazgo 5)", () => {
 
   it("[M3] formato teams con 1 equipo (2 bots del mismo equipo) → 409; con 2 equipos → 200", async () => {
     const owner = bots[0].ownerId;
-    const [t1] = await h.db("teams").insert({ name: `lc-t1-${++n}`, captain_id: owner }).returning("id");
-    const [t2] = await h.db("teams").insert({ name: `lc-t2-${++n}`, captain_id: owner }).returning("id");
+    const [t1] = await h
+      .db("teams")
+      .insert({ name: `lc-t1-${++n}`, captain_id: owner })
+      .returning("id");
+    const [t2] = await h
+      .db("teams")
+      .insert({ name: `lc-t2-${++n}`, captain_id: owner })
+      .returning("id");
     await h.db("bots").where({ id: bots[0].botId }).update({ team_id: t1.id });
     await h.db("bots").where({ id: bots[1].botId }).update({ team_id: t1.id });
     const tid = await createTournament("teams");
