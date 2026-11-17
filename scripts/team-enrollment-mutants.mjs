@@ -290,6 +290,55 @@ const MUTANTS = [
     kill: "T287_PRIVACY",
   },
   {
+    id: "R21",
+    name: "la exclusión no bloquea el torneo (carrera con el cierre, R2-1)",
+    edits: [
+      {
+        file: VE,
+        from: 'const locked_t = await trx("tournaments").where({ id: t.id }).forUpdate().first();',
+        to: 'const locked_t = await trx("tournaments").where({ id: t.id }).first();',
+      },
+    ],
+    tests: [API],
+    kill: "T287_EXCLUDE_RACE",
+  },
+  {
+    id: "R23a",
+    name: "el cierre no bloquea los bots inscritos (removeTeamBot concurrente, R2-3)",
+    edits: [{ file: T, from: '          .orderBy("id")\n          .forShare();', to: '          .orderBy("id");' }],
+    tests: [API],
+    kill: "T287_CLOSE_REMOVE_RACE",
+  },
+  {
+    id: "R23b",
+    name: "el cierre no bloquea las versiones inscritas (suspend concurrente, R2-3)",
+    edits: [
+      { file: T, from: '          .orderBy("id")\n          .forNoKeyUpdate();', to: '          .orderBy("id");' },
+    ],
+    tests: [API],
+    kill: "T287_CLOSE_SUSPEND_RACE",
+  },
+  {
+    id: "CM5",
+    name: "cualquiera retira una autorización ajena (revisor)",
+    edits: [{ file: T, from: "if (!c || c.owner_id !== userId) throw notFound", to: "if (!c) throw notFound" }],
+    tests: [API],
+    kill: "T287_THIRD_PARTY",
+  },
+  {
+    id: "CM7",
+    name: "el alta acepta la autorización dada para OTRO equipo (revisor)",
+    edits: [
+      {
+        file: T,
+        from: "!c || c.team_id !== teamId || Number(c.version) !== m.version",
+        to: "!c || Number(c.version) !== m.version",
+      },
+    ],
+    tests: [API],
+    kill: "T287_CONSENT_OTHER_TEAM",
+  },
+  {
     id: "M7",
     name: "inscribe bots de otro dueño sin su autorización",
     edits: [{ file: T, from: "      if (unauthorized.length > 0) {", to: "      if (false) {" }],

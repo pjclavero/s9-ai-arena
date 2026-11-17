@@ -568,6 +568,23 @@ export function tournamentRoutes(
       }
 
       const entries = (await db("entries").where({ tournament_id: t.id })) as Record<string, unknown>[];
+      // #287 (ronda 3, R2-3) · lo que se valida no puede cambiar antes del commit: bots de las
+      // inscripciones FOR SHARE (un removeTeamBot/removeTeamMember/retirada concurrente espera
+      // al cierre) y sus versiones FOR NO KEY UPDATE en orden estable (un suspend/retire
+      // concurrente espera; dos cierres que comparten versión no se bloquean en ciclo). Las
+      // inscripciones ya no cambian: todas sus mutaciones bloquean antes el torneo.
+      if (entries.length > 0) {
+        await db("bots")
+          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])
+          .orderBy("id")
+          .forShare();
+        await db("bot_versions")
+          .where((q) => {
+            for (const e of entries) q.orWhere({ bot_id: e.bot_id, version: e.version });
+          })
+          .orderBy("id")
+          .forNoKeyUpdate();
+      }
       // #287 (ronda 2) · PREDICADO ÚNICO «compite» (estado + loadout + equipo + autorización
       // + tamaño), el mismo que permite al organizador excluir y al dueño sustituir: lo que
       // bloquea el cierre siempre se puede desbloquear.

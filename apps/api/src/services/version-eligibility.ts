@@ -802,6 +802,14 @@ export async function excludeTournamentEntry(
     throw new ApiError(409, "entry_eligible", "La inscripción compite: sólo su dueño puede retirarla");
   }
   await db.transaction(async (trx) => {
+    // #287 (ronda 3, R2-1) · el TORNEO bloqueado (FOR UPDATE) y su estado revalidado DENTRO,
+    // como el alta, la sustitución, las autorizaciones y el cierre: una exclusión concurrente
+    // con el cierre espera y ve el torneo cerrado (nunca deja cerrado un equipo a medias ni
+    // una versión congelada sin inscripción).
+    const locked_t = await trx("tournaments").where({ id: t.id }).forUpdate().first();
+    if (!locked_t || locked_t.state !== "open") {
+      throw new ApiError(409, "entries_closed", "Sólo se excluyen inscripciones pendientes de un torneo abierto");
+    }
     // TOCTOU · se bloquea la fila y se comprueba que sigue siendo LA MISMA inscripción
     // evaluada (versión y revisión): si el dueño la cambió entretanto (p. ej. a una
     // versión elegible), no se borra ni se audita nada.
@@ -815,6 +823,13 @@ export async function excludeTournamentEntry(
       Number(locked.loadout_revision) !== Number(entry.loadout_revision)
     ) {
       throw new ApiError(409, "entry_changed", "La inscripción cambió mientras se procesaba: vuelve a revisarla");
+    }
+    // El organizador sólo excluye lo que NO compite: se revalida con el torneo bloqueado.
+    if (!byOwner) {
+      const lockedIssues = (await entryCompetitionIssues(trx, locked_t, [locked])).get(String(locked.id)) ?? [];
+      if (lockedIssues.length === 0) {
+        throw new ApiError(409, "entry_eligible", "La inscripción compite: sólo su dueño puede retirarla");
+      }
     }
     const n = await trx("entries")
       .where({ id: entry.id, frozen: false, version: entry.version, loadout_revision: entry.loadout_revision })

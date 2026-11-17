@@ -886,3 +886,141 @@ describe("#287 ronda 2 · H7", () => {
     expect(r.body.teamId).toBe(A.teamId);
   });
 });
+
+// ------------------------------------------------------------------ ronda 3 (revisión R2)
+
+async function lockWaiters(n: number, timeoutMs = 10_000): Promise<number> {
+  const t0 = Date.now();
+  for (;;) {
+    const r = await h.db.raw(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+    );
+    const got = r.rows[0].n as number;
+    if (got >= n || Date.now() - t0 > timeoutMs) return got;
+    await new Promise((res) => setTimeout(res, 25));
+  }
+}
+const teamCounts = async (t: string) =>
+  (await h.db("entries").where({ tournament_id: t }).select("team_id").count("* as n").groupBy("team_id")).map(
+    (r: { n: string | number }) => Number(r.n),
+  );
+const auditId = async (action: string, target: string) =>
+  Number((await h.db("audit_log").where({ action, target }).orderBy("id", "desc").first())?.id ?? 0);
+
+/**
+ * Deja el cierre de `t` PARADO a mitad (después de validar, en el UPDATE que congela las
+ * inscripciones): una transacción auxiliar bloquea una de sus filas. Devuelve la promesa del
+ * cierre y la función que libera el bloqueo.
+ */
+async function closeStuck(t: string, entryId: string) {
+  const holder = await h.db.transaction();
+  await holder("entries").where({ id: entryId }).forUpdate();
+  const pClose = closeEntries(t).then((r) => r);
+  expect(await lockWaiters(1)).toBeGreaterThanOrEqual(1);
+  return { pClose, release: () => holder.rollback() };
+}
+
+describe("#287 ronda 3 · R2-1 · exclusión concurrente con el cierre", () => {
+  it("T287_EXCLUDE_RACE · el dueño se excluye mientras el cierre está en curso: espera y ve el torneo cerrado; ningún equipo a medias", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const C = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const ea = await enterTeam(devTok, t, A.teamId, members(A.bots));
+    expect(ea.status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).status).toBe(201);
+    const { pClose, release } = await closeStuck(t, ea.body.entries[0].id);
+    const pEx = exclude(devTok, t, ea.body.entries[1].id).then((r) => r);
+    // La exclusión queda esperando al torneo (o al menos no termina antes de liberar el cierre).
+    await lockWaiters(2, 1500);
+    await release();
+    const [cl, ex] = await Promise.all([pClose, pEx]);
+    expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    expect(ex.status).toBe(409);
+    expect(ex.body.error).toBe("entries_closed");
+    expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("closed");
+    expect((await teamCounts(t)).sort()).toEqual([2, 2, 2]);
+    const rows = await entriesOf(t);
+    expect(rows.every((e: { frozen: boolean }) => e.frozen)).toBe(true);
+  });
+});
+
+describe("#287 ronda 3 · R2-2 · autorizaciones (tests del revisor)", () => {
+  it("T287_THIRD_PARTY · ni el capitán ni el admin ni el organizador autorizan un bot ajeno; ni retiran una autorización ajena", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    const st = [
+      await consent(devTok, t, M.teamId, M.theirs),
+      await consent(adminTok, t, M.teamId, M.theirs),
+      await consent(orgTok, t, M.teamId, M.theirs),
+    ].map((r) => r.status);
+    expect(st).toEqual([404, 404, 404]);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(0);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    const rv = [await revoke(devTok, t, M.theirs), await revoke(adminTok, t, M.theirs)].map((r) => r.status);
+    expect(rv).toEqual([404, 404]);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(1);
+  });
+
+  it("T287_CONSENT_OTHER_TEAM · la autorización dada para el equipo X no vale para el equipo Y", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    const Y = await mkTeam(1, [userId]);
+    await h.db("bots").where({ id: M.theirs }).update({ team_id: Y.teamId });
+    const r = await enterTeam(devTok, t, Y.teamId, members([Y.bots[0], M.theirs]));
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("team_consent_required");
+    expect(await entriesOf(t)).toHaveLength(0);
+  });
+});
+
+describe("#287 ronda 3 · R2-3 · cambios de equipo o de versión durante el cierre", () => {
+  it("T287_CLOSE_REMOVE_RACE · un removeTeamBot durante el cierre espera a que termine (lo validado es lo que se cierra)", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const ea = await enterTeam(devTok, t, A.teamId, members(A.bots));
+    expect(ea.status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const { pClose, release } = await closeStuck(t, ea.body.entries[1].id);
+    const pRm = request(app)
+      .delete(`/teams/${A.teamId}/bots/${A.bots[0]}`)
+      .set(as(devTok))
+      .then((r) => r);
+    await lockWaiters(2, 1500);
+    await release();
+    const [cl, rm] = await Promise.all([pClose, pRm]);
+    expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    expect(rm.status).toBe(204);
+    // La salida del bot se aplicó DESPUÉS del cierre (su auditoría es posterior).
+    expect(await auditId("team.bot_removed", `team:${A.teamId}`)).toBeGreaterThan(
+      await auditId("tournament.entries_closed", `tournament:${t}`),
+    );
+  });
+
+  it("T287_CLOSE_SUSPEND_RACE · un suspend durante el cierre espera: la versión se congela (auditada) y después se suspende", async () => {
+    const A = await mkTeam(2);
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    const ea = await enterTeam(devTok, t, A.teamId, members(A.bots));
+    expect(ea.status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const { pClose, release } = await closeStuck(t, ea.body.entries[1].id);
+    const pSus = request(app)
+      .post(`/bots/${A.bots[0]}/versions/1/actions/suspend`)
+      .set(as(adminTok))
+      .send({ reason: "t287" })
+      .then((r) => r);
+    await lockWaiters(2, 1500);
+    await release();
+    const [cl, sus] = await Promise.all([pClose, pSus]);
+    expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    expect(sus.status).toBe(200);
+    const target = `bot:${A.bots[0]}@1`;
+    const freeze = await auditId("bot.version.freeze", target);
+    expect(freeze).toBeGreaterThan(0);
+    expect(await auditId("bot.version.suspend", target)).toBeGreaterThan(freeze);
+  });
+});
