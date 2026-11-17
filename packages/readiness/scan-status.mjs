@@ -277,14 +277,18 @@ export function clasificarNpmAudit(obs) {
   const desde = SEVERIDADES.indexOf(umbral);
   const relevantes = SEVERIDADES.slice(desde < 0 ? 0 : desde).reduce((n, s) => n + (recuentos[s] ?? 0), 0);
   const total = SEVERIDADES.reduce((n, s) => n + (recuentos[s] ?? 0), 0);
+  // El fichero de excepciones se valida SIEMPRE, también con la auditoría limpia:
+  // un fichero roto que sólo se descubre el día que aparece un hallazgo es una
+  // trampa con retardo. `aplicarExcepcionesNpmAudit` es el único punto que lo valida.
+  const exc = aplicarExcepcionesNpmAudit(informe, {
+    umbral,
+    excepciones: obs?.excepciones,
+    lockPackages: obs?.lockPackages,
+    hoy: obs?.hoy,
+    soloValidar: relevantes === 0,
+  });
+  if (exc.error) return res(ESTADO_SCAN.SCAN_ERROR, exc.error);
   if (relevantes > 0) {
-    const exc = aplicarExcepcionesNpmAudit(informe, {
-      umbral,
-      excepciones: obs?.excepciones,
-      lockPackages: obs?.lockPackages,
-      hoy: obs?.hoy,
-    });
-    if (exc.error) return res(ESTADO_SCAN.SCAN_ERROR, exc.error);
     if (exc.aplicadas.length > 0 && exc.restantes === 0) {
       return res(
         ESTADO_SCAN.CLEAN,
@@ -322,12 +326,17 @@ export function clasificarNpmAudit(obs) {
  *
  * @returns {{error?: string, aplicadas: object[], restantes: number, notas: string[]}}
  */
-export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepciones, lockPackages, hoy } = {}) {
+export function aplicarExcepcionesNpmAudit(
+  informe,
+  { umbral = "high", excepciones, lockPackages, hoy, soloValidar = false } = {},
+) {
   const sinNada = { aplicadas: [], restantes: Infinity, notas: [] };
-  if (excepciones === undefined || excepciones === null) return sinNada;
+  // Sólo `undefined` es «no hay fichero». `null` (o cualquier otro valor) es un
+  // fichero presente y roto: lo rechaza el validador.
+  if (excepciones === undefined) return sinNada;
   const invalida = validarExcepcionesNpmAudit(excepciones);
   if (invalida) return { ...sinNada, error: `excepciones de npm audit no válidas: ${invalida}` };
-  if (excepciones.length === 0) return sinNada;
+  if (soloValidar || excepciones.length === 0) return sinNada;
 
   const notas = [];
   const fecha =
@@ -364,13 +373,19 @@ export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepcion
 
   const desde = SEVERIDADES.indexOf(umbral);
   const relevante = (sev) => SEVERIDADES.indexOf(sev) >= (desde < 0 ? 0 : desde);
-  const ghsaDe = (aviso) => String(aviso?.url ?? "").match(/GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}/)?.[0] ?? null;
+  // El GHSA sólo se extrae de una URL de aviso de GitHub COMPLETA y anclada: un
+  // GHSA incrustado en cualquier otra parte de la cadena no cuenta.
+  const ghsaDe = (aviso) =>
+    String(aviso?.url ?? "").match(
+      /^https:\/\/github\.com\/advisories\/(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})$/,
+    )?.[1] ?? null;
   const exceptuado = (aviso) => {
     const ghsa = ghsaDe(aviso);
     return ghsa !== null && vigentes.some((e) => e.ghsa === ghsa && e.paquete === aviso?.name);
   };
 
   // Avisos (objetos) >= umbral que alcanzan a `nombre` siguiendo `via`.
+  let malformado = null;
   const avisosQueAlcanzan = (nombre) => {
     const vistos = new Set();
     const avisos = [];
@@ -387,18 +402,38 @@ export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepcion
       for (const via of v.via) {
         if (typeof via === "string") pila.push(via);
         else if (via && typeof via === "object") {
-          if (relevante(via.severity)) avisos.push(via);
+          if (!SEVERIDADES.includes(via.severity)) {
+            // Un aviso sin severidad conocida no es «no relevante»: es un informe
+            // que no se puede leer, y se rechaza entero.
+            malformado = `aviso de «${n}» sin severidad conocida`;
+          } else if (relevante(via.severity)) avisos.push(via);
         } else avisos.push(null);
       }
     }
     return avisos;
   };
 
+  // Coherencia entre los recuentos y el detalle: si metadata cuenta más
+  // vulnerabilidades >= umbral de las que el informe lista, hay un informe
+  // truncado y no se puede afirmar que lo listado sea todo.
+  const contadas = SEVERIDADES.filter(relevante).reduce(
+    (n, s) => n + (Number(informe?.metadata?.vulnerabilities?.[s]) || 0),
+    0,
+  );
+  const listadas = Object.values(vulns).filter((v) => relevante(v?.severity)).length;
+  if (listadas < contadas) {
+    return {
+      ...sinNada,
+      error: `informe de npm audit incoherente: metadata cuenta ${contadas} vulnerabilidad(es) >= ${umbral} y sólo lista ${listadas}`,
+    };
+  }
+
   const usadas = new Set();
   let restantes = 0;
   for (const [nombre, v] of Object.entries(vulns)) {
     if (!relevante(v?.severity)) continue;
     const avisos = avisosQueAlcanzan(nombre);
+    if (malformado) return { ...sinNada, error: `informe de npm audit malformado: ${malformado}` };
     const cubierta = avisos.length > 0 && avisos.every((a) => a !== null && exceptuado(a));
     if (!cubierta) {
       restantes += 1;
@@ -413,6 +448,17 @@ export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepcion
   return { aplicadas, restantes, notas };
 }
 
+/** Tope de vida de una excepción, en días desde `alta`. No es un estado permanente. */
+export const HORIZONTE_MAX_DIAS = 31;
+
+/** Fecha AAAA-MM-DD REAL (rechaza 2026-99-99 y 2026-02-31) → ms UTC, o null. */
+function fechaReal(valor) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof valor === "string" ? valor : "");
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.toISOString().slice(0, 10) === valor ? d.getTime() : null;
+}
+
 /** Devuelve el motivo por el que el fichero de excepciones NO es válido, o null. */
 export function validarExcepcionesNpmAudit(excepciones) {
   if (!Array.isArray(excepciones)) return "no es una lista";
@@ -421,7 +467,14 @@ export function validarExcepcionesNpmAudit(excepciones) {
     if (!/^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/.test(String(e.ghsa ?? ""))) return `entrada ${i}: ghsa inválido`;
     if (typeof e.paquete !== "string" || e.paquete.trim() === "") return `entrada ${i}: falta paquete`;
     if (e.alcance !== "dev") return `entrada ${i}: sólo se admite alcance "dev"`;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(e.caduca ?? ""))) return `entrada ${i}: caduca debe ser AAAA-MM-DD`;
+    const caduca = fechaReal(e.caduca);
+    if (caduca === null) return `entrada ${i}: caduca debe ser una fecha real AAAA-MM-DD`;
+    const alta = fechaReal(e.alta);
+    if (alta === null) return `entrada ${i}: alta debe ser una fecha real AAAA-MM-DD`;
+    if (caduca < alta) return `entrada ${i}: caduca es anterior a alta`;
+    if (caduca - alta > HORIZONTE_MAX_DIAS * 86400000) {
+      return `entrada ${i}: caduca supera el horizonte máximo de ${HORIZONTE_MAX_DIAS} días desde alta`;
+    }
     if (typeof e.motivo !== "string" || e.motivo.trim().length < 20) return `entrada ${i}: falta un motivo explícito`;
   }
   return null;

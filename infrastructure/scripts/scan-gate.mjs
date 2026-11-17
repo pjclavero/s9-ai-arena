@@ -121,8 +121,13 @@ export function cargarContextoExcepciones({
   return { excepciones, lockPackages, hoy: new Date().toISOString().slice(0, 10) };
 }
 
-export function ejecutarNpmAudit({ umbral = "high", reintentos = REINTENTOS, esperaMs = ESPERA_MS } = {}) {
-  const contexto = cargarContextoExcepciones();
+export function ejecutarNpmAudit({
+  umbral = "high",
+  reintentos = REINTENTOS,
+  esperaMs = ESPERA_MS,
+  contextoExcepciones = {},
+} = {}) {
+  const contexto = cargarContextoExcepciones(contextoExcepciones);
   let ultimo = null;
   for (let intento = 1; intento <= Math.max(1, reintentos); intento += 1) {
     const obs = correr("npm", ["audit", "--json", `--audit-level=${umbral}`]);
