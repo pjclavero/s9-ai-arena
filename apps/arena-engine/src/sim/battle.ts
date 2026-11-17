@@ -35,7 +35,7 @@ import {
   type GameMode,
   type SpawnDisk,
 } from "./modes.js";
-import { PhysicsWorld, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
+import { PhysicsWorld, finite, finiteClamped, initPhysics, type ImpactSurface, type Vec2 } from "./physics.js";
 import { captureInternalFrame } from "./internal-frame.js";
 import { buildObservation, radioRangeOf, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
@@ -743,7 +743,23 @@ export class Battle {
         }
 
         if (p.explosionRadiusM > 0) {
-          this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team, "explosion", directTarget);
+          // G1.5 · impacto contra un sólido (que sigue en pie): la onda sale de su CARA, y la
+          // línea de visión se decide con la geometría de esa cara, no con un rayo que nace
+          // dentro del muro por el redondeo (physics.hasLineOfSightFromSurface).
+          // Ronda 2 (P1-1): el centro de la onda es el punto de la CARA. Sólo difiere de
+          // `impact` si el tramo nació dentro del sólido (boca del arma dentro del muro).
+          const surface = target ? null : this.physics.impactSurface(from, angle, dist, hit.entityId, impact);
+          this.explode(
+            surface ? surface.point : impact,
+            p.damage,
+            p.explosionRadiusM,
+            poses,
+            p.ownerId,
+            p.team,
+            "explosion",
+            directTarget,
+            surface,
+          );
         }
         this.sounds.push({ position: impact, kind: "explosion", intensity: 1 });
         continue; // el proyectil muere al impactar
@@ -801,6 +817,7 @@ export class Battle {
     team: string,
     sourceKind: DamageSourceKind,
     excludeId: string | null,
+    surface: ImpactSurface | null = null,
   ): void {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
@@ -812,8 +829,21 @@ export class Battle {
       const f = explosionFalloff(d, radius);
       if (f <= 0) continue;
       // Una explosión no atraviesa muros.
-      if (!this.physics.hasLineOfSight(center, p.position)) continue;
-      this.damageVehicle(v, damage * f, center, poses, ownerId, team, DEFAULT_EXPLOSION_DAMAGE_TYPE, sourceKind);
+      const los = surface
+        ? this.physics.hasLineOfSightFromSurface(surface, p.position)
+        : this.physics.hasLineOfSight(center, p.position);
+      if (!los) continue;
+      this.damageVehicle(
+        v,
+        damage * f,
+        center,
+        poses,
+        ownerId,
+        team,
+        DEFAULT_EXPLOSION_DAMAGE_TYPE,
+        sourceKind,
+        surface,
+      );
     }
   }
 
@@ -849,6 +879,7 @@ export class Battle {
     ownerTeam: string | null,
     type: EnginePacket["type"] = DEFAULT_DIRECT_DAMAGE_TYPE,
     sourceKind: DamageSourceKind = "projectile",
+    blastSurface: ImpactSurface | null = null,
   ): void {
     const packet: EnginePacket = {
       amount,
@@ -871,7 +902,10 @@ export class Battle {
       // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
       // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
       // te hiere sin decirte quién ha sido.
-      const canSee = this.physics.hasLineOfSight(tp.position, packet.from, target.id);
+      // G1.5 · onda de un impacto contra un sólido: misma geometría de cara que en explode().
+      const canSee = blastSurface
+        ? this.physics.hasLineOfSightFromSurface(blastSurface, tp.position, target.id)
+        : this.physics.hasLineOfSight(tp.position, packet.from, target.id);
       this.emit(
         {
           kind: "hit_taken",
