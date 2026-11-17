@@ -330,13 +330,17 @@ export function aplicarExcepcionesNpmAudit(informe, { umbral = "high", excepcion
   if (excepciones.length === 0) return sinNada;
 
   const notas = [];
-  const fecha = typeof hoy === "string" && /^\d{4}-\d{2}-\d{2}$/.test(hoy) ? hoy : new Date().toISOString().slice(0, 10);
+  const fecha =
+    typeof hoy === "string" && /^\d{4}-\d{2}-\d{2}$/.test(hoy) ? hoy : new Date().toISOString().slice(0, 10);
   const vulns = informe?.vulnerabilities;
   if (vulns === null || typeof vulns !== "object" || Array.isArray(vulns)) {
     return { ...sinNada, notas: ["informe sin detalle de vulnerabilidades: no se puede aplicar ninguna excepción"] };
   }
   if (lockPackages === null || typeof lockPackages !== "object") {
-    return { ...sinNada, notas: ["sin package-lock.json legible: no se puede comprobar el alcance dev de las excepciones"] };
+    return {
+      ...sinNada,
+      notas: ["sin package-lock.json legible: no se puede comprobar el alcance dev de las excepciones"],
+    };
   }
 
   const soloDev = (paquete) => {

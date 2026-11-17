@@ -402,7 +402,12 @@ describe("clasificarNpmAudit · excepciones declaradas (fail-closed)", () => {
     JSON.stringify({
       auditReportVersion: 2,
       vulnerabilities: {
-        picomatch: { name: "picomatch", severity: "high", via: [aviso(GHSA, "picomatch")], nodes: ["node_modules/picomatch"] },
+        picomatch: {
+          name: "picomatch",
+          severity: "high",
+          via: [aviso(GHSA, "picomatch")],
+          nodes: ["node_modules/picomatch"],
+        },
         vite: { name: "vite", severity: "high", via: ["picomatch"], nodes: ["node_modules/vite"] },
         ...extra,
       },
@@ -500,7 +505,9 @@ describe("clasificarNpmAudit · excepciones declaradas (fail-closed)", () => {
     expect(validarExcepcionesNpmAudit(exc)).toBeNull();
     const lock = JSON.parse(readFileSync(join(raiz, "package-lock.json"), "utf8")).packages;
     for (const e of exc) {
-      const nodos = Object.keys(lock).filter((k) => k === `node_modules/${e.paquete}` || k.endsWith(`/node_modules/${e.paquete}`));
+      const nodos = Object.keys(lock).filter(
+        (k) => k === `node_modules/${e.paquete}` || k.endsWith(`/node_modules/${e.paquete}`),
+      );
       expect(nodos.length, e.paquete).toBeGreaterThan(0);
       for (const n of nodos) expect(lock[n].dev, n).toBe(true);
       // Caducidad corta a propósito: una excepción no es un estado permanente.
