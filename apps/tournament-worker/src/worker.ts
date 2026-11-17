@@ -92,7 +92,9 @@ export function concurrencyFromEnv(env: Record<string, string | undefined>): num
   const raw = env[CONCURRENCY_ENV]?.trim();
   if (raw === undefined || raw === "") return undefined;
   if (!/^[0-9]+$/.test(raw)) {
-    throw new Error(`${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`);
+    throw new Error(
+      `${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`,
+    );
   }
   const n = Number(raw);
   if (n < 1 || n > MAX_CONFIGURED_CONCURRENCY) {

@@ -32,7 +32,9 @@ describe("concurrencyFromEnv", () => {
   });
   it("0, negativo, sobre el tope, decimal o basura ⇒ error (M-C2: sin tope, M-C3: admite 0)", () => {
     for (const v of ["0", "-1", String(MAX_CONFIGURED_CONCURRENCY + 1), "1.5", "2x", "abc", "1e1", "0x2"]) {
-      expect(() => concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: v }), v).toThrow(/TOURNAMENT_WORKER_CONCURRENCY/);
+      expect(() => concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: v }), v).toThrow(
+        /TOURNAMENT_WORKER_CONCURRENCY/,
+      );
     }
   });
   it("el automático sigue siendo computeConcurrency (no cambia)", () => {
@@ -86,7 +88,8 @@ describe("intervalo de muestreo acotado", () => {
 
 describe("ContainerCpuSampler · la métrica sigue funcionando con menos carga", () => {
   afterEach(() => vi.useRealTimers());
-  const handle = (read: () => Promise<number | null>): ContainerHandle => ({ cpuMs: read } as unknown as ContainerHandle);
+  const handle = (read: () => Promise<number | null>): ContainerHandle =>
+    ({ cpuMs: read }) as unknown as ContainerHandle;
 
   it("a 2 s por contenedor hace ~1/4 de peticiones que a 500 ms y conserva la última lectura (M-C5)", async () => {
     vi.useFakeTimers();

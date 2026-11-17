@@ -54,7 +54,9 @@ export function cpuSampleMsFromEnv(env: Record<string, string | undefined>): num
   const raw = env[CPU_SAMPLE_ENV]?.trim();
   if (raw === undefined || raw === "") return DEFAULT_CPU_SAMPLE_MS;
   if (!/^[0-9]+$/.test(raw)) {
-    throw new Error(`${CPU_SAMPLE_ENV} inválida (${JSON.stringify(raw)}): entero en ms entre ${MIN_CPU_SAMPLE_MS} y ${MAX_CPU_SAMPLE_MS}`);
+    throw new Error(
+      `${CPU_SAMPLE_ENV} inválida (${JSON.stringify(raw)}): entero en ms entre ${MIN_CPU_SAMPLE_MS} y ${MAX_CPU_SAMPLE_MS}`,
+    );
   }
   const n = Number(raw);
   if (n < MIN_CPU_SAMPLE_MS || n > MAX_CPU_SAMPLE_MS) {
@@ -133,7 +135,9 @@ export class ContainerCpuSampler {
    */
   async final(): Promise<void> {
     this.stop();
-    await Promise.all(this.handles.map((_h, i) => this.inFlight[i] ?? (this.isDead(i) ? Promise.resolve() : this.sampleOne(i))));
+    await Promise.all(
+      this.handles.map((_h, i) => this.inFlight[i] ?? (this.isDead(i) ? Promise.resolve() : this.sampleOne(i))),
+    );
   }
 
   private sampleOne(i: number): Promise<void> {

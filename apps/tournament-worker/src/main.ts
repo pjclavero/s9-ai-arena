@@ -142,7 +142,11 @@ if (process.env.REDIS_URL) {
 // Valor inválido ⇒ lanza aquí y el worker no arranca (no se degrada al defecto).
 const workerConcurrency = concurrencyFromEnv(process.env);
 const cpuSampleMs = cpuSampleMsFromEnv(process.env);
-log("worker_load_config", { concurrency: workerConcurrency ?? computeConcurrency(), concurrencyFromEnv: workerConcurrency !== undefined, cpuSampleMs });
+log("worker_load_config", {
+  concurrency: workerConcurrency ?? computeConcurrency(),
+  concurrencyFromEnv: workerConcurrency !== undefined,
+  cpuSampleMs,
+});
 
 const worker = new TournamentWorker({
   db,
