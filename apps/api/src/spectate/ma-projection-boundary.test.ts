@@ -273,9 +273,12 @@ describe("PUBLIC_PROJECTION_BOUNDARY · con retardo (historial e init retrasado 
     });
     const live = await connect(gw, id, "public_live");
     const bcast = await connect(gw, id, "broadcast");
+    // La batalla dura MÁS que el retardo (60 tandas × ≥ 15 ms ≫ 400 ms): así el historial de
+    // CADA audiencia (también `staff`, sin clientes) ya ha vencido estado cuando llega el
+    // tardío, y un init que tomara el de otra audiencia no coincidiría por casualidad.
     while (!b.isFinished()) {
       for (let i = 0; i < 6 && !b.isFinished(); i++) b.step();
-      await sleep(2);
+      await sleep(15);
     }
     await sleep(900); // pasa el retardo: llega todo, incluido el result retrasado
     const late = await connect(gw, id, "public_live"); // init desde dueSnapshot/dueResult
