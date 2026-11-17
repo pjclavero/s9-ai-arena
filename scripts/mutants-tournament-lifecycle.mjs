@@ -141,10 +141,10 @@ const M = {
     "[S2]",
   ],
   S3: [
-    "onBattleJobExhausted traga el error sin registrarlo",
+    "onBattleJobExhausted no registra el evento esperado al tragar el error",
     BF,
-    '    console.error(\n      JSON.stringify({\n        level: "error",',
-    '    void (\n      JSON.stringify({\n        level: "error",',
+    'msg: "settle_failed_battle_error"',
+    'msg: "otro"',
     "[S3]",
   ],
   S4: [

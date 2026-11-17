@@ -368,9 +368,8 @@ export async function leagueTableDetailed(
       (b: Record<string, unknown>) => b.status !== "failed",
     );
     // ADR-022 · un enfrentamiento cuyas batallas JUGADAS terminaron TODAS por la salvaguarda
-    // técnica (o que no tiene ninguna jugada) no tiene resultado deportivo: no puntúa ni
-    // cuenta como empate en V-D-E.
-    if (battles.length === 0 || battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
+    // técnica no tiene resultado deportivo: no puntúa ni cuenta como empate en V-D-E.
+    if (battles.length > 0 && battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
     if (winner === p.home) {
       home.points += 3;
       home.wins++;
