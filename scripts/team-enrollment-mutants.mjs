@@ -229,8 +229,12 @@ const MUTANTS = [
   },
   {
     id: "H3",
-    name: "freeze incondicional (doble auditoría con cierres concurrentes)",
+    // Ronda 3 · desde R2-3 hay DOS barreras contra el doble freeze: el bloqueo FOR NO KEY
+    // UPDATE de las versiones (serializa dos cierres que las comparten) y el UPDATE
+    // condicional. Quitar sólo una es equivalente (la otra basta); el mutante quita ambas.
+    name: "freeze incondicional y sin bloqueo de versiones (doble auditoría con cierres concurrentes)",
     edits: [
+      { file: T, from: '          .orderBy("id")\n          .forNoKeyUpdate();', to: '          .orderBy("id");' },
       { file: T, from: '          .where({ id: v.id, state: "published" })', to: "          .where({ id: v.id })" },
     ],
     tests: [API],
