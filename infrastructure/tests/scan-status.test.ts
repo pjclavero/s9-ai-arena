@@ -541,6 +541,9 @@ describe("clasificarNpmAudit · excepciones declaradas (fail-closed)", () => {
     const malas: Array<[string, Record<string, unknown>]> = [
       ["caduca imposible", { caduca: "2026-99-99" }],
       ["caduca 31 de febrero", { caduca: "2026-02-31" }],
+      // dentro del horizonte si se normalizara (30 de noviembre → 1 de diciembre): sólo la fecha real lo frena
+      ["caduca 31 de noviembre", { caduca: "2026-11-31" }],
+      ["alta 30 de febrero", { alta: "2026-02-30", caduca: "2026-03-02" }],
       ["alta imposible", { alta: "2026-13-01" }],
       ["alta ausente", { alta: undefined }],
       ["caduca anterior a alta", { caduca: "2026-11-16" }],
