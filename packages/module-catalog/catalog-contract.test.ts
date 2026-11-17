@@ -1203,3 +1203,53 @@ describe("CATALOG_CONTRACT · D5 · mismo comportamiento con distinto consumo de
     });
   }
 });
+
+// ------------------------------------------------------------------ D6 · ids internos de entidad
+
+/**
+ * Ronda 6 (P2-1e, cerrado como CLASE «la huella está en un contador interno») · La misma regla
+ * que D5 para el contador de ids de entidad del motor (`Battle.entitySeq`, del que salen
+ * `proj_<n>` y `mine_<n>`): MISMO comportamiento + DISTINTA secuencia de ids ⇒ MISMO resultado.
+ * Antes de cada paso se GASTAN de 1 a 3 ids que ninguna entidad usa (con el RNG neutro de las
+ * comprobaciones positivas). Todos los canales del gate tienen que ser idénticos.
+ * No es en vacío: la traza completa (que incluye el hash de estado, con el asignador de ids)
+ * SÍ cambia, y se exige que la batalla tenga proyectiles y minas (hay ids que desplazar).
+ * Calibrada con W1/W2 de scripts/hardening/g1-mutants.py (proyectiles / minas vuelven a
+ * registrar el id crudo): los dos la ponen en ROJO. Los mismos sujetos que D5.
+ */
+function probeWithSpentIds(subject: string): { trace: ProbeTrace; spent: number; seen: Set<string> } {
+  let spent = 0;
+  const seen = new Set<string>();
+  const restore = before(BP, "step", (self) => {
+    const k = (self.tick % 3) + 1;
+    self.entitySeq += k;
+    spent += k;
+    for (const p of self.projectiles) seen.add(`p:${p.id}`);
+    for (const m of self.mines) seen.add(`m:${m.id}`);
+  });
+  try {
+    return { trace: probeTrace(catalog, subject, undefined, POSITIVE), spent, seen };
+  } finally {
+    restore();
+  }
+}
+
+describe("CATALOG_CONTRACT · D6 · mismo comportamiento con distinta secuencia de ids de entidad ⇒ mismo resultado", () => {
+  for (const subject of D5_SUBJECTS) {
+    it(`D6 · ${subject}: ids de entidad gastados de más ⇒ todos los canales idénticos`, () => {
+      const { trace, spent, seen } = probeWithSpentIds(subject);
+      expect(spent, "D6 en vacío: no se gastó ningún id").toBeGreaterThan(0);
+      expect(
+        [...seen].some((x) => x.startsWith("p:")),
+        "D6 en vacío: la sonda no tiene proyectiles",
+      ).toBe(true);
+      expect(
+        [...seen].some((x) => x.startsWith("m:")),
+        "D6 en vacío: la sonda no tiene minas",
+      ).toBe(true);
+      const plain = probeTrace(catalog, subject, undefined, POSITIVE);
+      expect(trace.full, "D6 en vacío: gastar ids no cambió el estado interno").not.toBe(plain.full);
+      expect(changedChannels(trace, plain), `canales que dependen de la secuencia de ids (${spent} ids)`).toEqual([]);
+    });
+  }
+});

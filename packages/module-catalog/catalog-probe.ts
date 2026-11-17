@@ -29,8 +29,9 @@
  *               TRANSICIÓN de estado (stateOf: lo que lee el rendimiento); su valor inicial
  *               («ok») no depende del spec y no se registra
  *   energy      (F) flujo de la energía almacenada en cada tick
- *   projectiles (P) id y posición de cada proyectil vivo (su vida = su alcance)
- *   mines       (P) id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
+ *   projectiles (P) etiqueta observable (propietario + orden de aparición; ronda 6: nunca el id
+ *               interno) y posición de cada proyectil vivo (su vida = su alcance)
+ *   mines       (P) ídem para cada mina sobre el terreno (siembra, detonación, caducidad)
  *   damage      (F) daño APLICADO medido en el ESTADO: hp que pierden casco, módulos y
  *               blindaje en cada tick. NUNCA el registro de daño (effective/hull/
  *               moduleDamage/base…): el registro puede decir una cosa y el estado recibir otra
@@ -519,8 +520,43 @@ function sampleVehicle(
   }
 }
 
+/**
+ * Ronda 6 (P2-1e) · Identidad OBSERVABLE de proyectiles y minas. El id interno de una entidad
+ * (`proj_<entitySeq>`, `mine_<entitySeq>`) sale de un contador del motor que cualquier ruta
+ * puede avanzar sin efecto observable (un id gastado de más). Los canales `projectiles` y
+ * `mines` NO lo registran: cada entidad se reetiqueta como «el n-ésimo proyectil (o mina) de
+ * su propietario, por orden de aparición en la traza» (`veh_1:p0`, `veh_1:p1`, `veh_3:m0`…).
+ * El id crudo sólo se usa como CLAVE interna para reconocer la misma entidad de un tick a otro
+ * (nunca sale al canal), así que dos batallas con el mismo comportamiento y distinta secuencia
+ * de ids dan la misma traza. Una etiqueta por batalla (la principal y la de durabilidad).
+ * Dentro de un tick, el orden de aparición es el del array del motor (orden de creación).
+ */
+export class EntityLabels {
+  private readonly label = new Map<string, string>();
+  private readonly count = new Map<string, number>();
+  of(kind: "p" | "m", rawId: string, ownerId: string): string {
+    const key = `${kind}\0${rawId}`;
+    let l = this.label.get(key);
+    if (l === undefined) {
+      const ok = `${kind}\0${ownerId}`;
+      const n = this.count.get(ok) ?? 0;
+      this.count.set(ok, n + 1);
+      l = `${ownerId}:${kind}${n}`;
+      this.label.set(key, l);
+    }
+    return l;
+  }
+}
+
+/** Proyectiles vivos del tick: etiqueta observable y posición (nunca el id crudo). */
+const projectileEffect = (labels: EntityLabels, frame: any): unknown =>
+  frame.projectiles.map((p: any) => [labels.of("p", p.id, p.ownerId), p.position.x, p.position.y]);
+/** Minas sobre el terreno: etiqueta observable y posición (nunca el id crudo). */
+const mineEffect = (labels: EntityLabels, battle: Battle): unknown =>
+  battle.getMines().map((m) => [labels.of("m", m.id, m.ownerId), r6(m.position.x), r6(m.position.y)]);
+
 /** Magnitudes de efecto del tick, campo a campo (lista blanca: nada de objetos enteros). */
-function sample(battle: Battle, rec: Recorder, w: Watch): void {
+function sample(battle: Battle, rec: Recorder, w: Watch, labels: EntityLabels): void {
   const t = battle.tick;
   const ch = rec.ch;
   for (const v of battle.getVehicles()) {
@@ -530,8 +566,8 @@ function sample(battle: Battle, rec: Recorder, w: Watch): void {
     sampleVehicle(rec, w, t, "", v, true);
   }
   const frame = battle.getInternalFrame();
-  ch.projectiles.push([t, frame.projectiles.map((p: any) => [p.id, p.position.x, p.position.y])]);
-  ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
+  ch.projectiles.push([t, projectileEffect(labels, frame)]);
+  ch.mines.push([t, mineEffect(labels, battle)]);
   ch.score.push([t, frame.score]);
 }
 
@@ -596,14 +632,15 @@ function probeTraceIn(
   escort.battle = battle;
   battle.attachBot("veh_4", escort);
   const w = new Watch("main", facts);
+  const labels = new EntityLabels();
   try {
     // Referencia de los flujos ANTES del primer paso (no entra en ningún canal).
-    sample(battle, rec, w);
+    sample(battle, rec, w, labels);
     for (const c of PROBE_CHANNELS) rec.ch[c].length = 0;
     for (let i = 0; i < PROBE_TICKS; i++) {
       NEUTRAL_CLOCK.tick = battle.tick;
       battle.step();
-      sample(battle, rec, w);
+      sample(battle, rec, w, labels);
       if (i % 15 === 0) rec.full.push(["hash", battle.tick, battle.stateHash()]);
     }
     rec.full.push(["final", battle.stateHash()]);
@@ -763,6 +800,7 @@ function durability(
   battle.attachBot("veh_2", new Pounder("bP", { x: 40, y: 40 }));
   battle.attachBot("veh_3", new Listener("bR", "DR", rec));
   const w = new Watch("durability", facts);
+  const labels = new EntityLabels();
   const byId = (id: string) => battle.getVehicles().find((v) => v.id === id)!;
   const d = () => byId("veh_1");
   // Tirador y compañero sólo aportan hechos (D0a): sus reservas no entran en ningún canal.
@@ -784,8 +822,8 @@ function durability(
       rec.ch.kinematics.push([t, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
       rec.ch.turret.push([t, r6(d().turretHeading)]);
       const frame = battle.getInternalFrame();
-      rec.ch.projectiles.push([t, frame.projectiles.map((q: any) => [q.id, q.position.x, q.position.y])]);
-      rec.ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
+      rec.ch.projectiles.push([t, projectileEffect(labels, frame)]);
+      rec.ch.mines.push([t, mineEffect(labels, battle)]);
       rec.ch.score.push([t, frame.score]);
       rec.full.push(["D", battle.tick, d().alive]);
     }
