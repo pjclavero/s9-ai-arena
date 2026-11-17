@@ -2,7 +2,7 @@
  * B (release 0.5.0) · Cierre de un job `run_battle` agotado: deja la batalla en `failed`
  * (`markBattleForReview`) Y hace avanzar su match y su torneo (`settleFailedBattle`), para que
  * una batalla fallida de forma definitiva nunca deje el torneo `running` para siempre.
- * Si el avance falla, no se propaga (el worker no debe caer por esto): el rescate periódico
+ * Si el avance falla, se registra (log estructurado) y no se propaga (el worker no debe caer por esto): el rescate periódico
  * (`rescueStuckTournaments`) lo recoge después.
  */
 import type { Knex } from "knex";
@@ -16,8 +16,17 @@ export async function onBattleJobExhausted(job: JobRow, ctx: HandlerContext): Pr
   if (job.kind !== "run_battle") return;
   try {
     await settleFailedBattle(ctx.db as Knex, String(job.payload.battleId ?? ""));
-  } catch {
-    /* lo recoge el rescate periódico */
+  } catch (err) {
+    // No se propaga (lo recoge el rescate periódico), pero queda registrado.
+    console.error(
+      JSON.stringify({
+        level: "error",
+        service: "tournament-worker",
+        msg: "settle_failed_battle_error",
+        battleId: String(job.payload.battleId ?? ""),
+        err: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
 }
 

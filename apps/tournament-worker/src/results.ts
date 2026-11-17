@@ -363,10 +363,14 @@ export async function leagueTableDetailed(
     const home = rows.get(p.home);
     const away = rows.get(p.away);
     if (!home || !away) continue;
-    const battles = await db("battles").where({ match_id: m.id });
-    // ADR-022 · un enfrentamiento cuyas batallas terminaron TODAS por la salvaguarda
-    // técnica no tiene resultado deportivo: no puntúa ni cuenta como empate en V-D-E.
-    if (battles.length > 0 && battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
+    // B · los juegos `failed` no cuentan: la serie se resuelve sólo con los que se jugaron.
+    const battles = (await db("battles").where({ match_id: m.id })).filter(
+      (b: Record<string, unknown>) => b.status !== "failed",
+    );
+    // ADR-022 · un enfrentamiento cuyas batallas JUGADAS terminaron TODAS por la salvaguarda
+    // técnica (o que no tiene ninguna jugada) no tiene resultado deportivo: no puntúa ni
+    // cuenta como empate en V-D-E.
+    if (battles.length === 0 || battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
     if (winner === p.home) {
       home.points += 3;
       home.wins++;
@@ -473,6 +477,13 @@ async function finishTournamentIfDone(mctx: MaterializeContext): Promise<void> {
     .update({ state: "finished", champion_bot_id: isTeams ? null : champion });
 }
 
+/**
+ * Punto de inyección SÓLO para pruebas (interleaving forzado): se invoca dentro de la
+ * transacción, tras cerrar los matches y antes de comprobar el fin del torneo. En producción
+ * no hay hook.
+ */
+export const settleHooks: { beforeFinishCheck?: (tournamentId: string) => Promise<void> } = {};
+
 /** Cerrojo por torneo: serializa «último resultado» y «otra batalla que falla». */
 async function lockTournament(trx: Knex, tournamentId: string): Promise<void> {
   await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`tournament-settle:${tournamentId}`]);
@@ -514,6 +525,7 @@ async function settleBattle(db: Knex, battleId: string, o: { standings: boolean 
         { dedupeKey: `update_standings:${battleId}` },
       );
     }
+    await settleHooks.beforeFinishCheck?.(battle.tournament_id);
     await finishTournamentIfDone(mctx);
   });
 }
@@ -561,6 +573,18 @@ export async function rescueStuckTournaments(db: Knex): Promise<string[]> {
         let progressed = false;
         for (const m of open) {
           if (await settleMatch(mctx, m)) {
+            // Elo/standings coherentes: las batallas `finished` de un match cerrado aquí pueden
+            // tener su `process_result` aparcado (needs_review) y no haber encolado nunca
+            // `update_standings`. Idempotente por dedupe_key (y applyBattleRating por battle_id).
+            const done = await trx("battles").where({ match_id: m.id, status: "finished" }).select("id");
+            for (const b of done) {
+              await enqueueJob(
+                trx,
+                "update_standings",
+                { tournamentId: id, battleId: b.id },
+                { dedupeKey: `update_standings:${b.id}` },
+              );
+            }
             progressed = true;
             changed = true;
             break; // el bracket pudo cambiar: se relee

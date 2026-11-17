@@ -138,7 +138,10 @@ export function tournamentMatchToJson(
     slot: m.slot ?? null,
     pairing,
     state: m.state,
-    winnerBotId: winnerHidden ? null : (m.winner_bot_id ?? null),
+    // B · un match `failed` (sin resultado) NO tiene ganador: `winnerBotId` va a null y quien
+    // avanza «por seed» en una eliminatoria se expone aparte en `advancedBotId`.
+    winnerBotId: winnerHidden || m.state === "failed" ? null : (m.winner_bot_id ?? null),
+    ...(m.state === "failed" && !winnerHidden ? { advancedBotId: m.winner_bot_id ?? null } : {}),
     ...(winnerHidden ? { winnerPrivate: true } : {}),
     ...(winnerName !== undefined ? { winnerBotName: winnerName } : {}),
     winnerTeamId: m.winner_team_id ?? null,
