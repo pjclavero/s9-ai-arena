@@ -17,7 +17,8 @@ mut() { # id fichero sed-expr test-asesino
   if git diff --quiet -- "$f"; then echo "$id: el sed no cambió nada"; fail=1; return; fi
   out=$($RUN 2>&1); rc=$?
   git checkout -q -- "$f"
-  if [ $rc -ne 0 ] && echo "$out" | grep -qF "$killer"; then echo "$id: MUERTO por «$killer»"
+  if echo "$out" | grep -q "Transform failed"; then echo "$id: INVÁLIDO (el mutante no compila)"; fail=1
+  elif [ $rc -ne 0 ] && echo "$out" | grep -qF "$killer"; then echo "$id: MUERTO por «$killer»"
   else echo "$id: SUPERVIVIENTE o muerto por otro test (rc=$rc, esperado «$killer»)"; fail=1; fi
 }
 W=apps/tournament-worker/src/worker.ts
