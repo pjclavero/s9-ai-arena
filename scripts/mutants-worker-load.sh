@@ -29,7 +29,7 @@ mut M-C4 $W 's/this\.config\.concurrency \?\? computeConcurrency\(\)/computeConc
 mut M-C5 $C 's/DEFAULT_CPU_SAMPLE_MS = 2_000/DEFAULT_CPU_SAMPLE_MS = 500/' "intervalo de muestreo acotado"
 mut M-C6 $C 's/Math.max\(MIN_CPU_SAMPLE_MS, Math.round\(ms\)\)/Math.round(ms)/' "intervalo de muestreo acotado"
 mut M-C7 $C 's/if \(this\.inFlight\[i\]\) \{/if (false) {/' "no se apilan"
-mut M-C8 $C 's/\(this\.last\[i\] === null \|\| v > this\.last\[i\]!\)/true/' "conserva la cota inferior"
+mut M-C8 $C 's/this\.last\[i\] === null \|\| v > this\.last\[i\]!/true/' "conserva la cota inferior"
 mut M-C9 $C 's/if \(this\.isDead\(i\)\) continue;//' "sólo contenedores vivos"
 git diff --quiet && echo "árbol limpio" || { echo "ÁRBOL SUCIO"; fail=1; }
 exit $fail
