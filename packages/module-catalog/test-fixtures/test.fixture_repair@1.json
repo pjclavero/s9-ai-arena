@@ -1,0 +1,62 @@
+{
+  "id": "test.fixture_repair",
+  "version": 1,
+  "name": "Fixture: reparación propia y modificadores",
+  "actions": [
+    {
+      "kind": "activate",
+      "cooldownTicks": 300,
+      "cost": {
+        "energyEU": 15,
+        "charges": 1
+      },
+      "effects": [
+        {
+          "primitive": "repair",
+          "strength": 30,
+          "repairs": "hull",
+          "targets": {
+            "relations": [
+              "self"
+            ],
+            "kinds": [
+              "vehicle"
+            ]
+          },
+          "stacking": "none"
+        },
+        {
+          "primitive": "communicationModifier",
+          "strength": 0.5,
+          "stat": "range",
+          "durationTicks": 300,
+          "targets": {
+            "relations": [
+              "self"
+            ],
+            "kinds": [
+              "vehicle"
+            ]
+          },
+          "stacking": "replace"
+        },
+        {
+          "primitive": "statusModifier",
+          "strength": -0.3,
+          "stat": "maxSpeed",
+          "durationTicks": 90,
+          "targets": {
+            "relations": [
+              "self"
+            ],
+            "kinds": [
+              "vehicle"
+            ]
+          },
+          "stacking": "add",
+          "maxStacks": 2
+        }
+      ]
+    }
+  ]
+}

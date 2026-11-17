@@ -149,7 +149,7 @@ describe("CTF · prórroga (next_score_wins)", () => {
         b.attachBot("veh_2", new IdleBot("idle"));
       },
     );
-    expect(replay.header.versions.engine).toBe("0.4.0");
+    expect(replay.header.versions.engine).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     expect(replay.header.ruleset.overtime).toEqual({ kind: "next_score_wins" });
     const v = await verify(fromJsonl(toJsonl(replay)));
     expect(v.matches).toBe(true);

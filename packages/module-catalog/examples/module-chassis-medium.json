@@ -35,7 +35,11 @@
       "accepts": [
         "weapon"
       ],
-      "maxSize": "L"
+      "maxSize": "L",
+      "mount": {
+        "turretRateRads": 1,
+        "turretArcRad": 6.2832
+      }
     },
     {
       "id": "ammo_main",

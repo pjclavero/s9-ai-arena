@@ -90,7 +90,12 @@ describe("worker · copia de reglas", () => {
       const out = await exec()(ctx(battle, rows));
       const replay = fromJsonl(out.replayJsonl);
       expect(replay.header.ruleset).toEqual(built.snapshot!.engineRuleset);
-      expect(replay.header.ruleset.respawn).toEqual({ enabled: true, delayTicks: 30, maxRespawns: 1 });
+      expect(replay.header.ruleset.respawn).toEqual({
+        enabled: true,
+        delayTicks: 30,
+        maxRespawns: 1,
+        rearmPolicy: "all_alive_participants",
+      });
       expect(out.versions.rulesetEngine).toBe("custom@1");
       expect(out.versions.catalog).toBe(built.snapshot!.catalogVersion);
       expect(out.ticks).toBeLessThanOrEqual(1800);
@@ -187,7 +192,7 @@ describe("torneo · copia inmutable de reglas (ADR-022)", () => {
       const replay = fromJsonl(out.replayJsonl);
       expect(replay.header.ruleset).toEqual(JSON.parse(JSON.stringify(snapshot!.engineRuleset)));
       expect(replay.header.ruleset.timeoutTiebreak).toEqual(["alive", "lives", "kills"]);
-      expect(replay.header.versions.engine).toBe("0.4.0");
+      expect(replay.header.versions.engine).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
       expect(out.versions.rulesetEngine).toBe("duel@1");
       expect(replay.header.ruleset.spectator).toEqual({ delaySeconds: 30 });
     } finally {

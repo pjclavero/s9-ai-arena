@@ -1,0 +1,640 @@
+{
+  "description": "OLA 2 · ME · mutantes de calibración. kill = el test indicado debe ponerse ROJO por una ASERCIÓN en un test cuyo nombre case con `expect`; identity = debe SOBREVIVIR (control del runner). Runner: scripts/hardening/me-mutants.mjs (sólo en el laboratorio).",
+  "version": 3,
+  "anchoredAt": "Integración OLA 2 (G1+G2+G3 en hardening/contracts, ADR-024) (las anclas se comprueban únicas en cada ejecución: ausente o repetida = ROTO)",
+  "changelog": [
+    "v1 (ME, BASE_SHA f07ff6f): 34 mutantes (19 K, 2 I, 13 F «fix» con S9_CONTRACT_ENFORCE).",
+    "v2 (G2 ronda 2): 12 anclas K/I reancladas al árbol integrado; K11 reformulado para caer por aserción; los 13 «fix» quedan obsoletos (todos los contratos son `it` y se cumplen): 12 reconvertidos a kill y 1 retirado (F06). 33 mutantes.",
+    "v3 (integración OLA 2): K05 y F07 reanclados. G1.5 (d0660d2f) añadió el argumento `surface` a explode() y la llamada pasó a varias líneas; v2 se ancló sobre G2 sin G1 y las dos anclas quedaron ausentes (ROTO). Misma mutación: el blanco directo deja de excluirse de la onda. 33 mutantes."
+  ],
+  "retired": [
+    {
+      "id": "F06-ma-welcome",
+      "was": "fix",
+      "reason": "RETIRADO: el contrato «WELCOME sin campos FUTURE» sólo detecta campos FUTURE, y desde MC el catálogo real no declara ninguno (catalog-effects «ningún campo … en estado FUTURE»). Ningún mutante de producción puede ponerlo rojo sin inventar a la vez un campo FUTURE en el catálogo: con el catálogo real el test es vacuo. La forma de la ficha la fijan K08 (golden del WELCOME) y, en MA, MW_welcome_full_modulespec."
+    }
+  ],
+  "mutants": [
+    {
+      "id": "K01-ttl91",
+      "kind": "kill",
+      "contract": "MC: alcance efectivo (vida del proyectil derivada de rangeM)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/weapon-range.test.ts"
+      ],
+      "expect": "alcance|TTL|rangeM",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  const ttlTicks = projectileLifetimeOf(w.spec);",
+          "to": "  const ttlTicks = projectileLifetimeOf(w.spec) + 1;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: el TTL fijo `ttlTicks: 90` ya no existe (MC deriva la vida de rangeM en projectileLifetimeOf); se muta la vida del proyectil disparado (+1 tick)."
+    },
+    {
+      "id": "K02-armor-wear",
+      "kind": "kill",
+      "contract": "MB: desgaste del blindaje (MD-03)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "desgaste|tabla",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/damage.ts",
+          "from": "    armor.hp = Math.max(0, armor.hp - absorbed * profile.armorWearFactor);",
+          "to": "    armor.hp = Math.max(0, armor.hp - absorbed * profile.armorWearFactor * 2);"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: el daño vive en sim/damage.ts (resolveDamage, puerta única de MB); se duplica el desgaste."
+    },
+    {
+      "id": "K03-hull-share",
+      "kind": "kill",
+      "contract": "MB: reparto casco/módulo (MD-04)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "tabla|D-B3",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/damage.ts",
+          "from": "  const hull = effective * profile.hullShare;",
+          "to": "  const hull = effective * profile.hullShare * 1.07;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: CHASSIS_DAMAGE_SHARE pasó al perfil de tipo de daño (profile.hullShare)."
+    },
+    {
+      "id": "K04-module-rng",
+      "kind": "kill",
+      "contract": "MB: sorteo de módulo con el RNG del motor (MD-05)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "tabla",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/damage.ts",
+          "from": "      const idx = rng.weighted(",
+          "to": "      const idx = 0 && rng.weighted("
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: mismo sorteo en sim/damage.ts; el mutante fija el índice y no consume RNG."
+    },
+    {
+      "id": "K05-he-no-splash",
+      "kind": "kill",
+      "contract": "MB: HE sin doble daño (D-B6)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "HE",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "\"explosion\",\n            directTarget,\n            surface,",
+          "to": "\"explosion\",\n            null,\n            surface,"
+        }
+      ],
+      "anchoredAt": "integracion-ola2",
+      "note": "REANCLADO Y REORIENTADO: la baseline ya no caracteriza el doble daño (MB lo corrigió: el impactado directo queda fuera de su onda). El mutante REINTRODUCE el defecto (onda sin excluir al blanco directo) y la baseline «corregido (MB): … daña UNA vez» debe ponerse roja."
+    },
+    {
+      "id": "K06-mine-own-seq",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA: ids proj_N/mine_N con entitySeq compartido (#261)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            this.entitySeq++,",
+          "to": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            1000 + this.entitySeq,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "entitySeq",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K07-no-hullhpmax",
+      "kind": "kill",
+      "contract": "MA/MB: forma del snapshot público",
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "snapshot",
+      "edits": [
+        {
+          "file": "packages/projection/project-frame.ts",
+          "from": "  if (fieldLevel(P, \"vehicle.hullHpMax\", a) === \"PUBLIC\") extra.hullHpMax = num(v.hullHpMax);",
+          "to": "  extra.hullHpMax = num(v.hullHpMax);"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO Y REORIENTADO: el snapshot público ya no lleva hullHpMax (MA, R2); el mutante lo fuga desde projectFrame."
+    },
+    {
+      "id": "K08-welcome-strip",
+      "kind": "kill",
+      "contract": "MA: forma del WELCOME",
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "WELCOME",
+      "edits": [
+        {
+          "file": "packages/projection/equipment.ts",
+          "from": "    if (eff.status === \"ACTIVE\" || (eff.status === \"PARTIAL\" && eff.validation)) specs[k] = v;",
+          "to": "    if ((eff.status === \"ACTIVE\" && k !== \"rangeM\") || (eff.status === \"PARTIAL\" && eff.validation)) specs[k] = v;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: la ficha del WELCOME la construye projectWelcomeModule (packages/projection/equipment.ts); el mutante quita rangeM (ACTIVE desde MC), como el original."
+    },
+    {
+      "id": "K09-mine-arm-early",
+      "kind": "kill",
+      "team": null,
+      "contract": "MC: armado exacto de mina (ME-04)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      if (this.tick < m.armedAtTick) {",
+          "to": "      if (this.tick < m.armedAtTick - 1) {"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/mines.test.ts"
+      ],
+      "expect": "C-MINE-1",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K10-mine-friendly",
+      "kind": "kill",
+      "team": null,
+      "contract": "MC: ownership de la mina (ME-03)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "        if (v.team === m.team && !this.config.ruleset.friendlyFire) continue;\n",
+          "to": ""
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/mines.test.ts"
+      ],
+      "expect": "C-MINE-2",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K11-epoch-in-hash",
+      "kind": "kill",
+      "contract": "MA/MD: visibilityEpoch fuera del hash (F3)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/hash-boundary.test.ts"
+      ],
+      "expect": "proyec|cadencia",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      botRefs: {},",
+          "to": "      botRefs: { epoch: this.snapshots.length },"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REFORMULADO: el original añadía una clave `epoch` de primer nivel y el guardia de claves exactas de MD (computeStateHash) lanzaba un Error que no es aserción (ROJO_ERRONEO). Ahora la cuenta de snapshots entra DENTRO de un componente ya existente del contrato (botRefs): el hash cambia con la cadencia y el test cae por su aserción.",
+      "expectMessage": "expected"
+    },
+    {
+      "id": "K12-cooldown+1",
+      "kind": "kill",
+      "team": null,
+      "contract": "MD: resultado deportivo de la referencia",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  w.cooldownUntilTick = tick + Math.round((w.spec.cooldownTicks ?? 30) / Math.max(0.25, v.performanceOf(slot)));",
+          "to": "  w.cooldownUntilTick = tick + Math.round(((w.spec.cooldownTicks ?? 30) + 1) / Math.max(0.25, v.performanceOf(slot)));"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/determinism-reference.test.ts"
+      ],
+      "expect": "resultado deportivo",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K13-verify-always",
+      "kind": "kill",
+      "contract": "MD: verify detecta manipulación",
+      "tests": [
+        "apps/arena-engine/tests/baseline/determinism-reference.test.ts"
+      ],
+      "expect": "manipulad",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/replay.ts",
+          "from": "    matches: mismatches.length === 0,",
+          "to": "    matches: true,"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: verify() v2 decide por la lista de discrepancias (mismatches)."
+    },
+    {
+      "id": "K14-turret-rate",
+      "kind": "kill",
+      "contract": "MB: velocidad de torreta (C-TUR-1, MT-02)",
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "C-TUR-1|turretRateRads",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/vehicle.ts",
+          "from": "    const rate = this.turretRate();",
+          "to": "    const rate = this.turretRate() * 1.1;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: el giro de torreta se movió a Vehicle.stepTurret (la tasa sale de la montura, D-B2)."
+    },
+    {
+      "id": "K15-proj-doc-hpmax",
+      "kind": "kill",
+      "contract": "MA: replay público proyectado",
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "replay público",
+      "edits": [
+        {
+          "file": "packages/projection/policy.ts",
+          "from": "    \"vehicle.hullHpMax\": PRIVATE, // revela el chasis",
+          "to": "    \"vehicle.hullHpMax\": PUBLIC, // revela el chasis"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO Y REORIENTADO: replay-projection ya no construye el vehículo a mano (lo proyecta packages/projection con la política); el mutante declara hullHpMax PUBLIC en la política y el documento de replay público debe dejar de cumplir."
+    },
+    {
+      "id": "K16-stats-moduleid",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA/MB: estadísticas por módulo",
+      "edits": [
+        {
+          "file": "apps/replay-service/src/stats.ts",
+          "from": "        moduleId: m.moduleId,",
+          "to": "        moduleId: null,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "estadísticas",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K17-mf-skip-stop",
+      "kind": "kill",
+      "team": "MF",
+      "contract": "MF: cada contenedor se para una vez",
+      "edits": [
+        {
+          "file": "apps/bot-manager/src/container-battle.ts",
+          "from": "    await Promise.allSettled(handles.map((h) => h.stop()));",
+          "to": "    await Promise.allSettled(handles.slice(1).map((h) => h.stop()));"
+        }
+      ],
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "expect": "EXACTAMENTE una vez|nunca hace HELLO",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K18-mf-no-server-stop",
+      "kind": "kill",
+      "team": "MF",
+      "contract": "MF: puerto cerrado tras el teardown",
+      "edits": [
+        {
+          "file": "apps/bot-manager/src/container-battle.ts",
+          "from": "    server.stop();\n    battle.free();",
+          "to": "    battle.free();"
+        }
+      ],
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "expect": "puerto",
+      "anchoredAt": "ronda2",
+      "note": "SIN CAMBIOS: ancla vigente y única en el SHA."
+    },
+    {
+      "id": "K19-armor-rounded",
+      "kind": "kill",
+      "contract": "MB: D-B4 blindaje interno exacto (guarda de baseline)",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "expect": "blindaje interno exacto",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/damage.ts",
+          "from": "    armor.hp = Math.max(0, armor.hp - absorbed * profile.armorWearFactor);",
+          "to": "    armor.hp = Math.max(0, Math.round(armor.hp - absorbed * profile.armorWearFactor));"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: el desgaste vive en sim/damage.ts; el mutante redondea el hp interno.",
+      "expectMessage": "expected"
+    },
+    {
+      "id": "I01-identity-ttl",
+      "kind": "identity",
+      "contract": "control del runner",
+      "tests": [
+        "apps/arena-engine/tests/baseline/weapon-range.test.ts"
+      ],
+      "expect": null,
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  const ttlTicks = projectileLifetimeOf(w.spec);",
+          "to": "  const ttlTicks = projectileLifetimeOf(w.spec); // mutante identidad"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO a la línea de K01."
+    },
+    {
+      "id": "I02-identity-snapshot",
+      "kind": "identity",
+      "contract": "control del runner",
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts",
+        "apps/arena-engine/tests/baseline/hash-boundary.test.ts"
+      ],
+      "expect": null,
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/internal-frame.ts",
+          "from": "        hullHpMax: v.spec.hullHp,",
+          "to": "        hullHpMax: v.spec.hullHp, // mutante identidad"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "REANCLADO: el frame interno lo construye sim/internal-frame.ts."
+    },
+    {
+      "id": "F01-md-verify-winner",
+      "kind": "kill",
+      "contract": "MD: verify compara winner",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "expect": "winner manipulado",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/replay.ts",
+          "from": "  cmp(\"winner\", official?.winner ?? null, recomputed.winner ?? null, strict);",
+          "to": ""
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: el contrato ya es `it` y se cumple (compareResults compara el winner); un «fix» sería vacuo. El mutante quita la comparación del winner.",
+      "team": "MD"
+    },
+    {
+      "id": "F02-md-hash-ttl",
+      "kind": "kill",
+      "contract": "MD: stateHash cubre TTL",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "expect": "TTL del proyectil",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      projectiles: this.projectiles,\n      deployables: this.mines,",
+          "to": "      projectiles: this.projectiles.map(({ ttlTicks: _t, ...p }) => p),\n      deployables: this.mines,"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: el hash v2 serializa el proyectil entero; el mutante saca el TTL del componente.",
+      "team": "MD"
+    },
+    {
+      "id": "F03-md-hash-seq",
+      "kind": "kill",
+      "contract": "MD: stateHash cubre entitySeq",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "expect": "entitySeq",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      allocator: { nextSeq: this.entitySeq, ownCounters: {}, contactCounters: {} },",
+          "to": "      allocator: { nextSeq: 0, ownCounters: {}, contactCounters: {} },"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill (era SOBREVIVE): el «fix» añadía una clave `seq` de primer nivel que el guardia de claves exactas de MD rechaza, y el contrato ya se cumple vía `allocator.nextSeq`. El mutante quita entitySeq del componente allocator.",
+      "team": "MD"
+    },
+    {
+      "id": "F04-md-obs-rng",
+      "kind": "kill",
+      "contract": "MD: observationFor no consume el RNG de simulación",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "expect": "observationFor",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      this.rng.stream(\"sensors\").clone(),",
+          "to": "      this.rng.stream(\"sensors\"),"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: observationFor usa una COPIA del flujo `sensors`; el mutante usa el flujo vivo.",
+      "team": "MD"
+    },
+    {
+      "id": "F05-ma-dense-ids",
+      "kind": "kill",
+      "contract": "MA: ids densos; lo no visto no consume id",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/projection-ids.test.ts"
+      ],
+      "expect": "densos|no consume id",
+      "edits": [
+        {
+          "file": "packages/projection/public-id-mapper.ts",
+          "from": "    return this.toPub.get(String(entity));",
+          "to": "    return String(entity) as PublicEntityId;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill (era VERDE_OK vacuo): el «fix» mutaba el contador del MOTOR, pero los ids densos los da el mapper de la proyección (MA), así que el test ya estaba verde con o sin él. El mutante saca el id interno (proj_N con entitySeq compartido con la mina oculta).",
+      "team": "MA"
+    },
+    {
+      "id": "F07-mb-he-single",
+      "kind": "kill",
+      "contract": "MB: HE sin doble daño",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/damage-turret.test.ts"
+      ],
+      "expect": "UN único paquete",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "\"explosion\",\n            directTarget,\n            surface,",
+          "to": "\"explosion\",\n            null,\n            surface,"
+        }
+      ],
+      "anchoredAt": "integracion-ola2",
+      "note": "RECONVERTIDO fix→kill: la onda excluye al blanco directo (D-B6); el mutante deja de excluirlo.",
+      "team": "MB"
+    },
+    {
+      "id": "F08-mb-hulllevel",
+      "kind": "kill",
+      "contract": "MB: hullLevel N=20 en lo público",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/damage-turret.test.ts"
+      ],
+      "expect": "hullLevel|estado público de daño",
+      "edits": [
+        {
+          "file": "packages/projection/project-frame.ts",
+          "from": "  if (hpLevel === \"PUBLIC\") extra.hullHp = num(v.hullHp);",
+          "to": "  extra.hullHp = num(v.hullHp);"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: lo público lleva hullLevel y nunca hullHp; el mutante fuga el hullHp exacto junto al nivel.",
+      "team": "MB"
+    },
+    {
+      "id": "F09-mc-terrain",
+      "kind": "kill",
+      "contract": "MC: terrain eliminado del esquema",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/catalog-effects.test.ts"
+      ],
+      "expect": "terrain",
+      "edits": [
+        {
+          "file": "packages/module-catalog/schema/module.schema.json",
+          "from": "          \"turnRateRads\": { \"type\": \"number\", \"exclusiveMinimum\": 0 },\n          \"ratedLoadKg\": {",
+          "to": "          \"turnRateRads\": { \"type\": \"number\", \"exclusiveMinimum\": 0 },\n          \"terrain\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n          \"ratedLoadKg\": {"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: terrain ya no está en catálogo ni esquema; el mutante lo vuelve a admitir en el esquema de movement.",
+      "team": "MC"
+    },
+    {
+      "id": "F10-mc-weapon-range",
+      "kind": "kill",
+      "contract": "MC: weapon.rangeM fuente del alcance",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/catalog-effects.test.ts"
+      ],
+      "expect": "weapon.rangeM es la fuente",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  const ttl = projectileLifetimeTicks(spec.rangeM, spec.projectileSpeedMs);",
+          "to": "  const ttl = 90;"
+        },
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  if (spec.projectileLifetimeTicks !== undefined && spec.projectileLifetimeTicks !== ttl) {",
+          "to": "  if (false) {"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: vuelve el TTL fijo de 90 (rangeM sin efecto) y se apaga la comprobación de coherencia para que el fallo sea la ASERCIÓN del alcance y no una excepción.",
+      "team": "MC"
+    },
+    {
+      "id": "F11-mf-free-idem",
+      "kind": "kill",
+      "contract": "MF: Battle.free idempotente",
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "expect": "free\\(\\) dos veces",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/physics.ts",
+          "from": "    if (this.freed) return;\n",
+          "to": ""
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill (era VERDE_OK vacuo): el contrato ya se cumple en PhysicsWorld.free; el mutante quita la guarda de idempotencia (mismo cambio que G12).",
+      "team": "MF"
+    },
+    {
+      "id": "F12-mb-armor-broken",
+      "kind": "kill",
+      "contract": "MB: rotura de blindaje visible (armorBroken público)",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "expect": "armorBroken",
+      "edits": [
+        {
+          "file": "packages/projection/project-frame.ts",
+          "from": "    if (Object.keys(broken).length > 0) out.armorBroken = broken;",
+          "to": "    void broken;"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill: G2 proyecta armorBroken en projectFrame; el mutante deja de emitirlo.",
+      "team": "MB"
+    },
+    {
+      "id": "F13-ma-stats-no-moduleid",
+      "kind": "kill",
+      "contract": "MA: estadísticas públicas sin moduleId de catálogo",
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/equipment-privacy.test.ts"
+      ],
+      "expect": "no llevan moduleId de catálogo",
+      "edits": [
+        {
+          "file": "packages/projection/policy.ts",
+          "from": "    \"stats.perModule\": ownerOnly(),",
+          "to": "    \"stats.perModule\": PUBLIC,"
+        }
+      ],
+      "anchoredAt": "ronda2",
+      "note": "RECONVERTIDO fix→kill (era VERDE_OK vacuo): el «fix» quitaba moduleId de computeBattleStats, pero quien lo retira para terceros es la proyección por audiencia; el mutante publica perModule (con moduleId).",
+      "team": "MA"
+    }
+  ]
+}

@@ -99,13 +99,23 @@ info:
   # republica, ni se descongela) y closeEntries no la vuelve a tocar. `bot_not_published`
   # pasa a significar «estado fuera de published|frozen» también aquí (como en
   # createPracticeBattle) y lleva `currentState` con el estado real.
-  # 0.21.0 · #288 (aditivo): añade cancelTournament (POST /tournaments/{id}/actions/cancel):
+  # 0.21.0 · OLA 2 (motor 0.5.0, ADR-024) integrada en main: getSpectateTicket gana el
+  # query `audience` (public_live|broadcast, FIRMADA en el ticket); el replay público pasa a
+  # `s9.replay.public-competition.v2` (proyección pública, ids públicos); EQUIPMENT_PRIVATE:
+  # `damageDealt`/`damageTaken` absolutos y las cifras de composición de bots ajenos sólo
+  # para dueño y staff (rules-check y el 422 de createBattle), y el detalle de
+  # `bot_version_not_eligible` sólo para dueño y staff (en enterTournament, el dueño).
+  # 0.22.0 · #291 (autorización, sin operaciones nuevas): closeEntries y dryRunTournament
+  # exigen, además del rol organizer, ser quien creó el torneo o staff (moderator+): si no,
+  # 403. La vía de organizador de excludeTournamentEntry exige lo mismo (el dueño del bot
+  # sigue pudiendo retirar la suya). Regla única: canManageTournament.
+  # 0.23.0 · #289 (aditivo; antes 0.21.0 en la rama): añade cancelTournament (POST /tournaments/{id}/actions/cancel):
   # `draft|open` → `cancelled` (terminal), dueño del torneo o staff, auditado como
   # tournament.cancelled, idempotente; `closed|running|finished` → 409
   # tournament_not_cancellable. No borra nada. closeEntries pasa a ser atómico frente a
   # la cancelación (409 illegal_transition si el torneo ya no está `open`).
   # El 409 de cancelTournament usa su propio esquema TournamentNotCancellableError.
-  version: 0.21.0
+  version: 0.23.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -573,6 +583,9 @@ paths:
         '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # OLA 2 · EQUIPMENT_PRIVATE: la extensión GET /bots/{botId}/loadouts (listBotLoadouts, fuera del
+  # contrato) sólo responde al dueño y al staff; para cualquier otro es 404 uniforme, también
+  # con un bot de visibilidad pública.
   /bots/{botId}/loadouts:
     post:
       tags: [bots]
@@ -1130,6 +1143,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #288) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/actions/cancel:
@@ -1157,7 +1171,7 @@ paths:
       responses:
         '200': { description: Cancelado (o ya lo estaba), content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
         '400': { description: reason inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): predicado único canManageTournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 'tournament_not_cancellable (currentState: closed, running o finished; allowedTransitions vacío)', content: { application/json: { schema: { $ref: '#/components/schemas/TournamentNotCancellableError' } } } }
 
@@ -1167,7 +1181,8 @@ paths:
       operationId: excludeTournamentEntry
       summary: >-
         ELIG · Excluir una inscripción PENDIENTE (torneo open, sin congelar). El organizador sólo
-        puede excluir inscripciones NO elegibles; el dueño del bot puede retirar la suya. Se
+        puede excluir inscripciones NO elegibles, y sólo si creó ese torneo o es staff
+        (moderator+, #291); el dueño del bot puede retirar la suya. Se
         quita de las inscripciones y su contenido completo (quién, cuándo, motivo, versión)
         queda en audit_log como tournament.entry.excluded en la misma transacción. Una
         inscripción pendiente no tiene batallas ni calendario: no se toca ningún dato histórico.
@@ -1197,7 +1212,7 @@ paths:
                   excluded: { type: boolean, const: true }
                   by: { enum: [owner, organizer] }
         '400': { description: reason obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '403': { description: Ni dueño del bot ni organizador, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'Ni dueño del bot ni organizador de ese torneo (quien lo creó, con rol organizer) ni staff (#291)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible) · entry_changed (la inscripción cambió de versión mientras se procesaba: no se borra ni se audita)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
@@ -1205,11 +1220,12 @@ paths:
     post:
       tags: [tournaments]
       operationId: dryRunTournament
-      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings.'
+      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings. Sólo quien creó el torneo o el staff (#291).'
       x-min-role: organizer
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '202': { description: Simulacro encolado }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se encola nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/matches:
     get:
@@ -1339,7 +1355,7 @@ paths:
                 additionalProperties: true
                 required: [projection, battleId, snapshots, events, result]
                 properties:
-                  projection: { type: string, enum: [s9.replay.public-competition.v1] }
+                  projection: { type: string, enum: [s9.replay.public-competition.v2] }
                   battleId: { type: string }
                   snapshots: { type: array, items: { type: object, additionalProperties: true } }
                   events: { type: array, items: { type: object, additionalProperties: true } }
@@ -1381,7 +1397,7 @@ paths:
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
         '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES; mismas reglas de privacidad que rules-check: cifras exactas sólo de bots propios o para el staff, sin cifras de bots ajenos ni totales de bandos mixtos).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa) · ADR-022 map_team_mismatch (en CTF un bando no tiene base y bandera en el mapa)' }
 
@@ -1393,6 +1409,10 @@ paths:
         R-RULES (FASE 11) · Comprueba reglas y composición SIN crear la batalla: mismas validaciones que
         POST /battles (contenido, participantes, visibilidad TD-005, versión publicada, reglas y topes de
         créditos/masa con los loadouts REALES). Ayuda para la UI; la autoridad sigue siendo POST /battles.
+        EQUIPMENT_PRIVATE (OLA 2): `composition` lleva `costCredits`/`massKg` sólo de los bots PROPIOS del
+        solicitante (staff, rol >= moderator: de todos); de un bot ajeno sólo `ok` y `figuresHidden:true`.
+        Un bando con algún bot ajeno no lleva `totalCredits`/`totalMassKg` (`figuresHidden:true`), y las
+        `violations` de lo ajeno llevan `limit` pero no `actual`/`excess` (ni cifras en el mensaje).
         Un bot no visible da 404 como en la creación. Cache-Control: private, no-store.
       x-min-role: user
       requestBody:
@@ -1463,7 +1483,16 @@ paths:
         batalla (misma política que getBattle); sin sesión, además, exige S9_PUBLIC_SPECTATE_ENABLED.
       x-min-role: visitor
       security: []
-      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      parameters:
+        - { $ref: '#/components/parameters/BattleId' }
+        - name: audience
+          in: query
+          description: |
+            OLA 2 · audiencia del canal (va FIRMADA en el ticket). `broadcast` para la página de
+            emisión; por defecto `public_live`. Los roles de staff reciben siempre `staff` salvo
+            que pidan `broadcast`. No concede nada: todas las audiencias públicas reciben la misma
+            proyección, separada por mapper de ids e historial.
+          schema: { type: string, enum: [public_live, broadcast] }
       responses:
         '201':
           description: Ticket
@@ -2783,8 +2812,8 @@ components:
               shotsFired: { type: integer }
               shotsHit: { type: integer }
               accuracy: { type: number, nullable: true }
-              damageDealt: { type: number }
-              damageTaken: { type: number }
+              damageDealt: { type: number, description: 'HP absolutos: sólo dueño y staff (R2/EQUIPMENT_PRIVATE; reconstruyen el casco). Ausente para el resto.' }
+              damageTaken: { type: number, description: 'HP absolutos: sólo dueño y staff. Ausente para el resto.' }
               kills: { type: integer, description: 'Bajas de ENEMIGOS causadas por este bot (todas, también con respawn).' }
               teamKills: { type: integer, description: '4v4-STATS · Bajas de compañeros o propias (sólo con fuego amigo).' }
               deaths: { type: integer, description: '4v4-STATS · Veces que fue destruido (con respawn puede ser > 1). Ausente en stats anteriores a 4v4-STATS.' }
@@ -2885,8 +2914,8 @@ components:
         kills: { type: integer }
         teamKills: { type: integer }
         deaths: { type: integer }
-        damageDealt: { type: number }
-        damageTaken: { type: number }
+        damageDealt: { type: number, description: 'Ausente en la API pública (daño absoluto privado, R2); no se publica en perTeam para ningún lector.' }
+        damageTaken: { type: number, description: 'Ausente en la API pública (idem damageDealt).' }
         shotsFired: { type: integer }
         shotsHit: { type: integer }
         flagCaptures: { type: integer }

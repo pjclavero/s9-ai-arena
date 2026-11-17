@@ -104,7 +104,9 @@ function liveBattle() {
     tick++;
     producedAt.set(tick, Date.now());
     battle.snapshots.push({ tick, vehicles: [{ id: "v_red", position: { x: tick, y: tick }, hp: 1000 - tick }] });
-    if (tick % 10 === 0) battle.publicEvents.push({ type: "score", tick, team: "red" });
+    // OLA 2 · MA · evento INTERNO (`kind`): el gateway lo proyecta por lista blanca.
+    if (tick % 10 === 0)
+      battle.publicEvents.push({ kind: "score_changed", tick, team: "red", score: { red: tick / 10 } });
   }, 100);
   return { battle, producedAt, tick: () => tick };
 }
@@ -173,6 +175,9 @@ describe("FIX-DELAY · directo con retardo de 30 s y watchdog de 10 s (gateway y
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ev.snapshots.length, "nunca llegó el primer snapshot").toBeGreaterThan(20);
     expect(ev.snapshots[0].tick).toBe(1);
+    // 1a ronda 2 (REVIEW-1a F-3) · los eventos TAMBIÉN llegan tras el retardo (uno por
+    // segundo): sin esto, un proyector que los descartara dejaría el anti-coaching en vacío.
+    expect(ev.events.length, "nunca llegó un evento retrasado").toBeGreaterThanOrEqual(3);
     for (const s of [...ev.snapshots, ...ev.events]) {
       const lag = s.at - producedAt.get(s.tick)!;
       expect(lag, `ANTI_COACHING: tick ${s.tick} con ${lag} ms`).toBeGreaterThanOrEqual(DELAY_MS);

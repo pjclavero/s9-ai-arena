@@ -12,6 +12,5 @@
   "maxSpeedMs": 13,
   "accelerationMs2": 9,
   "turnRateRads": 1.8,
-  "ratedLoadKg": 1600,
-  "terrain": ["road"]
+  "ratedLoadKg": 1600
 }

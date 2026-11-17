@@ -27,6 +27,14 @@ export interface RadioMessage {
   sentTick: number;
   deliverAtTick: number;
   to?: string;
+  /**
+   * P-2 · alcance REAL de la radio (radio.rangeM). Posición del emisor y alcance efectivo
+   * (rangeM · rendimiento del módulo) fijados por el motor AL EMITIR, desde el estado de
+   * batalla: el mensaje sólo llega a receptores dentro de ese círculo en el momento de la
+   * entrega (`radioDeliverableTo`).
+   */
+  origin: Vec2;
+  rangeM: number;
 }
 
 export interface WorldView {
@@ -196,7 +204,7 @@ export function buildObservation(
   // ---- Radio: solo mensajes que le tocan y que ya deben entregarse. Un mensaje de
   // otro equipo no entra en la observación de ninguna forma (RADIO_SCOPE=TEAM).
   const radio = inbox
-    .filter((m) => m.deliverAtTick <= tick && radioDeliverableTo(m, v))
+    .filter((m) => m.deliverAtTick <= tick && radioDeliverableTo(m, v, pose.position))
     .map((m) => ({ from: m.from, data: m.data, sentTick: m.sentTick }));
   if (radio.length > 0) obs.radio = radio;
 
@@ -218,10 +226,12 @@ export function buildObservation(
  *     (o a un id inexistente) no se entrega a nadie.
  * Es la única regla de entrega: la usan el bucle de decisión y `observationFor()`.
  */
-export function radioDeliverableTo(m: RadioMessage, receiver: Vehicle): boolean {
+export function radioDeliverableTo(m: RadioMessage, receiver: Vehicle, receiverPos: Vec2): boolean {
   if (m.team !== receiver.team) return false;
   if (m.from === receiver.id) return false;
-  return !m.to || m.to === receiver.id;
+  if (m.to && m.to !== receiver.id) return false;
+  // P-2 · alcance real: fuera del círculo de emisión el mensaje no llega.
+  return dist(m.origin, receiverPos) <= m.rangeM;
 }
 
 /** Valida un mensaje de radio antes de encolarlo (D8). Devuelve el motivo del rechazo o null. */
@@ -245,12 +255,14 @@ export function validateRadio(
   return null;
 }
 
-/** ¿Está el receptor dentro del alcance de la radio del emisor? */
-export function radioReaches(sender: Vehicle, slot: string, from: Vec2, to: Vec2): boolean {
+/**
+ * Alcance efectivo de la radio de `slot` al emitir: radio.rangeM · rendimiento del módulo
+ * (un módulo dañado alcanza menos). Sustituye a `radioReaches`, que nunca se llamaba.
+ */
+export function radioRangeOf(sender: Vehicle, slot: string): number {
   const r = sender.modules.get(slot);
-  if (!r) return false;
-  const range = (r.spec.rangeM ?? 0) * sender.performanceOf(slot);
-  return dist(from, to) <= range;
+  if (!r || r.spec.category !== "radio") return 0;
+  return (r.spec.rangeM ?? 0) * sender.performanceOf(slot);
 }
 
 // ---------------------------------------------------------------- utilidades

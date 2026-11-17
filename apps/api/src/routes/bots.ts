@@ -9,7 +9,6 @@ import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
-import { ROLE_RANK } from "../openapi.js";
 import {
   applyTransition,
   assertLoadoutRevisionUsable,
@@ -17,6 +16,7 @@ import {
   canSeeBot,
   createLoadoutRevision,
   getVisibleBot,
+  isBotOwner,
   isStaff,
   validateLoadoutServerSide,
 } from "../services/bots.js";
@@ -55,8 +55,12 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
   };
 }
 
-/** ELIG · /loadouts exige rol user: sin él, la elegibilidad no detalla módulos. */
-const canReadLoadout = (auth: Auth) => !!auth && auth.rank >= ROLE_RANK.user;
+/**
+ * ELIG · OLA 2 (EQUIPMENT_PRIVATE): el loadout de un bot sólo lo lee su dueño y el staff
+ * (también si el bot es público), así que sólo ellos reciben la elegibilidad DETALLADA
+ * (módulos implicados); el resto, sólo el veredicto.
+ */
+const canReadLoadout = (auth: Auth, bot: Record<string, unknown>) => !!auth && (isBotOwner(auth, bot) || isStaff(auth));
 
 export function versionToJson(v: Record<string, unknown>) {
   return {
@@ -360,14 +364,19 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   /**
    * R3.7 (ERR-VIS-04) · Extensión: listar las revisiones de loadout de un bot.
    * El contrato de E1 solo tenía el POST, así que el editor del panel no podía
-   * cargar la revisión vigente (arrancaba siempre vacío). Misma visibilidad que
-   * el propio bot (getVisibleBot); la última revisión es la "vigente".
+   * cargar la revisión vigente (arrancaba siempre vacío). OLA 2: sólo dueño y staff
+   * (EQUIPMENT_PRIVATE); la última revisión es la "vigente".
    */
   defineExtension(
     router,
     { operationId: "listBotLoadouts", method: "get", path: "/bots/{botId}/loadouts", minRole: "user" },
     async (req, res) => {
       const bot = await getVisibleBot(db, req.auth, String(req.params.botId));
+      // OLA 2 · EQUIPMENT_PRIVATE (D-B1=R2): el loadout es PRIVADO también para un bot de
+      // visibilidad pública: sólo su dueño y el staff. Cualquier otro (incluido un
+      // miembro del equipo o un usuario con sesión) recibe el MISMO 404 que un id
+      // inexistente (no se revela ni que el bot existe).
+      if (!isBotOwner(req.auth, bot) && !isStaff(req.auth)) throw notFound();
       const rows = await db("bot_loadouts").where({ bot_id: bot.id }).orderBy("revision", "asc");
       res.json(rows.map(loadoutToJson));
     },
@@ -407,7 +416,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBotVersions", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
-    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth) }); // ELIG
+    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth, bot) }); // ELIG
     res.json(versions.map((v) => ({ ...versionToJson(v), ...elig(v) })));
   });
 
@@ -499,7 +508,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       .pluck("version");
     res.json({
       ...versionToJson(v),
-      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth) }))(v), // ELIG
+      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth, bot) }))(v), // ELIG
       ...(readable ? { sourceSha256: v.source_sha256 ?? undefined } : {}),
       canReadSource: readable,
       latestBuild: latest ? buildToJson(latest, { includeLogs }) : undefined,

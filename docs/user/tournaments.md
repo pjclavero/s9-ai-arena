@@ -57,7 +57,7 @@ En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → el
 
 ## Cerrar inscripciones (organizadores)
 
-El botón **«Cerrar inscripciones»** se ve siempre, pero sin el rol responde «Requiere rol organizer». Al cerrar verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
+El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el equipo de moderación: un organizador no puede cerrar el torneo de otro. Al cerrar verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
 
 ## Cancelar (organizadores)
 

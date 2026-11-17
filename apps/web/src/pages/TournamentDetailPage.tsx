@@ -310,9 +310,12 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                       </p>
                     ) : null;
                   })()}
-                  <button type="button" onClick={onCloseEntries}>
-                    Cerrar inscripciones
-                  </button>
+                  {/* #291 · sólo quien creó el torneo o el staff (la API también lo exige). */}
+                  {t.viewerCanManage && (
+                    <button type="button" onClick={onCloseEntries} data-testid="close-entries">
+                      Cerrar inscripciones
+                    </button>
+                  )}
                 </form>
               )}
               {t.viewerCanManage &&

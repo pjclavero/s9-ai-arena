@@ -51,14 +51,14 @@ Datos principales de `tournaments`:
 
 1. **Crear** (`POST /tournaments`, `organizer`). Se valida formato, modo, que `rulesetId` exista en la BD y el rango del presupuesto. Se inserta con `state='open'` (no pasa por `draft`).
 2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` **o `frozen`** (`409 bot_not_published` con `currentState` si su estado es otro) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
-3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer`). Si alguna inscripción pendiente usa una versión no elegible → `409 entries_not_eligible` con sus `entryId` (sin motivo: es del dueño) y no se congela ni se cierra nada. Si no:
+3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer` **y** quien creó el torneo o staff; si no, `403` sin efectos, #291). Si alguna inscripción pendiente usa una versión no elegible → `409 entries_not_eligible` con sus `entryId` (sin motivo: es del dueño) y no se congela ni se cierra nada. Si no:
    - marca `entries.frozen=true` y pasa cada versión inscrita de `published` a `frozen`; una versión que ya llegó `frozen` (de un torneo anterior) no se toca: ni transición ni auditoría;
    - aplica el commit-reveal de semillas: si el torneo publicó `seed_commitment`, el cierre debe traer `seeds` cuyo `sha256(seeds.join("|"))` coincida (`409 seeds_required` / `seed_reveal_mismatch`); si no, el servidor genera 8 semillas y su compromiso;
    - pone `state='closed'` y encola `generate_schedule`.
 4. **Calendario** (worker, `scheduler.ts`): ver [abajo](#calendario-y-batallas). Al terminar, `state='running'`.
 5. **Resultados** (worker, `results.ts`): `process_result` por batalla y `update_standings`. Al final, campeón y `finished`.
-6. **Dry-run** (`POST …/actions/dry-run`, `organizer`): encola `tournament_dry_run` con bots de ejemplo. Sin pantalla en la web.
-7. **Cancelar** (`POST …/actions/cancel`, `organizer` + dueño del torneo —`created_by`— o staff, `moderator`+; #288). Ver [abajo](#cancelación).
+6. **Dry-run** (`POST …/actions/dry-run`, `organizer` y quien creó el torneo o staff, #291): encola `tournament_dry_run` con bots de ejemplo. Sin pantalla en la web.
+7. **Cancelar** (`POST …/actions/cancel`, `organizer` + dueño del torneo —`created_by`— o staff, `moderator`+; #289, mismo predicado `canManageTournament` de #291). Ver [abajo](#cancelación).
 
 ### Cancelación
 
@@ -158,9 +158,10 @@ Es un hallazgo nuevo de esta consolidación: [TD-029](../roadmap/technical-debt.
 | `GET /tournaments/{id}` | anónimo (extensión) |
 | `GET /tournaments/{id}/battles` | anónimo (extensión) |
 | `POST /tournaments/{id}/entries` | `user` |
-| `POST /tournaments/{id}/actions/close-entries` | `organizer` |
-| `POST /tournaments/{id}/actions/dry-run` | `organizer` |
-| `POST /tournaments/{id}/actions/cancel` | `organizer` + dueño o staff (#288) |
+| `POST /tournaments/{id}/actions/close-entries` | `organizer` + dueño del torneo o staff (#291) |
+| `POST /tournaments/{id}/actions/dry-run` | `organizer` + dueño del torneo o staff (#291) |
+| `POST /tournaments/{id}/actions/cancel` | `organizer` + dueño del torneo o staff (#289, `canManageTournament`) |
+| `POST /tournaments/{id}/entries/{entryId}/actions/exclude` | `user`: dueño del bot, o `organizer` + dueño del torneo o staff (#291) |
 | `GET /tournaments/{id}/matches` | anónimo |
 | `GET /tournaments/{id}/team-standings` | anónimo |
 | `GET /standings` | anónimo |
@@ -175,8 +176,8 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 - **Pool de mapas**: la web no lo configura (ni presupuesto, fechas ni series). Siempre se juega en `mvp-arena-01` ([TD-015](../roadmap/technical-debt.md#td-015)).
 - **Versiones congeladas (FROZEN-REUSE)**: tras un torneo, la versión queda `frozen`: **inmutable** (código, hash y loadout fijos para siempre, trigger `bot_version_immutable`), no «usada». La misma versión exacta puede inscribirse en otros torneos, sin clonarla, republicarla ni descongelarla, siempre que siga siendo elegible (`assertTournamentEligible` en `services/version-eligibility.ts`). Las inscripciones de los torneos A y B apuntan a la misma fila de `bot_versions`.
 - **Botones sin rol**: «Cerrar inscripciones» se muestra a cualquiera y sin rol responde `403 Requiere rol organizer`.
-- **Cierre concurrente**: `close-entries` bloquea la fila del torneo desde #288; un segundo cierre simultáneo espera y recibe `409 illegal_transition` (`tournament-cancel.test.ts`, TC-R4). El resto de [TD-013](../roadmap/technical-debt.md#td-013) no cambia.
-- **Propiedad del cierre**: `close-entries` no comprueba quién creó el torneo (cualquier `organizer` cierra cualquiera); la cancelación sí.
+- **Cierre concurrente**: `close-entries` bloquea la fila del torneo desde #289; un segundo cierre simultáneo espera y recibe `409 illegal_transition` (`tournament-cancel.test.ts`, TC-R4). El resto de [TD-013](../roadmap/technical-debt.md#td-013) no cambia.
+- **Propiedad del torneo (#291)**: gestionar un torneo (cerrar inscripciones, dry-run, excluir inscripciones ajenas no elegibles) exige ser quien lo creó (`created_by`) o staff (moderator+), además del rol del contrato. La regla única es `canManageTournament` (`services/tournament-access.ts`); `GET /tournaments/{id}` la expone como `viewerCanManage` (`Cache-Control: private, no-store`) y la web sólo muestra «Cerrar inscripciones» si es `true`. Un torneo sin `created_by` (creador borrado) sólo lo gestiona el staff. Inscribir o retirar el propio bot sigue siendo del dueño del bot.
 - **Fallos de infraestructura**: una batalla `failed (infrastructure)` deja su serie sin cerrar. Ver [TD-015](../roadmap/technical-debt.md#td-015).
 
 ## Estado actual

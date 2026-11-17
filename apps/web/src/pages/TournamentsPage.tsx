@@ -17,7 +17,7 @@ export interface Tournament {
   entryCount?: number;
   /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
   broadcast?: boolean;
-  /** #288 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
+  /** #291 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
   viewerCanManage?: boolean;
 }
 

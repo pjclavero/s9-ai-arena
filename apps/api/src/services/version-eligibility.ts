@@ -33,7 +33,9 @@
 import type { Knex } from "knex";
 import { createHash } from "node:crypto";
 import { ApiError } from "../errors.js";
+import { ROLE_RANK } from "../openapi.js";
 import { getCatalog } from "./catalog.js";
+import { canManageTournament } from "./tournament-access.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import { BUDGET_CREDITS_MVP } from "../../../../packages/game-rules/index.js";
@@ -344,10 +346,14 @@ export function isCompetitionState(state: unknown): boolean {
  *    `published` ni `frozen` (borrador, en validación, suspendida, retirada…);
  *  - 409 `bot_version_not_eligible` si su loadout histórico no pasa hoy el validador.
  * Sólo LEE: no cambia el estado (una `frozen` sigue `frozen`) ni crea versiones.
+ * OLA 2 (EQUIPMENT_PRIVATE) · `viewer` decide cuánto detalle del loadout lleva el 409: la
+ * ruta de inscripción ya exige ser el dueño, así que pasa `{ userId, staff: false }` y el
+ * dueño ve el motivo real; sin `viewer`, sólo el veredicto genérico (falla hacia menos).
  */
 export async function assertTournamentEligible(
   db: Knex,
   version: Record<string, unknown> | undefined | null,
+  viewer?: EligibilityViewer,
 ): Promise<void> {
   if (!version || !isCompetitionState(version.state)) {
     throw new ApiError(
@@ -359,14 +365,13 @@ export async function assertTournamentEligible(
       version ? { currentState: String(version.state) } : undefined,
     );
   }
-  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }]);
+  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }], viewer);
 }
 
 /**
  * H9 · Campo aditivo `battleEligibility` para las filas de versión que devuelve la API.
  * Sólo para versiones publicadas/congeladas (las demás ya no son seleccionables por
- * estado). El llamador ya comprobó que quien pregunta puede ver el bot — y por tanto su
- * loadout (listBotLoadouts) —, así que el motivo no añade información privada.
+ * estado). `opts.detailed` lo fija el llamador (dueño/staff); sin él sólo sale el veredicto.
  */
 export async function battleEligibilityOf(
   db: Knex,
@@ -396,24 +401,57 @@ export async function battleEligibilityOf(
   };
 }
 
+/** Quién pregunta, para decidir cuánto detalle del loadout puede ver en un 409. */
+export interface EligibilityViewer {
+  userId: string | null;
+  /** Staff (moderador o superior): ve el detalle de cualquier bot. */
+  staff: boolean;
+}
+
+/** Mensaje y forma que ve quien NO es dueño ni staff del bot: veredicto, nunca el loadout. */
+const GENERIC_NOT_ELIGIBLE = "la versión no es elegible";
+
 /**
  * Autoridad en servidor para competición NUEVA (H7/H8). Llamar DESPUÉS de las
- * comprobaciones de visibilidad y de estado publicado: quien llega aquí ya puede ver
- * el bot (y su loadout), así que el motivo no revela nada que no pudiera leer.
- * 409 `bot_version_not_eligible` con la primera versión no elegible y la lista.
+ * comprobaciones de visibilidad y de estado publicado. OJO (OLA 2, EQUIPMENT_PRIVATE):
+ * poder VER un bot (p. ej. público) no da derecho a su loadout, que sólo lee su dueño y el
+ * staff; por eso el motivo detallado (módulos, ranuras, munición) sólo se devuelve a ellos.
+ * Sin `viewer` o para un bot ajeno: 409 `bot_version_not_eligible` con motivo genérico y
+ * `violations: []`. Primer elemento no elegible y la lista, como siempre.
  */
-export async function assertVersionsEligible(db: Knex, refs: VersionRef[]): Promise<void> {
+export async function assertVersionsEligible(db: Knex, refs: VersionRef[], viewer?: EligibilityViewer): Promise<void> {
   const res = await evaluateVersionsEligibility(db, refs);
   const bad = refs.map((r) => ({ ...r, e: eligibilityOf(res, r) })).filter((x) => !x.e.eligible);
   if (bad.length === 0) return;
+  const owners = new Map<string, string | null>();
+  if (viewer && !viewer.staff && viewer.userId) {
+    const rows = await db("bots")
+      .whereIn("id", [...new Set(bad.map((b) => b.botId))])
+      .select("id", "owner_id");
+    for (const r of rows as { id: string; owner_id: string }[]) owners.set(String(r.id), String(r.owner_id));
+  }
+  const detailFor = (botId: string) =>
+    !!viewer && (viewer.staff || (viewer.userId !== null && owners.get(botId) === viewer.userId));
+  const notEligible = bad.map((b) =>
+    detailFor(b.botId)
+      ? { botId: b.botId, version: b.version, ...eligibilityToJson(b.e!) }
+      : {
+          botId: b.botId,
+          version: b.version,
+          eligible: false,
+          ...(b.e!.reason ? { reason: b.e!.reason } : {}),
+          category: b.e!.category,
+          violations: [],
+        },
+  );
   const first = bad[0];
   throw new ApiError(
     409,
     "bot_version_not_eligible",
-    `${first.botId} v${first.version}: ${first.e!.message} ${first.e!.suggestedAction}`,
-    {
-      notEligible: bad.map((b) => ({ botId: b.botId, version: b.version, ...eligibilityToJson(b.e!) })),
-    },
+    detailFor(first.botId)
+      ? `${first.botId} v${first.version}: ${first.e!.message} ${first.e!.suggestedAction}`
+      : `${first.botId} v${first.version}: ${GENERIC_NOT_ELIGIBLE}.`,
+    { notEligible },
   );
 }
 
@@ -522,7 +560,8 @@ export async function replaceIneligibleEntry(
 ): Promise<Record<string, unknown> | null> {
   const botId = String(version.bot_id);
   const n = Number(version.version);
-  await assertVersionsEligible(db, [{ botId, version: n }]);
+  // Sólo el dueño inscribe su bot (la ruta lo exige): ve el detalle de su propio loadout.
+  await assertVersionsEligible(db, [{ botId, version: n }], { userId: actorId, staff: false });
   const entry = await db("entries").where({ tournament_id: tournament.id, bot_id: botId }).first();
   if (!entry || entry.frozen || Number(entry.version) === n) return null;
   const prev = eligibilityOf(await evaluateVersionsEligibility(db, [{ botId, version: Number(entry.version) }]), {
@@ -600,7 +639,8 @@ export async function entryEligibilityGate(db: Knex, entries: Record<string, unk
  */
 export async function excludeTournamentEntry(
   db: Knex,
-  actor: { userId: string; isOrganizer: boolean },
+  // #291 · `rank` (no un booleano de rol): la vía de organizador exige además gestionar ESTE torneo.
+  actor: { userId: string; rank: number },
   tournamentId: string,
   entryId: string,
   reason: unknown,
@@ -622,8 +662,14 @@ export async function excludeTournamentEntry(
   if (!t || !entry) throw new ApiError(404, "not_found", "No existe o no es visible para el solicitante");
   const bot = await db("bots").where({ id: entry.bot_id }).first();
   const byOwner = bot?.owner_id === actor.userId;
-  if (!byOwner && !actor.isOrganizer) {
-    throw new ApiError(403, "forbidden", "Sólo el dueño del bot o un organizador pueden excluir la inscripción");
+  // #291 · vía de organizador = rol organizer (suelo de main) Y dueño del torneo o staff.
+  const byManager = actor.rank >= ROLE_RANK.organizer && canManageTournament(actor, t);
+  if (!byOwner && !byManager) {
+    throw new ApiError(
+      403,
+      "forbidden",
+      "Sólo el dueño del bot, o quien organiza el torneo (o el staff), pueden excluir la inscripción",
+    );
   }
   if (t.state !== "open" || entry.frozen) {
     throw new ApiError(409, "entries_closed", "Sólo se excluyen inscripciones pendientes de un torneo abierto");

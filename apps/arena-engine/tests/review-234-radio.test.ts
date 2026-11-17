@@ -137,6 +137,7 @@ function run(o: RunOpts) {
     b.attachBot(p.id, s);
   }
   const ofor = new Map<string, string[]>();
+  const simParts: string[] = [];
   for (let i = 0; i < (o.steps ?? 420); i++) {
     if (o.kill) {
       // Receptor rival muerto (b1), emisor muerto (r1) y otro receptor (b2), con respawn.
@@ -150,6 +151,12 @@ function run(o: RunOpts) {
       }
     }
     b.step();
+    // OLA2-MD · el hash v2 INCLUYE la radio (cola, contadores, comandos en vuelo): la
+    // no-interferencia se afirma sobre los componentes que no son radio.
+    if (b.tick % 30 === 1) {
+      const c = b.stateHashBreakdown().components;
+      simParts.push([c.tick, c.rng, c.solver, c.projectiles, c.deployables, c.destructibles, c.mode].join(":"));
+    }
     if (o.observeFor) {
       for (const id of ids("b", o.n)) {
         const list = ofor.get(id) ?? [];
@@ -161,9 +168,10 @@ function run(o: RunOpts) {
   }
   const hashes = [...b.stateHashes];
   const publicEvents = JSON.stringify(b.publicEvents);
+  const snaps = JSON.stringify(b.snapshots);
   const teams = Object.fromEntries(b.getVehicles().map((v) => [v.id, v.team]));
   b.free();
-  return { bots, hashes, publicEvents, ofor, teams };
+  return { bots, hashes, publicEvents, ofor, teams, simParts, snaps };
 }
 
 function blueView(r: ReturnType<typeof run>, n: number) {
@@ -180,9 +188,11 @@ describe("REVIEW #234 · no-interferencia: lo que ve azul no depende de si rojo 
       it(`${n}v${n} · ${variant.name}`, () => {
         const loud = run({ n, redTalks: true, kill: variant.kill, latency: variant.latency, observeFor: true });
         const quiet = run({ n, redTalks: false, kill: variant.kill, latency: variant.latency, observeFor: true });
-        // La radio no altera la simulación (hash) ni los eventos públicos.
-        expect(loud.hashes.length).toBeGreaterThan(5);
-        expect(loud.hashes).toEqual(quiet.hashes);
+        // La radio no altera la simulación (física, combate, RNG, modo, snapshots) ni los
+        // eventos públicos. OLA2-MD: el hash completo SÍ cambia (la cola de radio es estado).
+        expect(loud.simParts.length).toBeGreaterThan(5);
+        expect(loud.simParts).toEqual(quiet.simParts);
+        expect(loud.snaps).toBe(quiet.snaps);
         expect(loud.publicEvents).toBe(quiet.publicEvents);
         // El respawn no cambia el equipo.
         for (const [id, t] of Object.entries(loud.teams)) expect(t).toBe(teamOf(id));

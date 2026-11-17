@@ -156,8 +156,9 @@ ruido no era `npm audit`, era leer su fallo como un veredicto de seguridad.
 ## 8. Calibración
 
 `infrastructure/scripts/scan-status-mutations.mjs` estropea los ficheros de
-producción y exige que las suites se pongan rojas. Ocho mutaciones, las cinco
-primeras son exactamente los fallos que este ADR impide:
+producción y exige que las suites se pongan rojas. Treinta mutaciones (M1-M12 de origen; M13-M30 añadidas en el PR #296 tras la
+revisión independiente). Las cinco primeras son exactamente los fallos que
+este ADR impide:
 
 | # | Mutación |
 |---|---|
@@ -169,7 +170,70 @@ primeras son exactamente los fallos que este ADR impide:
 | M6 | un escáner que no declara nada deja de contar |
 | M7 | un informe de Trivy sin objetivos escaneados dado por limpio |
 | M8 | el semáforo volviendo a deducir el veredicto del código de salida del job |
+| M9 | una excepción de `npm audit` que exime aunque el paquete haya llegado a producción |
+| M10 | una excepción de `npm audit` caducada que sigue eximiendo |
+| M11 | una vulnerabilidad dada por cubierta con que UN aviso de su cadena esté exceptuado |
+| M12 | un fichero de excepciones mal formado leído como válido |
+| M13 | la excepción deja de estar atada al GHSA (todo aviso del paquete exento) |
+| M14 | `scan-gate` deja de emitir el `::warning::` de la excepción aplicada |
+| M15 | fichero de excepciones presente pero ilegible leído como «sin excepciones» |
+| M16 | reloj congelado: la excepción nunca caduca |
+| M17 | `scan-gate` no pasa el contexto de excepciones al clasificador |
+| M18 | lockfile leído siempre como `{}` |
+| M19 | paquete sin nodos en el informe dado por sólo-dev |
+| M20 | vulnerabilidad sin ningún aviso alto en su cadena dada por cubierta |
+| M21 | nombre de la cadena `via` sin entrada ignorado en vez de bloquear |
+| M22 | el día de caducidad deja de eximir |
+| M23 | fichero de excepciones validado sólo cuando hay hallazgos |
+| M24 | fichero de excepciones `null` leído como «ninguna» |
+| M25 | fechas imposibles (`2026-99-99`) aceptadas |
+| M26 | horizonte de 31 días sin acotar |
+| M27 | aviso `via` sin severidad conocida descartado como «no relevante» |
+| M28 | `metadata` cuenta más altas de las que el informe lista y se da por bueno |
+| M29 | GHSA extraído de cualquier parte de la URL (principio sin anclar) |
+| M30 | GHSA extraído con cola en la URL (final sin anclar) |
 
 El harness corre en la CI dentro de un job **obligatorio** (`image-provenance`,
 junto a la calibración del contrato de despliegue) y arranca con un control
 positivo: si la suite no está verde **antes** de mutar, no afirma nada.
+
+## 9. Excepciones declaradas de `npm audit` (2026-11-17)
+
+Motivo: el 17-11-2026 GitHub revisó GHSA-fc5q-39xc-vjpf (picomatch, ReDoS,
+`<= 4.0.7`, **sin versión corregida**) y el `scan` de `main` pasó a rojo sin
+cambio alguno en el repositorio. Ninguna actualización de dependencias puede
+arreglarlo. Las salidas fáciles —bajar el umbral, auditar sólo producción
+(`--omit=dev`) o quitar `npm audit` del gate— silencian categorías enteras,
+también lo que sí tiene arreglo, y quedan descartadas.
+
+Mecanismo: `infrastructure/npm-audit-excepciones.json`, leído por
+`scan-gate.mjs` y aplicado por `aplicarExcepcionesNpmAudit` en
+`packages/readiness/scan-status.mjs`. Cada entrada nombra un **aviso (GHSA) y
+un paquete**, un `motivo`, `alcance: "dev"` (el único admitido) y una fecha de
+`caduca` y una fecha de `alta`, ambas fechas REALES (`2026-99-99` se rechaza);
+el validador exige `caduca` como máximo 31 días después de `alta`, de modo que
+un fichero con horizonte mayor es `SCAN_ERROR`. Una excepción sólo exime si:
+
+1. el fichero es válido (si no, `SCAN_ERROR`: nunca «sin excepciones»);
+2. no ha caducado (la caducidad es **inclusiva**: con `caduca: 2026-12-17` el
+   17/12 todavía exime y el scan vuelve a rojo el 18/12; la fecha de «hoy» es UTC);
+3. **todos** los nodos del paquete en `package-lock.json` son `dev: true` (si
+   entra en producción, deja de aplicarse sola);
+4. cubre **todos** los avisos `>= umbral` que alcanzan a cada vulnerabilidad
+   por su cadena `via` (un aviso nuevo vuelve a contar).
+
+Con excepciones aplicadas el estado es `CLEAN`, pero el detalle las nombra
+(GHSA, paquete y caducidad) y `scan-gate.mjs` emite un `::warning::` en el
+job: una excepción nunca es silenciosa. Una excepción que ya no se usa se
+anuncia para retirarla.
+
+Fail-closed adicional (misma ronda):
+
+- el fichero de excepciones se valida **siempre**, también con la auditoría
+  limpia; un fichero con `null` o roto es `SCAN_ERROR` (sólo «fichero ausente»
+  significa «ninguna excepción»);
+- un `npm audit` malformado no puede dar `CLEAN`: un aviso `via` sin severidad
+  conocida, o un `metadata` que cuenta más vulnerabilidades altas de las que el
+  informe lista, es `SCAN_ERROR`;
+- el GHSA se extrae sólo de URLs `https://github.com/advisories/GHSA-…`
+  completas y ancladas.
