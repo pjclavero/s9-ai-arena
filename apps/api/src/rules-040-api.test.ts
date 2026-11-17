@@ -189,7 +189,12 @@ describe("POST /battles · CTF", () => {
     });
     expect(r.status, JSON.stringify(r.body)).toBe(202);
     expect(r.body.rules.respawnLabel).toBe("0 reapariciones por bot (1 vida en total)");
-    expect(r.body.rules.engine.respawn).toEqual({ enabled: true, delayTicks: 150, maxRespawns: 0 });
+    expect(r.body.rules.engine.respawn).toEqual({
+      enabled: true,
+      delayTicks: 150,
+      maxRespawns: 0,
+      rearmPolicy: "all_alive_participants",
+    });
   });
 });
 
@@ -224,7 +229,7 @@ describe("POST /tournaments · copia inmutable de reglas", () => {
     expect(r.body.rules.engine.timeoutTiebreak).toEqual(["score", "kills"]);
     const row = await h.db("tournaments").where({ id: r.body.id }).first();
     expect(row.rules.engineRuleset.rulesetId).toBe("team_deathmatch@1");
-    expect(row.rules.engineVersion).toBe("0.4.0");
+    expect(row.rules.engineVersion).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     // Retardo anti-coaching del directo en torneos (escalado EQ5); no toca la simulación.
     expect(row.rules.engineRuleset.spectator).toEqual({ delaySeconds: 30 });
   });

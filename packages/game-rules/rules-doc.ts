@@ -24,6 +24,7 @@ import {
   tiebreakFamilyOf,
   type RulesPreset,
 } from "./battle-rules.js";
+import { DEFAULT_RESPAWN_REARM_POLICY } from "./index.js";
 
 /** Versión del documento JSON (sube si cambia su forma). */
 export const RULES_DOC_SCHEMA = 1;
@@ -64,7 +65,7 @@ export function rulesDocJson() {
     schema: RULES_DOC_SCHEMA,
     $comment:
       "GENERADO desde packages/game-rules/battle-rules.ts (npx tsx scripts/generate-rules-doc.ts). No editar a mano.",
-    engineVersion: "0.4.0",
+    engineVersion: "0.5.0",
     respawn: {
       definition:
         "maxRespawns es el número de veces que un bot puede REAPARECER después de morir. Vidas totales = maxRespawns + 1.",
@@ -73,6 +74,17 @@ export function rulesDocJson() {
         none: "sin reaparición: 1 vida",
         limited: `limitada: maxRespawns entre ${RULES_LIMITS.maxRespawns.min} y ${RULES_LIMITS.maxRespawns.max}`,
         unlimited: "ilimitada",
+      },
+      // OLA2-G3 · RESPAWN_REARM_POLICY (regla fija del respawn, no la elige el jugador).
+      rearm: {
+        policy: DEFAULT_RESPAWN_REARM_POLICY,
+        rules: [
+          "la munición (rondas de cañón y ametralladora, cargas de minas) es de cada vehículo y no hay reabastecimiento en la arena",
+          "con reaparición (limitada o ilimitada): cada vez que un vehículo reaparece, él y TODOS los vehículos vivos de la batalla, de cualquier bando, vuelven a su munición máxima",
+          "el rearme rellena hasta el máximo, nunca por encima: si reaparecen varios en el mismo instante se rearma una sola vez",
+          "el rearme no repara módulos, no recarga energía ni reinicia la cadencia de disparo",
+          "sin reaparición la munición es finita: si se agota, la batalla sigue hasta el tiempo máximo y se resuelve por el desempate del modo",
+        ],
       },
     },
     tiebreaks: Object.values(TIEBREAK_RULES).map((t) => ({ ...t, criteria: [...t.criteria], steps: [...t.steps] })),
@@ -134,7 +146,7 @@ export function rulesDocMarkdown(): string {
   out.push("# Reglas de batalla, modos y desempates");
   out.push("");
   out.push(
-    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0**. Datos estructurados: [`rules.json`](rules.json).",
+    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.5.0**. Datos estructurados: [`rules.json`](rules.json).",
   );
   out.push("");
   out.push("## Reapariciones (`maxRespawns`)");
@@ -147,6 +159,10 @@ export function rulesDocMarkdown(): string {
     out.push(`| ${r.maxRespawns} | ${r.lives}${r.maxRespawns > 0 ? ` (vida inicial + ${r.maxRespawns})` : ""} |`);
   out.push("");
   out.push(li([d.respawn.modes.none, d.respawn.modes.limited, d.respawn.modes.unlimited]));
+  out.push("");
+  out.push(`### Munición al reaparecer (\`rearmPolicy = ${d.respawn.rearm.policy}\`)`);
+  out.push("");
+  out.push(li(d.respawn.rearm.rules));
   out.push("");
   out.push("## Desempates");
   out.push("");

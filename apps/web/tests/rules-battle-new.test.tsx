@@ -230,6 +230,55 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     expect(posts).toHaveLength(0);
   });
 
+  it("EQUIPMENT_PRIVATE: un bot ajeno se pinta sin número (cumple/excede) y el bando mixto sin total", async () => {
+    mockApi(() => ({
+      ok: false,
+      errors: [],
+      rules: null,
+      composition: {
+        ok: false,
+        limits: { botCredits: 900, teamCredits: 1500, botMassKg: null, teamMassKg: null },
+        teams: [
+          {
+            team: "red",
+            figuresHidden: true,
+            ok: false,
+            bots: [
+              {
+                botId: "bot_r",
+                label: "Red v1",
+                team: "red",
+                costCredits: 890,
+                massKg: 2890,
+                ok: true,
+                figuresHidden: false,
+              },
+              { botId: "bot_x", label: "Ajeno v1", team: "red", ok: false, figuresHidden: true },
+            ],
+          },
+        ],
+        violations: [
+          {
+            code: "bot_credits_exceeded",
+            team: "red",
+            botId: "bot_x",
+            limit: 900,
+            message: "Ajeno v1 supera el presupuesto máximo por bot (límite 900 cr)",
+          },
+        ],
+      },
+    }));
+    render(<BattleNewPage me={ME} />);
+    await pickBots();
+    const report = await screen.findByTestId("rules-check");
+    const lines = within(report)
+      .getAllByTestId("rules-check-bot")
+      .map((l) => l.textContent);
+    expect(lines).toEqual(["✓ Red v1 — 890/900 cr", "✗ Ajeno v1 — excede los límites"]);
+    expect(within(report).queryByText(/Total equipo/)).toBeNull();
+    expect(within(report).getByTestId("rules-check-team-hidden")).toBeTruthy();
+  });
+
   it("errores de reglas del servidor aparecen en la checklist", async () => {
     mockApi(() => ({
       ok: false,

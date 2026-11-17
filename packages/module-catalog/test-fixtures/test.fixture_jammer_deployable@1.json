@@ -1,0 +1,70 @@
+{
+  "id": "test.fixture_jammer_deployable",
+  "version": 1,
+  "name": "Fixture: emisor desplegable (radio+radar, timer)",
+  "actions": [
+    {
+      "kind": "deploy",
+      "cooldownTicks": 120,
+      "cost": {
+        "energyEU": 8,
+        "charges": 1
+      },
+      "deployable": {
+        "lifetimeTicks": 600,
+        "armDelayTicks": 15,
+        "maxActivePerOwner": 1,
+        "trigger": {
+          "kind": "timer",
+          "afterTicks": 1
+        },
+        "consumeOnTrigger": false,
+        "effects": [
+          {
+            "primitive": "interference",
+            "strength": 1,
+            "radiusM": 20,
+            "durationTicks": 300,
+            "falloff": "step",
+            "targets": {
+              "relations": [
+                "enemy"
+              ],
+              "kinds": [
+                "vehicle"
+              ]
+            },
+            "stacking": "replace",
+            "profile": {
+              "channels": {
+                "radio": {
+                  "strength": 1,
+                  "mode": "block"
+                },
+                "radar": {
+                  "strength": 0.6,
+                  "mode": "noise",
+                  "noise": 3
+                }
+              }
+            }
+          }
+        ],
+        "visibility": {
+          "allies": "revealed",
+          "enemies": "hidden",
+          "spectator": "detected",
+          "signature": {
+            "radar": 0.3
+          }
+        },
+        "placement": {
+          "mode": "at_self"
+        },
+        "ownership": {
+          "friendlyTrigger": "never"
+        }
+      }
+    }
+  ]
+}

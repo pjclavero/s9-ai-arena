@@ -1,0 +1,65 @@
+{
+  "id": "test.fixture_remote_charge",
+  "version": 1,
+  "name": "Fixture: carga remota (deploy + trigger)",
+  "actions": [
+    {
+      "kind": "deploy",
+      "cooldownTicks": 60,
+      "cost": {
+        "energyEU": 4,
+        "charges": 1
+      },
+      "deployable": {
+        "lifetimeTicks": 3000,
+        "armDelayTicks": 0,
+        "maxActivePerOwner": 2,
+        "trigger": {
+          "kind": "remote",
+          "requiresOwnerAlive": true
+        },
+        "consumeOnTrigger": true,
+        "effects": [
+          {
+            "primitive": "explosion",
+            "strength": 40,
+            "radiusM": 4,
+            "falloff": "linear",
+            "damageType": "explosive",
+            "targets": {
+              "relations": [
+                "enemy",
+                "ally"
+              ],
+              "kinds": [
+                "vehicle",
+                "deployable"
+              ]
+            },
+            "stacking": "none"
+          }
+        ],
+        "visibility": {
+          "allies": "revealed",
+          "enemies": "hidden",
+          "spectator": "hidden",
+          "signature": {}
+        },
+        "placement": {
+          "mode": "offset",
+          "maxOffsetM": 3
+        },
+        "ownership": {
+          "friendlyTrigger": "always"
+        }
+      }
+    },
+    {
+      "kind": "trigger",
+      "cooldownTicks": 0,
+      "cost": {
+        "energyEU": 0
+      }
+    }
+  ]
+}

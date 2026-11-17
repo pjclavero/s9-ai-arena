@@ -105,6 +105,11 @@ M = [
     ("P2 LiveScreen ignora el feed del director", BP,
      "    if (!scene || !feed) return;", "    if (!scene || !feed || true) return;",
      PG, "DELAYED_TOURNAMENT_END"),
+    # 1a (ola2-into-main) · la conexión del director es la ÚNICA de /broadcast: debe pedir la
+    # audiencia `broadcast` firmada de la OLA 2 (MA). Sin ella el ticket sale `public_live`.
+    ("P3 el director no pide la audiencia broadcast (OLA 2)", BP,
+     "spectate-ticket?audience=broadcast`", "spectate-ticket`",
+     PG, "DELAYED_TOURNAMENT_END"),
     # ── Retardo 0 ────────────────────────────────────────────────────────────────────
     ("Z1 con retardo 0 el feed no cuenta (nada sale en directo)", DIR, PLAYING,
      '      case "playing":\n        return feed.delayMs ? "running" : "hidden";',
@@ -129,7 +134,8 @@ M = [
      "    const p = Number.isFinite(fa) && Date.now() >= fa + (i.feed(b.id)?.delayMs ?? 0) - 5000 ? delayedEndOf(real) : projectBattleStatus(real, i.feed(b.id), isEnded, atStart, i.playedEver?.has(b.id) ?? false);",
      UT, "DELAYED_BATTLE_END"),
     ("X3 el gateway pone en init.finished el fin REAL (sin esperar la cola)", GW,
-     "      finished = feed.dueResult !== null;", "      finished = feed.battle.isFinished();",
+     # OLA 2 · reanclado: el estado retrasado es por audiencia (`af`); MISMA mutación.
+     "      finished = af.dueResult !== null;", "      finished = feed.battle.isFinished();",
      E2E, "conectar ENTRE el fin real"),
     ("X3c el init con result (aunque finished=false) cierra la batalla", TL,
      '        if (msg?.finished) advance("ended");', '        if (msg?.finished || msg?.result) advance("ended");',

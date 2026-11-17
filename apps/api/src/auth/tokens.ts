@@ -125,9 +125,20 @@ export function verifyAccessToken(token: string): AccessClaims | null {
   }
 }
 
+/**
+ * OLA 2 · MA · Audiencia del canal de espectador, FIRMADA en el ticket (contrato §4,
+ * `SpectateTicketClaimsV2.aud`). El claim se llama `view` porque `aud` es el claim
+ * registrado de JWT y ya lleva `AUD_SPECTATE`. El gateway separa mapper de ids,
+ * historial y último estado por audiencia; un ticket sin `view` se rechaza.
+ */
+export type SpectatorView = "public_live" | "broadcast" | "staff";
+export const SPECTATOR_VIEWS: readonly SpectatorView[] = ["public_live", "broadcast", "staff"];
+
 export interface SpectateTicketInput {
   battleId: string;
   jti: string;
+  /** Audiencia. Por defecto: `staff` si `debug`, si no `public_live`. */
+  view?: SpectatorView;
   /** Capas de depuración: solo si la API lo firma según el rol (T8.2). */
   debug?: boolean;
   /**
@@ -142,6 +153,8 @@ export interface SpectateTicketInput {
 export interface VerifiedSpectateTicket {
   battleId: string;
   jti?: string;
+  /** Audiencia firmada (siempre presente en un ticket válido). */
+  view: SpectatorView;
   debug?: boolean;
   /** Carril J · ticket emitido a un visitante anónimo (ver SpectateTicketInput.anon). */
   anon?: boolean;
@@ -150,7 +163,12 @@ export interface VerifiedSpectateTicket {
 
 export function signSpectateTicket(input: SpectateTicketInput, ttlS: number): string {
   return jwt.sign(
-    { battleId: input.battleId, ...(input.debug ? { debug: true } : {}), ...(input.anon ? { anon: true } : {}) },
+    {
+      battleId: input.battleId,
+      view: input.view ?? (input.debug ? "staff" : "public_live"),
+      ...(input.debug ? { debug: true } : {}),
+      ...(input.anon ? { anon: true } : {}),
+    },
     spectateTicketSecret(),
     {
       algorithm: TOKEN_ALG,
@@ -170,7 +188,18 @@ export function verifySpectateTicket(token: string): VerifiedSpectateTicket | nu
       audience: AUD_SPECTATE,
     }) as jwt.JwtPayload;
     if (typeof p.battleId !== "string" || typeof p.exp !== "number") return null;
-    return { battleId: p.battleId, jti: p.jti, debug: p.debug === true, anon: p.anon === true, exp: p.exp };
+    // Sin audiencia firmada (o con una desconocida) el ticket no vale: fail-closed.
+    if (!SPECTATOR_VIEWS.includes(p.view as SpectatorView)) return null;
+    // `staff` exige el flag de depuración firmado junto a él (la API sólo lo emite a staff).
+    if (p.view === "staff" && p.debug !== true) return null;
+    return {
+      battleId: p.battleId,
+      jti: p.jti,
+      view: p.view as SpectatorView,
+      debug: p.debug === true,
+      anon: p.anon === true,
+      exp: p.exp,
+    };
   } catch {
     return null;
   }

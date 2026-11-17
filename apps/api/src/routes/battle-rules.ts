@@ -7,8 +7,10 @@
  * para la UI: POST /battles lo recalcula todo y es la única autoridad.
  *
  * Privacidad: sólo se informa de bots que el solicitante PUEDE meter en una batalla
- * (un bot privado ajeno da 404, igual que en la creación). Su coste y masa ya los
- * revela la cabecera del replay (spec completo de cada vehículo) a quien lee la batalla.
+ * (un bot privado ajeno da 404, igual que en la creación). OLA 2 (EQUIPMENT_PRIVATE,
+ * D-B1=R2): masa y coste exactos sólo de los bots PROPIOS (y, para el staff, de todos);
+ * de los ajenos sólo cumple/excede y el límite; un total por bando con algún bot ajeno
+ * va sin cifras.
  */
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
@@ -16,7 +18,7 @@ import { defineOperation } from "../registry.js";
 import { ApiError, badRequest } from "../errors.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { assertTeamComposition } from "./battles.js";
-import { buildBattleRules, rulesToJson } from "../services/battle-rules.js";
+import { buildBattleRules, compositionViewer, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import { MAX_BATTLE_PARTICIPANTS } from "../../../../packages/game-rules/battle-rules.js";
 
@@ -44,7 +46,7 @@ export function battleRulesRoutes(db: Db): Router {
       const built = await buildBattleRules(
         db,
         { mode, rulesetId, rules, participants },
-        { allowCompositionFailure: true },
+        { allowCompositionFailure: true, viewer: compositionViewer(req.auth) },
       );
       res.setHeader("Cache-Control", "private, no-store");
       res.json({

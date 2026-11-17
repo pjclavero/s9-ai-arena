@@ -173,7 +173,7 @@ describe("T5.1 · handshake", () => {
     });
     const msg = await q.next();
     expect(msg.type).toBe("WELCOME");
-    expect(msg.payload.selfId).toBe("veh_1");
+    expect(msg.payload.selfId).toBe("v_1"); // OLA 2 · id público del canal del bot
     expect(msg.payload.timing.decisionDeadlineMs).toBe(50);
     expect(msg.payload.timing.decisionEveryNTicks).toBe(3);
     expect(msg.payload.versions.protocol).toBe("arena/1");

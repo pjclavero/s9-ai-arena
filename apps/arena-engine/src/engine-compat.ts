@@ -1,59 +1,31 @@
 /**
- * ADR-022 · ¿Puede ESTE motor re-simular un replay grabado con otra versión?
+ * ¿Puede ESTE motor re-simular un replay?
  *
- * Regla: un replay se verifica con este motor si su versión es la actual, o si está en
- * `engine.reproduces` (engine-deps.json) Y el ruleset de su cabecera no usa ninguna regla
- * nueva de 0.4.0. Esas versiones antiguas no conocían las reglas nuevas, así que un replay
- * suyo que las «declarase» sería un replay fabricado o corrupto: no se re-simula.
- *
- * Por qué es seguro para 0.3.0: el motor 0.4.0 SOLO cambia la simulación cuando el
- * ruleset declara `respawn.maxRespawns`, `timeoutTiebreak` u `overtime` (todos los
- * caminos nuevos están detrás de esos campos). Lo prueban replays REALES grabados con el
- * motor de producción (main a1a6c4e, 0.3.0) que se re-simulan idénticos tick a tick
- * (apps/replay-service/tests/engine-0.3.0-compat.test.ts) y los hashes fijados con el
- * motor de 9aaad79 (apps/arena-engine/tests/rules-respawn-tiebreak.test.ts).
+ * OLA2-MD · verificador de VERSIÓN ÚNICA (contrato engine-v2 §13, BACKWARD_COMPATIBILITY_REQUIRED=NO).
+ * Desaparece `engine.reproduces` (ADR-022): con el replay v2 (hash por componentes, flujos
+ * de RNG con nombre) ningún replay de 0.3.0/0.4.0 (formatVersion 1) se puede reproducir, así
+ * que el único criterio es `headerIncompatibility()` de replay.ts: mismo formato, motor,
+ * física (paquete y wasm), protocolo, runtime, catálogo y esquemas de hash/RNG/ids.
  */
+import { headerIncompatibility, type ReplayHeader } from "./replay.js";
 import deps from "./engine-deps.json" with { type: "json" };
 
-/** Reglas que sólo existen desde 0.4.0. */
-export function rulesetUsesEngine040Rules(ruleset: unknown): string[] {
-  if (!ruleset || typeof ruleset !== "object") return [];
-  const r = ruleset as Record<string, any>;
-  const used: string[] = [];
-  if (r.respawn && typeof r.respawn === "object" && r.respawn.maxRespawns !== undefined)
-    used.push("respawn.maxRespawns");
-  if (r.timeoutTiebreak !== undefined) used.push("timeoutTiebreak");
-  if (r.overtime !== undefined) used.push("overtime");
-  return used;
-}
-
-/** ok ⇒ `verifiedWith`/`compat`; !ok ⇒ `reason`. (Forma plana: el repo no usa strictNullChecks.) */
+/** ok ⇒ `verifiedWith`; !ok ⇒ `reason`. (Forma plana: el repo no usa strictNullChecks.) */
 export interface EngineVerifyDecision {
   ok: boolean;
   verifiedWith?: string;
+  /** Siempre false desde OLA2-MD: ya no hay re-simulación de versiones anteriores. */
   compat?: boolean;
   reason?: string;
 }
 
-/** Versiones anteriores que este motor reproduce (vacío si no declara ninguna). */
+/** Versiones anteriores que este motor reproduce: ninguna desde el replay v2. */
 export function reproducedVersions(): readonly string[] {
-  const list = (deps.engine as { reproduces?: unknown }).reproduces;
-  return Array.isArray(list) ? list.filter((v): v is string => typeof v === "string") : [];
+  return [];
 }
 
-export function engineCanVerify(header: { versions?: { engine?: string }; ruleset?: unknown }): EngineVerifyDecision {
-  const recorded = header.versions?.engine;
-  const current = deps.engine.version;
-  if (recorded === current) return { ok: true, verifiedWith: current, compat: false };
-  if (typeof recorded === "string" && reproducedVersions().includes(recorded)) {
-    const used = rulesetUsesEngine040Rules(header.ruleset);
-    if (used.length > 0) {
-      return {
-        ok: false,
-        reason: `engine_rules_mismatch: replay=${recorded} declara reglas de ${current} (${used.join(", ")})`,
-      };
-    }
-    return { ok: true, verifiedWith: current, compat: true };
-  }
-  return { ok: false, reason: `engine_version_mismatch: replay=${recorded}, disponible=${current}` };
+export function engineCanVerify(header: Partial<ReplayHeader> | null | undefined): EngineVerifyDecision {
+  const reason = headerIncompatibility(header as ReplayHeader);
+  if (reason) return { ok: false, reason };
+  return { ok: true, verifiedWith: deps.engine.version, compat: false };
 }

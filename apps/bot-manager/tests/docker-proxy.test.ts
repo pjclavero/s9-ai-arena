@@ -247,7 +247,10 @@ describe("RC2 · P6/P7 · allowlist explícita de operaciones y default deny", (
       ["GET", `/containers/${ID_A}/archive?path=/`],
       ["PUT", `/containers/${ID_A}/archive`],
       ["HEAD", `/containers/${ID_A}/archive`],
-      ["DELETE", `/containers/${ID_A}`],
+      // OLA2-MF · DELETE /containers/{id} ya NO está aquí: se admite con Id completo
+      // y SÓLO sobre contenedores propios (docker-proxy-lifecycle.test.ts).
+      ["DELETE", `/containers/${ID_A}?v=1`],
+      ["DELETE", `/containers/bot-x`],
       ["POST", "/containers/prune"],
       ["GET", "/containers/json"],
       ["POST", "/build"],

@@ -185,13 +185,53 @@ export function validateLoadout(
   // -------------------------------------------------------- compatibilidad arma-munición
   violations.push(...ammoRule(accepted, catalog));
 
+  // ----------------------------------------- munición embebida = módulo que se simula
+  // OLA 2 · MC (hallazgo del gate CATALOG_CONTRACT): la munición canónica va como propiedad
+  // del arma (`ammo:`) y resolveVehicle la MATERIALIZA como módulo en la bahía de munición,
+  // con su masa, su consumo y su coste. Antes el validador no la contaba: su costCredits,
+  // massKg, size, requiresChassis y maxPerVehicle no validaban nada en la forma canónica.
+  // Se cuenta igual que la materializa resolveVehicle (misma regla de bahía y de módulo
+  // explícito no duplicado).
+  const explicitIds = new Set(loadout.modules.map((m) => m.moduleId));
+  const ammoSlots = chassisDef.slots.filter((s) => s.accepts.includes("ammo"));
+  let ammoCursor = 0;
+  const materialized: Accepted[] = [...accepted];
+  for (const a of accepted) {
+    if (a.moduleDef.category !== "weapon" || typeof a.ammo !== "string" || explicitIds.has(a.ammo)) continue;
+    const ammoDef = findModule(catalog, a.ammo);
+    if (!ammoDef || ammoDef.category !== "ammo") continue; // lo reporta ammoRule
+    const bay = ammoSlots[ammoCursor++];
+    const slotId = bay?.id ?? `${a.slot}_ammo`;
+    if (bay && ammoDef.size) {
+      const r = safeLookup(SIZE_RANK, ammoDef.size);
+      const max = safeLookup(SIZE_RANK, bay.maxSize);
+      if (r === undefined || max === undefined || r > max) {
+        violations.push({
+          code: "slot_size_exceeded",
+          slot: slotId,
+          moduleId: a.ammo,
+          message: `${ammoDef.id} es de tamaño ${ammoDef.size}, la bahía "${slotId}" admite hasta ${bay.maxSize}`,
+        });
+      }
+    }
+    if (ammoDef.requiresChassis && !ammoDef.requiresChassis.includes(chassisDef.id)) {
+      violations.push({
+        code: "incompatible_chassis",
+        slot: slotId,
+        moduleId: a.ammo,
+        message: `${ammoDef.id} requiere uno de [${ammoDef.requiresChassis.join(", ")}], montado en ${chassisDef.id}`,
+      });
+    }
+    materialized.push({ slot: slotId, moduleDef: ammoDef });
+  }
+
   // -------------------------------------------------------- duplicados (maxPerVehicle)
   const countByBaseId = new Map<string, number>();
-  for (const a of accepted) {
+  for (const a of materialized) {
     countByBaseId.set(a.moduleDef.id, (countByBaseId.get(a.moduleDef.id) ?? 0) + 1);
   }
   const reportedDuplicate = new Set<string>();
-  for (const a of accepted) {
+  for (const a of materialized) {
     const limit = a.moduleDef.maxPerVehicle;
     const count = countByBaseId.get(a.moduleDef.id) ?? 0;
     if (limit != null && count > limit && !reportedDuplicate.has(a.moduleDef.id)) {
@@ -205,7 +245,7 @@ export function validateLoadout(
   }
 
   // -------------------------------------------------------------------------- masa
-  const moduleMass = accepted.reduce((sum, a) => sum + a.moduleDef.massKg, 0);
+  const moduleMass = materialized.reduce((sum, a) => sum + a.moduleDef.massKg, 0);
   if (chassisDef.maxLoadKg != null && moduleMass > chassisDef.maxLoadKg) {
     violations.push({
       code: "mass_exceeded",
@@ -214,10 +254,10 @@ export function validateLoadout(
   }
 
   // ----------------------------------------------------------------------- energía
-  const generationEUs = accepted
+  const generationEUs = materialized
     .filter((a) => a.moduleDef.category === "power")
     .reduce((sum, a) => sum + (a.moduleDef.generationEUs ?? 0), 0);
-  const passiveEUs = accepted.reduce((sum, a) => sum + (a.moduleDef.power?.passiveEUs ?? 0), 0);
+  const passiveEUs = materialized.reduce((sum, a) => sum + (a.moduleDef.power?.passiveEUs ?? 0), 0);
   if (generationEUs < passiveEUs) {
     violations.push({
       code: "energy_deficit",
@@ -226,7 +266,7 @@ export function validateLoadout(
   }
 
   // ---------------------------------------------------------------------- presupuesto
-  const modulesCost = accepted.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
+  const modulesCost = materialized.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
   const totalCost = chassisDef.costCredits + modulesCost;
   if (totalCost > budgetCredits) {
     violations.push({
@@ -243,7 +283,7 @@ export function validateLoadout(
       message: `${chassisDef.id} cuesta ${chassisDef.costCredits} créditos, por encima del ${MAX_MODULE_COST_FRACTION * 100}% del presupuesto efectivo (${perModuleCap.toFixed(2)})`,
     });
   }
-  for (const a of accepted) {
+  for (const a of materialized) {
     if (a.moduleDef.costCredits > perModuleCap) {
       violations.push({
         code: "module_cost_cap_exceeded",

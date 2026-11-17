@@ -306,7 +306,7 @@ describe("R6 · torneos: terceros", () => {
 });
 
 describe("R2 · fuga a terceros", () => {
-  it("bot público ajeno: el 409 sólo expone lo legible en /loadouts", async () => {
+  it("bot público ajeno: el 409 sólo expone lo legible en /loadouts (OLA 2: nada, el loadout es privado)", async () => {
     const r = await request(app)
       .post("/battles")
       .set(as(devTok))
@@ -318,7 +318,7 @@ describe("R2 · fuga a terceros", () => {
       );
     expect(r.status).toBe(409);
     const lo = await request(app).get(`/bots/${alienPub}/loadouts`).set(as(devTok));
-    expect(lo.status).toBe(200);
+    expect(lo.status).toBe(404); // OLA 2 · EQUIPMENT_PRIVATE: ni a un usuario con sesión
   });
 
   it("anónimo: GET versiones de bot público sin sesión no expone más que con sesión", async () => {

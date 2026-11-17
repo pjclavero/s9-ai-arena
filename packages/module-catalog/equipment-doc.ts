@@ -105,8 +105,8 @@ const COLUMNS: Record<ModuleCategory, string[]> = {
     "damage",
     "cooldownTicks",
     "projectileSpeedMs",
+    "rangeM",
     "spreadRad",
-    "turretRateRads",
     "power.perActionEU",
     "massKg",
     "costCredits",
@@ -115,7 +115,7 @@ const COLUMNS: Record<ModuleCategory, string[]> = {
   ],
   ammo: ["rounds", "damageMultiplier", "explosionRadiusM", "massKg", "costCredits", "size"],
   armor: ["sector", "reduction", "hp", "massKg", "costCredits", "size"],
-  radio: ["maxMessageBytes", "maxMessagesPerSecond", "massKg", "costCredits", "power.passiveEUs", "size"],
+  radio: ["rangeM", "maxMessageBytes", "maxMessagesPerSecond", "massKg", "costCredits", "power.passiveEUs", "size"],
   mine: [
     "charges",
     "damage",
@@ -142,11 +142,11 @@ const INTRO: Record<ModuleCategory, string> = {
     "Todo consume energía (EU). La reserva se carga con la generación menos el consumo; disparar y soltar minas gasta además un poco por acción. Sin energía, la acción se rechaza.",
   sensor:
     "Son los únicos ojos de tu bot: sin un sensor operativo, la observación no trae esa información. Cada tipo ve distinto (ver la [guía de sensores](bots/sensores.md)).",
-  weapon: `El arma dispara la munición que le montes (columna «Munición compatible»). La recarga se cuenta en ticks (${TICKS_PER_SECOND} por segundo).`,
+  weapon: `El arma dispara la munición que le montes (columna «Munición compatible»). La recarga se cuenta en ticks (${TICKS_PER_SECOND} por segundo). El **alcance** es la distancia máxima que recorre el proyectil antes de desaparecer.`,
   ammo: "La munición se monta con el arma. Cada tipo cambia el daño y el número de disparos.",
   armor: `Cada pieza protege un sector (frontal, izquierdo, derecho o trasero). Reduce el daño que entra por ese lado, nunca por debajo del ${pct(DMG_MIN_FRACTION)} del daño original, y se desgasta con lo que absorbe.`,
   radio:
-    "Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes.",
+    "Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo, dentro de su **alcance** (medido desde donde se emite el mensaje). Los bots rivales no reciben estos mensajes.",
   mine: "La mina se suelta con el comando `deployMine` y sólo cabe en la bahía de minas de los chasis medio y pesado.",
   utility: "",
 };
@@ -165,19 +165,17 @@ function slotsTable(chassis: ModuleDefinition[]): string {
     "|---|---|",
   ];
   for (const c of chassis) {
-    const slots = (c.slots ?? []).map((s) => `${slotName(s.id)} (${s.maxSize})`).join(" · ");
+    // D-B2 · la torreta gira según la MONTURA de la ranura del chasis, no según el arma.
+    const slots = (c.slots ?? [])
+      .map((s) => `${slotName(s.id)} (${s.maxSize}${s.mount ? `, torreta ${num(s.mount.turretRateRads)} rad/s` : ""})`)
+      .join(" · ");
     lines.push(`| ${displayName(c, ALL)} | ${slots} |`);
   }
   return lines.join("\n");
 }
 
 /** Qué decir al jugador de cada dato sin efecto (el texto técnico de effect-status.ts no es para jugadores). */
-const FUTURE_NOTE: Record<string, string> = {
-  "weapon.rangeM": "el alcance real lo marca cuánto tiempo vive el proyectil en vuelo, no este dato.",
-  "weapon.turretArcRad": "todas las torretas giran 360°, no hay límite de arco.",
-  "radio.rangeM": "la radio no tiene alcance: llega a cualquier distancia.",
-  "movement.terrain": "el terreno no influye en la velocidad.",
-};
+const FUTURE_NOTE: Record<string, string> = {};
 
 /** Propiedades del catálogo que ningún código de simulación lee: no te fíes de ellas. */
 function noEffectList(): string {

@@ -79,7 +79,7 @@ function writeLegibleReplay(battleId: string, replayPath: string): void {
   const jsonl = [
     {
       t: "header",
-      formatVersion: 1,
+      formatVersion: 2,
       battleId,
       seed: "top-secret-seed-should-never-leak",
       rulesetId: "r",
@@ -220,7 +220,7 @@ describe("R11 · capability encendida", () => {
     const res = await request(app).get(`/public/replays/${battleId}/download`);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("application/json");
-    expect(res.body.projection).toBe("s9.replay.public-competition.v1");
+    expect(res.body.projection).toBe("s9.replay.public-competition.v2");
     expect(res.body.result).toMatchObject({ winner: "A", ticks: 3, score: { A: 1 } });
     const text = JSON.stringify(res.body);
     for (const leak of [

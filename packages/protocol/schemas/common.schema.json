@@ -20,7 +20,7 @@
     "entityId": {
       "type": "string",
       "pattern": "^[a-z]+_[0-9a-zA-Z]{1,16}$",
-      "description": "Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1)."
+      "description": "Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md)."
     },
     "moduleId": {
       "type": "string",

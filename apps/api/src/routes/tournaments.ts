@@ -306,7 +306,8 @@ export function tournamentRoutes(
     // FROZEN-REUSE (B2-B4) · `published` o `frozen` (congelada por un torneo anterior:
     // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
     // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
-    await assertTournamentEligible(db, v);
+    // OLA 2 (EQUIPMENT_PRIVATE) · sólo el dueño llega aquí: ve el motivo real de su loadout.
+    await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false });
     // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente con una versión que
     // ya no lo es se puede cambiar por otra válida (nunca se sustituye sola).
     const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
