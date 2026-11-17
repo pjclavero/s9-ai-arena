@@ -99,7 +99,11 @@ info:
   # republica, ni se descongela) y closeEntries no la vuelve a tocar. `bot_not_published`
   # pasa a significar «estado fuera de published|frozen» también aquí (como en
   # createPracticeBattle) y lleva `currentState` con el estado real.
-  version: 0.20.0
+  # 0.20.1 · #291 (autorización, sin operaciones nuevas): closeEntries y dryRunTournament
+  # exigen, además del rol organizer, ser quien creó el torneo o staff (moderator+): si no,
+  # 403. La vía de organizador de excludeTournamentEntry exige lo mismo (el dueño del bot
+  # sigue pudiendo retirar la suya). Regla única: canManageTournament.
+  version: 0.20.1
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1124,6 +1128,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
@@ -1132,7 +1137,8 @@ paths:
       operationId: excludeTournamentEntry
       summary: >-
         ELIG · Excluir una inscripción PENDIENTE (torneo open, sin congelar). El organizador sólo
-        puede excluir inscripciones NO elegibles; el dueño del bot puede retirar la suya. Se
+        puede excluir inscripciones NO elegibles, y sólo si creó ese torneo o es staff
+        (moderator+, #291); el dueño del bot puede retirar la suya. Se
         quita de las inscripciones y su contenido completo (quién, cuándo, motivo, versión)
         queda en audit_log como tournament.entry.excluded en la misma transacción. Una
         inscripción pendiente no tiene batallas ni calendario: no se toca ningún dato histórico.
@@ -1162,7 +1168,7 @@ paths:
                   excluded: { type: boolean, const: true }
                   by: { enum: [owner, organizer] }
         '400': { description: reason obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '403': { description: Ni dueño del bot ni organizador, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'Ni dueño del bot ni organizador de ese torneo (quien lo creó, con rol organizer) ni staff (#291)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible) · entry_changed (la inscripción cambió de versión mientras se procesaba: no se borra ni se audita)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
@@ -1170,11 +1176,12 @@ paths:
     post:
       tags: [tournaments]
       operationId: dryRunTournament
-      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings.'
+      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings. Sólo quien creó el torneo o el staff (#291).'
       x-min-role: organizer
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '202': { description: Simulacro encolado }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se encola nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/matches:
     get:

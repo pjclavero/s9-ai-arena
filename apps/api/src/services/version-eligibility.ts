@@ -33,7 +33,9 @@
 import type { Knex } from "knex";
 import { createHash } from "node:crypto";
 import { ApiError } from "../errors.js";
+import { ROLE_RANK } from "../openapi.js";
 import { getCatalog } from "./catalog.js";
+import { canManageTournament } from "./tournament-access.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import { BUDGET_CREDITS_MVP } from "../../../../packages/game-rules/index.js";
@@ -600,7 +602,8 @@ export async function entryEligibilityGate(db: Knex, entries: Record<string, unk
  */
 export async function excludeTournamentEntry(
   db: Knex,
-  actor: { userId: string; isOrganizer: boolean },
+  // #291 · `rank` (no un booleano de rol): la vía de organizador exige además gestionar ESTE torneo.
+  actor: { userId: string; rank: number },
   tournamentId: string,
   entryId: string,
   reason: unknown,
@@ -622,8 +625,14 @@ export async function excludeTournamentEntry(
   if (!t || !entry) throw new ApiError(404, "not_found", "No existe o no es visible para el solicitante");
   const bot = await db("bots").where({ id: entry.bot_id }).first();
   const byOwner = bot?.owner_id === actor.userId;
-  if (!byOwner && !actor.isOrganizer) {
-    throw new ApiError(403, "forbidden", "Sólo el dueño del bot o un organizador pueden excluir la inscripción");
+  // #291 · vía de organizador = rol organizer (suelo de main) Y dueño del torneo o staff.
+  const byManager = actor.rank >= ROLE_RANK.organizer && canManageTournament(actor, t);
+  if (!byOwner && !byManager) {
+    throw new ApiError(
+      403,
+      "forbidden",
+      "Sólo el dueño del bot, o quien organiza el torneo (o el staff), pueden excluir la inscripción",
+    );
   }
   if (t.state !== "open" || entry.frozen) {
     throw new ApiError(409, "entries_closed", "Sólo se excluyen inscripciones pendientes de un torneo abierto");

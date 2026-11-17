@@ -18,8 +18,8 @@ import {
   excludeTournamentEntry,
   replaceIneligibleEntry,
 } from "../services/version-eligibility.js";
-import { ROLE_RANK } from "../openapi.js";
 import { pathParam } from "../params.js";
+import { assertCanManageTournament, canManageTournament } from "../services/tournament-access.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
@@ -240,7 +240,13 @@ export function tournamentRoutes(
         .catch(() => null);
       if (!t) throw notFound();
       const entries = await db("entries").where({ tournament_id: t.id }).count("* as n").first();
-      res.json({ ...tournamentToJson(t), entryCount: Number(entries?.n ?? 0) });
+      // #291 · `viewerCanManage` depende de quién pregunta: nunca en una caché compartida.
+      res.setHeader("Cache-Control", NO_STORE);
+      res.json({
+        ...tournamentToJson(t),
+        entryCount: Number(entries?.n ?? 0),
+        viewerCanManage: canManageTournament(req.auth, t),
+      });
     },
   );
 
@@ -336,7 +342,7 @@ export function tournamentRoutes(
     res.json(
       await excludeTournamentEntry(
         db,
-        { userId: req.auth!.userId, isOrganizer: req.auth!.rank >= ROLE_RANK.organizer },
+        { userId: req.auth!.userId, rank: req.auth!.rank },
         pathParam(req, "tournamentId"),
         pathParam(req, "entryId"),
         req.body?.reason,
@@ -351,6 +357,7 @@ export function tournamentRoutes(
       .first()
       .catch(() => null);
     if (!t) throw notFound();
+    assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff
     if (t.state !== "open") {
       throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
         currentState: t.state,
@@ -419,6 +426,7 @@ export function tournamentRoutes(
       .first()
       .catch(() => null);
     if (!t) throw notFound();
+    assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff
     // Simulacro con bots de ejemplo (E9.M): lo consume el tournament-worker de E9.
     await db("jobs").insert({ kind: "tournament_dry_run", payload: JSON.stringify({ tournamentId: t.id }) });
     res.status(202).json({ status: "queued" });
