@@ -90,7 +90,12 @@ describe("worker · copia de reglas", () => {
       const out = await exec()(ctx(battle, rows));
       const replay = fromJsonl(out.replayJsonl);
       expect(replay.header.ruleset).toEqual(built.snapshot!.engineRuleset);
-      expect(replay.header.ruleset.respawn).toEqual({ enabled: true, delayTicks: 30, maxRespawns: 1 });
+      expect(replay.header.ruleset.respawn).toEqual({
+        enabled: true,
+        delayTicks: 30,
+        maxRespawns: 1,
+        rearmPolicy: "all_alive_participants",
+      });
       expect(out.versions.rulesetEngine).toBe("custom@1");
       expect(out.versions.catalog).toBe(built.snapshot!.catalogVersion);
       expect(out.ticks).toBeLessThanOrEqual(1800);

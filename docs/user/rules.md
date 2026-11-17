@@ -16,6 +16,14 @@ maxRespawns es el número de veces que un bot puede REAPARECER después de morir
 - limitada: maxRespawns entre 0 y 10
 - ilimitada
 
+### Munición al reaparecer (`rearmPolicy = all_alive_participants`)
+
+- la munición (rondas de cañón y ametralladora, cargas de minas) es de cada vehículo y no hay reabastecimiento en la arena
+- con reaparición (limitada o ilimitada): cada vez que un vehículo reaparece, él y TODOS los vehículos vivos de la batalla, de cualquier bando, vuelven a su munición máxima
+- el rearme rellena hasta el máximo, nunca por encima: si reaparecen varios en el mismo instante se rearma una sola vez
+- el rearme no repara módulos, no recarga energía ni reinicia la cadencia de disparo
+- sin reaparición la munición es finita: si se agota, la batalla sigue hasta el tiempo máximo y se resuelve por el desempate del modo
+
 ## Desempates
 
 Deterministas: sólo dependen del estado de la batalla en el último tick. Se aplican en orden; el primer criterio que distingue decide.

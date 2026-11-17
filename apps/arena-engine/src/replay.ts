@@ -23,6 +23,7 @@ import {
   type StateHashComponentV2,
 } from "./sim/state-hash.js";
 import { CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
+import { respawnRearmPolicyOf, respawnRearmPolicyProblems } from "../../../packages/game-rules/index.js";
 
 /**
  * OLA2-MD · Replay v2 (contrato engine-v2 §13). `formatVersion: 2`; cualquier otra versión
@@ -250,6 +251,32 @@ export function runningVersions(rulesetId: string): Record<string, string> {
   };
 }
 
+/**
+ * OLA2-G3 · REPLAY_RULE_HEADER: el ruleset de la cabecera declara SIEMPRE la política de
+ * rearme EFECTIVA con la que corrió la batalla (`respawn.rearmPolicy`), aunque la config en
+ * vivo la dejara implícita. Así la re-simulación no depende de ningún valor por defecto del
+ * motor que la lea: la regla viaja en la receta. Sin respawn no se añade nada (no aplica).
+ * El hash de estado no incluye el ruleset: declarar la política no cambia ningún hash.
+ */
+export function rulesetForHeader(ruleset: any): any {
+  if (!ruleset?.respawn?.enabled || ruleset.respawn.rearmPolicy !== undefined) return ruleset;
+  return { ...ruleset, respawn: { ...ruleset.respawn, rearmPolicy: respawnRearmPolicyOf(ruleset) } };
+}
+
+/**
+ * OLA2-G3 · VERIFY_REPRODUCES_RULE: una cabecera con respawn y SIN `rearmPolicy` explícita, o
+ * con un valor no admitido, no se re-simula (motivo explícito, falla cerrado). Nunca se
+ * completa con un valor por defecto: eso convertiría el default del verificador en regla.
+ */
+export function headerRearmPolicyProblem(ruleset: any): string | null {
+  if (!ruleset?.respawn) return null;
+  if (ruleset.respawn.enabled === true && ruleset.respawn.rearmPolicy === undefined) {
+    return "rules_incomplete: respawn.rearmPolicy ausente en la cabecera (la regla debe viajar en el replay)";
+  }
+  const problems = respawnRearmPolicyProblems(ruleset);
+  return problems.length ? `rules_invalid: ${problems.join("; ")}` : null;
+}
+
 /** Cabecera v2 de una config (la comparten replay y checkpoint). */
 export function buildHeaderV2(config: BattleConfig, versions: Record<string, string>): ReplayHeader {
   return {
@@ -257,7 +284,8 @@ export function buildHeaderV2(config: BattleConfig, versions: Record<string, str
     battleId: config.battleId,
     seed: config.seed,
     rulesetId: config.ruleset.rulesetId,
-    ruleset: config.ruleset,
+    // OLA2-G3 · política de rearme explícita (REPLAY_RULE_HEADER).
+    ruleset: rulesetForHeader(config.ruleset),
     map: config.map,
     participants: config.participants,
     versions,
@@ -279,6 +307,10 @@ export function buildHeaderV2(config: BattleConfig, versions: Record<string, str
 
 /** BattleConfig de re-simulación desde una cabecera v2 (cadencias incluidas: cierra P3-2). */
 export function configFromHeader(h: ReplayHeader, recordReplay = false): BattleConfig {
+  // OLA2-G3 · la reconstrucción tampoco rellena la política con un default (cubre
+  // resimulateWithEvents, que no pasa por headerIncompatibility).
+  const rearm = headerRearmPolicyProblem(h.ruleset);
+  if (rearm) throw new Error(`configFromHeader: ${rearm}`);
   return {
     battleId: h.battleId,
     seed: h.seed,
@@ -305,6 +337,8 @@ export function headerIncompatibility(h: ReplayHeader): string | null {
   if (h.versions?.rules !== h.rulesetId || h.ruleset?.rulesetId !== h.rulesetId) {
     return `rules_mismatch: versions.rules=${h.versions?.rules}, rulesetId=${h.rulesetId}, ruleset=${h.ruleset?.rulesetId}`;
   }
+  const rearm = headerRearmPolicyProblem(h.ruleset);
+  if (rearm) return rearm;
   if (h.physicsWasmSha256 !== deps.physics.wasmSha256) {
     return `physics_wasm_mismatch: replay=${h.physicsWasmSha256}, motor=${deps.physics.wasmSha256}`;
   }

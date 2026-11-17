@@ -418,6 +418,19 @@ export class Vehicle {
   }
 
   // --------------------------------------------------------------- respawn
+  /**
+   * OLA2-G3 · REARME: munición al MÁXIMO de catálogo (rondas de `ammo`, cargas de `mine`).
+   * Asignación, no suma: idempotente y nunca por encima del máximo. No repara módulos ni
+   * toca energía o cooldowns. Lo usan `respawn()` (siempre) y la regla
+   * `respawn.rearmPolicy = "all_alive_participants"` del bucle (PASO 7) para los vivos.
+   */
+  rearm(): void {
+    for (const m of this.modules.values()) {
+      m.ammo = m.spec.rounds ?? 0;
+      m.charges = m.spec.charges ?? 0;
+    }
+  }
+
   respawn(position: { x: number; y: number }): void {
     this.respawnsUsed += 1;
     this.hullHp = this.spec.hullHp;
@@ -431,9 +444,8 @@ export class Vehicle {
       m.hp = m.spec.hp;
       m.offline = false;
       m.cooldownUntilTick = 0;
-      m.ammo = m.spec.rounds ?? 0;
-      m.charges = m.spec.charges ?? 0;
     }
+    this.rearm();
     for (const s of SECTORS) {
       const a = this.armor[s];
       if (a) a.hp = a.hpMax;
