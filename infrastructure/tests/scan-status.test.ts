@@ -13,6 +13,9 @@
  * verde) y NEGATIVO (el caso malo bloquea): una prueba que sólo mira un lado no
  * distingue «funciona» de «siempre dice lo mismo».
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error módulo .mjs sin tipos
 import {
@@ -22,6 +25,7 @@ import {
   POLITICA_SCAN_ERROR,
   READINESS,
   agregarScans,
+  aplicarExcepcionesNpmAudit,
   bloquea,
   clasificarNpmAudit,
   clasificarScanCompose,
@@ -30,6 +34,7 @@ import {
   motivoDeScan,
   pareceFuenteCaida,
   readinessDeScan,
+  validarExcepcionesNpmAudit,
 } from "../../packages/readiness/scan-status.mjs";
 import { ESTADO_DRIFT_A_READINESS } from "../../packages/readiness/checks.ts";
 import type { CheckStatus } from "../../packages/readiness/engine.ts";
@@ -374,5 +379,269 @@ describe("agregarScans · el peor manda y el ausente cuenta", () => {
   it("sin ningún resultado → NOT_EXERCISED (nunca un verde por lista vacía)", () => {
     expect(agregarScans([]).readiness).toBe("not_exercised");
     expect(agregarScans(undefined as never).readiness).toBe("not_exercised");
+  });
+});
+
+// ── Excepciones declaradas de npm audit (deps/npm-audit-2026-11-17) ──────────
+// Una excepción sólo exime un AVISO concreto de un PAQUETE sólo-dev, vigente, y
+// sólo si cubre TODOS los avisos >= umbral que alcanzan a la vulnerabilidad.
+// Cada condición tiene su control negativo: si se pierde, el scan sigue rojo.
+describe("clasificarNpmAudit · excepciones declaradas (fail-closed)", () => {
+  const GHSA = "GHSA-fc5q-39xc-vjpf";
+  const OTRO = "GHSA-aaaa-bbbb-cccc";
+  const aviso = (ghsa: string, name: string, severity = "high") => ({
+    source: 1,
+    name,
+    dependency: name,
+    title: "ReDoS",
+    url: `https://github.com/advisories/${ghsa}`,
+    severity,
+    range: "<=4.0.7",
+  });
+  const informe = (extra: Record<string, unknown> = {}, high = 2) =>
+    JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {
+        picomatch: {
+          name: "picomatch",
+          severity: "high",
+          via: [aviso(GHSA, "picomatch")],
+          nodes: ["node_modules/picomatch"],
+        },
+        vite: { name: "vite", severity: "high", via: ["picomatch"], nodes: ["node_modules/vite"] },
+        ...extra,
+      },
+      metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high, critical: 0, total: high } },
+    });
+  const LOCK_DEV = {
+    "": {},
+    "node_modules/picomatch": { version: "4.0.7", dev: true },
+    "node_modules/vite": { version: "8.1.6", dev: true },
+    "node_modules/otro": { version: "1.0.0", dev: true },
+  };
+  const EXC = [
+    {
+      ghsa: GHSA,
+      paquete: "picomatch",
+      alcance: "dev",
+      alta: "2026-11-17",
+      caduca: "2026-12-17",
+      motivo: "sin versión corregida; sólo herramientas de desarrollo",
+    },
+  ];
+  const base = { exitCode: 1, umbral: "high", excepciones: EXC, lockPackages: LOCK_DEV, hoy: "2026-11-17" };
+
+  it("control POSITIVO: aviso exceptuado, sólo-dev y vigente → CLEAN, y el detalle NOMBRA la excepción", () => {
+    const r = clasificarNpmAudit({ ...base, stdout: informe() });
+    expect(r.estado).toBe("CLEAN");
+    expect(r.detalle).toContain(GHSA);
+    expect(r.detalle).toContain("2026-12-17");
+  });
+
+  it("control NEGATIVO: sin excepciones declaradas, el mismo informe es FINDINGS", () => {
+    expect(clasificarNpmAudit({ ...base, excepciones: undefined, stdout: informe() }).estado).toBe("FINDINGS");
+  });
+
+  it("control NEGATIVO: el paquete llega a producción en el lockfile → la excepción NO aplica", () => {
+    const lock = { ...LOCK_DEV, "node_modules/picomatch": { version: "4.0.7" } };
+    const r = clasificarNpmAudit({ ...base, lockPackages: lock, stdout: informe() });
+    expect(r.estado).toBe("FINDINGS");
+    expect(r.detalle).toMatch(/no es sólo de desarrollo/);
+  });
+
+  it("control NEGATIVO: sin lockfile legible no se puede comprobar el alcance → FINDINGS", () => {
+    expect(clasificarNpmAudit({ ...base, lockPackages: null, stdout: informe() }).estado).toBe("FINDINGS");
+  });
+
+  it("control NEGATIVO: excepción caducada → FINDINGS (el día de caducidad todavía exime)", () => {
+    expect(clasificarNpmAudit({ ...base, hoy: "2026-12-17", stdout: informe() }).estado).toBe("CLEAN");
+    const r = clasificarNpmAudit({ ...base, hoy: "2026-12-18", stdout: informe() });
+    expect(r.estado).toBe("FINDINGS");
+    expect(r.detalle).toMatch(/caducada/);
+  });
+
+  it("control NEGATIVO: otro aviso alto NO exceptuado en la cadena → FINDINGS", () => {
+    const extra = {
+      vite: { name: "vite", severity: "high", via: ["picomatch", aviso(OTRO, "vite")], nodes: ["node_modules/vite"] },
+    };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(extra) }).estado).toBe("FINDINGS");
+  });
+
+  it("control NEGATIVO: un paquete distinto con el mismo GHSA no queda cubierto", () => {
+    const extra = {
+      otro: { name: "otro", severity: "high", via: [aviso(GHSA, "otro")], nodes: ["node_modules/otro"] },
+    };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(extra, 3) }).estado).toBe("FINDINGS");
+  });
+
+  it("control NEGATIVO: una cadena `via` rota (nombre sin entrada) no se da por cubierta", () => {
+    const extra = { vite: { name: "vite", severity: "high", via: ["fantasma"], nodes: ["node_modules/vite"] } };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(extra) }).estado).toBe("FINDINGS");
+  });
+
+  it("un fichero de excepciones mal formado es SCAN_ERROR, nunca «sin excepciones» ni CLEAN", () => {
+    for (const mala of [
+      "ilegible",
+      {},
+      [{ ...EXC[0], alcance: "prod" }],
+      [{ ...EXC[0], ghsa: "CVE-2026-1" }],
+      [{ ...EXC[0], caduca: "pronto" }],
+      [{ ...EXC[0], motivo: "" }],
+    ]) {
+      const r = clasificarNpmAudit({ ...base, excepciones: mala, stdout: informe() });
+      expect(r.estado, JSON.stringify(mala)).toBe("SCAN_ERROR");
+    }
+  });
+
+  it("P1-1 · un SEGUNDO aviso alto del mismo paquete con OTRO GHSA no queda cubierto → FINDINGS", () => {
+    const extra = {
+      picomatch: {
+        name: "picomatch",
+        severity: "high",
+        via: [aviso(GHSA, "picomatch"), aviso(OTRO, "picomatch")],
+        nodes: ["node_modules/picomatch"],
+      },
+    };
+    const r = clasificarNpmAudit({ ...base, stdout: informe(extra) });
+    expect(r.estado).toBe("FINDINGS");
+  });
+
+  it("R6 · un paquete exceptuado sin nodos en el informe NO es sólo-dev: no exime", () => {
+    // `picomatch` sólo aparece como aviso dentro de la cadena de vite, sin entrada propia.
+    const sinEntrada = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {
+        vite: { name: "vite", severity: "high", via: [aviso(GHSA, "picomatch")], nodes: ["node_modules/vite"] },
+      },
+      metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } },
+    });
+    const r = clasificarNpmAudit({ ...base, stdout: sinEntrada });
+    expect(r.estado).toBe("FINDINGS");
+    expect(r.detalle).toMatch(/no es sólo de desarrollo/);
+  });
+
+  it("R11 · una vulnerabilidad alta sin ningún aviso alto en su cadena no se da por cubierta", () => {
+    const extra = { huerfano: { name: "huerfano", severity: "high", via: [], nodes: ["node_modules/otro"] } };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(extra, 3) }).estado).toBe("FINDINGS");
+  });
+
+  it("R12 · cadena mixta (un aviso exceptuado + un nombre sin entrada) no se da por cubierta", () => {
+    const extra = {
+      vite: { name: "vite", severity: "high", via: ["picomatch", "fantasma"], nodes: ["node_modules/vite"] },
+    };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(extra) }).estado).toBe("FINDINGS");
+  });
+
+  it("P2 · la caducidad es INCLUSIVA: el 17/12 todavía exime y el 18/12 ya no", () => {
+    expect(clasificarNpmAudit({ ...base, hoy: "2026-12-17", stdout: informe() }).estado).toBe("CLEAN");
+    expect(clasificarNpmAudit({ ...base, hoy: "2026-12-18", stdout: informe() }).estado).toBe("FINDINGS");
+  });
+
+  it("P2 · el validador rechaza fechas imposibles, alta ausente y horizontes de más de 31 días", () => {
+    const malas: Array<[string, Record<string, unknown>]> = [
+      ["caduca imposible", { caduca: "2026-99-99" }],
+      ["caduca 31 de febrero", { caduca: "2026-02-31" }],
+      // dentro del horizonte si se normalizara (30 de noviembre → 1 de diciembre): sólo la fecha real lo frena
+      ["caduca 31 de noviembre", { caduca: "2026-11-31" }],
+      ["alta 30 de febrero", { alta: "2026-02-30", caduca: "2026-03-02" }],
+      ["alta imposible", { alta: "2026-13-01" }],
+      ["alta ausente", { alta: undefined }],
+      ["caduca anterior a alta", { caduca: "2026-11-16" }],
+      ["horizonte de 32 días", { caduca: "2026-12-19" }],
+      ["horizonte ilimitado", { caduca: "2099-01-01" }],
+    ];
+    for (const [nombre, cambio] of malas) {
+      expect(validarExcepcionesNpmAudit([{ ...EXC[0], ...cambio }]), nombre).not.toBeNull();
+    }
+    // frontera: 31 días exactos sí vale (17/11 → 18/12)
+    expect(validarExcepcionesNpmAudit([{ ...EXC[0], caduca: "2026-12-18" }])).toBeNull();
+    expect(validarExcepcionesNpmAudit(EXC)).toBeNull();
+  });
+
+  it("P2 · fail-closed ante un `npm audit` malformado: SCAN_ERROR, nunca CLEAN", () => {
+    // via sin severity
+    const sinSeveridad = {
+      picomatch: {
+        name: "picomatch",
+        severity: "high",
+        via: [{ ...aviso(GHSA, "picomatch"), severity: undefined }],
+        nodes: ["node_modules/picomatch"],
+      },
+    };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(sinSeveridad) }).estado).toBe("SCAN_ERROR");
+    // severidad desconocida
+    const rara = {
+      picomatch: {
+        name: "picomatch",
+        severity: "high",
+        via: [{ ...aviso(GHSA, "picomatch"), severity: "grave" }],
+        nodes: ["node_modules/picomatch"],
+      },
+    };
+    expect(clasificarNpmAudit({ ...base, stdout: informe(rara) }).estado).toBe("SCAN_ERROR");
+    // metadata cuenta más altas de las que lista
+    const r = clasificarNpmAudit({ ...base, stdout: informe({}, 5) });
+    expect(r.estado).toBe("SCAN_ERROR");
+    expect(r.detalle).toMatch(/incoherente/);
+  });
+
+  it("P2 · el fichero de excepciones se valida SIEMPRE, también con la auditoría limpia", () => {
+    const limpio = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } },
+    });
+    expect(clasificarNpmAudit({ ...base, stdout: limpio }).estado).toBe("CLEAN");
+    for (const mala of [null, "ilegible", {}, [{ ...EXC[0], caduca: "2026-99-99" }]]) {
+      const r = clasificarNpmAudit({ ...base, excepciones: mala, stdout: limpio });
+      expect(r.estado, JSON.stringify(mala)).toBe("SCAN_ERROR");
+    }
+    // un `null` también es error con hallazgos (antes caía a FINDINGS)
+    expect(clasificarNpmAudit({ ...base, excepciones: null, stdout: informe() }).estado).toBe("SCAN_ERROR");
+    // ausente sigue significando «ninguna»
+    expect(clasificarNpmAudit({ ...base, excepciones: undefined, stdout: limpio }).estado).toBe("CLEAN");
+  });
+
+  it("P2 · el GHSA se extrae anclado a la URL de avisos de GitHub, no de cualquier parte", () => {
+    for (const url of [
+      `https://evil.example/?x=https://github.com/advisories/${GHSA}`,
+      `https://github.com/advisories/${GHSA}/../otro`,
+      `http://github.com/advisories/${GHSA}`,
+      `GHSA ${GHSA}`,
+    ]) {
+      const extra = {
+        picomatch: {
+          name: "picomatch",
+          severity: "high",
+          via: [{ ...aviso(GHSA, "picomatch"), url }],
+          nodes: ["node_modules/picomatch"],
+        },
+      };
+      expect(clasificarNpmAudit({ ...base, stdout: informe(extra) }).estado, url).toBe("FINDINGS");
+    }
+  });
+
+  it("una excepción que ya no se usa se anuncia para retirarla", () => {
+    const exc = [...EXC, { ...EXC[0], ghsa: OTRO, paquete: "picomatch" }];
+    const r = aplicarExcepcionesNpmAudit(JSON.parse(informe()), { ...base, excepciones: exc });
+    expect(r.restantes).toBe(0);
+    expect(r.notas.join(" ")).toContain(`${OTRO} sin uso`);
+  });
+
+  it("el fichero REAL de excepciones es válido y cada entrada es sólo-dev en el lockfile REAL", () => {
+    const raiz = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const exc = JSON.parse(readFileSync(join(raiz, "infrastructure", "npm-audit-excepciones.json"), "utf8"));
+    expect(validarExcepcionesNpmAudit(exc)).toBeNull();
+    const lock = JSON.parse(readFileSync(join(raiz, "package-lock.json"), "utf8")).packages;
+    for (const e of exc) {
+      const nodos = Object.keys(lock).filter(
+        (k) => k === `node_modules/${e.paquete}` || k.endsWith(`/node_modules/${e.paquete}`),
+      );
+      expect(nodos.length, e.paquete).toBeGreaterThan(0);
+      for (const n of nodos) expect(lock[n].dev, n).toBe(true);
+      // Caducidad corta a propósito: una excepción no es un estado permanente
+      // (el tope lo impone ya el validador; aquí se comprueba que el real lo cumple).
+      expect(Date.parse(e.caduca) - Date.parse(e.alta)).toBeLessThanOrEqual(31 * 24 * 3600 * 1000);
+    }
   });
 });
