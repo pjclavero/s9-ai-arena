@@ -12,7 +12,12 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { enqueueJob } from "./queue.js";
 import { TournamentWorker } from "./worker.js";
 import { InfrastructureFailure } from "./errors.js";
-import { makeRunBattleHandler, markBattleForReview, type BattleContext, type BattleExecution } from "./battle-runner.js";
+import {
+  makeRunBattleHandler,
+  markBattleForReview,
+  type BattleContext,
+  type BattleExecution,
+} from "./battle-runner.js";
 import { createBots, insertScheduledBattle, type TestBot } from "./testing/fixtures.js";
 
 let h: TestDbHandle;
