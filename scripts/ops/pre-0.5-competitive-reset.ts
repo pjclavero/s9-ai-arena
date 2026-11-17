@@ -20,7 +20,13 @@
  *       --manifest /ruta/manifiesto.json --replays-dir /data/replays [--apply]
  *
  *  · `--dry-run` ejecuta TODO (guardas, borrados, verificación) dentro de una transacción
- *    y hace ROLLBACK: enseña los conteos antes/después reales y la huella del esquema.
+ *    y hace ROLLBACK: enseña los conteos antes/después reales, la huella del esquema y la LISTA
+ *    de torneos que se borrarían. Sin efectos: no inserta la marca (no consume identidad de
+ *    audit_log) y no escribe el manifiesto salvo con `--write-dry-run-manifest`.
+ *    ATENCIÓN: igual que el apply, toma bloqueos EXCLUSIVE sobre battles, tournaments, entries,
+ *    jobs, streaming_sessions… mientras dura (las escrituras de la API y de los workers esperan).
+ *    En producción SÓLO se ejecuta en la ventana de mantenimiento, con tournament-worker,
+ *    bot-manager y bot-build-worker PARADOS.
  *  · `--apply` exige `S9_RESET_CONFIRM` = huella del esquema que imprime el dry-run (nunca
  *    por argv) y hace COMMIT sólo si la verificación dentro de la transacción pasa.
  *  · Una sola ejecución: deja una marca en `audit_log` (sólo inserción, la propia BD impide
@@ -29,11 +35,26 @@
  *    de las batallas borradas y `replay-files` borra, por id y de uno en uno, sólo
  *    `<dir>/<id>.replay` y `<dir>/<id>.replay.json` (paso separado y revisable).
  *
- * Códigos de salida: 0 OK · 1 verificación fallida (ROLLBACK) o error · 2 guarda fallida
- * o falta de confirmación · 3 ya aplicado · 4 fallo DESPUÉS del COMMIT (STOP y restaurar).
+ * Códigos de salida: 0 OK · 1 verificación fallida o error ANTES del COMMIT (ROLLBACK: no se
+ * tocó nada) · 2 guarda fallida, falta de confirmación o rutas de salida no válidas · 3 ya
+ * aplicado · 4 fallo DESPUÉS del COMMIT o COMMIT de resultado desconocido (incluida la escritura
+ * del --report): STOP, comprobar la marca en audit_log y restaurar. Siempre se imprime RESULT.
  */
 import { createHash } from "node:crypto";
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import {
+  accessSync,
+  closeSync,
+  constants as fsConstants,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Knex } from "knex";
@@ -279,6 +300,7 @@ export interface ResetReport {
     | "ALREADY_APPLIED"
     | "VERIFY_FAILED"
     | "POST_COMMIT_FAILED"
+    | "COMMIT_UNKNOWN"
     | "ERROR";
   exitCode: number;
   fingerprint?: string;
@@ -291,6 +313,8 @@ export interface ResetReport {
   orphans?: Record<string, number>;
   historical?: Record<string, number>;
   frozenVersions?: { before: number; after: number };
+  /** Torneos que se borran (P2-1): se listan SIEMPRE antes de borrar, también en dry-run. */
+  tournaments?: TournamentListing[];
   replayManifest?: { path: string | null; sha256: string; battles: number; withReplayRef: number };
   postCommit?: { failures: string[]; changedVolatile: string[] };
   error?: string;
@@ -300,8 +324,10 @@ export interface ResetOptions {
   mode: "dry-run" | "apply";
   /** Valor de S9_RESET_CONFIRM (sólo apply). */
   confirm?: string;
-  /** Ruta del manifiesto de replays (obligatoria en apply). */
+  /** Ruta del manifiesto de replays (obligatoria en apply; en dry-run sólo con writeDryRunManifest). */
   manifestPath?: string | null;
+  /** Dry-run: escribir el manifiesto (marcado dryRun:true) en manifestPath. Por defecto NO. */
+  writeDryRunManifest?: boolean;
   /** SÓLO TESTS (mutantes): sustituye el plan de borrado. */
   steps?: readonly Step[];
   /** SÓLO TESTS (mutantes): sentencias extra tras el plan, antes de verificar. */
@@ -309,7 +335,31 @@ export interface ResetOptions {
   /** SÓLO TESTS: esquema esperado (por defecto EXPECTED_MIGRATIONS). */
   expectedMigrations?: readonly string[];
   log?: (line: string) => void;
+  /** SÓLO TESTS: puntos de inyección (bloqueos, COMMIT, actividad tras el COMMIT). */
+  testHooks?: {
+    /** Dentro de la transacción, tras los bloqueos y las guardas, antes de borrar. */
+    afterLock?: () => Promise<void>;
+    /** Sustituye trx.commit() (p. ej. COMMIT que lanza tras confirmarse). */
+    commit?: (trx: Knex.Transaction) => Promise<void>;
+    /** Tras el COMMIT y antes de la verificación posterior (p. ej. un worker vivo). */
+    afterCommit?: () => Promise<void>;
+  };
 }
+
+export interface TournamentListing {
+  id: string;
+  name: string;
+  state: string;
+  entries: number;
+  battles: number;
+  liveBattles: number;
+  activeJobs: number;
+  terminal: boolean;
+  /** `running` nominal sin nada vivo: torneo atascado, se borra. */
+  stuck: boolean;
+}
+
+const TERMINAL_TOURNAMENT_STATES = ["finished", "cancelled"];
 
 const q = (id: string) => `"${id.replace(/"/g, '""')}"`;
 
@@ -410,12 +460,16 @@ async function declaredOrphans(db: Knex | Knex.Transaction): Promise<Record<stri
 }
 
 async function rowHash(db: Knex | Knex.Transaction, table: string, where: string): Promise<TableState> {
+  // pg_attribute (no information_schema, que oculta columnas sin privilegio): TODAS las columnas.
   const cols = await rows<{ column_name: string; data_type: string }>(
     db,
-    `SELECT column_name, data_type FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = ? ORDER BY column_name`,
+    `SELECT a.attname::text AS column_name, format_type(a.atttypid, NULL) AS data_type
+       FROM pg_attribute a
+      WHERE a.attrelid = to_regclass(format('public.%I', ?::text)) AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attname`,
     [table],
   );
+  if (cols.length === 0) throw new Error(`rowHash: ${table} sin columnas legibles`);
   // bytea (código, artefactos) se resume con sha256: misma garantía sin materializar MB en texto.
   const exprs = cols.map((c) =>
     c.data_type === "bytea"
@@ -487,6 +541,36 @@ async function frozenCount(db: Knex | Knex.Transaction): Promise<number> {
   return (await rows<{ n: number }>(db, `SELECT count(*)::int AS n FROM bot_versions WHERE state = 'frozen'`))[0].n;
 }
 
+/** Torneos que se borrarán, con su actividad viva (batallas running y jobs activos que los referencian). */
+export async function listTournaments(db: Knex | Knex.Transaction): Promise<TournamentListing[]> {
+  const r = await rows<any>(
+    db,
+    `SELECT t.id::text AS id, t.name, t.state,
+            (SELECT count(*) FROM entries e WHERE e.tournament_id = t.id)::int AS entries,
+            (SELECT count(*) FROM battles b WHERE b.tournament_id = t.id)::int AS battles,
+            (SELECT count(*) FROM battles b WHERE b.tournament_id = t.id AND b.status = 'running')::int AS live_battles,
+            (SELECT count(*) FROM jobs j WHERE j.status IN ('queued','running') AND (
+                 j.payload->>'tournamentId' = t.id::text
+              OR j.payload->>'battleId' IN (SELECT b.id::text FROM battles b WHERE b.tournament_id = t.id)
+              OR j.payload->>'matchId' IN (SELECT m.id::text FROM matches m WHERE m.tournament_id = t.id)))::int AS active_jobs
+       FROM tournaments t ORDER BY t.created_at, t.id`,
+  );
+  return r.map((x) => {
+    const terminal = TERMINAL_TOURNAMENT_STATES.includes(x.state);
+    return {
+      id: x.id,
+      name: x.name,
+      state: x.state,
+      entries: x.entries,
+      battles: x.battles,
+      liveBattles: x.live_battles,
+      activeJobs: x.active_jobs,
+      terminal,
+      stuck: x.state === "running" && x.live_battles === 0 && x.active_jobs === 0,
+    };
+  });
+}
+
 /** Guardas de esquema y de actividad. Devuelve la lista de fallos (vacía = OK). */
 async function guards(trx: Knex.Transaction, expected: readonly string[]): Promise<string[]> {
   const fails: string[] = [];
@@ -531,10 +615,17 @@ async function guards(trx: Knex.Transaction, expected: readonly string[]): Promi
     if (running) fails.push(`${running} batalla(s) en 'running'`);
     const activeJobs = await one(`SELECT count(*)::int AS n FROM jobs WHERE status IN ('queued','running')`);
     if (activeJobs) fails.push(`${activeJobs} job(s) activos (queued/running)`);
-    const runningT = await one(`SELECT count(*)::int AS n FROM tournaments WHERE state = 'running'`);
-    if (runningT) fails.push(`${runningT} torneo(s) en 'running'`);
-    const runningM = await one(`SELECT count(*)::int AS n FROM matches WHERE state = 'running'`);
-    if (runningM) fails.push(`${runningM} partida(s) en 'running'`);
+    // P2-1 · El estado NOMINAL `running` de torneos/partidas no es criterio: un torneo `running`
+    // sin batallas en curso ni jobs activos está ATASCADO y se borra (se lista como tal). Sólo
+    // aborta un torneo con actividad viva. (Las guardas globales de arriba ya abortan ante
+    // cualquier batalla running o job activo; esta repite el motivo con el nombre del torneo.)
+    for (const t of await listTournaments(trx)) {
+      if (t.liveBattles || t.activeJobs) {
+        fails.push(
+          `torneo «${t.name}» (${t.id}, ${t.state}) con actividad viva: ${t.liveBattles} batalla(s) running, ${t.activeJobs} job(s) activos`,
+        );
+      }
+    }
     const activeStream = await one(`SELECT count(*)::int AS n FROM streaming_sessions WHERE state = 'active'`);
     if (activeStream) fails.push(`${activeStream} emisión(es) activa(s)`);
     const ach = await one(`SELECT count(*)::int AS n FROM achievements`);
@@ -552,13 +643,23 @@ function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+/**
+ * Escritura ATÓMICA y sin sobrescribir (P1-1): temporal en el mismo directorio (0600, fsync) y
+ * `link` al nombre final, que falla con EEXIST si ya existe; nunca deja un fichero a medias.
+ */
 function writeDurable(path: string, content: string): void {
-  const fd = openSync(path, "wx", 0o600);
+  const tmp = join(dirname(path), `.${path.split("/").pop()}.tmp-${process.pid}-${Date.now()}`);
+  const fd = openSync(tmp, "wx", 0o600);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+  try {
+    linkSync(tmp, path);
+  } finally {
+    unlinkSync(tmp);
   }
   try {
     const dfd = openSync(dirname(path), "r");
@@ -569,7 +670,26 @@ function writeDurable(path: string, content: string): void {
   }
 }
 
-function diffStates(before: DbState, after: DbState): string[] {
+/** Ruta de salida válida: no existe y su directorio existe y es escribible. null = OK. */
+export function outputPathProblem(path: string): string | null {
+  let exists = true;
+  try {
+    lstatSync(path); // también detecta enlaces simbólicos rotos
+  } catch {
+    exists = false;
+  }
+  if (exists) return `${path} ya existe (no se sobrescribe)`;
+  const dir = dirname(path);
+  try {
+    if (!statSync(dir).isDirectory()) return `${dir} no es un directorio`;
+    accessSync(dir, fsConstants.W_OK | fsConstants.X_OK);
+  } catch {
+    return `${dir} no existe o no es escribible`;
+  }
+  return null;
+}
+
+function diffStates(before: DbState, after: DbState, auditDelta: number): string[] {
   const fails: string[] = [];
   for (const [table, spec] of Object.entries(INVENTORY)) {
     const b = before[table];
@@ -581,7 +701,9 @@ function diffStates(before: DbState, after: DbState): string[] {
       if (a.hash !== b.hash) fails.push(`${table}: el subconjunto conservado cambió (${b.hash} → ${a.hash})`);
     } else if (table === "audit_log") {
       if (a.hash !== b.hash) fails.push(`audit_log: las filas previas cambiaron`);
-      if (a.count !== b.count + 1) fails.push(`audit_log: ${a.count - b.count} filas nuevas (esperada 1, la marca)`);
+      if (a.count !== b.count + auditDelta) {
+        fails.push(`audit_log: ${a.count - b.count} filas nuevas (esperada(s) ${auditDelta}: la marca sólo en apply)`);
+      }
     } else {
       if (a.count !== b.count) fails.push(`${table}: ${b.count} → ${a.count} filas (PRESERVE)`);
       if (a.hash !== b.hash) fails.push(`${table}: hash de filas cambió (PRESERVE)`);
@@ -616,6 +738,7 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
     .map(([t]) => t);
 
   const trx = await db.transaction();
+  let committing = false;
   let committed = false;
   try {
     // Snapshot fijo: los hashes "antes" y "después" ven la MISMA foto salvo lo que hace este script.
@@ -660,6 +783,16 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
       }
     }
 
+    // P2-1 · lista de torneos que se borrarán (el CLI la imprime ANTES de la tabla de conteos).
+    report.tournaments = await listTournaments(trx);
+    for (const t of report.tournaments) {
+      log(
+        `  TORNEO ${t.id} «${t.name}» estado=${t.state} entries=${t.entries} batallas=${t.battles}` +
+          (t.stuck ? "  ⚠ ATASCADO (running sin batallas en curso ni jobs activos): se borra" : "") +
+          (!t.terminal && !t.stuck ? "  ⚠ NO TERMINAL: se borra" : ""),
+      );
+    }
+
     const [{ m }] = (await trx.raw(`SELECT coalesce(max(id), 0)::bigint AS m FROM audit_log`)).rows;
     const auditMax = Number(m);
     report.before = await snapshot(trx, auditMax);
@@ -682,6 +815,8 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
     const manifestText = JSON.stringify(manifest, null, 2) + "\n";
     const manifestSha = createHash("sha256").update(manifestText).digest("hex");
 
+    await opts.testHooks?.afterLock?.();
+
     report.deleted = {};
     for (const step of steps) {
       const r = await trx.raw(step.sql);
@@ -690,24 +825,26 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
     }
     for (const sql of opts.extraSql ?? []) await trx.raw(sql);
 
-    // Marca de una sola ejecución (también en dry-run: se deshace con el ROLLBACK).
-    await trx("audit_log").insert({
-      actor_id: null,
-      action: AUDIT_ACTION,
-      target: AUDIT_TARGET,
-      detail: JSON.stringify({
-        scriptVersion: SCRIPT_VERSION,
-        fingerprint: report.fingerprint,
-        deleted: report.deleted,
-        before: Object.fromEntries(Object.entries(report.before).map(([t, s]) => [t, s.count])),
-        replayManifestSha256: manifestSha,
-        battles: battles.length,
-      }),
-    });
+    // Marca de una sola ejecución. SÓLO en apply (P2-3): en dry-run ni siquiera se inserta, para
+    // no consumir identidad de audit_log (un INSERT deshecho deja hueco en la secuencia).
+    if (opts.mode === "apply")
+      await trx("audit_log").insert({
+        actor_id: null,
+        action: AUDIT_ACTION,
+        target: AUDIT_TARGET,
+        detail: JSON.stringify({
+          scriptVersion: SCRIPT_VERSION,
+          fingerprint: report.fingerprint,
+          deleted: report.deleted,
+          before: Object.fromEntries(Object.entries(report.before).map(([t, s]) => [t, s.count])),
+          replayManifestSha256: manifestSha,
+          battles: battles.length,
+        }),
+      });
 
     // ---------------------------------------------------------- verificación EN la transacción
     report.after = await snapshot(trx, auditMax);
-    const verify = diffStates(report.before, report.after);
+    const verify = diffStates(report.before, report.after, opts.mode === "apply" ? 1 : 0);
     const declared = await declaredOrphans(trx);
     const logical = await logicalRefs(trx);
     report.orphans = { ...declared, ...logical };
@@ -727,8 +864,9 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
     if ((await schemaFingerprint(trx)) !== report.fingerprint) verify.push("el esquema cambió durante el reset");
     report.historical = await historicalRefs(trx);
     report.verifyFailures = verify;
+    const writeManifest = opts.mode === "apply" || opts.writeDryRunManifest === true;
     report.replayManifest = {
-      path: opts.manifestPath ?? null,
+      path: writeManifest ? (opts.manifestPath ?? null) : null,
       sha256: manifestSha,
       battles: battles.length,
       withReplayRef: battles.filter((b) => b.replay_ref).length,
@@ -741,7 +879,7 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
       return report;
     }
 
-    if (opts.manifestPath) writeDurable(opts.manifestPath, manifestText);
+    if (writeManifest && opts.manifestPath) writeDurable(opts.manifestPath, manifestText);
 
     if (opts.mode !== "apply") {
       await trx.rollback();
@@ -750,14 +888,31 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
       return report;
     }
 
-    await trx.commit();
+    // A partir de aquí el estado puede haber cambiado: cualquier fallo es 4, nunca 1.
+    committing = true;
+    await (opts.testHooks?.commit ? opts.testHooks.commit(trx) : trx.commit());
     committed = true;
   } catch (err) {
-    if (!committed && !trx.isCompleted()) await trx.rollback().catch(() => {});
+    if (committing && !committed) {
+      // COMMIT que lanza: pudo confirmarse en el servidor y perderse la respuesta (conexión
+      // cortada). Estado DESCONOCIDO: exit 4, comprobar la marca en audit_log.
+      if (!trx.isCompleted()) await trx.rollback().catch(() => {});
+      report.status = "COMMIT_UNKNOWN";
+      report.exitCode = 4;
+      report.error = `COMMIT con resultado desconocido: ${(err as Error).message}. Comprobar la marca ${AUDIT_ACTION} en audit_log; STOP`;
+      return report;
+    }
+    if (!trx.isCompleted()) await trx.rollback().catch(() => {});
     report.status = "ERROR";
     report.exitCode = 1;
     report.error = (err as Error).message;
     return report;
+  }
+
+  try {
+    await opts.testHooks?.afterCommit?.();
+  } catch (err) {
+    report.warnings.push(`afterCommit: ${(err as Error).message}`);
   }
 
   // ---------------------------------------------------------- verificación DESPUÉS del COMMIT
@@ -914,7 +1069,13 @@ function printTable(rep: ResetReport, out: (s: string) => void): void {
   }
 }
 
-export async function main(argv: string[]): Promise<number> {
+export interface MainHooks {
+  /** SÓLO TESTS: justo antes de escribir el --report (p. ej. hacer que falle). */
+  beforeReportWrite?: () => void;
+  reset?: ResetOptions["testHooks"];
+}
+
+export async function main(argv: string[], hooks?: MainHooks): Promise<number> {
   const out = (s: string) => process.stdout.write(s + "\n");
   const db = createDb();
   try {
@@ -936,17 +1097,57 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     const apply = argv.includes("--apply");
+    const result = (st: string, code: number, fp?: string) =>
+      out(`RESULT ${JSON.stringify({ status: st, exitCode: code, fingerprint: fp })}`);
     if (apply && argv.includes("--dry-run")) {
       out("--apply y --dry-run son incompatibles");
+      result("USAGE", 2);
       return 2;
+    }
+    const manifestPath = arg(argv, "--replay-manifest") ?? null;
+    const reportPath = arg(argv, "--report") ?? null;
+    const writeDryRunManifest = argv.includes("--write-dry-run-manifest");
+    // P1-1 · Las rutas de salida se validan ANTES de abrir la transacción: un --report que ya
+    // existe o no se puede escribir aborta con 2 sin tocar nada (nunca después del COMMIT).
+    const outputs: string[] = [];
+    if (reportPath) outputs.push(reportPath);
+    if (manifestPath && (apply || writeDryRunManifest)) outputs.push(manifestPath);
+    if (reportPath && manifestPath && reportPath === manifestPath) {
+      out("GUARDA: --report y --replay-manifest no pueden ser la misma ruta");
+      result("GUARD_FAILED", 2);
+      return 2;
+    }
+    for (const o of outputs) {
+      const problem = outputPathProblem(o);
+      if (problem) {
+        out(`GUARDA: ruta de salida no válida: ${problem}`);
+        result("GUARD_FAILED", 2);
+        return 2;
+      }
+    }
+    if (manifestPath && !apply && !writeDryRunManifest) {
+      out("AVISO: en dry-run el manifiesto NO se escribe (usa --write-dry-run-manifest para escribirlo)");
     }
     const rep = await runReset(db, {
       mode: apply ? "apply" : "dry-run",
       confirm: process.env.S9_RESET_CONFIRM,
-      manifestPath: arg(argv, "--replay-manifest") ?? null,
+      manifestPath,
+      writeDryRunManifest,
       log: out,
+      testHooks: hooks?.reset,
     });
     out(`MODO ${rep.mode} · huella del esquema: ${rep.fingerprint ?? "(no calculada)"}`);
+    const pending = (rep.tournaments ?? []).filter((t) => !t.terminal);
+    if (rep.tournaments) {
+      out(
+        `torneos que se borran: ${rep.tournaments.length} (no terminales: ${pending.length}, atascados: ${pending.filter((t) => t.stuck).length})`,
+      );
+    }
+    if (pending.length) {
+      out("################################################################################");
+      out(`### ATENCIÓN: ${pending.length} torneo(s) NO terminal(es) se borran (ver líneas TORNEO ⚠ arriba)`);
+      out("################################################################################");
+    }
     printTable(rep, out);
     if (rep.frozenVersions) out(`versiones frozen: ${rep.frozenVersions.before} → ${rep.frozenVersions.after}`);
     if (rep.orphans) {
@@ -965,9 +1166,27 @@ export async function main(argv: string[]): Promise<number> {
     for (const p of rep.postCommit?.failures ?? []) out(`POST-COMMIT: ${p}`);
     for (const p of rep.postCommit?.changedVolatile ?? []) out(`AVISO (volátil): ${p}`);
     if (rep.error) out(`ERROR: ${rep.error}`);
-    const reportPath = arg(argv, "--report");
-    if (reportPath) writeDurable(reportPath, JSON.stringify(rep, null, 2) + "\n");
-    out(`RESULT ${JSON.stringify({ status: rep.status, exitCode: rep.exitCode, fingerprint: rep.fingerprint })}`);
+    if (reportPath) {
+      // Tras un COMMIT (o un COMMIT de resultado desconocido) cualquier fallo aquí es 4: el reset
+      // está (o puede estar) aplicado y no se debe confundir con «ROLLBACK, no se tocó nada».
+      const afterCommit =
+        rep.mode === "apply" && ["APPLIED", "POST_COMMIT_FAILED", "COMMIT_UNKNOWN"].includes(rep.status);
+      try {
+        hooks?.beforeReportWrite?.();
+        writeDurable(reportPath, JSON.stringify(rep, null, 2) + "\n");
+      } catch (err) {
+        out(`ERROR escribiendo --report: ${(err as Error).message}`);
+        if (afterCommit) {
+          rep.status = rep.status === "COMMIT_UNKNOWN" ? "COMMIT_UNKNOWN" : "POST_COMMIT_FAILED";
+          rep.exitCode = 4;
+          out("POST-COMMIT: el reset está aplicado pero el informe no se pudo escribir: STOP");
+        } else if (rep.exitCode === 0) {
+          rep.status = "ERROR";
+          rep.exitCode = 1;
+        }
+      }
+    }
+    result(rep.status, rep.exitCode, rep.fingerprint);
     return rep.exitCode;
   } finally {
     await db.destroy();

@@ -16,15 +16,20 @@
  * esté en MIGRATIONS, se usa la real y este parche no se ejecuta.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { MIGRATIONS } from "./migrations.js";
+import { createDb, type Db } from "./connection.js";
+import { MIGRATIONS, migrateToLatest } from "./migrations.js";
 import {
   AUDIT_ACTION,
+  AUDIT_TARGET,
   EXPECTED_MIGRATIONS,
+  MANIFEST_FORMAT,
+  RESET_NAME,
   INVENTORY,
   RESET_STEPS,
   main,
@@ -60,10 +65,10 @@ const PRESERVE_TABLES = Object.entries(INVENTORY)
   .filter(([, s]) => s.klass === "PRESERVE")
   .map(([t]) => t);
 
-async function ensure022(): Promise<void> {
+async function ensure022(db: Db): Promise<void> {
   if (MIGRATIONS.some((m) => m.name === "022_entries_team")) return;
   // DDL literal de 022_entries_team (#290, feat/tournament-team-enrollment).
-  await h.db.raw(`
+  await db.raw(`
     ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id);
     CREATE INDEX entries_tournament_team_idx ON entries (tournament_id, team_id) WHERE team_id IS NOT NULL;
     CREATE TABLE team_entry_consents (
@@ -77,11 +82,10 @@ async function ensure022(): Promise<void> {
       FOREIGN KEY (bot_id, version) REFERENCES bot_versions(bot_id, version) ON DELETE CASCADE
     );
   `);
-  await h.db("knex_migrations").insert({ name: "022_entries_team", batch: 2, migration_time: new Date() });
+  await db("knex_migrations").insert({ name: "022_entries_team", batch: 2, migration_time: new Date() });
 }
 
-async function seed(): Promise<void> {
-  const db = h.db;
+async function seed(db: Db): Promise<void> {
   await db("users").insert([
     { id: U1, email: "u1@example.test", password_hash: "x", display_name: "U1" },
     { id: U2, email: "u2@example.test", password_hash: "x", display_name: "U2" },
@@ -295,6 +299,52 @@ async function dbHash(): Promise<Record<string, string>> {
   return out;
 }
 
+/** BD NUEVA en el mismo servidor, migrada y sembrada igual: para escenarios que aplican el reset. */
+async function freshDb(): Promise<{ db: Db; url: string; drop: () => Promise<void> }> {
+  const name = `reset_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await h.db.raw(`CREATE DATABASE "${name}"`);
+  const u = new URL(h.url);
+  u.pathname = `/${name}`;
+  const db = createDb(u.toString());
+  await migrateToLatest(db);
+  await ensure022(db);
+  await seed(db);
+  return {
+    db,
+    url: u.toString(),
+    drop: async () => {
+      await db.destroy();
+      await h.db.raw(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    },
+  };
+}
+
+async function marks(db: Db): Promise<number> {
+  return (await db.raw(`SELECT count(*)::int AS n FROM audit_log WHERE action = ?`, [AUDIT_ACTION])).rows[0].n;
+}
+
+/** Ejecuta main() capturando stdout (para comprobar que SIEMPRE se imprime RESULT). */
+async function runMain(url: string, argv: string[], env: Record<string, string>, hooks?: Parameters<typeof main>[1]) {
+  const lines: string[] = [];
+  const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  const prev = { DATABASE_URL: process.env.DATABASE_URL, S9_RESET_CONFIRM: process.env.S9_RESET_CONFIRM };
+  process.env.DATABASE_URL = url;
+  for (const [k, v] of Object.entries(env)) process.env[k] = v;
+  try {
+    const code = await main(argv, hooks);
+    return { code, out: lines.join("") };
+  } finally {
+    spy.mockRestore();
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 async function fingerprint(): Promise<string> {
   const r = await runReset(h.db, { mode: "dry-run" });
   expect(r.status).toBe("DRY_RUN_OK");
@@ -306,8 +356,8 @@ beforeAll(async () => {
   work = mkdtempSync(join(tmpdir(), "s9-reset-"));
   replaysDir = join(work, "replays");
   mkdirSync(replaysDir);
-  await ensure022();
-  await seed();
+  await ensure022(h.db);
+  await seed(h.db);
 }, 180_000);
 afterAll(async () => {
   await h?.stop();
@@ -357,7 +407,83 @@ describe("pre-0.5 competitive reset · dry-run y guardas", () => {
     expect(r.frozenVersions).toEqual({ before: 2, after: 2 });
     expect(r.replayManifest!.battles).toBe(4);
     expect(r.historical!["audit_log.target battle:<id> sin batalla"]).toBe(1);
+    // P2-1 · lista de torneos que se borran, con entries y batallas.
+    expect(r.tournaments!.map((t) => [t.name, t.state, t.entries, t.battles, t.terminal, t.stuck])).toEqual([
+      ["T1", "finished", 2, 1, true, false],
+      ["T2", "open", 1, 0, false, false],
+      ["T3", "cancelled", 0, 0, true, false],
+    ]);
     expect(await dbHash()).toEqual(before);
+  });
+
+  it("P2-3 · el dry-run no consume identidad de audit_log ni escribe el manifiesto sin opción explícita", async () => {
+    const before = await dbHash();
+    const seqBefore = (await h.db.raw(`SELECT last_value, is_called FROM audit_log_id_seq`)).rows[0];
+    const p = join(work, "dry-sin-opcion.json");
+    const r = await runReset(h.db, { mode: "dry-run", manifestPath: p });
+    expect(r.status).toBe("DRY_RUN_OK");
+    expect(r.replayManifest!.path).toBeNull();
+    expect(existsSync(p)).toBe(false);
+    expect((await h.db.raw(`SELECT last_value, is_called FROM audit_log_id_seq`)).rows[0]).toEqual(seqBefore);
+    expect(await dbHash()).toEqual(before);
+    // Con la opción explícita sí lo escribe, marcado como de dry-run (replay-files lo rechaza).
+    const p2 = join(work, "dry-con-opcion.json");
+    const r2 = await runReset(h.db, { mode: "dry-run", manifestPath: p2, writeDryRunManifest: true });
+    expect(r2.replayManifest!.path).toBe(p2);
+    expect(JSON.parse(readFileSync(p2, "utf8")).dryRun).toBe(true);
+  });
+
+  it("P2-1 · un torneo `running` SIN nada vivo (atascado) no aborta: se lista como atascado y se borra", async () => {
+    await h.db.raw(`UPDATE tournaments SET state = 'running' WHERE id = '${T2}'`);
+    await h.db.raw(`UPDATE matches SET state = 'running' WHERE id = '${M1}'`);
+    try {
+      const before = await dbHash();
+      const logs: string[] = [];
+      const r = await runReset(h.db, { mode: "dry-run", log: (l) => logs.push(l) });
+      expect(r.status, r.guardFailures.join()).toBe("DRY_RUN_OK");
+      const t2 = r.tournaments!.find((t) => t.id === T2)!;
+      expect(t2).toMatchObject({ state: "running", stuck: true, terminal: false, liveBattles: 0, activeJobs: 0 });
+      expect(logs.join("\n")).toMatch(new RegExp(`TORNEO ${T2} «T2» estado=running entries=1 batallas=0 .*ATASCADO`));
+      expect(r.deleted!.tournaments).toBe(3);
+      expect(r.after!.matches.count).toBe(0);
+      expect(await dbHash()).toEqual(before);
+    } finally {
+      await h.db.raw(`UPDATE matches SET state = 'finished' WHERE id = '${M1}'`);
+      await h.db.raw(`UPDATE tournaments SET state = 'open' WHERE id = '${T2}'`);
+    }
+  });
+
+  it("M7 · durante el reset las tablas a borrar están bloqueadas (EXCLUSIVE) para otras conexiones", async () => {
+    const seen: { locks: string[]; insertError: string | null } = { locks: [], insertError: null };
+    const r = await runReset(h.db, {
+      mode: "dry-run",
+      testHooks: {
+        afterLock: async () => {
+          // Otra conexión del pool ve los bloqueos de la transacción del reset…
+          seen.locks = (
+            await h.db.raw(
+              `SELECT c.relname AS t FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+                WHERE l.mode = 'ExclusiveLock' AND l.granted AND l.pid <> pg_backend_pid() ORDER BY 1`,
+            )
+          ).rows.map((x: { t: string }) => x.t);
+          // …y una escritura en una tabla bloqueada tiene que esperar (aquí, agotar su lock_timeout).
+          try {
+            await h.db.transaction(async (t) => {
+              await t.raw(`SET LOCAL lock_timeout = '300ms'`);
+              await t.raw(`INSERT INTO jobs (kind, status) VALUES ('bot_build', 'done')`);
+            });
+          } catch (err) {
+            seen.insertError = (err as Error).message;
+          }
+        },
+      },
+    });
+    expect(r.status).toBe("DRY_RUN_OK");
+    for (const t of ["battles", "tournaments", "entries", "jobs", "streaming_sessions", "ratings", "standings"]) {
+      expect(seen.locks, t).toContain(t);
+    }
+    expect(seen.insertError).toMatch(/lock timeout/i);
+    expect(await h.db("jobs").where({ kind: "bot_build" }).count({ n: "*" })).toEqual([{ n: "2" }]);
   });
 
   it("--apply sin confirmación, o con una huella equivocada, se rechaza sin tocar nada", async () => {
@@ -388,10 +514,22 @@ describe("pre-0.5 competitive reset · dry-run y guardas", () => {
       expect: /job\(s\) activos/,
     },
     {
-      name: "torneo running",
-      on: `UPDATE tournaments SET state = 'running' WHERE id = '${T2}'`,
-      off: `UPDATE tournaments SET state = 'open' WHERE id = '${T2}'`,
-      expect: /torneo\(s\) en 'running'/,
+      name: "torneo running con una batalla en curso",
+      on: `UPDATE tournaments SET state = 'running' WHERE id = '${T2}'; UPDATE battles SET tournament_id = '${T2}', status = 'running' WHERE id = '${BA3}'`,
+      off: `UPDATE battles SET tournament_id = NULL, status = 'scheduled' WHERE id = '${BA3}'; UPDATE tournaments SET state = 'open' WHERE id = '${T2}'`,
+      expect: /torneo «T2».*1 batalla\(s\) running/,
+    },
+    {
+      name: "torneo con un job activo",
+      on: `UPDATE jobs SET status = 'queued' WHERE kind = 'tournament_dry_run'`,
+      off: `UPDATE jobs SET status = 'done' WHERE kind = 'tournament_dry_run'`,
+      expect: /torneo «T2».*1 job\(s\) activos/,
+    },
+    {
+      name: "partida running con su batalla en curso",
+      on: `UPDATE matches SET state = 'running' WHERE id = '${M1}'; UPDATE battles SET status = 'running' WHERE id = '${BA1}'`,
+      off: `UPDATE battles SET status = 'finished' WHERE id = '${BA1}'; UPDATE matches SET state = 'finished' WHERE id = '${M1}'`,
+      expect: /batalla\(s\) en 'running'[\s\S]*torneo «T1»/,
     },
     {
       name: "emisión activa",
@@ -497,6 +635,21 @@ describe("pre-0.5 competitive reset · mutantes del plan (deben morir con ROLLBA
       name: "añade una fila de auditoría extra",
       extraSql: [`INSERT INTO audit_log (action, target) VALUES ('x', 'y')`],
       expect: /audit_log: 2 filas nuevas/,
+    },
+    {
+      name: "M1 · cambia los bytes de un artefacto (bytea)",
+      extraSql: [`UPDATE artifacts SET bytes = convert_to('otro artefacto', 'UTF8')`],
+      expect: /artifacts: hash de filas cambió/,
+    },
+    {
+      name: "M8 · cambia la 1ª columna (alfabética) de users: created_at",
+      extraSql: [`UPDATE users SET created_at = created_at - interval '1 day'`],
+      expect: /users: hash de filas cambió/,
+    },
+    {
+      name: "M8 · cambia la 1ª columna (alfabética) de teams: captain_id",
+      extraSql: [`UPDATE teams SET captain_id = '${U2}'`],
+      expect: /teams: hash de filas cambió/,
     },
     {
       name: "toca la configuración",
@@ -635,6 +788,161 @@ describe("pre-0.5 competitive reset · apply, repetición y archivos", () => {
     } finally {
       if (prev === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = prev;
+    }
+  });
+});
+
+describe("pre-0.5 competitive reset · ronda 2: fallos tras el COMMIT y replay-files", () => {
+  const RESULT = (out: string) => {
+    const line = out.split("\n").find((l) => l.startsWith("RESULT "));
+    return line ? JSON.parse(line.slice("RESULT ".length)) : null;
+  };
+
+  it("P1-1 · --report inválido (existe o directorio inexistente) aborta con 2 ANTES de tocar nada; si falla tras el COMMIT, 4 con RESULT", async () => {
+    const f = await freshDb();
+    try {
+      const fp = (await runReset(f.db, { mode: "dry-run" })).fingerprint!;
+      const dir = mkdtempSync(join(work, "p11-"));
+      const existing = join(dir, "report.json");
+      writeFileSync(existing, "ya existe");
+      const env = { S9_RESET_CONFIRM: fp };
+
+      const a = await runMain(
+        f.url,
+        ["--apply", "--replay-manifest", join(dir, "m-a.json"), "--report", existing],
+        env,
+      );
+      expect(a.code).toBe(2);
+      expect(RESULT(a.out)).toMatchObject({ status: "GUARD_FAILED", exitCode: 2 });
+      expect(a.out).toMatch(/ya existe/);
+      expect(await marks(f.db)).toBe(0);
+
+      const b = await runMain(
+        f.url,
+        ["--apply", "--replay-manifest", join(dir, "m-b.json"), "--report", join(dir, "no-existe", "r.json")],
+        env,
+      );
+      expect(b.code).toBe(2);
+      expect(RESULT(b.out)).toMatchObject({ status: "GUARD_FAILED", exitCode: 2 });
+      expect(await marks(f.db)).toBe(0);
+
+      // El directorio del informe desaparece entre la validación y la escritura (tras el COMMIT).
+      const repDir = mkdtempSync(join(work, "p11-rep-"));
+      const c = await runMain(
+        f.url,
+        ["--apply", "--replay-manifest", join(dir, "m-c.json"), "--report", join(repDir, "r.json")],
+        env,
+        { beforeReportWrite: () => rmSync(repDir, { recursive: true, force: true }) },
+      );
+      expect(c.code).toBe(4);
+      expect(RESULT(c.out)).toMatchObject({ status: "POST_COMMIT_FAILED", exitCode: 4 });
+      expect(c.out).toMatch(/ERROR escribiendo --report/);
+      expect(await marks(f.db)).toBe(1); // aplicado de verdad: por eso 4 y no 1
+    } finally {
+      await f.drop();
+    }
+  });
+
+  it("P1-1 · COMMIT que lanza tras confirmarse → COMMIT_UNKNOWN (4) con RESULT; la marca está", async () => {
+    const f = await freshDb();
+    try {
+      const fp = (await runReset(f.db, { mode: "dry-run" })).fingerprint!;
+      const dir = mkdtempSync(join(work, "p11b-"));
+      const r = await runMain(
+        f.url,
+        ["--apply", "--replay-manifest", join(dir, "m.json")],
+        { S9_RESET_CONFIRM: fp },
+        {
+          reset: {
+            commit: async (trx) => {
+              await trx.commit();
+              throw new Error("conexión cortada tras enviar COMMIT");
+            },
+          },
+        },
+      );
+      expect(r.code).toBe(4);
+      expect(RESULT(r.out)).toMatchObject({ status: "COMMIT_UNKNOWN", exitCode: 4 });
+      expect(await marks(f.db)).toBe(1);
+    } finally {
+      await f.drop();
+    }
+  });
+
+  it("P1-1/M5 · COMMIT que lanza sin confirmarse también es 4 (estado desconocido); y un fallo de la verificación posterior es 4", async () => {
+    const f = await freshDb();
+    try {
+      const fp = (await runReset(f.db, { mode: "dry-run" })).fingerprint!;
+      const r1 = await runReset(f.db, {
+        mode: "apply",
+        confirm: fp,
+        manifestPath: join(mkdtempSync(join(work, "m5a-")), "m.json"),
+        testHooks: {
+          commit: async () => {
+            throw new Error("socket cerrado");
+          },
+        },
+      });
+      expect(r1).toMatchObject({ status: "COMMIT_UNKNOWN", exitCode: 4 });
+      expect(await marks(f.db)).toBe(0); // en realidad no se confirmó: el 4 es conservador
+
+      // Un worker vivo crea una batalla justo tras el COMMIT: la verificación posterior falla → 4.
+      const r2 = await runReset(f.db, {
+        mode: "apply",
+        confirm: fp,
+        manifestPath: join(mkdtempSync(join(work, "m5b-")), "m.json"),
+        testHooks: {
+          afterCommit: async () => {
+            const mv = await f.db("map_versions").first();
+            await f.db("battles").insert({
+              mode: "deathmatch",
+              ruleset_id: "r1",
+              map_id: mv.map_id,
+              map_version: mv.version,
+              status: "scheduled",
+            });
+          },
+        },
+      });
+      expect(r2.status).toBe("POST_COMMIT_FAILED");
+      expect(r2.exitCode).toBe(4);
+      expect(r2.postCommit!.failures.join()).toMatch(/battles: 1 filas tras el COMMIT/);
+      expect(await marks(f.db)).toBe(1);
+    } finally {
+      await f.drop();
+    }
+  });
+
+  it("M4 · replay-files rechaza ids que no son UUID aunque el sha256 del manifiesto coincida con la marca", async () => {
+    const f = await freshDb();
+    try {
+      const dir = mkdtempSync(join(work, "m4-"));
+      const rdir = join(dir, "replays");
+      mkdirSync(rdir);
+      const victim = join(dir, "victima.replay");
+      writeFileSync(victim, "fuera del directorio de replays");
+      const manifestPath = join(dir, "manifest.json");
+      const text =
+        JSON.stringify({
+          format: MANIFEST_FORMAT,
+          reset: RESET_NAME,
+          dryRun: false,
+          battles: [{ id: "../victima", replayRef: null, replayHash: null }],
+        }) + "\n";
+      writeFileSync(manifestPath, text);
+      const sha = createHash("sha256").update(text).digest("hex");
+      await f.db("audit_log").insert({
+        action: AUDIT_ACTION,
+        target: AUDIT_TARGET,
+        detail: JSON.stringify({ replayManifestSha256: sha }),
+      });
+      const r = await replayFiles(f.db, { manifestPath, replaysDir: rdir, apply: true });
+      expect(r.status).toBe("REFUSED");
+      expect(r.refusals.join()).toMatch(/no UUID/);
+      expect(r.deleted).toEqual([]);
+      expect(existsSync(victim)).toBe(true);
+    } finally {
+      await f.drop();
     }
   });
 });
