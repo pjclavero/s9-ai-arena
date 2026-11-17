@@ -163,10 +163,24 @@ async function seed(): Promise<void> {
   const BUILD = id();
   await db("builds").insert({ id: BUILD, bot_id: B1, version: 1, status: "passed", artifact_hash: "ah" });
   await db("artifacts").insert({ build_id: BUILD, hash: "ah", storage_ref: "db", bytes: Buffer.from("artefacto") });
-  await db("security_findings").insert({ kind: "protocol_abuse", bot_id: B1, version: 1, severity: "low", detail: "d" });
+  await db("security_findings").insert({
+    kind: "protocol_abuse",
+    bot_id: B1,
+    version: 1,
+    severity: "low",
+    detail: "d",
+  });
 
   await db("tournaments").insert([
-    { id: T1, name: "T1", format: "teams", mode: "team_deathmatch", ruleset_id: "r1", state: "finished", created_by: U1 },
+    {
+      id: T1,
+      name: "T1",
+      format: "teams",
+      mode: "team_deathmatch",
+      ruleset_id: "r1",
+      state: "finished",
+      created_by: U1,
+    },
     { id: T2, name: "T2", format: "league", mode: "deathmatch", ruleset_id: "r1", state: "open", created_by: U1 },
     { id: T3, name: "T3", format: "league", mode: "deathmatch", ruleset_id: "r1", state: "cancelled", created_by: U2 },
   ]);
@@ -469,7 +483,11 @@ describe("pre-0.5 competitive reset · mutantes del plan (deben morir con ROLLBA
     },
     { name: "des-retira bots", extraSql: [`UPDATE bots SET retired_at = NULL`], expect: /bots: hash/ },
     { name: "borra loadouts no usados", extraSql: [`DELETE FROM loadout_modules`], expect: /loadout_modules/ },
-    { name: "borra un job de build", extraSql: [`DELETE FROM jobs WHERE kind = 'bot_build'`], expect: /jobs: el subconjunto conservado/ },
+    {
+      name: "borra un job de build",
+      extraSql: [`DELETE FROM jobs WHERE kind = 'bot_build'`],
+      expect: /jobs: el subconjunto conservado/,
+    },
     {
       name: "borra la emisión sin objetivo",
       extraSql: [`DELETE FROM streaming_sessions WHERE target_kind IS NULL`],
@@ -512,7 +530,11 @@ describe("pre-0.5 competitive reset · apply, repetición y archivos", () => {
   it("--apply deja RESET a 0, PRESERVE intacto (hash del test) y frozen sigue frozen", async () => {
     const before = await dbHash();
     preserved = Object.fromEntries(PRESERVE_TABLES.filter((t) => t !== "audit_log").map((t) => [t, before[t]]));
-    const frozen = await h.db("bot_versions").where({ state: "frozen" }).orderBy(["bot_id", "version"]).select("bot_id", "version");
+    const frozen = await h
+      .db("bot_versions")
+      .where({ state: "frozen" })
+      .orderBy(["bot_id", "version"])
+      .select("bot_id", "version");
     manifestPath = join(work, "manifest.json");
     applied = await runReset(h.db, { mode: "apply", confirm: await fingerprint(), manifestPath });
     expect(applied.status, JSON.stringify(applied.verifyFailures.concat(applied.postCommit?.failures ?? []))).toBe(
@@ -558,7 +580,9 @@ describe("pre-0.5 competitive reset · apply, repetición y archivos", () => {
 
   it("la API de la BD sigue usable: se puede crear un torneo nuevo e inscribir una versión frozen", async () => {
     const T = randomUUID();
-    await h.db("tournaments").insert({ id: T, name: "Nuevo 0.5", format: "league", mode: "deathmatch", ruleset_id: "r1" });
+    await h
+      .db("tournaments")
+      .insert({ id: T, name: "Nuevo 0.5", format: "league", mode: "deathmatch", ruleset_id: "r1" });
     await h.db("entries").insert({ tournament_id: T, bot_id: B1, version: 1, loadout_revision: 1, frozen: true });
     await h.db("entries").where({ tournament_id: T }).del();
     await h.db("tournaments").where({ id: T }).del();

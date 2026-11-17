@@ -181,7 +181,10 @@ export interface Step {
 /** Orden por FK: hijos antes que padres. Sin TRUNCATE ni CASCADE implícito hacia tablas conservadas. */
 export const RESET_STEPS: readonly Step[] = Object.freeze([
   { table: "jobs", sql: `DELETE FROM jobs WHERE ${INVENTORY.jobs.resetWhere}` },
-  { table: "streaming_sessions", sql: `DELETE FROM streaming_sessions WHERE ${INVENTORY.streaming_sessions.resetWhere}` },
+  {
+    table: "streaming_sessions",
+    sql: `DELETE FROM streaming_sessions WHERE ${INVENTORY.streaming_sessions.resetWhere}`,
+  },
   { table: "rating_events", sql: "DELETE FROM rating_events" },
   { table: "battle_stats", sql: "DELETE FROM battle_stats" },
   { table: "participants", sql: "DELETE FROM participants" },
@@ -439,7 +442,10 @@ async function snapshot(db: Knex | Knex.Transaction, auditMaxId: number): Promis
       state[table].hash = `${h.count}:${h.hash}`;
     }
     if (spec.klass === "PARTIAL") {
-      const [{ r }] = await rows<{ r: number }>(db, `SELECT count(*)::int AS r FROM ${q(table)} t WHERE ${spec.resetWhere}`);
+      const [{ r }] = await rows<{ r: number }>(
+        db,
+        `SELECT count(*)::int AS r FROM ${q(table)} t WHERE ${spec.resetWhere}`,
+      );
       state[table].resetCount = r;
     }
   }
@@ -484,7 +490,9 @@ async function frozenCount(db: Knex | Knex.Transaction): Promise<number> {
 /** Guardas de esquema y de actividad. Devuelve la lista de fallos (vacía = OK). */
 async function guards(trx: Knex.Transaction, expected: readonly string[]): Promise<string[]> {
   const fails: string[] = [];
-  const applied = (await rows<{ name: string }>(trx, `SELECT name FROM knex_migrations ORDER BY id`)).map((r) => r.name);
+  const applied = (await rows<{ name: string }>(trx, `SELECT name FROM knex_migrations ORDER BY id`)).map(
+    (r) => r.name,
+  );
   if (JSON.stringify(applied) !== JSON.stringify(expected)) {
     const missing = expected.filter((m) => !applied.includes(m));
     const extra = applied.filter((m) => !expected.includes(m));
@@ -493,7 +501,8 @@ async function guards(trx: Knex.Transaction, expected: readonly string[]): Promi
     );
   }
   const lock = await rows<{ is_locked: number }>(trx, `SELECT is_locked FROM knex_migrations_lock`);
-  if (lock.some((l) => Number(l.is_locked) !== 0)) fails.push("knex_migrations_lock está tomado: hay una migración en curso");
+  if (lock.some((l) => Number(l.is_locked) !== 0))
+    fails.push("knex_migrations_lock está tomado: hay una migración en curso");
 
   const tables = await publicTables(trx);
   const unknown = tables.filter((t) => !(t in INVENTORY));
@@ -502,7 +511,11 @@ async function guards(trx: Knex.Transaction, expected: readonly string[]): Promi
   if (missingT.length) fails.push(`tablas del inventario que no existen: ${missingT.join(", ")}`);
 
   // Un borrado nunca puede alcanzar (CASCADE / SET NULL / bloqueo) una tabla que se conserva.
-  const resetSet = new Set(Object.entries(INVENTORY).filter(([, s]) => s.klass === "RESET").map(([t]) => t));
+  const resetSet = new Set(
+    Object.entries(INVENTORY)
+      .filter(([, s]) => s.klass === "RESET")
+      .map(([t]) => t),
+  );
   for (const fk of await foreignKeys(trx)) {
     if (resetSet.has(fk.parent) && !resetSet.has(fk.child)) {
       fails.push(`FK ${fk.child}.${fk.conname} → ${fk.parent} (on delete '${fk.onDelete}') sale de una tabla NO-RESET`);
@@ -525,7 +538,8 @@ async function guards(trx: Knex.Transaction, expected: readonly string[]): Promi
     const activeStream = await one(`SELECT count(*)::int AS n FROM streaming_sessions WHERE state = 'active'`);
     if (activeStream) fails.push(`${activeStream} emisión(es) activa(s)`);
     const ach = await one(`SELECT count(*)::int AS n FROM achievements`);
-    if (ach) fails.push(`achievements tiene ${ach} fila(s): REVIEW obligatorio antes de decidir (no se borra a ciegas)`);
+    if (ach)
+      fails.push(`achievements tiene ${ach} fila(s): REVIEW obligatorio antes de decidir (no se borra a ciegas)`);
     const known = [...COMPETITIVE_JOB_KINDS, ...PRESERVED_JOB_KINDS];
     const kinds = (await rows<{ kind: string }>(trx, `SELECT DISTINCT kind FROM jobs ORDER BY 1`)).map((r) => r.kind);
     const unknownKinds = kinds.filter((k) => !known.includes(k));
@@ -581,7 +595,14 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
   const log = opts.log ?? (() => {});
   const expected = opts.expectedMigrations ?? EXPECTED_MIGRATIONS;
   const steps = opts.steps ?? RESET_STEPS;
-  const report: ResetReport = { mode: opts.mode, status: "ERROR", exitCode: 1, guardFailures: [], verifyFailures: [], warnings: [] };
+  const report: ResetReport = {
+    mode: opts.mode,
+    status: "ERROR",
+    exitCode: 1,
+    guardFailures: [],
+    verifyFailures: [],
+    warnings: [],
+  };
 
   // Qué tablas existen se mira FUERA de la transacción: dentro, la primera consulta fijaría el
   // snapshot antes de tomar los bloqueos.
@@ -819,7 +840,8 @@ export async function replayFiles(
     await db.raw(`SELECT detail FROM audit_log WHERE action = ? AND target = ?`, [AUDIT_ACTION, AUDIT_TARGET])
   ).rows as { detail: any }[];
   if (marks.length !== 1) rep.refusals.push(`marca de reset en audit_log: ${marks.length} (esperada 1)`);
-  else if (marks[0].detail?.replayManifestSha256 !== sha) rep.refusals.push("el sha256 del manifiesto no es el del reset");
+  else if (marks[0].detail?.replayManifestSha256 !== sha)
+    rep.refusals.push("el sha256 del manifiesto no es el del reset");
   const ids: string[] = (manifest.battles ?? []).map((b: { id: string }) => b.id);
   if (ids.some((id) => !UUID.test(id))) rep.refusals.push("ids de batalla no UUID en el manifiesto");
   if (ids.length) {
