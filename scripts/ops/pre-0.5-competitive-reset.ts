@@ -583,22 +583,25 @@ export async function runReset(db: Knex, opts: ResetOptions): Promise<ResetRepor
   const steps = opts.steps ?? RESET_STEPS;
   const report: ResetReport = { mode: opts.mode, status: "ERROR", exitCode: 1, guardFailures: [], verifyFailures: [], warnings: [] };
 
+  // Qué tablas existen se mira FUERA de la transacción: dentro, la primera consulta fijaría el
+  // snapshot antes de tomar los bloqueos.
+  const existing = (
+    await db.raw(
+      `SELECT c.relname AS t FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'`,
+    )
+  ).rows.map((r: { t: string }) => r.t);
+  const lockable = Object.entries(INVENTORY)
+    .filter(([t, s]) => s.klass !== "PRESERVE" && existing.includes(t))
+    .map(([t]) => t);
+
   const trx = await db.transaction();
   let committed = false;
   try {
     // Snapshot fijo: los hashes "antes" y "después" ven la MISMA foto salvo lo que hace este script.
     await trx.raw("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     await trx.raw("SET LOCAL lock_timeout = '15s'");
-    // Bloqueo ANTES del snapshot (LOCK no fija snapshot): nadie escribe en lo que se borra.
-    const lockTables = Object.entries(INVENTORY)
-      .filter(([, s]) => s.klass !== "PRESERVE")
-      .map(([t]) => t);
-    const existing = (
-      await trx.raw(
-        `SELECT c.relname AS t FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'`,
-      )
-    ).rows.map((r: { t: string }) => r.t);
-    const lockable = lockTables.filter((t) => existing.includes(t));
+    // Bloqueo ANTES del snapshot (SET y LOCK no lo fijan): nadie escribe en lo que se borra mientras
+    // dura el reset; las lecturas concurrentes siguen funcionando (EXCLUSIVE, no ACCESS EXCLUSIVE).
     if (lockable.length) await trx.raw(`LOCK TABLE ${lockable.map(q).join(", ")} IN EXCLUSIVE MODE`);
 
     if (existing.includes("audit_log") && (await alreadyApplied(trx))) {
