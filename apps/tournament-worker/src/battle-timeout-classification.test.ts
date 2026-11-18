@@ -8,10 +8,10 @@
  *  - política de reintento por código.
  */
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createServer, isIP, type AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import knex from "knex";
-import pg from "pg";
 import { describe, expect, it, vi } from "vitest";
 import {
   BATTLE_GUARD_FACTOR,
@@ -32,6 +32,17 @@ import {
   retryPolicyFor,
   toInfrastructureFailure,
 } from "./errors.js";
+
+// `pg` no trae tipos propios y el repo no depende de @types/pg: se carga con
+// createRequire y se tipa sólo lo que usa este test (evita TS7016 en el tsc
+// estricto de apps/tournament-worker).
+interface PgClientLike {
+  connect(): Promise<void>;
+  end(): Promise<void>;
+}
+const pg = createRequire(import.meta.url)("pg") as {
+  Client: new (config: Record<string, unknown>) => PgClientLike;
+};
 
 describe("F2 · el guard es PROPORCIONAL a las reglas reales del modo", () => {
   // Peor caso MEDIDO en producción: 9000 ticks de TDM en 323 s (ratio 1,06 sobre 306 s).
