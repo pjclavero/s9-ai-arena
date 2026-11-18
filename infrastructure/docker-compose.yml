@@ -373,6 +373,9 @@ services:
       # desde `ready` hasta su HELLO (docs/operations/configuration.md).
       SANDBOX_STARTUP_TIMEOUT_MS: ${SANDBOX_STARTUP_TIMEOUT_MS:-30000}
       BOT_EXECUTION_TIMEOUT_MS: ${BOT_EXECUTION_TIMEOUT_MS:-5000}
+      # Carga del host (PR C): vacío = automático; ver .env.example.
+      TOURNAMENT_WORKER_CONCURRENCY: ${TOURNAMENT_WORKER_CONCURRENCY:-}
+      TOURNAMENT_WORKER_CPU_SAMPLE_MS: ${TOURNAMENT_WORKER_CPU_SAMPLE_MS:-2000}
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # El gateway de espectador (en este proceso) aplica la MISMA capability
