@@ -442,22 +442,28 @@ describe("F3 · errores transitorios de BD (decididos por ORIGEN)", () => {
     },
   );
 
-  it.each(REALES_SIN_RUTA)("P2-12 · %s hacia el puerto de la BD (REAL, %s) → db_unavailable (pg y knex)", (_c, caso) => {
-    for (const via of ["pg", "knex"]) {
-      const e = real(caso, via);
-      expect(classifyDbError(e, { host: "postgres", port: 5432 })).toBe("db_unavailable"); // DSN por nombre
-      expect(classifyDbError(e, { host: (e as { address?: string }).address, port: 5432 })).toBe("db_unavailable"); // DSN por IP
-    }
-  });
-
-  it.each(REALES_SIN_RUTA)("P2-12 · %s REAL (%s) hacia OTRO puerto (docker-proxy/Redis) → NO es db_unavailable", (_c, caso) => {
-    for (const via of ["pg", "knex"]) {
-      const e = real(caso, via);
-      for (const puerto of [2375, 6379, 9001]) {
-        expect(classifyDbError(e, { host: "postgres", port: puerto })).toBeUndefined();
+  it.each(REALES_SIN_RUTA)(
+    "P2-12 · %s hacia el puerto de la BD (REAL, %s) → db_unavailable (pg y knex)",
+    (_c, caso) => {
+      for (const via of ["pg", "knex"]) {
+        const e = real(caso, via);
+        expect(classifyDbError(e, { host: "postgres", port: 5432 })).toBe("db_unavailable"); // DSN por nombre
+        expect(classifyDbError(e, { host: (e as { address?: string }).address, port: 5432 })).toBe("db_unavailable"); // DSN por IP
       }
-    }
-  });
+    },
+  );
+
+  it.each(REALES_SIN_RUTA)(
+    "P2-12 · %s REAL (%s) hacia OTRO puerto (docker-proxy/Redis) → NO es db_unavailable",
+    (_c, caso) => {
+      for (const via of ["pg", "knex"]) {
+        const e = real(caso, via);
+        for (const puerto of [2375, 6379, 9001]) {
+          expect(classifyDbError(e, { host: "postgres", port: puerto })).toBeUndefined();
+        }
+      }
+    },
+  );
 
   it("P2-12 · ECONNABORTED hacia el puerto de la BD (CONSTRUIDO: no capturable de forma segura) → db_unavailable", () => {
     expect(classifyDbError(nodeNet("ECONNABORTED", -103, "connect", "172.19.0.2", 5432), DB)).toBe("db_unavailable");
