@@ -46,6 +46,7 @@ import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
+import { isTournamentCancelled } from "./scheduler.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 import {
@@ -239,6 +240,10 @@ export async function claimBattle(
         status = 'scheduled'
         OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
       )
+      -- #288 · una batalla de un torneo cancelado no se ejecuta (en el MISMO UPDATE: sin ventana).
+      AND NOT EXISTS (
+        SELECT 1 FROM tournaments tc WHERE tc.id = battles.tournament_id AND tc.state = 'cancelled'
+      )
     RETURNING *
     `,
     { owner, leaseMs, battleId },
@@ -346,6 +351,8 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         return;
       }
       if (battle.status === "failed") return; // cerrada para revisión: nada que hacer
+      // #288 · torneo cancelado: la batalla no se ejecuta ni se toca; el trabajo termina.
+      if (await isTournamentCancelled(db, battle.tournament_id)) return;
       // `running` con lease vivo de OTRO titular: este trabajo es un duplicado.
       throw new InfrastructureFailure(
         "battle_busy",

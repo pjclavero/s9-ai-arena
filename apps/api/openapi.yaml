@@ -109,7 +109,13 @@ info:
   # exigen, además del rol organizer, ser quien creó el torneo o staff (moderator+): si no,
   # 403. La vía de organizador de excludeTournamentEntry exige lo mismo (el dueño del bot
   # sigue pudiendo retirar la suya). Regla única: canManageTournament.
-  version: 0.22.0
+  # 0.23.0 · #289 (aditivo; antes 0.21.0 en la rama): añade cancelTournament (POST /tournaments/{id}/actions/cancel):
+  # `draft|open` → `cancelled` (terminal), dueño del torneo o staff, auditado como
+  # tournament.cancelled, idempotente; `closed|running|finished` → 409
+  # tournament_not_cancellable. No borra nada. closeEntries pasa a ser atómico frente a
+  # la cancelación (409 illegal_transition si el torneo ya no está `open`).
+  # El 409 de cancelTournament usa su propio esquema TournamentNotCancellableError.
+  version: 0.23.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1138,7 +1144,37 @@ paths:
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
         '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #288) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+
+  /tournaments/{tournamentId}/actions/cancel:
+    post:
+      tags: [tournaments]
+      operationId: cancelTournament
+      summary: >-
+        #288 · Cancela un torneo que aún no tiene calendario (`draft` u `open`) → `cancelled`
+        (terminal). Sólo el organizador que lo creó o el staff (moderator+). No borra nada:
+        inscripciones, matches, batallas, clasificación e historial se conservan. Se audita como
+        tournament.cancelled en la misma transacción. Idempotente: un torneo ya cancelado
+        responde 200 sin nueva auditoría. Atómico frente a closeEntries (bloqueo de fila): de
+        una carrera sólo gana una de las dos transiciones. Tras cancelar, el worker no genera
+        calendario ni ejecuta batallas del torneo.
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 256, description: 'Motivo opcional; queda en audit_log.' }
+      responses:
+        '200': { description: Cancelado (o ya lo estaba), content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '400': { description: reason inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): predicado único canManageTournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'tournament_not_cancellable (currentState: closed, running o finished; allowedTransitions vacío)', content: { application/json: { schema: { $ref: '#/components/schemas/TournamentNotCancellableError' } } } }
 
   /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
     post:
@@ -2376,6 +2412,15 @@ components:
                     properties:
                       botId: { type: string }
                       version: { type: integer }
+
+    TournamentNotCancellableError:
+      description: '#288 · 409 de cancelTournament: el estado actual no admite cancelación.'
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState: { enum: [closed, running, finished] }
+            allowedTransitions: { type: array, items: { type: string }, maxItems: 0 }
 
     EntriesNotEligibleError:
       allOf:
