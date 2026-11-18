@@ -35,6 +35,20 @@ export function TournamentsPage(_props: { me: Me }) {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
+  /**
+   * #288 · Cancelar la creación: no envía NADA (ni POST ni estado a medias), limpia el
+   * formulario y vuelve al listado.
+   */
+  function onCancelCreate() {
+    setName("");
+    setFormat("single_elimination");
+    setMode("deathmatch");
+    setRulesetId("mvp-default");
+    setBroadcast(false);
+    setError("");
+    window.location.hash = "#/tournaments";
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault(); // envío también con Enter (ERR-VIS-10 a11y)
     setError("");
@@ -148,6 +162,9 @@ export function TournamentsPage(_props: { me: Me }) {
           )}
           <button type="submit" disabled={creating} data-testid="create-tournament">
             {creating ? "Creando…" : "Crear torneo"}
+          </button>{" "}
+          <button type="button" onClick={onCancelCreate} disabled={creating} data-testid="cancel-create-tournament">
+            Cancelar
           </button>
         </form>
       </div>

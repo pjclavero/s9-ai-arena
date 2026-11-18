@@ -11,7 +11,6 @@ import { battleToJson, loadParticipants } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
-import { applyTransition } from "../services/bots.js";
 import {
   assertTournamentEligible,
   entryEligibilityGate,
@@ -53,6 +52,14 @@ async function assertRostersFitRules(db: Db, t: Record<string, unknown>): Promis
     );
   }
 }
+
+/**
+ * #288 · Estados desde los que se puede cancelar un torneo: los que aún no tienen
+ * calendario ni batallas. `closed` (versiones congeladas, calendario encolado),
+ * `running` (batallas oficiales ya jugadas: Elo y clasificación aplicados) y
+ * `finished` (terminal) se rechazan; ninguna cancelación es destructiva.
+ */
+export const CANCELLABLE_TOURNAMENT_STATES = ["draft", "open"] as const;
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
@@ -353,72 +360,150 @@ export function tournamentRoutes(
   });
 
   defineOperation(router, "closeEntries", async (req, res) => {
-    const t = await db("tournaments")
-      .where({ id: req.params.tournamentId })
-      .first()
-      .catch(() => null);
-    if (!t) throw notFound();
-    assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff
-    if (t.state !== "open") {
-      throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
-        currentState: t.state,
-        allowedTransitions: t.state === "draft" ? ["open"] : [],
-      });
-    }
+    // #288 · El cierre entero va en UNA transacción con la fila del torneo bloqueada
+    // (FOR UPDATE): una cancelación concurrente espera a que termine (y ve `closed`), o
+    // gana antes y el cierre ve `cancelled` sin congelar nada ni encolar el calendario.
+    const updated = await db.transaction(async (db) => {
+      const t = await db("tournaments")
+        .where({ id: pathParam(req, "tournamentId") })
+        .forUpdate()
+        .first()
+        .catch(() => null);
+      if (!t) throw notFound();
+      assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff (tras el cerrojo, antes de tocar nada)
+      if (t.state !== "open") {
+        throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
+          currentState: t.state,
+          allowedTransitions: t.state === "draft" ? ["open"] : [],
+        });
+      }
 
-    const entries = await db("entries").where({ tournament_id: t.id });
-    await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
-    await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo
-    await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
-    // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
-    // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
-    // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
-    // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
-    for (const e of entries) {
-      const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();
-      if (v.state === "published") {
-        await applyTransition(db, req.auth, v, "freeze", {}, req.correlationId);
+      const entries = await db("entries").where({ tournament_id: t.id });
+      await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
+      await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo
+      await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
+      // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
+      // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo
+      // anterior) no se toca — ni transición, ni auditoría, ni «descongelar y volver a
+      // congelar». Nada en la plataforma descongela una versión al terminar un torneo.
+      // #288 (ronda 2, H-1) · El freeze es CONDICIONAL (`WHERE state='published'`) y sólo se
+      // audita si de verdad transicionó: con el cierre en una transacción, otro cierre
+      // concurrente de OTRO torneo que comparta la versión puede haberla congelado ya (la
+      // lectura de arriba es MVCC); al desbloquearse, el UPDATE re-evalúa el WHERE y no
+      // toca nada. Así una versión ya `frozen` nunca deja una segunda auditoría (#283).
+      for (const e of entries) {
+        const v = await db("bot_versions").where({ bot_id: e.bot_id, version: e.version }).first();
+        if (v.state !== "published") continue;
+        const [frozen] = await db("bot_versions")
+          .where({ id: v.id, state: "published" })
+          .update({ state: "frozen" })
+          .returning("id");
+        if (frozen) {
+          await audit(db, {
+            actorId: req.auth?.userId ?? null,
+            action: "bot.version.freeze",
+            target: `bot:${v.bot_id}@${v.version}`,
+            detail: { from: "published", to: "frozen" },
+            correlationId: req.correlationId,
+          });
+        }
       }
-    }
-    // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash
-    // del lote ANTES del cierre (seedCommitment al crear el torneo), ahora
-    // debe revelar las semillas que casan con él; ambos quedan en la BD y son
-    // verificables públicamente (endpoint de auditoría). Sin compromiso
-    // previo, el servidor genera lote y compromiso juntos (auto-commit).
-    const revealed: string[] | null = Array.isArray(req.body?.seeds) ? req.body.seeds.map(String) : null;
-    let seeds: string[];
-    let commitment: string;
-    if (t.seed_commitment) {
-      if (!revealed || revealed.length === 0) {
-        throw conflict("seeds_required", "El torneo publicó un compromiso: el cierre debe revelar las semillas");
+      // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash
+      // del lote ANTES del cierre (seedCommitment al crear el torneo), ahora
+      // debe revelar las semillas que casan con él; ambos quedan en la BD y son
+      // verificables públicamente (endpoint de auditoría). Sin compromiso
+      // previo, el servidor genera lote y compromiso juntos (auto-commit).
+      const revealed: string[] | null = Array.isArray(req.body?.seeds) ? req.body.seeds.map(String) : null;
+      let seeds: string[];
+      let commitment: string;
+      if (t.seed_commitment) {
+        if (!revealed || revealed.length === 0) {
+          throw conflict("seeds_required", "El torneo publicó un compromiso: el cierre debe revelar las semillas");
+        }
+        commitment = t.seed_commitment;
+        const proof = createHash("sha256").update(revealed.join("|")).digest("hex");
+        if (proof !== commitment) {
+          throw conflict("seed_reveal_mismatch", "Las semillas reveladas no casan con el compromiso publicado");
+        }
+        seeds = revealed;
+      } else {
+        seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
+        commitment = createHash("sha256").update(seeds.join("|")).digest("hex");
       }
-      commitment = t.seed_commitment;
-      const proof = createHash("sha256").update(revealed.join("|")).digest("hex");
-      if (proof !== commitment) {
-        throw conflict("seed_reveal_mismatch", "Las semillas reveladas no casan con el compromiso publicado");
-      }
-      seeds = revealed;
-    } else {
-      seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
-      commitment = createHash("sha256").update(seeds.join("|")).digest("hex");
-    }
-    const [updated] = await db("tournaments")
-      .where({ id: t.id })
-      .update({ state: "closed", seeds_revealed: JSON.stringify(seeds), seed_commitment: commitment })
-      .returning("*");
-    await db("jobs").insert({
-      kind: "generate_schedule",
-      payload: JSON.stringify({ tournamentId: t.id, seedProof: commitment }),
-      dedupe_key: `generate_schedule:${t.id}`,
-    });
-    await audit(db, {
-      actorId: req.auth!.userId,
-      action: "tournament.entries_closed",
-      target: `tournament:${t.id}`,
-      detail: { entries: entries.length },
-      correlationId: req.correlationId,
+      // Transición condicional: doble barrera además del bloqueo de fila.
+      const [updated] = await db("tournaments")
+        .where({ id: t.id, state: "open" })
+        .update({ state: "closed", seeds_revealed: JSON.stringify(seeds), seed_commitment: commitment })
+        .returning("*");
+      if (!updated) throw conflict("illegal_transition", "El torneo cambió de estado durante el cierre");
+      await db("jobs").insert({
+        kind: "generate_schedule",
+        payload: JSON.stringify({ tournamentId: t.id, seedProof: commitment }),
+        dedupe_key: `generate_schedule:${t.id}`,
+      });
+      await audit(db, {
+        actorId: req.auth!.userId,
+        action: "tournament.entries_closed",
+        target: `tournament:${t.id}`,
+        detail: { entries: entries.length },
+        correlationId: req.correlationId,
+      });
+      return updated;
     });
     res.json(tournamentToJson(updated));
+  });
+
+  /**
+   * #288 · Cancelar un torneo que aún no tiene calendario (`draft`/`open`). Dueño o
+   * staff. Sólo cambia el estado a `cancelled` (terminal): entries, matches, batallas,
+   * clasificación y auditoría se conservan. Auditado en la misma transacción.
+   * Idempotente: cancelar uno ya cancelado devuelve 200 sin otra entrada de auditoría.
+   */
+  defineOperation(router, "cancelTournament", async (req, res) => {
+    const reason = req.body?.reason;
+    if (reason !== undefined && (typeof reason !== "string" || reason.length > 256)) {
+      throw badRequest("reason debe ser un texto de hasta 256 caracteres");
+    }
+    const result = await db.transaction(async (trx) => {
+      const t = await trx("tournaments")
+        .where({ id: pathParam(req, "tournamentId") })
+        .forUpdate()
+        .first()
+        .catch(() => null);
+      if (!t) throw notFound();
+      assertCanManageTournament(req.auth, t); // #291 · predicado único (dueño del torneo o staff)
+      if (t.state === "cancelled") return t; // idempotente: ni cambio ni auditoría
+      if (!(CANCELLABLE_TOURNAMENT_STATES as readonly string[]).includes(t.state)) {
+        throw conflict(
+          "tournament_not_cancellable",
+          t.state === "finished"
+            ? "El torneo ya ha terminado: no se puede cancelar"
+            : "Las inscripciones ya están cerradas y el calendario generado o en juego: no se puede cancelar",
+          { currentState: t.state, allowedTransitions: [] },
+        );
+      }
+      const [cancelled] = await trx("tournaments")
+        .where({ id: t.id })
+        .whereIn("state", [...CANCELLABLE_TOURNAMENT_STATES])
+        .update({ state: "cancelled" })
+        .returning("*");
+      if (!cancelled) throw conflict("tournament_not_cancellable", "El torneo cambió de estado: no se puede cancelar");
+      const entries = await trx("entries").where({ tournament_id: t.id }).count("* as n").first();
+      await audit(trx, {
+        actorId: req.auth!.userId,
+        action: "tournament.cancelled",
+        target: `tournament:${t.id}`,
+        detail: {
+          from: t.state,
+          entries: Number(entries?.n ?? 0),
+          by: req.auth!.userId === t.created_by ? "owner" : "staff",
+          ...(reason ? { reason } : {}),
+        },
+        correlationId: req.correlationId,
+      });
+      return cancelled;
+    });
+    res.json(tournamentToJson(result));
   });
 
   defineOperation(router, "dryRunTournament", async (req, res) => {
