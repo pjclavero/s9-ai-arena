@@ -36,8 +36,14 @@ async function snapshot(c, heads) {
 
 const a = await snapshot(A, true);
 const b = await snapshot(B, false);
-const ja = JSON.stringify(a);
-const jb = JSON.stringify(b);
+const canon = (v) =>
+  JSON.stringify(v, (_k, x) =>
+    x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => (p < q ? -1 : 1)))
+      : x,
+  );
+const ja = canon(a);
+const jb = canon(b);
 if (ja !== jb) {
   console.error("COMPARACION DISTINTA\norigen :", ja, "\ndestino:", jb);
   process.exit(1);
