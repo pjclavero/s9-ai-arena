@@ -72,8 +72,8 @@ const M = {
   R5: [
     "teams: cuenta inscripciones en vez de equipos",
     API,
-    "new Set(rows.filter((r) => r.team_id).map((r) => r.team_id)).size",
-    "rows.length",
+    "count = teams.size;",
+    "count = entries.length;",
     "[R5]",
   ],
   R6: [
