@@ -220,6 +220,10 @@ export function teamRoutes(db: Db): Router {
     if (target === team.captain_id) throw conflict("captain_required", "El capitán no puede salir de su propio equipo");
     if (!UUID_RE.test(target)) throw notFound();
     await db.transaction(async (trx) => {
+      // #287 (ronda 4, R3-2) · bots bloqueados en orden de id (el mismo que el cierre de un
+      // torneo y la inscripción de equipo) ANTES del UPDATE: sin orden común, dos o más bots
+      // del miembro podían formar un ciclo de bloqueos con un cierre (deadlock ⇒ 500).
+      await trx("bots").where({ team_id: team.id, owner_id: target }).orderBy("id").forUpdate();
       await trx("team_members").where({ team_id: team.id, user_id: target }).delete();
       // Un bot del miembro expulsado deja de pertenecer al equipo: si no, seguiría
       // representando a un equipo del que su dueño ya no forma parte.
@@ -341,6 +345,8 @@ export function teamRoutes(db: Db): Router {
     const results: BotResult[] = await db.transaction(async (trx) => {
       // Cerrojo de fila: lo que se previsualiza o cambia es el estado vigente, no uno
       // que otra petición esté modificando a la vez.
+      // #287 (ronda 4, R3-2) · primero en orden de id (orden común de bloqueo de bots).
+      await trx("bots").where({ team_id: team.id }).orderBy("id").forUpdate();
       const bots = await trx("bots").where({ team_id: team.id }).orderBy("name", "asc").forUpdate();
       if (expected) {
         const now = new Set(bots.map((b: { id: string }) => b.id));

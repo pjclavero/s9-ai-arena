@@ -17,6 +17,8 @@ export interface Tournament {
   entryCount?: number;
   /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
   broadcast?: boolean;
+  /** ADR-022 · copia de reglas; #287 usa `params.teamSize` (torneos por equipos NvN). */
+  rules?: { params?: { teamSize?: number } | null } | null;
   /** #291 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
   viewerCanManage?: boolean;
 }
@@ -32,6 +34,9 @@ export function TournamentsPage(_props: { me: Me }) {
   const [mode, setMode] = useState("deathmatch");
   const [rulesetId, setRulesetId] = useState("mvp-default");
   const [broadcast, setBroadcast] = useState(false);
+  // #287 · tamaño de equipo de un torneo por equipos de Team Deathmatch (preset `team_deathmatch`).
+  const [teamSize, setTeamSize] = useState("4");
+  const teamRules = format === "teams" && mode === "team_deathmatch";
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -54,7 +59,14 @@ export function TournamentsPage(_props: { me: Me }) {
     setError("");
     setCreating(true);
     try {
-      const t = await api<Tournament>("POST", "/tournaments", { name, format, mode, rulesetId, broadcast });
+      const t = await api<Tournament>("POST", "/tournaments", {
+        name,
+        format,
+        mode,
+        rulesetId,
+        broadcast,
+        ...(teamRules ? { rules: { preset: "team_deathmatch", teamSize: Number(teamSize) } } : {}),
+      });
       setName("");
       reload();
       window.location.hash = `#/tournaments/${t.id}`;
@@ -138,6 +150,21 @@ export function TournamentsPage(_props: { me: Me }) {
             <label>
               Ruleset <input aria-label="ruleset" value={rulesetId} onChange={(e) => setRulesetId(e.target.value)} />
             </label>
+            {teamRules && (
+              <>
+                {" "}
+                <label>
+                  Tamaño{" "}
+                  <select aria-label="tamaño de equipo" value={teamSize} onChange={(e) => setTeamSize(e.target.value)}>
+                    {["2", "3", "4"].map((n) => (
+                      <option key={n} value={n}>
+                        {n} vs {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
           </p>
           <p>
             <label>
