@@ -74,10 +74,14 @@ M = [
     ("M9", "process_result pisa cancelled con finished", [(RESULTS,
         '      .whereNot({ state: "cancelled" })\n', '')],
      WRK, ["TW-4"]),
-    ("M11", "freeze sin condición de estado (H-1, ronda 2)", [(ROUTES,
+    # INT290 · tras integrar #290 hay DOS barreras contra el doble freeze (el bloqueo FOR NO KEY UPDATE de
+    # las versiones y el UPDATE condicional): quitar sólo una es equivalente, así que M11/M11b quitan ambas.
+    ("M11", "freeze sin condición de estado y sin bloqueo de versiones (H-1, ronda 2)", [(ROUTES,
+        '          .orderBy("id")\n          .forNoKeyUpdate();', '          .orderBy("id");'), (ROUTES,
         '          .where({ id: v.id, state: "published" })', '          .where({ id: v.id })')],
      API, ["TC-F1"]),
-    ("M11b", "auditoría de freeze aunque no transicione (H-1, ronda 2)", [(ROUTES,
+    ("M11b", "auditoría de freeze aunque no transicione, sin bloqueo de versiones (H-1, ronda 2)", [(ROUTES,
+        '          .orderBy("id")\n          .forNoKeyUpdate();', '          .orderBy("id");'), (ROUTES,
         '        if (frozen) {\n          await audit(db, {', '        if (true) {\n          await audit(db, {')],
      API, ["TC-F1"]),
     ("M10", "viewerCanManage para cualquiera", [(ROUTES,
