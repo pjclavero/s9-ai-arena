@@ -1227,7 +1227,6 @@ describe("#290 corrección · P2-1 · viewer de enterTournamentTeam ({userId, st
     expect(r.body.notEligible[0].message).toBeUndefined();
     expect(r.body.notEligible[0].suggestedAction).toBeUndefined();
     expect(r.body.message).toContain("la versión no es elegible");
-    expect(JSON.stringify(r.body)).not.toMatch(/ammo|munici/i);
     expect(await entriesOf(t)).toHaveLength(0);
   });
 

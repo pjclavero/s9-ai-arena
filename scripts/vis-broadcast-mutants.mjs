@@ -138,10 +138,14 @@ const MUTANTS = [
     tests: API,
   },
   {
-    name: "el precheck de streaming deja de bloquear destinos no autorizados",
+    // `broadcastable` y `broadcastAvailable` son DOS barreras sobre la misma fuente (la segunda
+    // devuelve el mismo motivo): quitar sólo la primera es EQUIVALENTE (el 409 sale igual por la
+    // segunda), así que el mutante quita las dos.
+    name: "el precheck de streaming deja de bloquear destinos no autorizados (se quitan las dos barreras)",
     file: "apps/api/src/routes/streaming.ts",
     from: "    if (!info.broadcastable) {\n      throw conflict(",
     to: "    if (false) {\n      throw conflict(",
+    extra: [{ from: "    if (!info.broadcastAvailable) {\n      const reason", to: "    if (false) {\n      const reason" }],
     tests: API,
   },
   {
@@ -183,7 +187,18 @@ for (const m of MUTANTS) {
     survivors += 1;
     continue;
   }
-  writeFileSync(m.file, original.replace(m.from, m.to));
+  let mutated = original.replace(m.from, m.to);
+  for (const x of m.extra ?? []) {
+    if (!mutated.includes(x.from)) {
+      console.log(`ROTO      · ${m.name} (el patrón extra ya no existe: actualiza el mutante)`);
+      survivors += 1;
+      mutated = null;
+      break;
+    }
+    mutated = mutated.replace(x.from, x.to);
+  }
+  if (mutated === null) continue;
+  writeFileSync(m.file, mutated);
   let red = false;
   let why = "";
   try {
