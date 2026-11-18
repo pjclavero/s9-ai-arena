@@ -1,5 +1,9 @@
 #!/bin/bash
+# Mutantes del REVISOR (PR A #298, R1-R14) adaptados a la ronda 2 (anclas renombradas por el
 # refactor: R5 y R6). R7 es EQUIVALENTE y está documentado (KnexTimeoutError también lo cubre el
+# regex del mensaje «Timeout acquiring a connection»): se espera que SOBREVIVA. La profundidad de
+# `cause` (antes R12, con un ancla que contenía `|`) pasa a M12 de battle-timeout-mutants.sh.
+# El mutante de salto del `else if` del worker no se usa (lo cubre M3b).
 # Uso: bash scripts/battle-timeout-reviewer-mutants.sh   (en VM111, árbol limpio y commiteado)
 set -u
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
