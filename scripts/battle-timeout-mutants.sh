@@ -65,7 +65,7 @@ MUTANTES=(
 "apps/tournament-worker/src/errors.ts|PG_CONNECT_TIMEOUT_MESSAGE.test(e.message) &&|false &&|M18 pg timeout expired no se reconoce|pg \`timeout expired\`"
 "apps/tournament-worker/src/errors.ts|  \"53300\", // too_many_connections: el servidor está saturado, se libera solo|  \"53300\", \"57014\",|M19 57014 vuelve a ser db_unavailable (P2-8)|57014 REAL (statement_timeout)"
 "apps/tournament-worker/src/errors.ts|db_query_timeout: { maxFailures: 2,|db_query_timeout: { maxFailures: 8,|M20 db_query_timeout sin tope corto (P2-8)|db_query_timeout (57014): tope CORTO"
-"apps/tournament-worker/src/worker.ts|classifyDbError(err) as \"db_unavailable\" \| \"db_query_timeout\",|\"db_unavailable\",|M21 el worker etiqueta todo como db_unavailable (P2-8)|el primer 57014 se reintenta"
+"apps/tournament-worker/src/worker.ts|classifyDbError(err) as \"db_unavailable\" \| \"db_query_timeout\",|\"db_unavailable\",|M21 el worker etiqueta todo como db_unavailable (P2-8)|SIN pasar por el runner también va por db_query_timeout"
 "apps/tournament-worker/src/errors.ts| \|\| ++budget.nodes > MAX_NODES||M22 sin tope de nodos visitados|AggregateError enorme"
 )
 

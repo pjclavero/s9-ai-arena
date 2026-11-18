@@ -169,6 +169,29 @@ describe("P2-8 · 57014 (consulta cancelada) tiene su PROPIA política corta: un
     expect(n).toBe(2);
     expect((await battleOf(battleId)).status).toBe("failed");
   });
+
+  it("un 57014 que llega al worker SIN pasar por el runner también va por db_query_timeout (tope de 2)", async () => {
+    await enqueueJob(h.db, "tournament_dry_run", {}, { dedupeKey: "dry-57014", maxAttempts: 3 });
+    let n = 0;
+    const w = new TournamentWorker({
+      db: h.db,
+      workerId: "q57014-dry-w",
+      handlers: {
+        tournament_dry_run: async () => {
+          n++;
+          throw cancelada();
+        },
+      },
+    });
+    const t0 = new Date();
+    await w.runOnce(t0);
+    const j1 = await jobOf("dry-57014");
+    expect(j1.status).toBe("queued");
+    expect(j1.last_error).toMatch(/^\[db_query_timeout\]/);
+    await w.runOnce(new Date(t0.getTime() + 60_000));
+    expect((await jobOf("dry-57014")).status).toBe("needs_review");
+    expect(n).toBe(2);
+  });
 });
 
 describe("F2 · battle_timeout: UN solo reintento", () => {
