@@ -243,7 +243,7 @@ const MUTANTS = [
   {
     id: "M5",
     name: "acepta una versión con loadout no elegible",
-    edits: [{ file: T, from: "      await assertVersionsEligible(trx, roster);\n", to: "" }],
+    edits: [{ file: T, from: "      await assertVersionsEligible(trx, roster, { userId, staff: false });\n", to: "" }],
     tests: [API],
     kill: "T287_INELIGIBLE",
   },
