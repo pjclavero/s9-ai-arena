@@ -68,7 +68,12 @@ function writeSyntheticExport(dir: string, o: Opts = {}) {
             loadoutRevision: 1,
             parentVersion: null,
             codePublic: false,
-            source: { file: `bots/${slug}/versions/v1/source.bin`, filename: "main.py", sha256: sha(c), bytes: c.length },
+            source: {
+              file: `bots/${slug}/versions/v1/source.bin`,
+              filename: "main.py",
+              sha256: sha(c),
+              bytes: c.length,
+            },
           },
         ],
         omittedVersions: [],
@@ -77,7 +82,17 @@ function writeSyntheticExport(dir: string, o: Opts = {}) {
   };
   bot("alfa", "Alfa", 1);
   bot("beta", "Beta", 2);
-  put("teams/rojo.json", json({ slug: "rojo", name: "Rojo", operatorRole: "captain", bots: o.teamBots ?? ["alfa", "beta"], externalBots: [], otherMembers: { count: 0, roles: [] } }));
+  put(
+    "teams/rojo.json",
+    json({
+      slug: "rojo",
+      name: "Rojo",
+      operatorRole: "captain",
+      bots: o.teamBots ?? ["alfa", "beta"],
+      externalBots: [],
+      otherMembers: { count: 0, roles: [] },
+    }),
+  );
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   const manifestText = json({
     formatVersion: o.formatVersion ?? 1,
@@ -106,9 +121,10 @@ function rehash(dir: string) {
   }
   const mt = json(m);
   writeFileSync(join(dir, "manifest.json"), mt);
-  const lines = [...m.files.map((f: { sha256: string; path: string }) => `${f.sha256}  ${f.path}`), `${sha(mt)}  manifest.json`].sort((a, b) =>
-    a.slice(66) < b.slice(66) ? -1 : 1,
-  );
+  const lines = [
+    ...m.files.map((f: { sha256: string; path: string }) => `${f.sha256}  ${f.path}`),
+    `${sha(mt)}  manifest.json`,
+  ].sort((a, b) => (a.slice(66) < b.slice(66) ? -1 : 1));
   writeFileSync(join(dir, "checksums.sha256"), lines.join("\n") + "\n");
 }
 
@@ -252,13 +268,18 @@ describe("import · valida antes de escribir (mutante M2 write_before_validate)"
   it("M2 · el CLI con un export corrupto sale con 1 sin credenciales ni red (verificación previa)", async () => {
     writeSyntheticExport(dir);
     writeFileSync(join(dir, "bots/beta/versions/v1/source.bin"), "# alterado\n");
-    await expect(cli(["import", "--from", dir, "--target-engine", "0.5.0", "--dry-run"], { out: () => {}, err: () => {} })).rejects.toThrow(/checksum/i);
+    await expect(
+      cli(["import", "--from", dir, "--target-engine", "0.5.0", "--dry-run"], { out: () => {}, err: () => {} }),
+    ).rejects.toThrow(/checksum/i);
   });
 
   it("--dry-run offline valida y no hace red", async () => {
     writeSyntheticExport(dir);
     const out: string[] = [];
-    const rc = await cli(["import", "--from", dir, "--target-engine", "0.5.0", "--dry-run"], { out: (s: string) => out.push(s), err: () => {} });
+    const rc = await cli(["import", "--from", dir, "--target-engine", "0.5.0", "--dry-run"], {
+      out: (s: string) => out.push(s),
+      err: () => {},
+    });
     expect(rc).toBe(0);
     expect(out.join("\n")).toMatch(/DRY-RUN OFFLINE/);
   });
@@ -279,16 +300,24 @@ describe("selección de versiones (política heads)", () => {
     expect(omitted.map((x: { version: number }) => x.version)).toEqual([1, 3]);
   });
   it("sin publicadas, la mejor cabeza disponible; todo bot con versiones exporta al menos una", () => {
-    expect(selectVersions([v(1, "retired"), v(2, "frozen")]).selected.map((x: { version: number }) => x.version)).toEqual([2]);
+    expect(
+      selectVersions([v(1, "retired"), v(2, "frozen")]).selected.map((x: { version: number }) => x.version),
+    ).toEqual([2]);
     expect(selectVersions([v(1, "retired")]).selected).toHaveLength(1);
     expect(selectVersions([]).selected).toEqual([]);
   });
   it("un borrador más antiguo que la publicada también se conserva (decisión del brief)", () => {
-    expect(selectVersions([v(1, "draft"), v(2, "published")]).selected.map((x: { version: number }) => x.version)).toEqual([1, 2]);
+    expect(
+      selectVersions([v(1, "draft"), v(2, "published")]).selected.map((x: { version: number }) => x.version),
+    ).toEqual([1, 2]);
   });
   it("una versión rejected posterior a todo se conserva; la anterior no", () => {
-    expect(selectVersions([v(1, "published"), v(2, "rejected")]).selected.map((x: { version: number }) => x.version)).toEqual([1, 2]);
-    expect(selectVersions([v(1, "rejected"), v(2, "published")]).selected.map((x: { version: number }) => x.version)).toEqual([2]);
+    expect(
+      selectVersions([v(1, "published"), v(2, "rejected")]).selected.map((x: { version: number }) => x.version),
+    ).toEqual([1, 2]);
+    expect(
+      selectVersions([v(1, "rejected"), v(2, "published")]).selected.map((x: { version: number }) => x.version),
+    ).toEqual([2]);
   });
   it("`all` las exporta todas y una política desconocida falla", () => {
     expect(selectVersions([v(1, "retired"), v(2, "published")], "all").selected).toHaveLength(2);
@@ -322,7 +351,9 @@ describe("escáner de secretos (mutante M3 secret_leak)", () => {
   });
   it("el código de un bot sólo se bloquea por credenciales de alta confianza (un correo en un comentario no)", () => {
     expect(scanBuffer(Buffer.from("# autor: yo@example.com\nprint(1)"), "source", "s.bin")).toEqual([]);
-    expect(scanBuffer(Buffer.from("TOKEN='ghp_abcdefghijklmnopqrstuvwxyz0123456789'"), "source", "s.bin").length).toBe(1);
+    expect(scanBuffer(Buffer.from("TOKEN='ghp_abcdefghijklmnopqrstuvwxyz0123456789'"), "source", "s.bin").length).toBe(
+      1,
+    );
   });
   it("un valor sensible conocido (correo, id, token) no puede aparecer en ningún fichero", () => {
     expect(scanBuffer(Buffer.from("hola mi-token-secreto"), "source", "s.bin", ["mi-token-secreto"]).length).toBe(1);
@@ -345,7 +376,9 @@ describe("credenciales (nunca por argv)", () => {
   });
   it("el CLI no acepta credenciales por argv (opción desconocida)", async () => {
     writeSyntheticExport(dir);
-    await expect(cli(["import", "--from", dir, "--password", "x", "--target-engine", "0.5.0"], { out: () => {}, err: () => {} })).rejects.toThrow();
+    await expect(
+      cli(["import", "--from", dir, "--password", "x", "--target-engine", "0.5.0"], { out: () => {}, err: () => {} }),
+    ).rejects.toThrow();
   });
 });
 
@@ -356,7 +389,10 @@ describe("cliente HTTP (reintentos y reautenticación)", () => {
     const fetchImpl = async (url: string, init: { headers: Record<string, string> }) => {
       seen.push({ url, auth: init.headers.Authorization });
       const r = responses[Math.min(i++, responses.length - 1)];
-      return new Response(JSON.stringify(r.body ?? {}), { status: r.status, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(r.body ?? {}), {
+        status: r.status,
+        headers: { "content-type": "application/json" },
+      });
     };
     return { seen, fetchImpl: fetchImpl as unknown as typeof fetch };
   };
@@ -365,24 +401,51 @@ describe("cliente HTTP (reintentos y reautenticación)", () => {
     const { ApiClient } = await import("../../../scripts/portable/lib/api.mjs");
     const waits: number[] = [];
     const { fetchImpl, seen } = mk([{ status: 429 }, { status: 429 }, { status: 200, body: { ok: 1 } }]);
-    const c = new ApiClient({ baseUrl: "http://x/api", auth: { token: "t" }, fetchImpl, sleep: async (ms: number) => void waits.push(ms), rateLimitWaitMs: 5 });
+    const c = new ApiClient({
+      baseUrl: "http://x/api",
+      auth: { token: "t" },
+      fetchImpl,
+      sleep: async (ms: number) => void waits.push(ms),
+      rateLimitWaitMs: 5,
+    });
     expect(await c.json("GET", "/a")).toEqual({ ok: 1 });
     expect(waits).toEqual([5, 5]);
     expect(seen).toHaveLength(3);
     const always = mk([{ status: 429 }]);
-    const c2 = new ApiClient({ baseUrl: "http://x", auth: { token: "t" }, fetchImpl: always.fetchImpl, sleep: async () => {}, rateLimitWaitMs: 5, rateLimitMaxWaitMs: 10 });
+    const c2 = new ApiClient({
+      baseUrl: "http://x",
+      auth: { token: "t" },
+      fetchImpl: always.fetchImpl,
+      sleep: async () => {},
+      rateLimitWaitMs: 5,
+      rateLimitMaxWaitMs: 10,
+    });
     await expect(c2.json("POST", "/a", { json: {} })).rejects.toThrow(/idempotente/);
   });
 
   it("un 401 con usuario/contraseña reautentica una vez; los errores jamás llevan el token ni la contraseña", async () => {
     const { ApiClient } = await import("../../../scripts/portable/lib/api.mjs");
-    const { fetchImpl, seen } = mk([{ status: 401 }, { status: 200, body: { accessToken: "NUEVO-TOKEN-123" } }, { status: 200, body: { ok: 1 } }]);
-    const c = new ApiClient({ baseUrl: "http://x", auth: { email: "a@b.c", password: "SECRETA-pw", token: "VIEJO-TOKEN" }, fetchImpl, sleep: async () => {} });
+    const { fetchImpl, seen } = mk([
+      { status: 401 },
+      { status: 200, body: { accessToken: "NUEVO-TOKEN-123" } },
+      { status: 200, body: { ok: 1 } },
+    ]);
+    const c = new ApiClient({
+      baseUrl: "http://x",
+      auth: { email: "a@b.c", password: "SECRETA-pw", token: "VIEJO-TOKEN" },
+      fetchImpl,
+      sleep: async () => {},
+    });
     expect(await c.json("GET", "/a")).toEqual({ ok: 1 });
     expect(seen.map((s) => s.url)).toEqual(["http://x/a", "http://x/auth/login", "http://x/a"]);
     expect(seen[2].auth).toBe("Bearer NUEVO-TOKEN-123");
     const bad = mk([{ status: 403, body: { error: "forbidden", message: "no" } }]);
-    const c2 = new ApiClient({ baseUrl: "http://x", auth: { token: "TOKEN-QUE-NO-DEBE-SALIR" }, fetchImpl: bad.fetchImpl, sleep: async () => {} });
+    const c2 = new ApiClient({
+      baseUrl: "http://x",
+      auth: { token: "TOKEN-QUE-NO-DEBE-SALIR" },
+      fetchImpl: bad.fetchImpl,
+      sleep: async () => {},
+    });
     const err = await c2.json("POST", "/z", { json: { password: "SECRETA-pw" } }).catch((e: Error) => e);
     expect((err as Error).message).toMatch(/HTTP 403 forbidden/);
     expect((err as Error).message).not.toContain("TOKEN-QUE-NO-DEBE-SALIR");

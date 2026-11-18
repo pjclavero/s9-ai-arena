@@ -38,7 +38,11 @@ export async function runExport({
   log = () => {},
   knownSecrets = [],
 }) {
-  if (!engineVersion) throw new PortableError("no_engine", "engineVersion es obligatorio (--engine-version o checkout con engine-deps.json).");
+  if (!engineVersion)
+    throw new PortableError(
+      "no_engine",
+      "engineVersion es obligatorio (--engine-version o checkout con engine-deps.json).",
+    );
   if (existsSync(dest) && readdirSync(dest).length > 0) {
     throw new PortableError("dest_not_empty", `${dest} no está vacío: el export no sobrescribe nada.`);
   }
@@ -82,7 +86,10 @@ export async function runExport({
     const keptLoadouts = loadouts.filter((l) => neededRevs.has(l.revision));
     for (const v of selected) {
       if (!loadouts.some((l) => l.revision === v.loadoutRevision)) {
-        throw new PortableError("missing_loadout", `${slug}: la versión ${v.version} usa una revisión de loadout (${v.loadoutRevision}) que la API no devuelve.`);
+        throw new PortableError(
+          "missing_loadout",
+          `${slug}: la versión ${v.version} usa una revisión de loadout (${v.loadoutRevision}) que la API no devuelve.`,
+        );
       }
     }
 
@@ -109,7 +116,9 @@ export async function runExport({
         runtime: v.runtime,
         loadoutRevision: v.loadoutRevision,
         parentVersion: v.parentVersion != null && selectedNums.has(v.parentVersion) ? v.parentVersion : null,
-        ...(v.parentVersion != null && !selectedNums.has(v.parentVersion) ? { parentVersionOmitted: v.parentVersion } : {}),
+        ...(v.parentVersion != null && !selectedNums.has(v.parentVersion)
+          ? { parentVersionOmitted: v.parentVersion }
+          : {}),
         codePublic: v.codePublic === true,
         source: {
           file,
@@ -160,9 +169,12 @@ export async function runExport({
       if (s) ownBots.push(s);
       else external.push({ name: b.name });
     }
-    if (external.length) warnings.push(`El equipo «${t.name}» incluye ${external.length} bot(s) de otros usuarios: no se exportan.`);
+    if (external.length)
+      warnings.push(`El equipo «${t.name}» incluye ${external.length} bot(s) de otros usuarios: no se exportan.`);
     if (members.length > 1) {
-      warnings.push(`El equipo «${t.name}» tiene ${members.length - 1} miembro(s) además del capitán: las cuentas no se migran; hay que volver a invitarlas.`);
+      warnings.push(
+        `El equipo «${t.name}» tiene ${members.length - 1} miembro(s) además del capitán: las cuentas no se migran; hay que volver a invitarlas.`,
+      );
     }
     put(
       `teams/${slug}.json`,
@@ -172,11 +184,20 @@ export async function runExport({
         operatorRole: "captain",
         bots: ownBots.sort(),
         externalBots: external.sort((a, b) => (a.name < b.name ? -1 : 1)),
-        otherMembers: { count: Math.max(0, members.length - 1), roles: members.filter((m) => m.userId !== me.id).map((m) => m.role).sort() },
+        otherMembers: {
+          count: Math.max(0, members.length - 1),
+          roles: members
+            .filter((m) => m.userId !== me.id)
+            .map((m) => m.role)
+            .sort(),
+        },
       }),
     );
   });
-  if (notCaptain > 0) warnings.push(`${notCaptain} equipo(s) donde el usuario es miembro pero no capitán: no se exportan (no son suyos).`);
+  if (notCaptain > 0)
+    warnings.push(
+      `${notCaptain} equipo(s) donde el usuario es miembro pero no capitán: no se exportan (no son suyos).`,
+    );
 
   // ---------------------------------------------------------------- manifest + checksums
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
@@ -189,7 +210,13 @@ export async function runExport({
     createdAt: now().toISOString(),
     versionsPolicy,
     catalogVersions: [...catalogs].sort(),
-    counts: { bots: mine.length, teams: captainTeams.length, versions: nVersions, loadouts: nLoadouts, omittedVersions: omittedAll.length },
+    counts: {
+      bots: mine.length,
+      teams: captainTeams.length,
+      versions: nVersions,
+      loadouts: nLoadouts,
+      omittedVersions: omittedAll.length,
+    },
     omittedVersions: omittedAll,
     warnings,
     files,
@@ -202,11 +229,16 @@ export async function runExport({
 
   // ---------------------------------------------------------------- verificación final
   const hits = scanExportDir(dest, files, known);
-  if (hits.length) throw new PortableError("secret_in_export", `El export contiene datos sensibles; se aborta:\n  ${hits.join("\n  ")}`);
+  if (hits.length)
+    throw new PortableError(
+      "secret_in_export",
+      `El export contiene datos sensibles; se aborta:\n  ${hits.join("\n  ")}`,
+    );
   rmSync(join(dest, INCOMPLETE_MARKER)); // verifyExport rechaza el marcador; se quita para verificar y se repone si falla
   try {
     const v = verifyExport(dest);
-    if (v.bots.length !== mine.length) throw new PortableError("count_mismatch", "Se exportaron menos bots de los que lista la API.");
+    if (v.bots.length !== mine.length)
+      throw new PortableError("count_mismatch", "Se exportaron menos bots de los que lista la API.");
   } catch (e) {
     writeFileSync(join(dest, INCOMPLETE_MARKER), "verificación final fallida\n");
     throw e;

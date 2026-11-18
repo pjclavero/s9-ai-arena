@@ -55,14 +55,19 @@ function makeClient(v, log) {
   });
 }
 
-export async function main(argv, io = { out: (s) => process.stdout.write(s + "\n"), err: (s) => process.stderr.write(s + "\n") }) {
+export async function main(
+  argv,
+  io = { out: (s) => process.stdout.write(s + "\n"), err: (s) => process.stderr.write(s + "\n") },
+) {
   const [cmd, ...rest] = argv;
   const log = (m) => io.err(`· ${m}`);
   if (cmd === "verify") {
     const dir = rest[0];
     if (!dir) throw new PortableError("usage", "uso: verify <directorio>");
     const { manifest, bots, teams } = verifyExport(dir);
-    io.out(`OK · formatVersion ${manifest.formatVersion} · engine ${manifest.engineVersion} · ${bots.length} bots · ${teams.length} equipos · ${manifest.counts.versions} versiones`);
+    io.out(
+      `OK · formatVersion ${manifest.formatVersion} · engine ${manifest.engineVersion} · ${bots.length} bots · ${teams.length} equipos · ${manifest.counts.versions} versiones`,
+    );
     return 0;
   }
   if (cmd === "export") {
@@ -101,9 +106,14 @@ export async function main(argv, io = { out: (s) => process.stdout.write(s + "\n
       engineVersionSource: "flag",
       log,
     });
-    io.out(`EXPORT OK · ${manifest.counts.bots} bots · ${manifest.counts.versions} versiones · ${manifest.counts.loadouts} loadouts · ${manifest.counts.teams} equipos · ${v.out}`);
+    io.out(
+      `EXPORT OK · ${manifest.counts.bots} bots · ${manifest.counts.versions} versiones · ${manifest.counts.loadouts} loadouts · ${manifest.counts.teams} equipos · ${v.out}`,
+    );
     for (const w of manifest.warnings) io.err(`aviso: ${w}`);
-    if (manifest.counts.omittedVersions) io.err(`aviso: ${manifest.counts.omittedVersions} versión(es) no exportadas por la política «${manifest.versionsPolicy}» (lista en manifest.json).`);
+    if (manifest.counts.omittedVersions)
+      io.err(
+        `aviso: ${manifest.counts.omittedVersions} versión(es) no exportadas por la política «${manifest.versionsPolicy}» (lista en manifest.json).`,
+      );
     return 0;
   }
   if (cmd === "import") {
@@ -121,14 +131,26 @@ export async function main(argv, io = { out: (s) => process.stdout.write(s + "\n
     });
     if (!v.from) throw new PortableError("usage", "Falta --from <directorio>.");
     const targetEngine = v["target-engine"] ?? checkoutEngine();
-    if (!targetEngine) throw new PortableError("usage", "Falta --target-engine <x.y.z> (no se encontró engine-deps.json en el checkout).");
+    if (!targetEngine)
+      throw new PortableError(
+        "usage",
+        "Falta --target-engine <x.y.z> (no se encontró engine-deps.json en el checkout).",
+      );
     const src = resolve(v.from);
     // Verificación previa SIN red y sin credenciales: un export corrupto falla aquí.
     const pre = verifyExport(src);
     assertEngineCompatible(pre.manifest.engineVersion, targetEngine);
-    const hasCreds = Boolean(v["credentials-file"] ?? process.env.S9_CREDENTIALS_FILE ?? v["token-file"] ?? process.env.S9_TOKEN_FILE ?? v["token-stdin"]);
+    const hasCreds = Boolean(
+      v["credentials-file"] ??
+      process.env.S9_CREDENTIALS_FILE ??
+      v["token-file"] ??
+      process.env.S9_TOKEN_FILE ??
+      v["token-stdin"],
+    );
     if (v["dry-run"] && !hasCreds) {
-      io.out(`DRY-RUN OFFLINE · export válido (formatVersion ${pre.manifest.formatVersion}, engine ${pre.manifest.engineVersion} → destino ${targetEngine}) · se crearían como máximo ${pre.bots.length} bots, ${pre.manifest.counts.versions} versiones, ${pre.manifest.counts.loadouts} loadouts y ${pre.teams.length} equipos. Con credenciales, --dry-run compara además con el estado real del destino.`);
+      io.out(
+        `DRY-RUN OFFLINE · export válido (formatVersion ${pre.manifest.formatVersion}, engine ${pre.manifest.engineVersion} → destino ${targetEngine}) · se crearían como máximo ${pre.bots.length} bots, ${pre.manifest.counts.versions} versiones, ${pre.manifest.counts.loadouts} loadouts y ${pre.teams.length} equipos. Con credenciales, --dry-run compara además con el estado real del destino.`,
+      );
       return 0;
     }
     const client = makeClient(v, log);
@@ -142,10 +164,18 @@ export async function main(argv, io = { out: (s) => process.stdout.write(s + "\n
       log,
     });
     if (v.report) writeFileSync(resolve(v.report), JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
-    for (const b of report.bots) io.out(`bot   ${b.slug.padEnd(32)} ${b.action.padEnd(8)} → ${b.id ?? "-"}   (versiones: ${b.versions.map((x) => `v${x.version}→${x.newVersion ?? "?"}:${x.action}`).join(", ") || "-"})`);
-    for (const t of report.teams) io.out(`team  ${t.slug.padEnd(32)} ${t.action.padEnd(8)} → ${t.id ?? "-"}   (bots: ${t.bots.map((x) => `${x.bot}:${x.action}`).join(", ") || "-"})`);
+    for (const b of report.bots)
+      io.out(
+        `bot   ${b.slug.padEnd(32)} ${b.action.padEnd(8)} → ${b.id ?? "-"}   (versiones: ${b.versions.map((x) => `v${x.version}→${x.newVersion ?? "?"}:${x.action}`).join(", ") || "-"})`,
+      );
+    for (const t of report.teams)
+      io.out(
+        `team  ${t.slug.padEnd(32)} ${t.action.padEnd(8)} → ${t.id ?? "-"}   (bots: ${t.bots.map((x) => `${x.bot}:${x.action}`).join(", ") || "-"})`,
+      );
     for (const e of report.errors) io.err(`ERROR ${e.scope}: ${e.message}`);
-    io.out(`${report.dryRun ? "DRY-RUN" : "IMPORT"} ${report.errors.length ? "CON ERRORES" : "OK"} · ${JSON.stringify(report.summary)}`);
+    io.out(
+      `${report.dryRun ? "DRY-RUN" : "IMPORT"} ${report.errors.length ? "CON ERRORES" : "OK"} · ${JSON.stringify(report.summary)}`,
+    );
     return report.errors.length ? 1 : 0;
   }
   throw new PortableError("usage", "uso: portable.mjs export|import|verify (ver la cabecera del fichero)");

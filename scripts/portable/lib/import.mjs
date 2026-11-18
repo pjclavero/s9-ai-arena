@@ -138,7 +138,8 @@ export async function runImport({
           row.action = "reused";
           row.newVersion = found.version;
           verMap.set(v.version, found.version);
-          if (submit && REBUILD_STATES.has(v.state) && found.state === "draft" && !dryRun) await queueBuild(client, target.id, found.version, row, botFail);
+          if (submit && REBUILD_STATES.has(v.state) && found.state === "draft" && !dryRun)
+            await queueBuild(client, target.id, found.version, row, botFail);
           continue;
         }
         const newRev = revMap.get(v.loadoutRevision);
@@ -156,17 +157,24 @@ export async function runImport({
           const form = new FormData();
           form.append("runtime", v.runtime);
           form.append("loadoutRevision", String(newRev));
-          if (v.parentVersion != null && verMap.has(v.parentVersion)) form.append("parentVersion", String(verMap.get(v.parentVersion)));
+          if (v.parentVersion != null && verMap.has(v.parentVersion))
+            form.append("parentVersion", String(verMap.get(v.parentVersion)));
           form.append("source", new Blob([bytes]), v.source.filename || "source.bin");
           log(`subir ${bot.slug} v${v.version}`);
           const created = await client.json("POST", `/bots/${target.id}/versions`, { form });
           const d = await client.json("GET", `/bots/${target.id}/versions/${created.version}`);
           if (d.sourceSha256 !== v.source.sha256) {
-            throw new PortableError("hash_after_import", `el código en el destino no coincide con el exportado (v${v.version}).`);
+            throw new PortableError(
+              "hash_after_import",
+              `el código en el destino no coincide con el exportado (v${v.version}).`,
+            );
           }
           row.action = "created";
           row.newVersion = created.version;
-          existingVersions.set(`${v.source.sha256}|${v.runtime}|${lk}`, { version: created.version, state: created.state });
+          existingVersions.set(`${v.source.sha256}|${v.runtime}|${lk}`, {
+            version: created.version,
+            state: created.state,
+          });
           verMap.set(v.version, created.version);
           if (submit && REBUILD_STATES.has(v.state)) await queueBuild(client, target.id, created.version, row, botFail);
         } catch (e) {
@@ -184,7 +192,10 @@ export async function runImport({
         if (restoreVisibility) {
           for (const v of bot.versions) {
             const nv = verMap.get(v.version);
-            if (v.codePublic && nv) await client.json("PUT", `/bots/${target.id}/versions/${nv}/code-visibility`, { json: { codePublic: true } });
+            if (v.codePublic && nv)
+              await client.json("PUT", `/bots/${target.id}/versions/${nv}/code-visibility`, {
+                json: { codePublic: true },
+              });
           }
         }
       }
@@ -206,7 +217,9 @@ export async function runImport({
     try {
       let t = existingTeams.get(team.name);
       if (t && t.isCaptain !== true) {
-        teamFail("ya existe un equipo con ese nombre y no eres su capitán (los nombres de equipo son únicos en la instalación).");
+        teamFail(
+          "ya existe un equipo con ese nombre y no eres su capitán (los nombres de equipo son únicos en la instalación).",
+        );
         entry.action = "blocked";
         continue;
       }

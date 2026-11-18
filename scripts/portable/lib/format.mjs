@@ -296,7 +296,8 @@ export function verifyExport(dir) {
   } catch (e) {
     return fail("not_found", `No se puede leer el directorio del export: ${e.message}`);
   }
-  if (top.includes(INCOMPLETE_MARKER)) fail("incomplete", "El export está marcado como incompleto (.export-incomplete).");
+  if (top.includes(INCOMPLETE_MARKER))
+    fail("incomplete", "El export está marcado como incompleto (.export-incomplete).");
   if (!top.includes(MANIFEST)) fail("no_manifest", "Falta manifest.json.");
   if (!top.includes(CHECKSUMS)) fail("no_checksums", "Falta checksums.sha256.");
 
@@ -328,15 +329,18 @@ export function verifyExport(dir) {
     );
   }
   for (const k of ["sourceSha", "engineVersion", "createdAt"]) {
-    if (typeof manifest[k] !== "string" || !manifest[k]) fail("manifest_invalid", `manifest.${k} ausente o no es texto.`);
+    if (typeof manifest[k] !== "string" || !manifest[k])
+      fail("manifest_invalid", `manifest.${k} ausente o no es texto.`);
   }
-  if (!Array.isArray(manifest.files) || !isObj(manifest.counts)) fail("manifest_invalid", "manifest.files/counts ausentes.");
+  if (!Array.isArray(manifest.files) || !isObj(manifest.counts))
+    fail("manifest_invalid", "manifest.files/counts ausentes.");
   const listed = new Map();
   for (const f of manifest.files) {
     if (!isObj(f) || !safeRel(f.path) || typeof f.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(f.sha256)) {
       fail("manifest_invalid", "Entrada de manifest.files inválida.");
     }
-    if (f.path === MANIFEST || f.path === CHECKSUMS) fail("manifest_invalid", `manifest.files no puede listar ${f.path}.`);
+    if (f.path === MANIFEST || f.path === CHECKSUMS)
+      fail("manifest_invalid", `manifest.files no puede listar ${f.path}.`);
     if (listed.has(f.path)) fail("manifest_invalid", `Ruta duplicada en manifest.files: ${f.path}`);
     listed.set(f.path, f);
   }
@@ -371,7 +375,12 @@ export function verifyExport(dir) {
     }
     const revs = new Set();
     for (const l of bot.loadouts) {
-      if (!Number.isInteger(l.revision) || revs.has(l.revision) || typeof l.chassis !== "string" || !Array.isArray(l.modules)) {
+      if (
+        !Number.isInteger(l.revision) ||
+        revs.has(l.revision) ||
+        typeof l.chassis !== "string" ||
+        !Array.isArray(l.modules)
+      ) {
         fail("bot_invalid", `${rel}: revisión de loadout inválida o repetida.`);
       }
       revs.add(l.revision);
@@ -383,10 +392,16 @@ export function verifyExport(dir) {
         fail("bot_invalid", `${rel}: versión/runtime inválidos.`);
       }
       if (!revs.has(v.loadoutRevision)) {
-        fail("dangling_loadout", `${rel}: la versión ${v.version} usa la revisión ${v.loadoutRevision}, que no existe.`);
+        fail(
+          "dangling_loadout",
+          `${rel}: la versión ${v.version} usa la revisión ${v.loadoutRevision}, que no existe.`,
+        );
       }
       if (v.parentVersion != null && !vers.has(v.parentVersion)) {
-        fail("dangling_parent", `${rel}: la versión ${v.version} apunta a un padre (${v.parentVersion}) que no está en el export.`);
+        fail(
+          "dangling_parent",
+          `${rel}: la versión ${v.version} apunta a un padre (${v.parentVersion}) que no está en el export.`,
+        );
       }
       const s = v.source;
       if (!isObj(s) || !listed.has(s.file) || !s.file.startsWith(`bots/${bot.slug}/`)) {
@@ -402,7 +417,13 @@ export function verifyExport(dir) {
   const teams = [];
   for (const rel of body.filter((r) => /^teams\/[^/]+\.json$/.test(r))) {
     const team = readJson(dir, rel);
-    if (!isObj(team) || !SLUG_RE.test(team.slug ?? "") || rel !== `teams/${team.slug}.json` || typeof team.name !== "string" || !team.name) {
+    if (
+      !isObj(team) ||
+      !SLUG_RE.test(team.slug ?? "") ||
+      rel !== `teams/${team.slug}.json` ||
+      typeof team.name !== "string" ||
+      !team.name
+    ) {
       fail("team_invalid", `${rel}: slug o nombre inválidos.`);
     }
     if (!Array.isArray(team.bots)) fail("team_invalid", `${rel}: falta la lista de bots.`);

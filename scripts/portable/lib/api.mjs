@@ -13,7 +13,8 @@ import { PortableError } from "./format.mjs";
 
 export function readSecretFile(file) {
   const mode = statSync(file).mode & 0o077;
-  if (mode !== 0) throw new PortableError("bad_permissions", `${file}: debe tener permisos 0600 (sin acceso para grupo/otros).`);
+  if (mode !== 0)
+    throw new PortableError("bad_permissions", `${file}: debe tener permisos 0600 (sin acceso para grupo/otros).`);
   return readFileSync(file, "utf8");
 }
 
@@ -22,7 +23,10 @@ export function loadAuth({ credentialsFile, tokenFile, tokenStdin, readStdin = (
   if (credentialsFile) {
     const c = JSON.parse(readSecretFile(credentialsFile));
     if (typeof c.email !== "string" || typeof c.password !== "string") {
-      throw new PortableError("bad_credentials", `${credentialsFile}: debe ser JSON con "email" y "password" (y opcional "totp").`);
+      throw new PortableError(
+        "bad_credentials",
+        `${credentialsFile}: debe ser JSON con "email" y "password" (y opcional "totp").`,
+      );
     }
     return { email: c.email, password: c.password, ...(typeof c.totp === "string" ? { totp: c.totp } : {}) };
   }
@@ -56,13 +60,24 @@ export class ApiClient {
   }
 
   async login() {
-    if (!this.auth.email) throw new PortableError("auth_failed", "El token ha caducado o es inválido y no hay credenciales para reautenticar.");
+    if (!this.auth.email)
+      throw new PortableError(
+        "auth_failed",
+        "El token ha caducado o es inválido y no hay credenciales para reautenticar.",
+      );
     const res = await this.#raw("POST", "/auth/login", {
-      json: { email: this.auth.email, password: this.auth.password, ...(this.auth.totp ? { totp: this.auth.totp } : {}) },
+      json: {
+        email: this.auth.email,
+        password: this.auth.password,
+        ...(this.auth.totp ? { totp: this.auth.totp } : {}),
+      },
       noAuth: true,
     });
     if (res.status !== 200 || typeof res.body?.accessToken !== "string") {
-      throw new PortableError("auth_failed", `Login rechazado (HTTP ${res.status}${res.body?.error ? ` ${res.body.error}` : ""}).`);
+      throw new PortableError(
+        "auth_failed",
+        `Login rechazado (HTTP ${res.status}${res.body?.error ? ` ${res.body.error}` : ""}).`,
+      );
     }
     this.token = res.body.accessToken;
   }

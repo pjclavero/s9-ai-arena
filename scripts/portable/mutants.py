@@ -39,7 +39,7 @@ M = [
     ("M3 secret_leak: el export mete el id y el correo del dueño y no escanea",
      [(EXP, "        visibility: bot.visibility,\n        retired: !!bot.retiredAt,",
        "        visibility: bot.visibility,\n        ownerId: bot.ownerId,\n        email: me.email,\n        retired: !!bot.retiredAt,"),
-      (EXP, "if (hits.length) throw new PortableError", "if (false) throw new PortableError")],
+      (EXP, "  if (hits.length)\n    throw new PortableError(", "  if (false)\n    throw new PortableError(")],
      [T_RT], "M3 ·"),
     ("M3b secret_scanner_blind: el escáner deja de detectar correos",
      [(FMT, '    if (EMAIL_RE.test(text)) hits.push(`${label}: contiene un correo electrónico`);\n', "")],

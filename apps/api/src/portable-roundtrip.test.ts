@@ -29,7 +29,9 @@ interface Api {
 const listen = (app: Parameters<typeof createServer>[1]): Promise<Api> =>
   new Promise((resolve) => {
     const server = createServer(app);
-    server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
+    server.listen(0, "127.0.0.1", () =>
+      resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }),
+    );
   });
 
 const BASE_MODULES = [
@@ -51,7 +53,12 @@ const L_RADIO = {
 };
 
 // Código sintético (nada del operador real): incluye bytes no UTF-8 y Unicode para probar fidelidad byte a byte.
-const code = (tag: string) => Buffer.concat([Buffer.from(`# ${tag} · ñandú ✓\n`), Buffer.from([0, 255, 254, 10, 128]), Buffer.from("print('ok')\n")]);
+const code = (tag: string) =>
+  Buffer.concat([
+    Buffer.from(`# ${tag} · ñandú ✓\n`),
+    Buffer.from([0, 255, 254, 10, 128]),
+    Buffer.from("print('ok')\n"),
+  ]);
 
 let A: TestDbHandle;
 let B: TestDbHandle;
@@ -68,12 +75,19 @@ const NEW_EMAIL = "operador.nuevo@example.test";
 const NEW_PASSWORD = "contraseña-nueva-del-operador!";
 let credFile: string;
 
-async function addVersion(c: InstanceType<typeof ApiClient>, botId: string, rev: number, runtime: "python" | "node", bytes: Buffer, parent?: number) {
+async function addVersion(
+  c: InstanceType<typeof ApiClient>,
+  botId: string,
+  rev: number,
+  runtime: "python" | "node",
+  bytes: Buffer,
+  parent?: number,
+) {
   const form = new FormData();
   form.append("runtime", runtime);
   form.append("loadoutRevision", String(rev));
   if (parent) form.append("parentVersion", String(parent));
-  form.append("source", new Blob([bytes]), runtime === "python" ? "main.py" : "main.js");
+  form.append("source", new Blob([new Uint8Array(bytes)]), runtime === "python" ? "main.py" : "main.js");
   return c.json("POST", `/bots/${botId}/versions`, { form });
 }
 
@@ -98,7 +112,11 @@ beforeAll(async () => {
   await seedContent(B.db);
   // Usuario NUEVO del destino, promovido a admin (el paso del operador antes de importar).
   const [u] = await B.db("users")
-    .insert({ email: NEW_EMAIL, password_hash: await argon2.hash(NEW_PASSWORD, { type: argon2.argon2id }), display_name: "nuevo" })
+    .insert({
+      email: NEW_EMAIL,
+      password_hash: await argon2.hash(NEW_PASSWORD, { type: argon2.argon2id }),
+      display_name: "nuevo",
+    })
     .returning("id");
   for (const role of ["user", "developer", "admin"]) await B.db("user_roles").insert({ user_id: u.id, role });
   apiA = await listen(createApp({ db: A.db, anonQuota: { max: 10_000, windowMs: 3600_000 } }));
@@ -158,7 +176,13 @@ beforeAll(async () => {
 
   // ------------------------------------------------------------ export
   exportDir = join(tmp, "export");
-  exported = await runExport({ client: clientA, dest: exportDir, sourceSha: "a".repeat(40), engineVersion: "0.5.0", knownSecrets: [DEV_PASSWORD] });
+  exported = await runExport({
+    client: clientA,
+    dest: exportDir,
+    sourceSha: "a".repeat(40),
+    engineVersion: "0.5.0",
+    knownSecrets: [DEV_PASSWORD],
+  });
 });
 
 afterAll(async () => {
@@ -180,7 +204,9 @@ describe("export", () => {
     // Alfa: v2 (cabeza publicada) + v3 (borrador); v1 omitida. Beta: v1 draft. Gamma: v1. 4 escuadra: v1 cada una.
     expect(m.counts.versions).toBe(2 + 1 + 1 + 4);
     expect(m.counts.omittedVersions).toBe(1);
-    expect(m.omittedVersions).toEqual([{ bot: "alfa-tanque", version: 1, state: "published", reason: "not_selected_by_policy_heads" }]);
+    expect(m.omittedVersions).toEqual([
+      { bot: "alfa-tanque", version: 1, state: "published", reason: "not_selected_by_policy_heads" },
+    ]);
     expect(m.warnings.join("\n")).toMatch(/otros usuarios/);
     expect(m.warnings.join("\n")).toMatch(/no capitán/);
     const v = verifyExport(exportDir);
@@ -194,10 +220,20 @@ describe("export", () => {
   });
 
   it("M3 · SIN secretos ni datos personales: ni correo, ni ids, ni token, ni contraseña, ni nombres de otros", () => {
-    const known = [operatorEmail, operatorId, tokA, DEV_PASSWORD, DEV_USERS.team_captain, "dev-team_captain", "dev-developer", NEW_EMAIL];
+    const known = [
+      operatorEmail,
+      operatorId,
+      tokA,
+      DEV_PASSWORD,
+      DEV_USERS.team_captain,
+      "dev-team_captain",
+      "dev-developer",
+      NEW_EMAIL,
+    ];
     const files: string[] = [];
     const walk = (d: string) => {
-      for (const e of readdirSync(d, { withFileTypes: true })) (e.isDirectory() ? walk(join(d, e.name)) : files.push(join(d, e.name)));
+      for (const e of readdirSync(d, { withFileTypes: true }))
+        e.isDirectory() ? walk(join(d, e.name)) : files.push(join(d, e.name));
     };
     walk(exportDir);
     expect(files.length).toBeGreaterThan(10);
@@ -225,7 +261,9 @@ describe("export", () => {
   });
 
   it("el export falla si el directorio no está vacío (no sobrescribe)", async () => {
-    await expect(runExport({ client: clientA, dest: exportDir, engineVersion: "0.5.0" })).rejects.toThrow(/no está vacío/);
+    await expect(runExport({ client: clientA, dest: exportDir, engineVersion: "0.5.0" })).rejects.toThrow(
+      /no está vacío/,
+    );
   });
 });
 
@@ -251,13 +289,19 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect(await counts(B)).toMatchObject({ bots: 0, loadouts: 0, versions: 0, teams: 0 });
     expect(r.bots).toHaveLength(7);
     expect(r.bots.every((b: { action: string }) => b.action === "created")).toBe(true);
-    expect(r.bots.flatMap((b: { versions: { action: string }[] }) => b.versions).every((v) => v.action === "would_create")).toBe(true);
+    expect(
+      r.bots.flatMap((b: { versions: { action: string }[] }) => b.versions).every((v) => v.action === "would_create"),
+    ).toBe(true);
   });
 
   it("importa bots, loadouts, versiones y equipos con el usuario nuevo (sin publicar nada)", async () => {
     report = await runImport({ client: newClient(), src: exportDir, targetEngine: "0.5.0" });
     expect(report.errors).toEqual([]);
-    expect(report.summary).toMatchObject({ bots: { created: 7, reused: 0 }, versions: { created: 8, reused: 0 }, teams: { created: 2, reused: 0 } });
+    expect(report.summary).toMatchObject({
+      bots: { created: 7, reused: 0 },
+      versions: { created: 8, reused: 0 },
+      teams: { created: 2, reused: 0 },
+    });
     const me = await B.db("users").where({ email: NEW_EMAIL }).first();
     // Propiedad: todos los bots son del usuario NUEVO; nada se publicó; todo en draft.
     expect((await B.db("bots").select("owner_id")).every((b) => b.owner_id === me.id)).toBe(true);
@@ -306,7 +350,12 @@ describe("import en una instalación NUEVA y vacía", () => {
     const teamsB = await cB.listAll("/teams");
     const rojo = teamsB.find((t: { name: string }) => t.name === "Equipo Rojo 4v4");
     expect(rojo.isCaptain).toBe(true);
-    expect(rojo.bots.map((b: { name: string }) => b.name).sort()).toEqual(["Escuadra 1", "Escuadra 2", "Escuadra 3", "Escuadra 4"]);
+    expect(rojo.bots.map((b: { name: string }) => b.name).sort()).toEqual([
+      "Escuadra 1",
+      "Escuadra 2",
+      "Escuadra 3",
+      "Escuadra 4",
+    ]);
     const azul = teamsB.find((t: { name: string }) => t.name === "Equipo Azul");
     expect(azul.bots.map((b: { name: string }) => b.name).sort()).toEqual(["Alfa Tanque", "Beta Ñandú"]); // el bot ajeno NO viaja
     expect(azul.members).toHaveLength(1); // los otros miembros no se migran
@@ -316,8 +365,14 @@ describe("import en una instalación NUEVA y vacía", () => {
   it("M4 · repetir el import es idempotente: nada se duplica y todo sale «reused»", async () => {
     const r2 = await runImport({ client: newClient(), src: exportDir, targetEngine: "0.5.0" });
     expect(r2.errors).toEqual([]);
-    expect(r2.summary).toMatchObject({ bots: { created: 0, reused: 7 }, versions: { created: 0, reused: 8 }, teams: { created: 0, reused: 2 } });
-    expect(r2.bots.flatMap((b: { loadouts: { action: string }[] }) => b.loadouts).every((l) => l.action === "reused")).toBe(true);
+    expect(r2.summary).toMatchObject({
+      bots: { created: 0, reused: 7 },
+      versions: { created: 0, reused: 8 },
+      teams: { created: 0, reused: 2 },
+    });
+    expect(
+      r2.bots.flatMap((b: { loadouts: { action: string }[] }) => b.loadouts).every((l) => l.action === "reused"),
+    ).toBe(true);
     expect(await counts(B)).toEqual(afterFirst);
   });
 
@@ -326,10 +381,25 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect(report.bots.every((b: { id: string }) => /^[0-9a-f-]{36}$/.test(b.id))).toBe(true);
     const rep = join(tmp, "report.json");
     const out: string[] = [];
-    const rc = await cli(["import", "--from", exportDir, "--target-engine", "0.5.0", "--api-url", apiB.url, "--credentials-file", credFile, "--report", rep], {
-      out: (s: string) => out.push(s),
-      err: () => {},
-    });
+    const rc = await cli(
+      [
+        "import",
+        "--from",
+        exportDir,
+        "--target-engine",
+        "0.5.0",
+        "--api-url",
+        apiB.url,
+        "--credentials-file",
+        credFile,
+        "--report",
+        rep,
+      ],
+      {
+        out: (s: string) => out.push(s),
+        err: () => {},
+      },
+    );
     expect(rc).toBe(0);
     expect(statSync(rep).mode & 0o077).toBe(0);
     expect(JSON.parse(readFileSync(rep, "utf8")).summary.bots).toEqual({ created: 0, reused: 7 });
@@ -347,7 +417,9 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect((await B.db("bot_versions").where({ state: "published" }).count({ c: "*" }).first())!.c).toBe("0");
     // y un tercer import no vuelve a encolar (ya no están en draft)
     const r3 = await runImport({ client: newClient(), src: exportDir, targetEngine: "0.5.0", submit: true });
-    expect(r3.bots.flatMap((b: { versions: { queued?: boolean }[] }) => b.versions).filter((v) => v.queued)).toHaveLength(0);
+    expect(
+      r3.bots.flatMap((b: { versions: { queued?: boolean }[] }) => b.versions).filter((v) => v.queued),
+    ).toHaveLength(0);
     expect((await counts(B)).builds).toBe(before.builds + 6);
   });
 
@@ -367,7 +439,10 @@ describe("import en una instalación NUEVA y vacía", () => {
     }
     const mt = JSON.stringify(m, null, 2) + "\n";
     writeFileSync(join(bad, "manifest.json"), mt);
-    const sums = [...m.files.map((e: { sha256: string; path: string }) => `${e.sha256}  ${e.path}`), `${sha256Hex(Buffer.from(mt))}  manifest.json`];
+    const sums = [
+      ...m.files.map((e: { sha256: string; path: string }) => `${e.sha256}  ${e.path}`),
+      `${sha256Hex(Buffer.from(mt))}  manifest.json`,
+    ];
     writeFileSync(join(bad, "checksums.sha256"), sums.join("\n") + "\n");
     const r = await runImport({ client: newClient(), src: bad, targetEngine: "0.5.0" });
     expect(r.errors.some((e: { scope: string }) => e.scope === "bot:beta-nandu")).toBe(true);
@@ -394,7 +469,10 @@ describe("import en una instalación NUEVA y vacía", () => {
     writeFileSync(join(bad, "manifest.json"), mt);
     writeFileSync(
       join(bad, "checksums.sha256"),
-      [...m.files.map((e: { sha256: string; path: string }) => `${e.sha256}  ${e.path}`), `${sha256Hex(Buffer.from(mt))}  manifest.json`].join("\n") + "\n",
+      [
+        ...m.files.map((e: { sha256: string; path: string }) => `${e.sha256}  ${e.path}`),
+        `${sha256Hex(Buffer.from(mt))}  manifest.json`,
+      ].join("\n") + "\n",
     );
     const r = await runImport({ client: newClient(), src: bad, targetEngine: "0.5.0" });
     const e = r.errors.filter((x: { scope: string }) => x.scope === "bot:gamma-retirado");
