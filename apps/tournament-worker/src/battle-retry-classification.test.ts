@@ -142,6 +142,35 @@ describe("fallo permanente: agota los reintentos y NO se reintenta sin fin", () 
   });
 });
 
+describe("P2-8 · 57014 (consulta cancelada) tiene su PROPIA política corta: un reintento y a revisión", () => {
+  // forma REAL capturada con pg (statement_timeout): ver scripts/capture-pg-errors.mjs
+  const cancelada = () =>
+    Object.assign(new Error("canceling statement due to statement timeout"), { name: "error", code: "57014" });
+
+  it("el primer 57014 se reintenta tras ~30 s; el segundo va a revisión (no ~8,5 min como una caída de la BD)", async () => {
+    const { battleId, key } = await setupJob("q57014", 0, 2);
+    let n = 0;
+    const w = workerWith(async () => {
+      n++;
+      throw cancelada();
+    }, "q57014-w");
+    const t0 = new Date();
+    await w.runOnce(t0);
+    const j1 = await jobOf(key);
+    expect(j1.status).toBe("queued");
+    expect(j1.last_error).toMatch(/^\[db_query_timeout\]/);
+    expect(j1.last_error).not.toMatch(/db_unavailable/);
+    const espera = new Date(j1.run_after).getTime() - t0.getTime();
+    expect(espera).toBeGreaterThanOrEqual(25_000);
+    expect(espera).toBeLessThanOrEqual(35_000);
+    await w.runOnce(new Date(t0.getTime() + 60_000));
+    const j2 = await jobOf(key);
+    expect(j2.status).toBe("needs_review");
+    expect(n).toBe(2);
+    expect((await battleOf(battleId)).status).toBe("failed");
+  });
+});
+
 describe("F2 · battle_timeout: UN solo reintento", () => {
   it("el primer timeout se reintenta tras una pausa larga; el segundo va a revisión manual", async () => {
     const { battleId, key } = await setupJob("bto", 0, 2);

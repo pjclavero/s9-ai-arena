@@ -157,11 +157,20 @@ export function hasOwnRetryPolicy(code: FailureCode): boolean {
  * Los SQLSTATE (57P01…, 08xxx, 53300…) y el mensaje literal de knex/tarn/pg sólo los
  * emite la capa de BD, así que valen por sí mismos.
  *
- * FORMAS REALES (medidas con pg/knex y Node, ver `scripts/capture-pg-errors.mjs` y
- * `testing/fixtures/real-db-errors.json`): Node rellena `address` con la IP YA RESUELTA, nunca con
- * el nombre del DSN, y el error de conexión no pasa por pg/knex en su pila.
+ * FORMAS REALES (medidas con pg/knex y Node 22, ver `scripts/capture-pg-errors.mjs` y
+ * `testing/fixtures/real-db-errors.json`):
+ *  · ECONNREFUSED/ECONNRESET al CONECTAR: `address` = IP YA RESUELTA (nunca el nombre del DSN),
+ *    `port`, `syscall:"connect"`; la pila es sólo `node:net` (no pasa por pg/knex).
+ *  · `localhost` dual-stack: `AggregateError` con `code` pero sin address/port; las direcciones
+ *    (::1 y 127.0.0.1) están en `.errors[]`; sin pila de pg.
+ *  · `read ECONNRESET` (RST sobre un socket abierto): `code`+`syscall:"read"`, SIN address ni port.
+ *    Con una consulta de pg en vuelo la pila pasa por pg (se reconoce por pila); con knex el mensaje
+ *    lleva el SQL delante (`select … - read ECONNRESET`) y la pila es sólo `node:internal`.
+ *  · backend terminado: 57P01 (DatabaseError); servidor muerto: `Connection terminated unexpectedly`.
+ *  · nombre que no resuelve: `ENOTFOUND` + `hostname`; en la red de Docker, pg da `timeout expired`.
+ * Un error 'error' de un cliente OCIOSO muerto no llega al manejador del trabajo (lo absorbe el pool).
  */
-const NETWORK_CODES = new Set(__NETCODES__);
+const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND", "ETIMEDOUT", "EPIPE"]);
 const TRANSIENT_DB_SQLSTATES = new Set([
   "53300", // too_many_connections: el servidor está saturado, se libera solo
   "57P01", // admin_shutdown
@@ -181,6 +190,16 @@ const TRANSIENT_DB_SQLSTATES = new Set([
 const QUERY_TIMEOUT_SQLSTATE = "57014";
 const TRANSIENT_DB_MESSAGE =
   /Timeout acquiring a connection|Acquire connection error|terminating connection|Connection terminated|the database system is (?:starting up|shutting down)|Client has encountered a connection error/i;
+/**
+ * knex ANTEPONE el SQL al mensaje de un error de red durante una consulta: `select … - read
+ * ECONNRESET` (medido). Es la única señal de BD de un `read ECONNRESET` sin dirección ni puerto cuya
+ * pila sólo pasa por `node:internal` (el socket de pg ya abierto). Un error de Redis, del docker-proxy
+ * o de un WebSocket no empieza por una sentencia SQL.
+ */
+const KNEX_SQL_PREFIXED_NET_ERROR =
+  /^\s*(?:select|insert|update|delete|with|begin|commit|rollback|savepoint|release|set|show|create|alter|drop|truncate|lock|copy|explain|call|do|values|merge)\b[\s\S]* - (?:read|write|connect) [A-Z_]+/i;
+/** `connectionTimeoutMillis` de pg al conectar (nombre que no resuelve, host que no contesta): sólo con pila de pg. */
+const PG_CONNECT_TIMEOUT_MESSAGE = /^timeout expired$/;
 const DB_LIBRARY_STACK = /node_modules[\\/](?:pg|pg-pool|pg-protocol|knex|tarn)[\\/]/;
 /** Tope de profundidad de `cause`/`errors[]` y de nodos visitados en total (evita ciclos y grafos enormes). */
 const MAX_DEPTH = 3;
@@ -274,8 +293,16 @@ export function classifyDbError(err: unknown, endpoint: DbEndpoint = dbEndpointF
       if (NETWORK_CODES.has(e.code)) {
         if (pointsAtDb(e, endpoint)) return true;
         if (typeof e.stack === "string" && DB_LIBRARY_STACK.test(e.stack)) return true;
+        if (typeof e.message === "string" && KNEX_SQL_PREFIXED_NET_ERROR.test(e.message)) return true;
       }
     }
+    if (
+      typeof e.message === "string" &&
+      PG_CONNECT_TIMEOUT_MESSAGE.test(e.message) &&
+      typeof e.stack === "string" &&
+      DB_LIBRARY_STACK.test(e.stack)
+    )
+      return true;
     if (typeof e.message === "string" && TRANSIENT_DB_MESSAGE.test(e.message)) return true;
     if (visit(e.cause, depth + 1)) return true;
     if (Array.isArray(e.errors)) for (const sub of e.errors) if (visit(sub, depth + 1)) return true;

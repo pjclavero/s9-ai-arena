@@ -18,7 +18,7 @@
 // `--inner <caso>`.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { connect as netConnect, createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import pg from "pg";
@@ -109,6 +109,18 @@ async function casosHost(out) {
   out.ipv4_cerrado = { pg: await pgConnect({ host: "127.0.0.1", port: cerrado }), knex: await knexSelect({ host: "127.0.0.1", port: cerrado }) };
   out.localhost_dualstack = { pg: await pgConnect({ host: "localhost", port: cerrado }), knex: await knexSelect({ host: "localhost", port: cerrado }) };
 
+  // un nombre que no resuelve (DNS): ENOTFOUND / EAI_AGAIN según el resolutor
+  out.dns_no_resuelve = { pg: await pgConnect({ host: "no-existe.invalid", port: 5432 }), knex: await knexSelect({ host: "no-existe.invalid", port: 5432 }) };
+
+  // un par TCP que RESETEA (RST) nada más aceptar: forma de un servidor que revienta con la conexión a medias
+  {
+    const srv = createServer((sock) => sock.resetAndDestroy());
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const pr = srv.address().port;
+    out.reset_durante_conexion = { pg: await pgConnect({ host: "127.0.0.1", port: pr }), knex: await knexSelect({ host: "127.0.0.1", port: pr }) };
+    await new Promise((r) => srv.close(r));
+  }
+
   const nombre = `s9cap-pg-${process.pid}`;
   dockerOk(["rm", "-f", nombre]);
   sh("docker", ["run", "-d", "--name", nombre, "-e", `POSTGRES_PASSWORD=${PASS}`, "-e", "POSTGRES_USER=arena", "-e", "POSTGRES_DB=arena", "-p", "127.0.0.1::5432", "postgres:16-alpine"]);
@@ -159,6 +171,46 @@ async function casosHost(out) {
       out.backend_terminado_knex = { knex: await k.raw("select 1").then(() => ({ ok: true }), (e) => forma(e)) };
       await k.destroy().catch(() => {});
       await admin.end().catch(() => {});
+    }
+
+    // (4b) RST sobre una conexión ya establecida: un proxy TCP transparente que resetea el lado del cliente
+    {
+      const socks = new Set();
+      const proxy = createServer((cl) => {
+        const up = netConnect(port, "127.0.0.1");
+        socks.add(cl);
+        cl.on("error", () => {});
+        up.on("error", () => {});
+        cl.pipe(up);
+        up.pipe(cl);
+      });
+      await new Promise((r) => proxy.listen(0, "127.0.0.1", r));
+      const pp = proxy.address().port;
+      const resetear = () => {
+        for (const x of socks) x.resetAndDestroy();
+        socks.clear();
+      };
+      const cEnVuelo = new pg.Client({ host: "127.0.0.1", port: pp, user: "arena", password: PASS, database: "arena" });
+      let evEnVuelo;
+      cEnVuelo.on("error", (e) => (evEnVuelo = forma(e)));
+      await cEnVuelo.connect();
+      const enVuelo = cEnVuelo.query("select pg_sleep(30)").then(() => ({ ok: true }), (e) => forma(e));
+      await new Promise((r) => setTimeout(r, 400));
+      resetear();
+      out.reset_en_vuelo = { pg: await enVuelo, evento_error_del_cliente: evEnVuelo };
+      const cOcioso = new pg.Client({ host: "127.0.0.1", port: pp, user: "arena", password: PASS, database: "arena" });
+      const evOcioso = new Promise((res) => cOcioso.on("error", (e) => res(forma(e))));
+      await cOcioso.connect();
+      resetear();
+      out.reset_ocioso = { evento_error_del_cliente: await evOcioso };
+      const k = knexFactory({ client: "pg", connection: { host: "127.0.0.1", port: pp, user: "arena", password: PASS, database: "arena" }, pool: { min: 1, max: 1 }, acquireConnectionTimeout: 4000 });
+      await k.raw("select 1");
+      const enVueloK = k.raw("select pg_sleep(30)").then(() => ({ ok: true }), (e) => forma(e));
+      await new Promise((r) => setTimeout(r, 400));
+      resetear();
+      out.reset_en_vuelo_knex = { knex: await enVueloK };
+      await k.destroy().catch(() => {});
+      await new Promise((r) => proxy.close(r));
     }
 
     // (5) el servidor muere (docker kill) con una conexión abierta y una consulta en vuelo
