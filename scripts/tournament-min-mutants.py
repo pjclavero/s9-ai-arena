@@ -2,7 +2,7 @@
 """INTB-FIX · mutantes del mínimo de participantes / cerrojo consultivo / privacidad de advancedBotId (Z1-Z12).
 Uso: python3 scripts/tournament-min-mutants.py ROOT [ids]. En serie; base verde primero; árbol limpio al final.
 Cada mutante no equivalente debe morir por un test NOMBRADO (columna `must`: subcadena del nombre del test
-que falla). Los equivalentes (Z1b, Z3b, Z5c, Z10) deben sobrevivir. Sale con 0 sólo si todo se cumple.
+que falla). Los equivalentes (Z3b, Z5c, Z10) deben sobrevivir. Sale con 0 sólo si todo se cumple.
 Commitea antes de lanzarlo: el harness restaura los ficheros mutados."""
 import json, os, subprocess, sys, tempfile
 ROOT = os.path.abspath(sys.argv[1]); only = sys.argv[2:]
@@ -52,7 +52,7 @@ M = [
 ]
 # id -> (ficheros de test, subcadena del test que DEBE fallar | None si es equivalente y debe sobrevivir)
 OVR = {
- "Z1": ([T], "B_MIN_ORDER_GATE"), "Z1b": ([T, L], None), "Z2": ([T], "B_MIN_UNDER_LOCK"),
+ "Z1": ([T], "B_MIN_ORDER_GATE"), "Z1b": ([T, L], "B_MIN_ORDER_GATE"), "Z2": ([T], "B_MIN_UNDER_LOCK"),
  "Z3": ([T, L], "[R5]"), "Z3b": ([T, L], None), "Z4": ([L], "[R1b]"), "Z4b": ([L], "[R1"), "Z4c": ([L], "[R1b]"),
  "Z5": ([L, W], "[R2]"), "Z5b": ([L, W], "[R2]"), "Z5c": ([L, W], None),
  "Z6": ([L, P], "[S4]"), "Z7": ([U], "advancedBotId"), "Z7b": ([L, P], "[S4]"),

@@ -796,9 +796,15 @@ describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede des
   });
 
   // INTB-FIX (Z11) · la autorización (403) va ANTES del mínimo: quien no gestiona no se entera del recuento.
-  it("B_MIN_ORDER_AUTH · quien no gestiona el torneo recibe 403, no el 409 del mínimo", async () => {
-    const t = await indTournament(); // lo crea el organizador; open, 0 inscritos
-    const r = await request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(devTok)).send({});
+  it("B_MIN_ORDER_AUTH · un organizador AJENO (llega al handler) recibe 403, no el 409 del mínimo", async () => {
+    const t = await indTournament(); // lo crea orgTok; open, 0 inscritos (<2)
+    const [u] = await h
+      .db("users")
+      .insert({ email: `ajeno-${++seq}@minauth.example.internal`, password_hash: "x", display_name: "ajeno" })
+      .returning(["id", "email"]);
+    await h.db("user_roles").insert({ user_id: u.id, role: "organizer" });
+    const otherOrg = await tokenFor(h.db, u.email);
+    const r = await request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(otherOrg)).send({});
     expect(r.status, JSON.stringify(r.body)).toBe(403);
     expect(r.body.error).not.toBe("not_enough_participants");
     expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("open");
