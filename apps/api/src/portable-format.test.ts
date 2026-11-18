@@ -1016,7 +1016,15 @@ describe("P2-3 · topes de tamaño en verifyExport (por fichero y total, configu
 describe("P1-1 · el motor de origen se lee de la API y se valida", () => {
   const apiWith = (items: unknown[], audits: Record<string, unknown>) => ({
     json: async (_m: string, p: string) => {
-      if (p.startsWith("/battles?")) return { items };
+      if (p.startsWith("/battles?")) {
+        // como la API real: honra ?status= (los items sin `status` se consideran siempre visibles)
+        const st = new URLSearchParams(p.split("?")[1]).get("status");
+        return {
+          items: items.filter(
+            (i) => !st || (i as { status?: string }).status === undefined || (i as { status?: string }).status === st,
+          ),
+        };
+      }
       const m = /^\/battles\/([^/]+)\/audit$/.exec(p);
       if (m && audits[m[1]] !== undefined) return audits[m[1]];
       throw new Error("404");
@@ -1031,6 +1039,16 @@ describe("P1-1 · el motor de origen se lee de la API y se valida", () => {
       { viejo: { versions: { engine: "0.3.0" } }, nuevo: { versions: { engine: "0.4.0" } } },
     );
     expect(await detectEngineVersion(c)).toEqual({ version: "0.4.0", battleId: "nuevo" });
+  });
+  it("Q1 · una batalla MÁS RECIENTE sin terminar no puede decidir el motor (sólo cuentan las terminadas)", async () => {
+    const c = apiWith(
+      [
+        { id: "terminada", status: "finished", createdAt: "2026-11-01T00:00:00Z" },
+        { id: "en-curso", status: "running", createdAt: "2026-11-17T00:00:00Z" },
+      ],
+      { terminada: { versions: { engine: "0.4.0" } }, "en-curso": { versions: { engine: "0.5.0" } } },
+    );
+    expect(await detectEngineVersion(c)).toEqual({ version: "0.4.0", battleId: "terminada" });
   });
   it("salta batallas sin motor legible y devuelve null si no hay ninguna", async () => {
     const c = apiWith(
@@ -1148,6 +1166,24 @@ describe("P2-3b · autenticación de larga duración (token de 15 min, 2FA)", ()
     expect(refreshes).toEqual(["R1", "R2"]); // rotación: cada refresh usa el último emitido
     expect(c.reauths).toBe(2);
     expect(seen[seen.length - 1].auth).toBe("Bearer A3");
+  });
+
+  it("Q3 · si el refresh FALLA, el refresh token guardado se anula y no se reenvía (reuso ⇒ familia revocada)", async () => {
+    const { seen, fetchImpl } = scripted({
+      "/auth/login": [{ status: 200, body: { accessToken: "A1", refreshToken: "R1" } }],
+      "/auth/refresh": [{ status: 401 }],
+      "/bots": [{ status: 401 }],
+    });
+    const c = new ApiClient({
+      baseUrl: "http://x",
+      auth: { email: "a@b.c", password: "pw", totp: "123456" },
+      fetchImpl,
+      sleep: async () => {},
+    });
+    await expect(c.json("GET", "/bots")).rejects.toMatchObject({ code: "auth_failed" });
+    await expect(c.json("GET", "/bots")).rejects.toMatchObject({ code: "auth_failed" });
+    const refreshes = seen.filter((s) => s.url === "/auth/refresh");
+    expect(refreshes).toHaveLength(1); // el segundo intento NO reenvía el R1 ya rechazado
   });
 
   it("sin 2FA y sin refresh válido: reautentica con usuario/contraseña SIN enviar TOTP", async () => {
