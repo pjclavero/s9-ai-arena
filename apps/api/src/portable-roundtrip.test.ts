@@ -360,7 +360,11 @@ describe("import en una instalación NUEVA y vacía", () => {
     writeFileSync(f, JSON.stringify(meta, null, 2) + "\n");
     // re-sellar manifest + checksums para que la verificación pase y se ejercite el import
     const m = JSON.parse(readFileSync(join(bad, "manifest.json"), "utf8"));
-    for (const e of m.files) e.sha256 = sha256Hex(readFileSync(join(bad, ...e.path.split("/"))));
+    for (const e of m.files) {
+      const b = readFileSync(join(bad, ...e.path.split("/")));
+      e.sha256 = sha256Hex(b);
+      e.bytes = b.length;
+    }
     const mt = JSON.stringify(m, null, 2) + "\n";
     writeFileSync(join(bad, "manifest.json"), mt);
     const sums = [...m.files.map((e: { sha256: string; path: string }) => `${e.sha256}  ${e.path}`), `${sha256Hex(Buffer.from(mt))}  manifest.json`];
@@ -381,7 +385,11 @@ describe("import en una instalación NUEVA y vacía", () => {
     meta.loadouts[0].modules = [{ slot: "drive", moduleId: "movement.no-existe@1" }];
     writeFileSync(f, JSON.stringify(meta, null, 2) + "\n");
     const m = JSON.parse(readFileSync(join(bad, "manifest.json"), "utf8"));
-    for (const e of m.files) e.sha256 = sha256Hex(readFileSync(join(bad, ...e.path.split("/"))));
+    for (const e of m.files) {
+      const b = readFileSync(join(bad, ...e.path.split("/")));
+      e.sha256 = sha256Hex(b);
+      e.bytes = b.length;
+    }
     const mt = JSON.stringify(m, null, 2) + "\n";
     writeFileSync(join(bad, "manifest.json"), mt);
     writeFileSync(
