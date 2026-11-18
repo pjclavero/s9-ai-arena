@@ -518,7 +518,9 @@ describe("TC-K · contrato OpenAPI de cancel y close-entries (acotado a las ruta
     // Al revés (lo razonable): ningún 2xx/4xx clave documentado que los tests no ejerciten.
     const seenCodes = new Set(seen.map((x) => String(x.status)));
     for (const code of Object.keys(doc).filter((c) => KEY_STATUSES.includes(c))) {
-      expect(seenCodes.has(code), `${operationId}: el yaml documenta el ${code} pero ningún caso lo provoca`).toBe(true);
+      expect(seenCodes.has(code), `${operationId}: el yaml documenta el ${code} pero ningún caso lo provoca`).toBe(
+        true,
+      );
     }
   }
 
