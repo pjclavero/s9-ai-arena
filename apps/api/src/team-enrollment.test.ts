@@ -1214,8 +1214,10 @@ describe("#290 corrección · P2-1 · viewer de enterTournamentTeam ({userId, st
     const t = await openTeamsTournament(2);
     expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
     // Tras la autorización, el loadout del bot ajeno deja de ser elegible (p. ej. cambia el catálogo).
-    const rev = await createLoadoutRevision(h.db, M.theirs, BAD_AMMO as never, SUMMARY);
-    await h.db("bot_versions").where({ bot_id: M.theirs, version: 1 }).update({ loadout_revision: rev.revision });
+    await h
+      .db("bot_loadouts")
+      .where({ bot_id: M.theirs, revision: 1 })
+      .update({ chassis: BAD_AMMO.chassis, modules: JSON.stringify(BAD_AMMO.modules) });
     const r = await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]));
     expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(r.body.error).toBe("bot_version_not_eligible");
