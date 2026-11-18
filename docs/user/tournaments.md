@@ -59,6 +59,12 @@ En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → el
 
 El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el equipo de moderación: un organizador no puede cerrar el torneo de otro. Al cerrar verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
 
+## Cancelar (organizadores)
+
+- **Al crear**: el botón **«Cancelar»**, junto a «Crear torneo», vacía el formulario y no crea nada.
+- **Un torneo ya creado**: quien lo creó (o la moderación y la administración) ve **«Cancelar torneo»** en el detalle mientras las **inscripciones siguen abiertas**. Pide confirmación. Un torneo cancelado no genera calendario, no juega ninguna batalla y no se puede reabrir; **no se borra nada**: inscripciones e historial se conservan.
+- Con las inscripciones **cerradas**, **en juego** o **terminado** ya no se puede cancelar, y el detalle dice por qué.
+
 ## Seguir el torneo
 
 - **Detalle**: la sección «Batallas» se refresca sola. Tiene el **cuadro** por rondas y el **historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen por su nombre y la versión que juega.

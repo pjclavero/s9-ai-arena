@@ -32,6 +32,7 @@
  *    infraestructura; unos sí y otro no → `bot_crash` del ausente (como antes);
  *  - timeout global o pérdida de la reserva (signal) → se aborta y se limpia.
  */
+import { ContainerCpuSampler } from "./cpu-sampler.js";
 import { randomUUID } from "node:crypto";
 import type { WebSocketServer } from "ws";
 import {
@@ -154,7 +155,7 @@ export interface ContainerAgentsOptions {
   connectTimeoutMs?: number;
   /** Margen del guard global sobre la duración teórica. Def. 15 s. */
   graceMs?: number;
-  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
+  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 2000 ms, acotado a [1000, 10000] (cpu-sampler.ts). */
   cpuSampleMs?: number;
   /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
   resources?: BattleResourceRegistry;
@@ -481,21 +482,12 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // lectura final llegaba siempre tarde, null). Se muestrea durante la
         // batalla y se guarda la última lectura positiva: es la CPU consumida
         // hasta esa muestra (cota inferior, nunca una estimación inventada).
-        const lastCpu: (number | null)[] = handles.map(() => null);
-        const sampleCpu = async () => {
-          await Promise.all(
-            handles.map(async (h, i) => {
-              try {
-                const v = (await h?.cpuMs?.()) ?? null;
-                if (typeof v === "number" && v > 0 && (lastCpu[i] === null || v > lastCpu[i]!)) lastCpu[i] = v;
-              } catch {
-                /* muestra perdida: se queda la anterior */
-              }
-            }),
-          );
-        };
-        cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
-        cpuSampler.unref?.();
+        // Intervalo 2 s (acotado 1-10 s), una petición en vuelo por contenedor y
+        // sólo contenedores vivos: ver cpu-sampler.ts.
+        const cpuSamplerImpl = new ContainerCpuSampler(handles, opts.cpuSampleMs);
+        const lastCpu = cpuSamplerImpl.last;
+        const sampleCpu = () => cpuSamplerImpl.final();
+        cpuSampler = cpuSamplerImpl.start();
         res.registerTimer(battleId, "cpu_sampler", cpuSampler, SCOPE);
 
         // UX-06 · si un bot se desconecta con la batalla en curso, se mira en ese
@@ -534,7 +526,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         offDisconnect();
 
         // Última muestra (por si el contenedor aún vive) y se fija la medida.
-        clearInterval(cpuSampler);
+        cpuSamplerImpl.stop();
         cpuSampler = undefined;
         await withinDeadline(sampleCpu(), FINAL_DIAGNOSTICS_DEADLINE_MS, "última muestra de CPU").catch(
           () => undefined, // muestra perdida: se queda la anterior (cota inferior)

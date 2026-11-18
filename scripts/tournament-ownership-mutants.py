@@ -21,12 +21,13 @@ API_T = "apps/api/src/tournament-action-ownership.test.ts"
 WEB_T = "apps/web/tests/tournament-action-ownership.test.tsx"
 
 GUARD = "    assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff\n"
+GUARD_CLOSE = "      assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff (tras el cerrojo, antes de tocar nada)\n"
 
 # (id y descripción, fichero, ancla, sustitución, test, prefijo del test que debe caer, razón)
 M = [
     ("M1 closeEntries sin guarda de propiedad", ROUTES,
-     GUARD + '    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
-     '    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
+     GUARD_CLOSE + '      if (t.state !== "open") {\n        throw conflict("illegal_transition"',
+     '      if (t.state !== "open") {\n        throw conflict("illegal_transition"',
      API_T, "TAO-C3", r"expected 200 to be 403"),
     ("M2 dryRunTournament sin guarda de propiedad", ROUTES,
      GUARD + "    // Simulacro con bots de ejemplo",
