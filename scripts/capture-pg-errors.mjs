@@ -45,7 +45,13 @@ function forma(e) {
     stackFrames: String(e?.stack ?? "")
       .split("\n")
       .slice(1)
-      .map((l) => l.trim().replace(/^at /, "").replace(/\(?(?:file:\/\/)?\/[^)]*?node_modules\//, "(node_modules/").replace(/:\d+:\d+\)?$/, ")"))
+      .map((l) =>
+        l
+          .trim()
+          .replace(/^at /, "")
+          .replace(/\(?(?:file:\/\/)?\/[^)]*?node_modules\//, "(node_modules/")
+          .replace(/:\d+:\d+\)?$/, ")"),
+      )
       .slice(0, 8),
     hasCause: e?.cause !== undefined,
   };
@@ -106,24 +112,50 @@ async function esperarPg(host, port) {
 /** Casos que se ejecutan en el host contra 127.0.0.1 / localhost y un Postgres real publicado. */
 async function casosHost(out) {
   const cerrado = await puertoCerrado();
-  out.ipv4_cerrado = { pg: await pgConnect({ host: "127.0.0.1", port: cerrado }), knex: await knexSelect({ host: "127.0.0.1", port: cerrado }) };
-  out.localhost_dualstack = { pg: await pgConnect({ host: "localhost", port: cerrado }), knex: await knexSelect({ host: "localhost", port: cerrado }) };
+  out.ipv4_cerrado = {
+    pg: await pgConnect({ host: "127.0.0.1", port: cerrado }),
+    knex: await knexSelect({ host: "127.0.0.1", port: cerrado }),
+  };
+  out.localhost_dualstack = {
+    pg: await pgConnect({ host: "localhost", port: cerrado }),
+    knex: await knexSelect({ host: "localhost", port: cerrado }),
+  };
 
   // un nombre que no resuelve (DNS): ENOTFOUND / EAI_AGAIN según el resolutor
-  out.dns_no_resuelve = { pg: await pgConnect({ host: "no-existe.invalid", port: 5432 }), knex: await knexSelect({ host: "no-existe.invalid", port: 5432 }) };
+  out.dns_no_resuelve = {
+    pg: await pgConnect({ host: "no-existe.invalid", port: 5432 }),
+    knex: await knexSelect({ host: "no-existe.invalid", port: 5432 }),
+  };
 
   // un par TCP que RESETEA (RST) nada más aceptar: forma de un servidor que revienta con la conexión a medias
   {
     const srv = createServer((sock) => sock.resetAndDestroy());
     await new Promise((r) => srv.listen(0, "127.0.0.1", r));
     const pr = srv.address().port;
-    out.reset_durante_conexion = { pg: await pgConnect({ host: "127.0.0.1", port: pr }), knex: await knexSelect({ host: "127.0.0.1", port: pr }) };
+    out.reset_durante_conexion = {
+      pg: await pgConnect({ host: "127.0.0.1", port: pr }),
+      knex: await knexSelect({ host: "127.0.0.1", port: pr }),
+    };
     await new Promise((r) => srv.close(r));
   }
 
   const nombre = `s9cap-pg-${process.pid}`;
   dockerOk(["rm", "-f", nombre]);
-  sh("docker", ["run", "-d", "--name", nombre, "-e", `POSTGRES_PASSWORD=${PASS}`, "-e", "POSTGRES_USER=arena", "-e", "POSTGRES_DB=arena", "-p", "127.0.0.1::5432", "postgres:16-alpine"]);
+  sh("docker", [
+    "run",
+    "-d",
+    "--name",
+    nombre,
+    "-e",
+    `POSTGRES_PASSWORD=${PASS}`,
+    "-e",
+    "POSTGRES_USER=arena",
+    "-e",
+    "POSTGRES_DB=arena",
+    "-p",
+    "127.0.0.1::5432",
+    "postgres:16-alpine",
+  ]);
   try {
     const mapeo = sh("docker", ["port", nombre, "5432/tcp"]); // 127.0.0.1:PUERTO
     const port = Number(mapeo.split(":").pop());
@@ -155,20 +187,47 @@ async function casosHost(out) {
       await admin.query("select pg_terminate_backend($1)", [pid2]);
       out.backend_terminado_ocioso = { pg: await evento };
       // (3) la siguiente consulta sobre ese cliente ya muerto
-      out.consulta_sobre_cliente_muerto = { pg: await ocioso.query("select 1").then(() => ({ ok: true }), (e) => forma(e)) };
+      out.consulta_sobre_cliente_muerto = {
+        pg: await ocioso.query("select 1").then(
+          () => ({ ok: true }),
+          (e) => forma(e),
+        ),
+      };
       // (4) 57014: statement_timeout real
-      const lento = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena", statement_timeout: 300 });
+      const lento = new pg.Client({
+        host: "127.0.0.1",
+        port,
+        user: "arena",
+        password: PASS,
+        database: "arena",
+        statement_timeout: 300,
+      });
       lento.on("error", () => {});
       await lento.connect();
-      out.statement_timeout = { pg: await lento.query("select pg_sleep(5)").then(() => ({ ok: true }), (e) => forma(e)) };
+      out.statement_timeout = {
+        pg: await lento.query("select pg_sleep(5)").then(
+          () => ({ ok: true }),
+          (e) => forma(e),
+        ),
+      };
       await lento.end().catch(() => {});
       // knex: pool con una conexión terminada
-      const k = knexFactory({ client: "pg", connection: { host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" }, pool: { min: 1, max: 1 }, acquireConnectionTimeout: 4000 });
+      const k = knexFactory({
+        client: "pg",
+        connection: { host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" },
+        pool: { min: 1, max: 1 },
+        acquireConnectionTimeout: 4000,
+      });
       await k.raw("select 1");
       const pidK = (await k.raw("select pg_backend_pid() as pid")).rows[0].pid;
       await admin.query("select pg_terminate_backend($1)", [pidK]);
       await new Promise((r) => setTimeout(r, 300));
-      out.backend_terminado_knex = { knex: await k.raw("select 1").then(() => ({ ok: true }), (e) => forma(e)) };
+      out.backend_terminado_knex = {
+        knex: await k.raw("select 1").then(
+          () => ({ ok: true }),
+          (e) => forma(e),
+        ),
+      };
       await k.destroy().catch(() => {});
       await admin.end().catch(() => {});
     }
@@ -194,7 +253,10 @@ async function casosHost(out) {
       let evEnVuelo;
       cEnVuelo.on("error", (e) => (evEnVuelo = forma(e)));
       await cEnVuelo.connect();
-      const enVuelo = cEnVuelo.query("select pg_sleep(30)").then(() => ({ ok: true }), (e) => forma(e));
+      const enVuelo = cEnVuelo.query("select pg_sleep(30)").then(
+        () => ({ ok: true }),
+        (e) => forma(e),
+      );
       await new Promise((r) => setTimeout(r, 400));
       resetear();
       out.reset_en_vuelo = { pg: await enVuelo, evento_error_del_cliente: evEnVuelo };
@@ -203,9 +265,17 @@ async function casosHost(out) {
       await cOcioso.connect();
       resetear();
       out.reset_ocioso = { evento_error_del_cliente: await evOcioso };
-      const k = knexFactory({ client: "pg", connection: { host: "127.0.0.1", port: pp, user: "arena", password: PASS, database: "arena" }, pool: { min: 1, max: 1 }, acquireConnectionTimeout: 4000 });
+      const k = knexFactory({
+        client: "pg",
+        connection: { host: "127.0.0.1", port: pp, user: "arena", password: PASS, database: "arena" },
+        pool: { min: 1, max: 1 },
+        acquireConnectionTimeout: 4000,
+      });
       await k.raw("select 1");
-      const enVueloK = k.raw("select pg_sleep(30)").then(() => ({ ok: true }), (e) => forma(e));
+      const enVueloK = k.raw("select pg_sleep(30)").then(
+        () => ({ ok: true }),
+        (e) => forma(e),
+      );
       await new Promise((r) => setTimeout(r, 400));
       resetear();
       out.reset_en_vuelo_knex = { knex: await enVueloK };
@@ -228,7 +298,10 @@ async function casosHost(out) {
       out.servidor_muerto_en_vuelo = { pg: await enVuelo, evento_error_del_cliente: eventoC };
       await c.end().catch(() => {});
       // y la reconexión contra el puerto publicado, ya sin servidor
-      out.servidor_muerto_reconexion = { pg: await pgConnect({ host: "127.0.0.1", port }), knex: await knexSelect({ host: "127.0.0.1", port }) };
+      out.servidor_muerto_reconexion = {
+        pg: await pgConnect({ host: "127.0.0.1", port }),
+        knex: await knexSelect({ host: "127.0.0.1", port }),
+      };
     }
   } finally {
     dockerOk(["rm", "-f", nombre]);
@@ -240,7 +313,23 @@ async function casosPorNombre(out, nodeBin, raizRepo) {
   const red = `s9cap-net-${process.pid}`;
   dockerOk(["network", "rm", red]);
   sh("docker", ["network", "create", red]);
-  const argsInner = (caso) => ["run", "--rm", "--network", red, "-v", `${nodeBin}:/node:ro`, "-v", `${raizRepo}:/repo:ro`, "-w", "/repo", "debian:stable-slim", "/node/bin/node", "scripts/capture-pg-errors.mjs", "--inner", caso];
+  const argsInner = (caso) => [
+    "run",
+    "--rm",
+    "--network",
+    red,
+    "-v",
+    `${nodeBin}:/node:ro`,
+    "-v",
+    `${raizRepo}:/repo:ro`,
+    "-w",
+    "/repo",
+    "debian:stable-slim",
+    "/node/bin/node",
+    "scripts/capture-pg-errors.mjs",
+    "--inner",
+    caso,
+  ];
   const interno = (caso) => {
     const r = spawnSync("docker", argsInner(caso), { encoding: "utf8" });
     if (r.status !== 0) throw new Error(`inner ${caso} rc=${r.status}: ${r.stderr}`);
@@ -260,7 +349,9 @@ async function casosPorNombre(out, nodeBin, raizRepo) {
           setTimeout(() => matar(), 500);
         }
       });
-      p.on("close", (rc) => (rc === 0 ? res(JSON.parse(so.trim().split("\n").pop())) : rej(new Error(`inner ${caso} rc=${rc}: ${se}`))));
+      p.on("close", (rc) =>
+        rc === 0 ? res(JSON.parse(so.trim().split("\n").pop())) : rej(new Error(`inner ${caso} rc=${rc}: ${se}`)),
+      );
     });
   try {
     // (a) contenedor `postgres` vivo pero sin nada escuchando en 5432 (arranque/reinicio de la BD)
@@ -270,7 +361,21 @@ async function casosPorNombre(out, nodeBin, raizRepo) {
     // (b) contenedor `postgres` inexistente (parado): el nombre ya no resuelve
     out.nombre_no_resuelve = interno("conectar");
     // (c) Postgres real parado con el pool de knex abierto, por nombre
-    sh("docker", ["run", "-d", "--name", "postgres", "--network", red, "-e", `POSTGRES_PASSWORD=${PASS}`, "-e", "POSTGRES_USER=arena", "-e", "POSTGRES_DB=arena", "postgres:16-alpine"]);
+    sh("docker", [
+      "run",
+      "-d",
+      "--name",
+      "postgres",
+      "--network",
+      red,
+      "-e",
+      `POSTGRES_PASSWORD=${PASS}`,
+      "-e",
+      "POSTGRES_USER=arena",
+      "-e",
+      "POSTGRES_DB=arena",
+      "postgres:16-alpine",
+    ]);
     out.nombre_servidor_matado_en_vuelo = await internoMatando("matar", () => dockerOk(["kill", "postgres"]));
   } finally {
     dockerOk(["rm", "-f", "postgres"]);
@@ -281,7 +386,9 @@ async function casosPorNombre(out, nodeBin, raizRepo) {
 async function interno(caso) {
   const host = "postgres";
   if (caso === "conectar") {
-    console.log(JSON.stringify({ pg: await pgConnect({ host, port: 5432 }), knex: await knexSelect({ host, port: 5432 }) }));
+    console.log(
+      JSON.stringify({ pg: await pgConnect({ host, port: 5432 }), knex: await knexSelect({ host, port: 5432 }) }),
+    );
     return;
   }
   // 'matar': espera a que el Postgres por nombre acepte, abre cliente y pool, y pide a Docker
@@ -291,15 +398,28 @@ async function interno(caso) {
   let evento;
   c.on("error", (e) => (evento = forma(e)));
   await c.connect();
-  const k = knexFactory({ client: "pg", connection: { host, port: 5432, user: "arena", password: PASS, database: "arena" }, pool: { min: 1, max: 1 }, acquireConnectionTimeout: 4000 });
+  const k = knexFactory({
+    client: "pg",
+    connection: { host, port: 5432, user: "arena", password: PASS, database: "arena" },
+    pool: { min: 1, max: 1 },
+    acquireConnectionTimeout: 4000,
+  });
   await k.raw("select 1");
-  const enVuelo = c.query("select pg_sleep(60)").then(() => ({ ok: true }), (e) => forma(e));
+  const enVuelo = c.query("select pg_sleep(60)").then(
+    () => ({ ok: true }),
+    (e) => forma(e),
+  );
   console.error("LISTO");
   const pg1 = await enVuelo;
   await new Promise((r) => setTimeout(r, 500));
   const rec = await pgConnect({ host, port: 5432 });
-  const rk = await k.raw("select 1").then(() => ({ ok: true }), (e) => forma(e));
-  console.log(JSON.stringify({ en_vuelo: pg1, evento_error_del_cliente: evento, reconexion_pg: rec, knex_tras_muerte: rk }));
+  const rk = await k.raw("select 1").then(
+    () => ({ ok: true }),
+    (e) => forma(e),
+  );
+  console.log(
+    JSON.stringify({ en_vuelo: pg1, evento_error_del_cliente: evento, reconexion_pg: rec, knex_tras_muerte: rk }),
+  );
   await k.destroy().catch(() => {});
 }
 
@@ -308,7 +428,9 @@ async function main() {
   if (i > 0) return interno(process.argv[i + 1]);
   const salida = process.argv[2];
   if (!salida) throw new Error("uso: capture-pg-errors.mjs <salida.json>");
-  const out = { _meta: { node: process.version, pg: pg.Client ? "pg" : "?", generado: "por scripts/capture-pg-errors.mjs" } };
+  const out = {
+    _meta: { node: process.version, pg: pg.Client ? "pg" : "?", generado: "por scripts/capture-pg-errors.mjs" },
+  };
   await casosHost(out);
   await casosPorNombre(out, resolve(dirname(process.execPath), ".."), resolve(AQUI, ".."));
   writeFileSync(salida, JSON.stringify(out, null, 2) + "\n");
