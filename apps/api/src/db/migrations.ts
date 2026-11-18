@@ -1094,6 +1094,54 @@ const m021_runtime_settings: Migration = {
   },
 };
 
+// #287 · Inscripción de EQUIPOS completos en torneos `teams`. Hasta ahora el equipo de una
+// inscripción se deducía EN VIVO de `bots.team_id`, así que al cerrar no se podía comprobar
+// que cada bot siguiera en el equipo con el que se inscribió (un intercambio de bots entre
+// dos equipos inscritos conservaba los tamaños y pasaba), y un cambio de equipo tras el
+// cierre movía el bot de bando en el calendario y la clasificación.
+//
+// SÓLO añade una columna nullable: NO rellena las filas existentes (NULL = inscripción
+// anterior, que sigue usando `bots.team_id` como siempre vía COALESCE). FK por defecto
+// (NO ACTION): un equipo con inscripciones no se borra (23503, que `deleteTeam` ya traduce
+// a `team_in_use`; con RESTRICT PostgreSQL daría 23001 y saldría como 500).
+//
+// Ronda 2 (#287 H5) · `team_entry_consents`: AUTORIZACIÓN explícita del DUEÑO de un bot para
+// que su equipo lo inscriba en un torneo concreto con una versión concreta. Un equipo de
+// varios dueños sólo entra (atómicamente) cuando cada bot ajeno al solicitante tiene la suya;
+// los bots del propio solicitante la reciben implícita al inscribir. Una fila por (torneo,
+// bot); la versión forma parte de la autorización (otra versión = otra autorización). Al
+// cerrar, una inscripción de equipo sin su autorización vigente no compite. Tabla NUEVA: no
+// toca filas existentes. Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-022.test.ts`.
+const m022_entries_team: Migration = {
+  name: "022_entries_team",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id);
+      CREATE INDEX entries_tournament_team_idx ON entries (tournament_id, team_id) WHERE team_id IS NOT NULL;
+      CREATE TABLE team_entry_consents (
+        tournament_id uuid NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        bot_id        uuid NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        team_id       uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        version       integer NOT NULL,
+        owner_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (tournament_id, bot_id),
+        FOREIGN KEY (bot_id, version) REFERENCES bot_versions(bot_id, version) ON DELETE CASCADE
+      );
+    `);
+  },
+  // Vuelta atrás: se pierde a qué equipo se inscribió cada entrada (vuelve a deducirse de
+  // bots.team_id) y las autorizaciones de los dueños.
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS team_entry_consents;
+      DROP INDEX IF EXISTS entries_tournament_team_idx;
+      ALTER TABLE entries DROP COLUMN team_id;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1116,6 +1164,7 @@ export const MIGRATIONS: Migration[] = [
   m019_visibility_broadcast,
   m020_streaming_ingests,
   m021_runtime_settings,
+  m022_entries_team,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1188,6 +1237,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "019_visibility_broadcast",
   "020_streaming_ingests",
   "021_runtime_settings",
+  // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
+  "022_entries_team",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

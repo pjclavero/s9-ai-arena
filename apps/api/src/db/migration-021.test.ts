@@ -26,8 +26,9 @@ afterAll(async () => {
 });
 
 describe("migración 021_runtime_settings", () => {
-  it("está aplicada, es la última y nace sin fila", async () => {
-    expect(MIGRATIONS.at(-1)!.name).toBe(NAME);
+  it("está aplicada y nace sin fila", async () => {
+    // #287 · ya no es la última (detrás va 022_entries_team); sigue aplicada.
+    expect(MIGRATIONS.map((m) => m.name)).toContain(NAME);
     expect(await tables()).toContain("app_runtime_settings");
     expect(await h.db("app_runtime_settings").select()).toEqual([]);
   });
