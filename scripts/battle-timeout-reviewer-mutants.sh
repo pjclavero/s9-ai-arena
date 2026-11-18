@@ -18,7 +18,7 @@ M=(
 "packages/game-rules/battle-timing.ts|export const BATTLE_GUARD_FACTOR = 1.25;|export const BATTLE_GUARD_FACTOR = 1.0;|R2 factor 1.0"
 "apps/tournament-worker/src/container-agents.ts|return tick > 0|return tick >= 0|R3 tick=0 tratado como timeout"
 "apps/tournament-worker/src/errors.ts|Math.min(120_000, 5000 * 2 ** n)|5000 * 2 ** n|R4 backoff db sin tope"
-"apps/tournament-worker/src/errors.ts|return transientDb(e.cause, depth + 1, endpoint);|return false;|R5 cause no inspeccionado"
+"apps/tournament-worker/src/errors.ts|if (visit(e.cause, depth + 1)) return true;|/* sin cause */|R5 cause no inspeccionado"
 "apps/tournament-worker/src/errors.ts|battle_timeout: { maxFailures: 2, backoffMs: (n) => 60_000 * Math.max(1, n) }|battle_timeout: { maxFailures: 2, backoffMs: (n) => 1000 }|R6 battle_timeout sin pausa de 60 s"
 "apps/tournament-worker/src/errors.ts|if (e.name === \"KnexTimeoutError\") return true;|if (false) return true;|R7 EQUIV KnexTimeoutError por nombre"
 "apps/tournament-worker/src/errors.ts|\"57P03\", // cannot_connect_now|\"57P03\", \"42601\",|R8 42601 sintaxis transitorio"
