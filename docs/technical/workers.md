@@ -69,6 +69,19 @@ Una batalla `failed` sigue impidiendo que el match o el torneo se cierren ([TD-0
 Lanza `computeConcurrency()` bucles, como mínimo 1: `min(cpus − 1, floor(RAM_MB / 2048))`. Cada
 bucle procesa un trabajo a la vez. Sin trabajo, espera `pollMs` (1 s) en `BLPOP` o en `sleep`.
 
+### Clasificación de fallos de infraestructura de la batalla
+
+`run_battle` etiqueta los fallos de infraestructura con un código que decide el reintento (`errors.ts`):
+
+- `battle_timeout`: el guard global (margen PROPORCIONAL a la duración teórica) saltó con el motor ya jugando (tick > 0); un reintento y a revisión. Si no hubo ni un tick es `engine_start_failure`.
+- `db_unavailable`: BD o red hacia ella caídas; backoff creciente, tope de 8 fallos (~8,5 min) y a revisión.
+- `db_query_timeout` (SQLSTATE 57014): tope de 2 fallos.
+- El contador es POR CLASE (`payload._failureCounts`), no el total de intentos.
+
+La atribución de un error de red (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, `EAI_AGAIN`, `ENOTFOUND`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNABORTED`) a la BD se decide por su ORIGEN (puerto/IP del DSN, `cause`, `AggregateError`, pila de pg/knex o SQL antepuesto), no por el código.
+
+**Límite conocido (P2-11):** con el DSN por nombre (producción) Node deja en `address` la IP resuelta, que no se puede comparar con el nombre; sólo queda el puerto. Un error de red al puerto de la BD con la IP de otro servicio que escuche en ese mismo puerto se clasifica como `db_unavailable`. La forma del error no permite distinguirlo. Impacto acotado: backoff con tope de 8 fallos y a revisión, sin bucles ni daño. Un test lo fija (`P2-11 · límite conocido`) para que no se amplíe sin querer.
+
 ### Espectador en directo
 
 El worker crea un `SpectateGateway` en `SPECTATE_PORT`, porque la batalla vive en su memoria (también ahora que la conducen contenedores: el `ProtocolServer` y el motor están en este proceso). El

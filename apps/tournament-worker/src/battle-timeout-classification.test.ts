@@ -406,6 +406,52 @@ describe("F3 · errores transitorios de BD (decididos por ORIGEN)", () => {
     expect(isTransientDbError(muchos, DB)).toBe(false); // el transitorio queda más allá del tope de nodos
   });
 
+  // P2-12: host/red inalcanzables y conexión abortada. FORMAS NO CAPTURADAS EN VIVO (exigen una red sin
+  // ruta o un RST de aborto que no se puede provocar de forma segura aquí): se construyen con la forma
+  // DOCUMENTADA de Node (`connect EHOSTUNREACH ip:puerto`, errno negativo de libuv, syscall, address, port).
+  const nodeNet = (code: string, errno: number, syscall: string, address?: string, port?: number) =>
+    Object.assign(new Error(address ? `${syscall} ${code} ${address}:${port}` : `${syscall} ${code}`), {
+      errno,
+      code,
+      syscall,
+      ...(address ? { address, port } : {}),
+    });
+
+  it.each([
+    ["EHOSTUNREACH", nodeNet("EHOSTUNREACH", -113, "connect", "172.19.0.2", 5432)],
+    ["ENETUNREACH", nodeNet("ENETUNREACH", -101, "connect", "172.19.0.2", 5432)],
+    ["ECONNABORTED", nodeNet("ECONNABORTED", -103, "connect", "172.19.0.2", 5432)],
+  ])("P2-12 · %s hacia el puerto de la BD (DSN por nombre, address = IP resuelta) → db_unavailable", (_c, err) => {
+    expect(classifyDbError(err, DB)).toBe("db_unavailable");
+  });
+
+  it.each([
+    ["EHOSTUNREACH", nodeNet("EHOSTUNREACH", -113, "connect", "172.20.0.3", 2375)],
+    ["ENETUNREACH", nodeNet("ENETUNREACH", -101, "connect", "172.20.0.4", 6379)],
+    ["ECONNABORTED", nodeNet("ECONNABORTED", -103, "read")],
+  ])("P2-12 · %s de otro origen (docker-proxy/Redis/sin evidencia) → NO es db_unavailable", (_c, err) => {
+    expect(classifyDbError(err, DB)).toBeUndefined();
+  });
+
+  it("P2-12 · ECONNABORTED sin dirección: sólo con pila de pg (en vuelo) → db_unavailable", () => {
+    const e = nodeNet("ECONNABORTED", -103, "read");
+    e.stack =
+      "Error: read ECONNABORTED\n    at Client._handleErrorWhileConnecting (/app/node_modules/pg/lib/client.js:318:19)";
+    expect(classifyDbError(e, DB)).toBe("db_unavailable");
+  });
+
+  // P2-11: FIJA el límite conocido. NO es un comportamiento deseable, es el que la forma del error impone:
+  // el mismo error contra el puerto de la BD, con la IP de OTRO servicio, se atribuye a la BD.
+  it("P2-11 · límite conocido: servicio AJENO en el puerto de la BD, DSN por nombre → se atribuye a la BD", () => {
+    const ajeno = nodeNet("ECONNREFUSED", -111, "connect", "172.20.0.99", 5432);
+    expect(classifyDbError(ajeno, DB)).toBe("db_unavailable"); // falso positivo ACEPTADO (acotado, ver errors.ts)
+    // acotado: es db_unavailable con tope de 8 fallos y backoff acotado, nunca un reintento infinito
+    expect(retryPolicyFor("db_unavailable").maxFailures).toBe(8);
+    expect(retryPolicyFor("db_unavailable").backoffMs(50)).toBe(120_000);
+    // con el DSN por IP literal el límite NO existe: otra IP no se atribuye
+    expect(classifyDbError(ajeno, { host: "172.19.0.2", port: 5432 })).toBeUndefined();
+  });
+
   it("sin endpoint conocido, un código de red SIN más evidencia no se atribuye a la BD", () => {
     expect(isTransientDbError(net("ECONNREFUSED", { address: "172.20.0.2", port: 5432 }), {})).toBe(false);
     expect(isTransientDbError(knexTimeout, {})).toBe(true);

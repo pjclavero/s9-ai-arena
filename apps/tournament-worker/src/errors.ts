@@ -170,7 +170,19 @@ export function hasOwnRetryPolicy(code: FailureCode): boolean {
  *  · nombre que no resuelve: `ENOTFOUND` + `hostname`; en la red de Docker, pg da `timeout expired`.
  * Un error 'error' de un cliente OCIOSO muerto no llega al manejador del trabajo (lo absorbe el pool).
  */
-const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND", "ETIMEDOUT", "EPIPE"]);
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EPIPE",
+  // Host/red inalcanzables (BD apagada con el host caído, contenedor retirado de la red) y conexión
+  // abortada. Mismo criterio de origen que el resto: puerto/IP de la BD, pila de pg/knex o SQL antepuesto.
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNABORTED",
+]);
 const TRANSIENT_DB_SQLSTATES = new Set([
   "53300", // too_many_connections: el servidor está saturado, se libera solo
   "57P01", // admin_shutdown
@@ -265,6 +277,14 @@ function pointsAtDb(e: { address?: unknown; port?: unknown; hostname?: unknown }
 type DbFailureCode = "db_unavailable" | "db_query_timeout";
 
 /**
+ * LÍMITE CONOCIDO (P2-11, no corregible por la forma del error): con el DSN por NOMBRE (producción:
+ * `postgres`), Node deja en `address` la IP ya resuelta, que no se puede comparar con el nombre; el
+ * único criterio que queda es el PUERTO. Un error de red al puerto de la BD (5432) con la IP de OTRO
+ * servicio que escuche también en ese puerto se atribuye, por tanto, a la BD (falso positivo). La forma
+ * del error no distingue los dos casos y no se amplía el criterio a ciegas. Impacto acotado: sólo un
+ * `db_unavailable` (backoff creciente, tope de 8 fallos, ~8,5 min y a revisión); ni bucle ni daño.
+ * El test «P2-11 · límite conocido» FIJA este comportamiento: quien lo cambie debe hacerlo a propósito.
+ *
  * Clasifica un error de BD/red como `db_unavailable`, `db_query_timeout` (57014) o ninguno.
  * Recorre `cause` y `AggregateError.errors[]` con tope de profundidad y de nodos.
  */

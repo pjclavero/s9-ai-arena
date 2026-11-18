@@ -67,6 +67,9 @@ MUTANTES=(
 "apps/tournament-worker/src/errors.ts|db_query_timeout: { maxFailures: 2,|db_query_timeout: { maxFailures: 8,|M20 db_query_timeout sin tope corto (P2-8)|db_query_timeout (57014): tope CORTO"
 "apps/tournament-worker/src/worker.ts|classifyDbError(err) as \"db_unavailable\" \| \"db_query_timeout\",|\"db_unavailable\",|M21 el worker etiqueta todo como db_unavailable (P2-8)|SIN pasar por el runner también va por db_query_timeout"
 "apps/tournament-worker/src/errors.ts| \|\| ++budget.nodes > MAX_NODES||M22 sin tope de nodos visitados|AggregateError enorme"
+"apps/tournament-worker/src/errors.ts|  \"EHOSTUNREACH\",|  /* sin EHOSTUNREACH */|M23 sin EHOSTUNREACH (P2-12)|P2-12 · EHOSTUNREACH hacia el puerto de la BD"
+"apps/tournament-worker/src/errors.ts|  \"ENETUNREACH\",|  /* sin ENETUNREACH */|M24 sin ENETUNREACH (P2-12)|P2-12 · ENETUNREACH hacia el puerto de la BD"
+"apps/tournament-worker/src/errors.ts|  \"ECONNABORTED\",|  /* sin ECONNABORTED */|M25 sin ECONNABORTED (P2-12)|P2-12 · ECONNABORTED hacia el puerto de la BD"
 )
 
 fallos=0
