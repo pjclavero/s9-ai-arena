@@ -649,6 +649,10 @@ describe("#287 ronda 2 · H3 · freeze condicional (REV-1 de #289)", () => {
       await h
         .db("entries")
         .insert({ tournament_id: t, bot_id: shared, version: 1, loadout_revision: 1, frozen: false });
+      // B (0.5.0): el cierre exige >=2 inscritos; cada torneo lleva además un bot propio distinto.
+      await h
+        .db("entries")
+        .insert({ tournament_id: t, bot_id: await mkBot(devId, null), version: 1, loadout_revision: 1, frozen: false });
     }
     // Retiene el INSERT del job de t1 (dedupe_key única): el cierre 1 queda bloqueado DESPUÉS
     // de congelar la versión, sin commit.
@@ -672,9 +676,11 @@ describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede des
     const t = await indTournament();
     const a = await mkBot(devId, null);
     const b = await mkBot(devId, null);
+    const c = await mkBot(devId, null); // B (0.5.0): tras excluir `a` deben quedar >=2 inscritos
     const ea = await enterOne(devTok, t, a);
     expect(ea.status).toBe(201);
     expect((await enterOne(devTok, t, b)).status).toBe(201);
+    expect((await enterOne(devTok, t, c)).status).toBe(201);
     expect((await request(app).post(`/bots/${a}/versions/1/actions/retire`).set(as(devTok)).send({})).status).toBe(200);
     const c1 = await closeEntries(t);
     expect(c1.status).toBe(409);
@@ -683,6 +689,51 @@ describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede des
     const ex = await exclude(orgTok, t, ea.body.id);
     expect(ex.status, JSON.stringify(ex.body)).toBe(200);
     expect((await closeEntries(t)).status).toBe(200);
+  });
+
+  it("B_MIN_CONCURRENT · retirada y cierre simultáneos con 2 inscritos: nunca queda cerrado con menos de 2", async () => {
+    for (let i = 0; i < 6; i++) {
+      const t = await indTournament();
+      const a = await mkBot(devId, null);
+      const b = await mkBot(devId, null);
+      const ea = await enterOne(devTok, t, a);
+      expect(ea.status).toBe(201);
+      expect((await enterOne(devTok, t, b)).status).toBe(201);
+      const [ex, cl] = await Promise.all([exclude(devTok, t, ea.body.id), closeEntries(t)]);
+      const tour = await h.db("tournaments").where({ id: t }).first();
+      const left = await entriesOf(t);
+      if (tour.state === "closed") {
+        // Ganó el cierre: la retirada espera, ve el torneo cerrado y se rechaza; nada se pierde.
+        expect([cl.status, ex.status], JSON.stringify([cl.body, ex.body])).toEqual([200, 409]);
+        expect(left).toHaveLength(2);
+      } else {
+        // Ganó la retirada: el cierre cuenta DENTRO de su transacción y se rechaza sin efectos.
+        expect([ex.status, cl.status], JSON.stringify([ex.body, cl.body])).toEqual([200, 409]);
+        expect(cl.body.error).toBe("not_enough_participants");
+        expect(tour.state).toBe("open");
+        expect(left).toHaveLength(1);
+        expect(left.every((e: { frozen: boolean }) => e.frozen === false)).toBe(true);
+      }
+      expect(tour.state === "closed" ? left.length : 2).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("B_MIN_AFTER_GATE · el mínimo cuenta lo que compite: 2 inscritos con uno retirado dan entries_not_eligible, y al excluirlo not_enough_participants", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    const ea = await enterOne(devTok, t, a);
+    expect((await enterOne(devTok, t, b)).status).toBe(201);
+    expect((await request(app).post(`/bots/${a}/versions/1/actions/retire`).set(as(devTok)).send({})).status).toBe(200);
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error).toBe("entries_not_eligible");
+    expect((await exclude(orgTok, t, ea.body.id)).status).toBe(200);
+    const c2 = await closeEntries(t);
+    expect(c2.status).toBe(409);
+    expect(c2.body.error).toBe("not_enough_participants");
+    expect(c2.body.current).toBe(1);
+    expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("open");
   });
 
   it("T287_UNBLOCK_REPLACE_IND · …o su dueño la sustituye por otra versión válida", async () => {
@@ -702,10 +753,12 @@ describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede des
   it("T287_UNBLOCK_SUSPENDED_TEAM · un miembro suspendido: el organizador excluye ese y luego el resto del equipo (a medias), y cierra", async () => {
     const A = await mkTeam(2);
     const B = await mkTeam(2);
+    const C = await mkTeam(2); // B (0.5.0): tras excluir el equipo A deben quedar >=2 equipos
     const t = await openTeamsTournament(2);
     const ra = await enterTeam(devTok, t, A.teamId, members(A.bots));
     expect(ra.status).toBe(201);
     expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).status).toBe(201);
     const sus = await request(app)
       .post(`/bots/${A.bots[0]}/versions/1/actions/suspend`)
       .set(as(adminTok))
@@ -845,10 +898,12 @@ describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización expl
   it("T287_MO_REVOKED · retirar la autorización antes del cierre saca al equipo ENTERO (y el cierre no lo congela)", async () => {
     const M = await mkMultiOwnerTeam();
     const B = await mkTeam(2);
+    const C = await mkTeam(2); // B (0.5.0): al salir el equipo M deben quedar >=2 equipos
     const t = await openTeamsTournament(2);
     expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
     expect((await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]))).status).toBe(201);
     expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).status).toBe(201);
     const rv = await revoke(userTok, t, M.theirs);
     expect(rv.status, JSON.stringify(rv.body)).toBe(200);
     expect(rv.body.withdrawnEntries).toBe(2);
