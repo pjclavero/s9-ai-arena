@@ -60,7 +60,7 @@ MUTANTES=(
 "apps/tournament-worker/src/errors.ts|if (Array.isArray(e.errors)) for (const sub of e.errors) if (visit(sub, depth + 1)) return true;|/* no recorre AggregateError */|M13 no recorrer AggregateError.errors[] (P1-1)|localhost\` dual-stack"
 "apps/tournament-worker/src/errors.ts|  return isIP(address) !== 0;|  return false;|M14 no aceptar el PUERTO con DSN por nombre (address = IP resuelta) (P1-1)|DSN por NOMBRE → IP"
 "apps/tournament-worker/src/errors.ts|  if (isIP(host) !== 0) return false;|  /* sin comprobar IP literal */|M15 con DSN por IP literal se acepta cualquier IP (P1-1)|DSN por IP literal"
-"apps/tournament-worker/src/errors.ts|new Set([\"ECONNREFUSED\", \"ECONNRESET\", \"EAI_AGAIN\", \"ENOTFOUND\", \"ETIMEDOUT\", \"EPIPE\"])|new Set([\"ECONNREFUSED\", \"ECONNRESET\", \"EAI_AGAIN\", \"ETIMEDOUT\", \"EPIPE\"])|M16 sin ENOTFOUND|ENOTFOUND real"
+"apps/tournament-worker/src/errors.ts|  \"ENOTFOUND\",|  /* sin ENOTFOUND */|M16 sin ENOTFOUND|ENOTFOUND real"
 "apps/tournament-worker/src/errors.ts|if (typeof e.message === \"string\" && KNEX_SQL_PREFIXED_NET_ERROR.test(e.message)) return true;|/* sin SQL antepuesto */|M17 el read ECONNRESET de knex no se reconoce|vía knex"
 "apps/tournament-worker/src/errors.ts|PG_CONNECT_TIMEOUT_MESSAGE.test(e.message) &&|false &&|M18 pg timeout expired no se reconoce|pg \`timeout expired\`"
 "apps/tournament-worker/src/errors.ts|  \"53300\", // too_many_connections: el servidor está saturado, se libera solo|  \"53300\", \"57014\",|M19 57014 vuelve a ser db_unavailable (P2-8)|57014 REAL (statement_timeout)"
