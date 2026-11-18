@@ -1319,40 +1319,123 @@ describe("R4 · salida del CLI con el motor forzado y guarda de anfitrión del E
     });
   });
 
-  // Guarda del E2E: se ejecuta de verdad (bash) con un entorno limpio y una lista de contenedores inyectada.
-  const guard = (env: Record<string, string>) =>
-    spawnSync("bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
-      cwd: join(__dirname, "../../.."),
-      env: { PATH: process.env.PATH ?? "", ...env },
-      encoding: "utf8",
-    });
+  // Guarda del E2E: se ejecuta de verdad (bash) con un `docker` FALSO en el PATH (sin variables de prueba que
+  // sustituyan a docker ps), con los nombres y etiquetas REALES de producción (proyecto compose `infrastructure`).
+  const REPO = join(__dirname, "../../..");
+  const PROD_SERVICES = (() => {
+    const t = readFileSync(join(REPO, "infrastructure/docker-compose.yml"), "utf8");
+    const body = t.slice(t.indexOf("\nservices:") + 1).split(/\n(?=[a-z])/)[0];
+    return [...body.matchAll(/^ {2}([a-z0-9-]+):\s*$/gm)].map((m) => m[1]);
+  })();
+  /** Línea de `docker ps -a --format '{{.Names}}|{{.State}}|{{.Label "s9portable.e2e"}}|{{.Label "com.docker.compose.project"}}'`. */
+  const prod = (svc: string, state = "running") => `infrastructure-${svc}-1|${state}||infrastructure`;
+  const propio = (n: string) => `s9portable-${n}|running|1|`;
+  const guard = (env: Record<string, string>, docker: { ps?: string[]; rc?: number; sinDocker?: boolean } = {}) => {
+    const bin = mkdtempSync(join(tmpdir(), "fake-docker-"));
+    try {
+      writeFileSync(join(bin, "ps.txt"), (docker.ps ?? []).join("\n") + "\n");
+      writeFileSync(
+        join(bin, "docker"),
+        `#!/bin/sh\n[ "$1" = ps ] || exit 2\ncat "${join(bin, "ps.txt")}"\nexit ${docker.rc ?? 0}\n`,
+      );
+      chmodSync(join(bin, "docker"), 0o755);
+      return spawnSync("/bin/bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
+        cwd: REPO,
+        env: { PATH: docker.sinDocker ? "/nonexistent-s9" : `${bin}:/usr/bin:/bin`, ...env },
+        encoding: "utf8",
+      });
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  };
+  const LAB = { S9_PORTABLE_E2E_LAB: "1" };
+  it("R5-0 · la lista de servicios de producción se lee del compose real (no está vacía)", () => {
+    expect(PROD_SERVICES).toEqual(
+      expect.arrayContaining(["api", "postgres", "gateway", "tournament-worker", "streamer"]),
+    );
+    expect(PROD_SERVICES.length).toBeGreaterThanOrEqual(20);
+  });
   it("R4-2 · sin consentimiento explícito el E2E NO corre (protege por defecto)", () => {
-    const r = guard({ S9_PORTABLE_GUARD_CONTAINERS: "" });
+    const r = guard({}, { ps: [] });
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/S9_PORTABLE_E2E_LAB=1/);
   });
-  it("R4-2 · con consentimiento y sin contenedores del producto, corre", () => {
-    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9portable-src-1\notro-servicio" });
+  it("R5-1 · con consentimiento y SIN contenedores, corre", () => {
+    expect(guard(LAB, { ps: [] }).status).toBe(0);
+  });
+  it("R5-1 · los contenedores del propio ensayo (etiqueta s9portable.e2e=1) no cuentan como ajenos", () => {
+    const r = guard(LAB, { ps: [propio("src-9"), propio("dst-9"), propio("api")] });
     expect(r.status).toBe(0);
   });
-  it("R4-2 · con consentimiento PERO con contenedores del producto en marcha, se niega", () => {
-    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9-arena-api-1\ns9portable-src-1" });
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/contenedores del producto/);
-    expect(r.stderr).toContain("s9-arena-api-1");
-  });
-  it("R4-2 · los contenedores del propio ensayo (s9portable-) no cuentan como producción", () => {
-    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9portable-src-9\ns9portable-dst-9" });
-    expect(r.status).toBe(0);
-  });
-  it("R4-2 · S9_PORTABLE_FORBIDDEN_HOSTS sigue vetando el anfitrión por su nombre", () => {
-    const host = execFileSync("hostname").toString().trim();
-    const r = guard({
-      S9_PORTABLE_E2E_LAB: "1",
-      S9_PORTABLE_GUARD_CONTAINERS: "",
-      S9_PORTABLE_FORBIDDEN_HOSTS: `x ${host}`,
+  for (const svc of PROD_SERVICES) {
+    it(`R5-2 · producción real «infrastructure-${svc}-1» en marcha ⇒ se niega`, () => {
+      const r = guard(LAB, { ps: [prod(svc)] });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`infrastructure-${svc}-1`);
     });
+  }
+  it("R5-2 · producción completa en marcha junto al ensayo ⇒ se niega", () => {
+    const r = guard(LAB, { ps: [...PROD_SERVICES.map((s) => prod(s)), propio("src-1")] });
     expect(r.status).toBe(1);
+  });
+  it("R5-2 · producción PARADA pero con la etiqueta de compose ⇒ se niega (defensa adicional)", () => {
+    const r = guard(LAB, { ps: [prod("api", "exited"), prod("postgres", "exited")] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/proyecto compose/);
+  });
+  it("R5-2 · un proyecto compose cualquiera (no sólo `infrastructure`) también se niega", () => {
+    const r = guard(LAB, { ps: ["otro-web-1|running||otro"] });
+    expect(r.status).toBe(1);
+  });
+  it("R5-3 · un contenedor ajeno cualquiera (foo) en marcha ⇒ se niega", () => {
+    const r = guard(LAB, { ps: ["foo|running||"] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("foo");
+  });
+  it("R5-3 · ajeno junto a uno del ensayo ⇒ se niega igualmente", () => {
+    expect(guard(LAB, { ps: [propio("src-1"), "foo|running||"] }).status).toBe(1);
+  });
+  it("R5-3 · el NOMBRE s9portable- sin la etiqueta no basta (no se puede suplantar por nombre)", () => {
+    const r = guard(LAB, { ps: ["s9portable-api|running||"] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("s9portable-api");
+  });
+  it("R5-3 · un contenedor ajeno PARADO y sin compose no bloquea (sólo importan los vivos)", () => {
+    expect(guard(LAB, { ps: ["foo|exited||"] }).status).toBe(0);
+  });
+  it("R5-4 · si «docker ps» falla, FALLA CERRADO", () => {
+    const r = guard(LAB, { ps: [], rc: 1 });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/docker ps.*falló/);
+  });
+  it("R5-4 · si docker no está en el PATH, FALLA CERRADO", () => {
+    const r = guard(LAB, { sinDocker: true });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/no hay docker/);
+  });
+  it("R5-5 · S9_PORTABLE_GUARD_CONTAINERS ya no existe: definida (y vacía) no oculta la producción", () => {
+    const r = guard({ ...LAB, S9_PORTABLE_GUARD_CONTAINERS: "" }, { ps: [prod("api")] });
+    expect(r.status).toBe(1);
+  });
+  it("R5-6 · la anulación consciente ALLOW_PRODUCT_CONTAINERS=1 deja pasar pero imprime un AVISO PELIGROSO", () => {
+    const r = guard({ ...LAB, S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS: "1" }, { ps: [prod("api")] });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/AVISO PELIGROSO/);
+  });
+  it("R5-6 · la anulación no sustituye al consentimiento LAB=1", () => {
+    expect(guard({ S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS: "1" }, { ps: [] }).status).toBe(1);
+  });
+  it("R4-2 · S9_PORTABLE_FORBIDDEN_HOSTS veta el anfitrión por su nombre (con LAB=1: se prueba el veto, no el consentimiento)", () => {
+    const host = execFileSync("hostname").toString().trim();
+    const vetado = guard({ ...LAB, S9_PORTABLE_FORBIDDEN_HOSTS: `x ${host}` }, { ps: [] });
+    expect(vetado.status).toBe(1);
+    expect(vetado.stderr).toMatch(/vetado/);
+    // control: con otro nombre vetado, el mismo entorno corre => el rechazo de arriba es del veto
+    expect(guard({ ...LAB, S9_PORTABLE_FORBIDDEN_HOSTS: "x-otro-anfitrion" }, { ps: [] }).status).toBe(0);
+  });
+  it("R5-7 · run.sh etiqueta sus contenedores con s9portable.e2e=1 (es lo que la guarda reconoce como propios)", () => {
+    const t = readFileSync(join(REPO, "scripts/portable/e2e/run.sh"), "utf8");
+    expect(t).toMatch(/docker run -d --name "\$1" --label s9portable\.e2e=1 /);
   });
   it("R4-2 · run.sh y repeat.sh invocan la guarda antes de tocar nada", () => {
     for (const f of ["run.sh", "repeat.sh"]) {

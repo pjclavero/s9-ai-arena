@@ -60,7 +60,7 @@ free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0
 start_db() { # nombre -> deja el puerto asignado en $DB_PORT
   docker rm -f "$1" >/dev/null 2>&1 || true
   CONTAINERS+=("$1")
-  docker run -d --name "$1" -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=arena -p "127.0.0.1::5432" postgres:16-alpine >/dev/null
+  docker run -d --name "$1" --label s9portable.e2e=1 -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=arena -p "127.0.0.1::5432" postgres:16-alpine >/dev/null
   DB_PORT=$(docker port "$1" 5432/tcp | head -1 | sed 's/.*://')
   for _ in $(seq 1 60); do
     docker exec "$1" pg_isready -U postgres -d arena >/dev/null 2>&1 && return 0

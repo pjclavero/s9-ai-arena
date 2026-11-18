@@ -1,15 +1,19 @@
 # Guarda de anfitrión del E2E portable. Se hace `source` desde run.sh y repeat.sh (no se ejecuta suelta).
 #
-# Protege POR DEFECTO, sin nombres de máquinas en el repo, con dos capas:
-#  1) CONSENTIMIENTO explícito: sin S9_PORTABLE_E2E_LAB=1 el E2E se niega a correr. Una máquina nueva,
-#     o un operador que lanza el script a ciegas, no arranca Postgres ni APIs por accidente.
-#  2) SEÑALES genéricas de producción, que se comprueban AUNQUE haya consentimiento: contenedores en
-#     marcha del propio producto (nombre `s9`/`arena` + servicio api/gateway/postgres/db/streamer/redis…)
-#     que no sean los del propio ensayo (prefijo `s9portable-`). Anula la señal sólo un segundo
-#     consentimiento deliberado: S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS=1 (p. ej. un laboratorio
-#     que a propósito tenga otro stack del producto).
-# Además, S9_PORTABLE_FORBIDDEN_HOSTS="h1 h2" sigue vetando nombres concretos (opcional).
-# Para pruebas: S9_PORTABLE_GUARD_CONTAINERS (una línea por nombre) sustituye a `docker ps`.
+# Protege POR DEFECTO, sin nombres de máquinas en el repo, con dos capas, ambas de FALLO CERRADO:
+#  1) CONSENTIMIENTO explícito: sin S9_PORTABLE_E2E_LAB=1 el E2E se niega a correr.
+#  2) NINGÚN contenedor ajeno: el E2E se niega si en el anfitrión hay CUALQUIER contenedor en marcha que
+#     no lleve la etiqueta `s9portable.e2e=1` (la ponen run.sh a sus propios contenedores; el nombre NO
+#     basta: un `s9portable-x` sin etiqueta cuenta como ajeno). Además se niega si existe (en marcha o
+#     parado) algún contenedor con la etiqueta `com.docker.compose.project`, sea cual sea el proyecto
+#     (producción es el proyecto `infrastructure`: `infrastructure-api-1`, `infrastructure-postgres-1`…).
+#     Si `docker` no está, no responde o `docker ps` falla: STOP (no se puede demostrar que no es producción).
+#
+# Anulaciones (ambas conscientes):
+#  - S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS=1  SALTA la capa 2 entera. PELIGROSO: sólo para un laboratorio
+#    que a propósito tenga otros contenedores. En producción provoca la caída que esta guarda evita. Imprime aviso.
+#  - S9_PORTABLE_FORBIDDEN_HOSTS="h1 h2" (opcional) veta nombres de anfitrión concretos.
+# No hay ninguna variable que sustituya a `docker ps`: los tests de la guarda ponen un `docker` falso en el PATH.
 s9_portable_guard() {
   local h
   for h in ${S9_PORTABLE_FORBIDDEN_HOSTS:-}; do
@@ -19,18 +23,36 @@ s9_portable_guard() {
     echo "STOP: el E2E portable levanta Postgres y APIs reales y SÓLO se ejecuta en un laboratorio. Exporta S9_PORTABLE_E2E_LAB=1 si esta máquina lo es." >&2
     return 1
   fi
-  if [ "${S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS:-}" != "1" ]; then
-    local names hits
-    if [ -n "${S9_PORTABLE_GUARD_CONTAINERS+x}" ]; then
-      names=$S9_PORTABLE_GUARD_CONTAINERS
-    else
-      names=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
-    fi
-    hits=$(printf '%s\n' "$names" | grep -v '^s9portable-' | grep -Ei '(s9|arena)' | grep -Ei '(api|gateway|postgres|db|streamer|redis|worker|nginx)' || true)
-    if [ -n "$hits" ]; then
-      echo "STOP: hay contenedores del producto en marcha en este anfitrión (¿producción?): $(printf '%s' "$hits" | tr '\n' ' ')" >&2
-      return 1
-    fi
+  if [ "${S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS:-}" = "1" ]; then
+    echo "AVISO PELIGROSO: S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS=1 desactiva la comprobación de contenedores ajenos; si este anfitrión es producción, el E2E la puede tumbar." >&2
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "STOP: no hay docker en el PATH; no se puede comprobar que el anfitrión no es producción." >&2
+    return 1
+  fi
+  local ps rc=0 line name state own proj foreign="" composes=""
+  ps=$(docker ps -a --format '{{.Names}}|{{.State}}|{{.Label "s9portable.e2e"}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null) || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "STOP: «docker ps» falló (rc=$rc); no se puede comprobar que el anfitrión no es producción." >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS='|' read -r name state own proj <<<"$line"
+    if [ -n "$proj" ]; then composes="$composes $name($proj)"; fi
+    case "$state" in
+      exited | created | dead) ;;
+      *) if [ "$own" != "1" ]; then foreign="$foreign $name"; fi ;;
+    esac
+  done <<<"$ps"
+  if [ -n "$foreign" ]; then
+    echo "STOP: hay contenedores ajenos al ensayo en marcha en este anfitrión (¿producción u otro carril?):$foreign" >&2
+    return 1
+  fi
+  if [ -n "$composes" ]; then
+    echo "STOP: hay contenedores de un proyecto compose (¿producción?):$composes" >&2
+    return 1
   fi
   return 0
 }
