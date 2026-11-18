@@ -308,7 +308,7 @@ describe("slugs", () => {
 describe("escáner de secretos (mutante M3 secret_leak)", () => {
   it("M3 · detecta correo, UUID, JWT, Bearer, clave PEM, destino de streaming y claves prohibidas en metadatos", () => {
     const bad = [
-      '{"email":"alguien@example.com"}',
+      '{"nota":"alguien@example.com"}',
       '{"x":"3f2504e0-4f89-41d3-9a0c-0305e82c3301"}',
       '{"t":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk"}',
       '{"h":"Bearer abcdefghijklmnop12345"}',

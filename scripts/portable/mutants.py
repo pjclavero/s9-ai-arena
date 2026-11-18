@@ -115,7 +115,7 @@ def main():
                 fails += 1
                 continue
             r = run_tests(tests)
-            out = r.stdout
+            out = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
             open(f"{LOG}/portable-mut-{mid}.log", "w").write(out)
             failed = sorted(set(re.findall(r"(?:×|✗)\s+(.*?)(?:\s+\d+ms)?$", out, flags=re.M)))
             named = [f for f in failed if frag in f]
