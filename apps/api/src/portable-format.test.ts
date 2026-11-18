@@ -1077,7 +1077,12 @@ describe("P1-1 · el motor de origen se lee de la API y se valida", () => {
   it("R3-2 · el manifest y los avisos del export dejan constancia del motor forzado", async () => {
     const world: FakeWorld = { bots: [bt("b1", "Uno", [{ version: 1, state: "draft" }])] };
     const out = join(dir, "forzado");
-    const ov = { accepted: "0.5.0", detected: "0.4.0", detectedBattleId: "b9", reason: "despliegue nuevo sin batallas" };
+    const ov = {
+      accepted: "0.5.0",
+      detected: "0.4.0",
+      detectedBattleId: "b9",
+      reason: "despliegue nuevo sin batallas",
+    };
     await runExport({
       client: fakeApi(world),
       dest: out,
