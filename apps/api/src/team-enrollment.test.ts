@@ -738,6 +738,72 @@ describe("#287 ronda 2 · H2/H4 · lo que bloquea el cierre siempre se puede des
     expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("open");
   });
 
+  // INTB-FIX (P2-1, Z1) · el orden es gate → mínimo. Un solo inscrito que NO compite: con el orden
+  // correcto manda el gate (entries_not_eligible); con el mínimo antes saldría not_enough_participants.
+  it("B_MIN_ORDER_GATE · 1 inscrito no competidor: gana el gate (entries_not_eligible), no el mínimo", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const ea = await enterOne(devTok, t, a);
+    expect(ea.status).toBe(201);
+    expect((await request(app).post(`/bots/${a}/versions/1/actions/retire`).set(as(devTok)).send({})).status).toBe(200);
+    const c1 = await closeEntries(t);
+    expect(c1.status).toBe(409);
+    expect(c1.body.error, JSON.stringify(c1.body)).toBe("entries_not_eligible");
+    // Control: excluida la inscripción, ahora sí manda el mínimo.
+    expect((await exclude(orgTok, t, ea.body.id)).status).toBe(200);
+    const c2 = await closeEntries(t);
+    expect(c2.status).toBe(409);
+    expect(c2.body.error).toBe("not_enough_participants");
+  });
+
+  // INTB-FIX (P2-2, Z2) · DETERMINISTA: el mínimo se lee bajo el cerrojo del torneo. Un titular
+  // retiene el FOR UPDATE del torneo; el cierre se queda esperando; mientras tanto se retira una
+  // inscripción y se confirma. Si el mínimo se hubiera leído antes del cerrojo (TOCTOU), el cierre
+  // vería 2 inscritos y cerraría con 1; leído bajo el cerrojo, ve 1 y rechaza.
+  it("B_MIN_UNDER_LOCK · una retirada confirmada mientras el cierre espera el cerrojo del torneo se refleja en el mínimo", async () => {
+    const t = await indTournament();
+    const a = await mkBot(devId, null);
+    const b = await mkBot(devId, null);
+    const ea = await enterOne(devTok, t, a);
+    expect(ea.status).toBe(201);
+    expect((await enterOne(devTok, t, b)).status).toBe(201);
+    const holder = await h.db.transaction();
+    await holder.raw("SELECT 1 FROM tournaments WHERE id = ? FOR UPDATE", [t]);
+    const pClose = closeEntries(t).then((r) => r);
+    expect(await lockWaiters(1)).toBeGreaterThanOrEqual(1);
+    await holder("entries").where({ id: ea.body.id }).delete();
+    await holder.commit();
+    const cl = await pClose;
+    expect(cl.status, JSON.stringify(cl.body)).toBe(409);
+    expect(cl.body.error).toBe("not_enough_participants");
+    expect(cl.body.current).toBe(1);
+    const tour = await h.db("tournaments").where({ id: t }).first();
+    expect(tour.state).toBe("open");
+    expect((await entriesOf(t)).every((e: { frozen: boolean }) => e.frozen === false)).toBe(true);
+  });
+
+  // INTB-FIX (P2-4, Z9) · el 409 illegal_transition va ANTES del mínimo.
+  it("B_MIN_ORDER_STATE · torneo que no está open con <2 inscritos: illegal_transition, no not_enough_participants", async () => {
+    const a = await mkBot(devId, null);
+    for (const state of ["draft", "closed", "cancelled"]) {
+      const t = await indTournament();
+      if (state !== "draft") expect((await enterOne(devTok, t, a)).status).toBe(201); // 1 inscrito (<2)
+      await h.db("tournaments").where({ id: t }).update({ state });
+      const c = await closeEntries(t);
+      expect(c.status, `${state}: ${JSON.stringify(c.body)}`).toBe(409);
+      expect(c.body.error, `${state}: ${JSON.stringify(c.body)}`).toBe("illegal_transition");
+    }
+  });
+
+  // INTB-FIX (Z11) · la autorización (403) va ANTES del mínimo: quien no gestiona no se entera del recuento.
+  it("B_MIN_ORDER_AUTH · quien no gestiona el torneo recibe 403, no el 409 del mínimo", async () => {
+    const t = await indTournament(); // lo crea el organizador; open, 0 inscritos
+    const r = await request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(devTok)).send({});
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    expect(r.body.error).not.toBe("not_enough_participants");
+    expect((await h.db("tournaments").where({ id: t }).first()).state).toBe("open");
+  });
+
   it("T287_UNBLOCK_REPLACE_IND · …o su dueño la sustituye por otra versión válida", async () => {
     const t = await indTournament();
     const a = await mkBot(devId, null);

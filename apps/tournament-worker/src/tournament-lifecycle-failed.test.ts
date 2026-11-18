@@ -422,6 +422,113 @@ describe("[R1] cerrojo por torneo: dos cierres concurrentes de matches DISTINTOS
   }, 30_000);
 });
 
+// ---------------------------------------------- INTB-FIX (P2-3) · orden del cerrojo consultivo
+
+/**
+ * Traza, en orden, las consultas que emite knex (con el id de transacción). Sirve para fijar un
+ * ORDEN de cerrojos sin depender del azar: en cada transacción que toca `tournaments`/`matches`,
+ * la primera consulta tras el BEGIN debe ser `pg_advisory_xact_lock` (el cerrojo `tournament-settle`).
+ */
+function traceQueries() {
+  const log: { tx: string | undefined; sql: string }[] = [];
+  const fn = (q: { __knexTxId?: string; sql?: string }) => log.push({ tx: q.__knexTxId, sql: String(q.sql ?? "") });
+  h.db.on("query", fn);
+  return { log, stop: () => h.db.removeListener("query", fn) };
+}
+
+/** Por cada transacción que lee torneo/matches: ¿el cerrojo consultivo es lo PRIMERO que hace? */
+function lockFirstReport(log: { tx: string | undefined; sql: string }[]) {
+  const byTx = new Map<string, string[]>();
+  for (const { tx, sql } of log) {
+    if (!tx || /^\s*(begin|commit|rollback|savepoint|release)/i.test(sql)) continue;
+    byTx.set(tx, [...(byTx.get(tx) ?? []), sql]);
+  }
+  const txs = [...byTx.values()].filter((qs) => qs.some((q) => /"(tournaments|matches)"/.test(q)));
+  return {
+    n: txs.length,
+    firstIsLock: txs.map((qs) => /pg_advisory_xact_lock/.test(qs[0])),
+    firsts: txs.map((qs) => qs[0].slice(0, 80)),
+  };
+}
+
+describe("[R1b] el cerrojo consultivo tournament-settle se toma ANTES de leer, en todos los caminos", () => {
+  it("[R1b] settleBattle (process_result): la 1.ª consulta de la transacción es el cerrojo, antes de leer torneo/matches", async () => {
+    const tid = await schedule("round_robin", 3);
+    const b = await h.db("battles").where({ tournament_id: tid }).orderBy("id").first();
+    await h
+      .db("battles")
+      .where({ id: b.id })
+      .update({ status: "finished", result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }) });
+    const tr = traceQueries();
+    try {
+      await handleProcessResult({ payload: { battleId: b.id } } as unknown as JobRow, { db: h.db, workerId: "r1b" });
+    } finally {
+      tr.stop();
+    }
+    const rep = lockFirstReport(tr.log);
+    expect(rep.n, "debe verse al menos una transacción que lee el torneo").toBeGreaterThanOrEqual(1);
+    expect(rep.firstIsLock, JSON.stringify(rep.firsts)).toEqual(rep.firstIsLock.map(() => true));
+  });
+
+  it("[R1b] settleFailedBattle (batalla failed): mismo orden", async () => {
+    const tid = await schedule("round_robin", 3);
+    const b = await h.db("battles").where({ tournament_id: tid }).orderBy("id").first();
+    await h.db("battles").where({ id: b.id }).update({ status: "failed" });
+    const tr = traceQueries();
+    try {
+      await settleFailedBattle(h.db, b.id);
+    } finally {
+      tr.stop();
+    }
+    const rep = lockFirstReport(tr.log);
+    expect(rep.n).toBeGreaterThanOrEqual(1);
+    expect(rep.firstIsLock, JSON.stringify(rep.firsts)).toEqual(rep.firstIsLock.map(() => true));
+  });
+
+  it("[R1b] rescueStuckTournaments: cada torneo rescatado toma el cerrojo antes de leer", async () => {
+    const tid = await schedule("round_robin", 3);
+    await h
+      .db("battles")
+      .where({ tournament_id: tid })
+      .update({ status: "finished", result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }) });
+    const tr = traceQueries();
+    let touched: string[];
+    try {
+      touched = await rescueStuckTournaments(h.db);
+    } finally {
+      tr.stop();
+    }
+    expect(touched).toContain(tid);
+    const rep = lockFirstReport(tr.log);
+    expect(rep.n).toBeGreaterThanOrEqual(1);
+    expect(rep.firstIsLock, JSON.stringify(rep.firsts)).toEqual(rep.firstIsLock.map(() => true));
+  });
+
+  it("[R1b] el cerrojo es EFECTIVO: con el cerrojo del torneo retenido, el rescate espera y no avanza nada", async () => {
+    const tid = await schedule("round_robin", 3);
+    await h
+      .db("battles")
+      .where({ tournament_id: tid })
+      .update({ status: "finished", result: JSON.stringify({ winner: "A", ticks: 10, score: { A: 1, B: 0 } }) });
+    const holder = await h.db.transaction();
+    await holder.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`tournament-settle:${tid}`]);
+    const p = rescueStuckTournaments(h.db);
+    let waiting = 0;
+    for (let i = 0; i < 200 && waiting < 1; i++) {
+      waiting = (
+        await h.db.raw(
+          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`,
+        )
+      ).rows[0].n;
+      if (!waiting) await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(waiting).toBeGreaterThanOrEqual(1);
+    expect((await h.db("tournaments").where({ id: tid }).first()).state).toBe("running"); // nada avanzó
+    await holder.rollback();
+    expect(await p).toContain(tid);
+  });
+});
+
 // ------------------------------------------------------------------- puntuación
 
 describe("puntuación con juegos failed en la serie", () => {
