@@ -9,6 +9,7 @@
  * más bots de borde (de otro dueño, de otro equipo, con loadout no elegible, en borrador,
  * retirado) creados en cada prueba para que ninguna dependa de otra.
  */
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
@@ -64,15 +65,22 @@ const as = (tok: string) => ({ Authorization: `Bearer ${tok}` });
 async function mkBot(
   ownerId: string,
   teamId: string | null,
-  opts: { state?: string; loadout?: object; visibility?: string } = {},
+  opts: { state?: string; loadout?: object; visibility?: string; id?: string; versionId?: string } = {},
 ): Promise<string> {
   const name = `T287-${++seq}`;
   const [bot] = await h
     .db("bots")
-    .insert({ name, owner_id: ownerId, team_id: teamId, visibility: opts.visibility ?? "private" })
+    .insert({
+      ...(opts.id ? { id: opts.id } : {}),
+      name,
+      owner_id: ownerId,
+      team_id: teamId,
+      visibility: opts.visibility ?? "private",
+    })
     .returning("*");
   await createLoadoutRevision(h.db, bot.id, (opts.loadout ?? GOOD) as never, SUMMARY);
   await h.db("bot_versions").insert({
+    ...(opts.versionId ? { id: opts.versionId } : {}),
     bot_id: bot.id,
     version: 1,
     state: opts.state ?? "published",
@@ -876,6 +884,13 @@ describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización expl
     expect(rv.body.error).toBe("entries_closed");
     const C = await mkTeam(2);
     expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).body.error).toBe("entries_closed");
+    // P2-3 · excluir una inscripción de un torneo cancelado tampoco se permite (ni el dueño ni el organizador).
+    const [firstEntry] = await entriesOf(t);
+    for (const tok of [devTok, orgTok]) {
+      const ex = await exclude(tok, t, firstEntry.id);
+      expect(ex.status, JSON.stringify(ex.body)).toBe(409);
+      expect(ex.body.error).toBe("entries_closed");
+    }
     expect(await entriesOf(t)).toHaveLength(4);
     expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(4);
     // Y el cierre ya no es posible.
@@ -1170,4 +1185,127 @@ describe("#287 ronda 4 · R3-2 · orden común de bloqueo de bots", () => {
       await h.db.raw(`DROP TRIGGER IF EXISTS t287_hold_bot ON bots; DROP FUNCTION IF EXISTS t287_hold_bot();`);
     }
   });
+});
+
+// ------------------------------------------------------------------ ronda corta de corrección de #290
+
+/** ¿Está bloqueada la fila por otra transacción? (FOR UPDATE NOWAIT: 55P03 si hay un cerrojo en conflicto). */
+async function rowLocked(table: "bots" | "bot_versions", id: string): Promise<boolean> {
+  const trx = await h.db.transaction();
+  try {
+    await trx.raw(`SELECT 1 FROM ${table} WHERE id = ? FOR UPDATE NOWAIT`, [id]);
+    return false;
+  } catch (e) {
+    if ((e as { code?: string }).code === "55P03") return true;
+    throw e;
+  } finally {
+    await trx.rollback().catch(() => undefined);
+  }
+}
+/** Dos uuid ordenados: lo < hi (el orden de bloqueo común es el de id ascendente). */
+const idPair = (): { lo: string; hi: string } => {
+  const [lo, hi] = [randomUUID(), randomUUID()].sort();
+  return { lo, hi };
+};
+
+describe("#290 corrección · P2-1 · viewer de enterTournamentTeam ({userId, staff:false})", () => {
+  it("T290_TEAM_VIEWER · un bot AJENO autorizado que deja de ser elegible da un 409 genérico; uno PROPIO, el detalle", async () => {
+    const M = await mkMultiOwnerTeam();
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    // Tras la autorización, el loadout del bot ajeno deja de ser elegible (p. ej. cambia el catálogo).
+    const rev = await createLoadoutRevision(h.db, M.theirs, BAD_AMMO as never, SUMMARY);
+    await h.db("bot_versions").where({ bot_id: M.theirs, version: 1 }).update({ loadout_revision: rev.revision });
+    const r = await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]));
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(r.body.error).toBe("bot_version_not_eligible");
+    expect(r.body.notEligible).toHaveLength(1);
+    expect(r.body.notEligible[0].botId).toBe(M.theirs);
+    expect(r.body.notEligible[0].violations).toEqual([]); // sin el detalle del loadout ajeno
+    expect(r.body.notEligible[0].message).toBeUndefined();
+    expect(r.body.notEligible[0].suggestedAction).toBeUndefined();
+    expect(r.body.message).toContain("la versión no es elegible");
+    expect(JSON.stringify(r.body)).not.toMatch(/ammo|munici/i);
+    expect(await entriesOf(t)).toHaveLength(0);
+  });
+
+  it("T290_TEAM_VIEWER_OWN · el dueño que inscribe su propio bot no elegible SÍ recibe el motivo real", async () => {
+    const A = await mkTeam(1);
+    const bad = await mkBot(devId, A.teamId, { loadout: BAD_AMMO });
+    const t = await openTeamsTournament(2);
+    const r = await enterTeam(devTok, t, A.teamId, members([A.bots[0], bad]));
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(r.body.error).toBe("bot_version_not_eligible");
+    expect(r.body.notEligible[0].botId).toBe(bad);
+    expect(r.body.notEligible[0].violations.length).toBeGreaterThan(0);
+    expect(r.body.notEligible[0].message).toBeTruthy();
+    expect(await entriesOf(t)).toHaveLength(0);
+  });
+});
+
+describe("#290 corrección · P2-2 · orden de id de los cerrojos (las dos orientaciones)", () => {
+  // Técnica: otra transacción H retiene la fila de MAYOR id; la operación espera en ella. Si
+  // bloquea en orden de id ascendente, ya posee la de MENOR id y una prueba NOWAIT la ve
+  // bloqueada; si bloquea en otro orden (físico, created_at, descendente) llega a la de
+  // mayor id sin haber tomado la otra y el interbloqueo con quien sí ordena por id es posible.
+  // `loFirst`: la fila de menor id se inserta antes (orden físico = orden de id) o después.
+  for (const loFirst of [true, false]) {
+    const tag = loFirst ? "FISICO=ID" : "FISICO=INVERSO";
+
+    it(`T287_LOCK_ORDER_CLOSE_BOTS · closeEntries bloquea los bots por id ascendente (${tag})`, async () => {
+      const { lo, hi } = idPair();
+      const ids = loFirst ? [lo, hi] : [hi, lo];
+      const bots: string[] = [];
+      for (const id of ids) bots.push(await mkBot(devId, null, { id }));
+      const t = await indTournament();
+      for (const b of bots) expect((await enterOne(devTok, t, b)).status).toBe(201);
+      const holder = await h.db.transaction();
+      await holder.raw("SELECT 1 FROM bots WHERE id = ? FOR UPDATE", [hi]);
+      const pClose = closeEntries(t).then((r) => r);
+      expect(await lockWaiters(1)).toBeGreaterThanOrEqual(1);
+      const loHeld = await rowLocked("bots", lo);
+      await holder.rollback();
+      const cl = await pClose;
+      expect(loHeld, "el cierre debe tener ya el bot de menor id mientras espera al de mayor id").toBe(true);
+      expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    });
+
+    it(`T287_LOCK_ORDER_CLOSE_VERSIONS · closeEntries bloquea las versiones por id ascendente (${tag})`, async () => {
+      const { lo, hi } = idPair();
+      const vids = loFirst ? [lo, hi] : [hi, lo];
+      const bots: string[] = [];
+      for (const versionId of vids) bots.push(await mkBot(devId, null, { versionId }));
+      const t = await indTournament();
+      for (const b of bots) expect((await enterOne(devTok, t, b)).status).toBe(201);
+      const holder = await h.db.transaction();
+      await holder.raw("SELECT 1 FROM bot_versions WHERE id = ? FOR UPDATE", [hi]);
+      const pClose = closeEntries(t).then((r) => r);
+      expect(await lockWaiters(1)).toBeGreaterThanOrEqual(1);
+      const loHeld = await rowLocked("bot_versions", lo);
+      await holder.rollback();
+      const cl = await pClose;
+      expect(loHeld, "el cierre debe tener ya la versión de menor id mientras espera a la de mayor id").toBe(true);
+      expect(cl.status, JSON.stringify(cl.body)).toBe(200);
+    });
+
+    it(`T287_LOCK_ORDER_ENTER_TEAM · enterTournamentTeam bloquea los bots por id ascendente (${tag})`, async () => {
+      const { lo, hi } = idPair();
+      const [team] = await h
+        .db("teams")
+        .insert({ name: `T287-lo-${++seq}`, captain_id: devId })
+        .returning("*");
+      await h.db("team_members").insert({ team_id: team.id, user_id: devId, role: "captain" });
+      for (const id of loFirst ? [lo, hi] : [hi, lo]) await mkBot(devId, team.id as string, { id });
+      const t = await openTeamsTournament(2);
+      const holder = await h.db.transaction();
+      await holder.raw("SELECT 1 FROM bots WHERE id = ? FOR UPDATE", [hi]);
+      const pEnter = enterTeam(devTok, t, team.id as string, members([lo, hi])).then((r) => r);
+      expect(await lockWaiters(1)).toBeGreaterThanOrEqual(1);
+      const loHeld = await rowLocked("bots", lo);
+      await holder.rollback();
+      const en = await pEnter;
+      expect(loHeld, "la inscripción debe tener ya el bot de menor id mientras espera al de mayor id").toBe(true);
+      expect(en.status, JSON.stringify(en.body)).toBe(201);
+    });
+  }
 });

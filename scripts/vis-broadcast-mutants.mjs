@@ -19,8 +19,8 @@ const MUTANTS = [
   {
     name: "/broadcast pasa por getVisibleBot() (la batalla exige poder ver la ficha de cada bot)",
     file: "apps/api/src/routes/battles.ts",
-    from: '    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis));\n    res.setHeader("Cache-Control", NO_STORE);',
-    to: '    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis));\n    const { getVisibleBot } = await import("../services/bots.js");\n    for (const p of await db("participants").where({ battle_id: battle.id })) await getVisibleBot(db, req.auth, p.bot_id);\n    res.setHeader("Cache-Control", NO_STORE);',
+    from: '    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis()));\n    res.setHeader("Cache-Control", NO_STORE);',
+    to: '    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis()));\n    const { getVisibleBot } = await import("../services/bots.js");\n    for (const p of await db("participants").where({ battle_id: battle.id })) await getVisibleBot(db, req.auth, p.bot_id);\n    res.setHeader("Cache-Control", NO_STORE);',
     tests: API,
   },
   {
@@ -61,9 +61,10 @@ const MUTANTS = [
   {
     name: "cerrar el torneo pone code_public=true a las versiones inscritas",
     file: "apps/api/src/routes/tournaments.ts",
-    // #287 · closeEntries va en una transacción (`db` sombreado, un nivel más de sangría).
-    from: '      if (!t) throw notFound();\n      if (t.state !== "open") {\n        throw conflict("illegal_transition"',
-    to: '      if (!t) throw notFound();\n      await db.raw("UPDATE bot_versions v SET code_public = true FROM entries e WHERE e.bot_id = v.bot_id AND e.version = v.version AND e.tournament_id = ?", [t.id]);\n      if (t.state !== "open") {\n        throw conflict("illegal_transition"',
+    // #287 · closeEntries va en una transacción (`db` sombreado, un nivel más de sangría) y,
+    // desde #291, autoriza (`assertCanManageTournament`) justo después del cerrojo del torneo.
+    from: "      assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff (tras el cerrojo, antes de tocar nada)\n",
+    to: '      assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff (tras el cerrojo, antes de tocar nada)\n      await db.raw("UPDATE bot_versions v SET code_public = true FROM entries e WHERE e.bot_id = v.bot_id AND e.version = v.version AND e.tournament_id = ?", [t.id]);\n',
     tests: API,
   },
   {
@@ -145,9 +146,10 @@ const MUTANTS = [
   },
   {
     name: "la web enseña los controles de visibilidad a quien no es dueño",
-    file: "apps/web/src/pages/BotDetailPage.tsx",
-    from: "  const canEditVisibility = props.meId !== undefined && props.meId === bot.ownerId;",
-    to: "  const canEditVisibility = true;",
+    // La ficha de bots vive en BotsPage (BotDetailPage ya no existe): `isOwner` gobierna los controles.
+    file: "apps/web/src/pages/BotsPage.tsx",
+    from: "  const isOwner = !!selected && (selected.ownerId === undefined || selected.ownerId === props.me.id);",
+    to: "  const isOwner = !!selected;",
     tests: WEB,
   },
   {
@@ -160,15 +162,15 @@ const MUTANTS = [
   {
     name: "crear torneo ignora la casilla «Retransmisión pública»",
     file: "apps/web/src/pages/TournamentsPage.tsx",
-    from: "{ name, format, mode, rulesetId, broadcast }",
-    to: "{ name, format, mode, rulesetId, broadcast: false }",
+    from: "        rulesetId,\n        broadcast,\n",
+    to: "        rulesetId,\n        broadcast: false,\n",
     tests: WEB,
   },
   {
     name: "la página de Streaming vuelve a un motivo único para todo destino bloqueado",
     file: "apps/web/src/pages/StreamingPage.tsx",
-    from: '              {target.broadcastBlockedReason === "tournament_not_broadcastable"',
-    to: "              {false",
+    from: '  return d.broadcastBlockedReason === "tournament_not_broadcastable"\n    ? "No retransmisible',
+    to: '  return false\n    ? "No retransmisible',
     tests: ["apps/web/tests/eq5b-streaming-page.test.tsx"],
   },
 ];

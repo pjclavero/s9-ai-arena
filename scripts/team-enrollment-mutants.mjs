@@ -481,6 +481,144 @@ const MUTANTS = [
     tests: [API],
     kill: "T287_SCHEDULE_TEAM",
   },
+  // EQUIVALENTES documentados (no se mutan): staff:true o sin viewer en enterTournament,
+  // replaceIneligibleEntry y putTeamEntryConsent. En esas tres rutas sólo llega el DUEÑO del bot
+  // (la ruta lo exige antes), que ya ve el motivo real: el viewer no cambia ninguna salida
+  // observable. En enterTournamentTeam no es así (quien inscribe puede no ser dueño): L1/L1b.
+  // El WHERE state='published' del freeze de closeEntries es una doble barrera con el cerrojo
+  // FOR NO KEY UPDATE de las versiones (M3b quita ambas).
+  // ---- Ronda corta de corrección de #290 (P2-1..P2-3 y huecos del revisor R4/R4d/R5c/R6/R6b/R6c)
+  {
+    id: "L1",
+    name: "enterTournamentTeam pasa viewer staff:true (el detalle del loadout ajeno se filtra)",
+    edits: [
+      {
+        file: T,
+        from: "await assertVersionsEligible(trx, roster, { userId, staff: false });",
+        to: "await assertVersionsEligible(trx, roster, { userId, staff: true });",
+      },
+    ],
+    tests: [API],
+    kill: "T290_TEAM_VIEWER",
+  },
+  {
+    id: "L1b",
+    name: "enterTournamentTeam sin viewer (el dueño ya no ve el motivo de su propio bot)",
+    edits: [
+      {
+        file: T,
+        from: "await assertVersionsEligible(trx, roster, { userId, staff: false });",
+        to: "await assertVersionsEligible(trx, roster);",
+      },
+    ],
+    tests: [API],
+    kill: "T290_TEAM_VIEWER_OWN",
+  },
+  {
+    id: "L2",
+    name: "excluir una inscripción de un torneo cancelado se permite",
+    edits: [
+      {
+        file: VE,
+        from: 'if (!locked_t || locked_t.state !== "open") {',
+        to: 'if (!locked_t || (locked_t.state !== "open" && locked_t.state !== "cancelled")) {',
+      },
+      {
+        file: VE,
+        from: '  if (t.state !== "open" || entry.frozen) {',
+        to: '  if ((t.state !== "open" && t.state !== "cancelled") || entry.frozen) {',
+      },
+    ],
+    tests: [API],
+    kill: "T289X_CANCEL_CONSENTS",
+  },
+  {
+    id: "L3",
+    name: "closeEntries: bots bloqueados por created_at desc (orden físico inverso al de id)",
+    edits: [
+      {
+        file: T,
+        from: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])\n          .orderBy("id")',
+        to: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])\n          .orderBy("created_at", "desc")',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_CLOSE_BOTS",
+  },
+  {
+    id: "L3b",
+    name: "closeEntries: bots bloqueados en orden físico (sin ORDER BY)",
+    edits: [
+      {
+        file: T,
+        from: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])\n          .orderBy("id")',
+        to: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_CLOSE_BOTS",
+  },
+  {
+    id: "L3c",
+    name: "closeEntries: bots bloqueados por id DESCENDENTE",
+    edits: [
+      {
+        file: T,
+        from: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])\n          .orderBy("id")',
+        to: '          .whereIn("id", [...new Set(entries.map((e) => String(e.bot_id)))])\n          .orderBy("id", "desc")',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_CLOSE_BOTS",
+  },
+  {
+    id: "L4",
+    name: "closeEntries: versiones bloqueadas en orden físico (sin ORDER BY)",
+    edits: [
+      { file: T, from: '          .orderBy("id")\n          .forNoKeyUpdate();', to: "          .forNoKeyUpdate();" },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_CLOSE_VERSIONS",
+  },
+  {
+    id: "L4b",
+    name: "closeEntries: versiones bloqueadas por id DESCENDENTE",
+    edits: [
+      {
+        file: T,
+        from: '          .orderBy("id")\n          .forNoKeyUpdate();',
+        to: '          .orderBy("id", "desc")\n          .forNoKeyUpdate();',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_CLOSE_VERSIONS",
+  },
+  {
+    id: "L5",
+    name: "enterTournamentTeam: bots bloqueados en orden físico (sin ORDER BY)",
+    edits: [
+      {
+        file: T,
+        from: 'await trx("bots").whereIn("id", ids).orderBy("id").forUpdate()',
+        to: 'await trx("bots").whereIn("id", ids).forUpdate()',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_ENTER_TEAM",
+  },
+  {
+    id: "L5b",
+    name: "enterTournamentTeam: bots bloqueados por id DESCENDENTE",
+    edits: [
+      {
+        file: T,
+        from: 'await trx("bots").whereIn("id", ids).orderBy("id").forUpdate()',
+        to: 'await trx("bots").whereIn("id", ids).orderBy("id", "desc").forUpdate()',
+      },
+    ],
+    tests: [API],
+    kill: "T287_LOCK_ORDER_ENTER_TEAM",
+  },
 ];
 
 function sh(cmd, args) {
