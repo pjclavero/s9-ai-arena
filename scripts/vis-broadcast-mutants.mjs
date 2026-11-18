@@ -145,7 +145,9 @@ const MUTANTS = [
     file: "apps/api/src/routes/streaming.ts",
     from: "    if (!info.broadcastable) {\n      throw conflict(",
     to: "    if (false) {\n      throw conflict(",
-    extra: [{ from: "    if (!info.broadcastAvailable) {\n      const reason", to: "    if (false) {\n      const reason" }],
+    extra: [
+      { from: "    if (!info.broadcastAvailable) {\n      const reason", to: "    if (false) {\n      const reason" },
+    ],
     tests: API,
   },
   {
