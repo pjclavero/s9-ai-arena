@@ -69,13 +69,7 @@ const M = {
     "const advances = null;",
     "[R4]",
   ],
-  R5: [
-    "teams: cuenta inscripciones en vez de equipos",
-    API,
-    "count = teams.size;",
-    "count = entries.length;",
-    "[R5]",
-  ],
+  R5: ["teams: cuenta inscripciones en vez de equipos", API, "count = teams.size;", "count = entries.length;", "[R5]"],
   R6: [
     "onBattleJobExhausted no avanza el torneo (no llama a settleFailedBattle)",
     BF,
