@@ -19,6 +19,7 @@ IMP = "scripts/portable/lib/import.mjs"
 EXP = "scripts/portable/lib/export.mjs"
 API = "scripts/portable/lib/api.mjs"
 CLI = "scripts/portable/portable.mjs"
+GUARD = "scripts/portable/e2e/guard.sh"
 T_FMT = "apps/api/src/portable-format.test.ts"
 T_RT = "apps/api/src/portable-roundtrip.test.ts"
 LOG = os.environ.get("PORTABLE_MUT_LOGDIR", "/tmp")
@@ -168,6 +169,24 @@ M = [
     ("Q3 refresh_fallido_reutiliza: tras un refresh fallido se conserva el refresh token",
      [(API, "      this.refreshToken = null;\n      return false;", "      return false;")],
      [T_FMT], "Q3 ·"),
+    ("R4a forzado_sin_aviso_cli: el CLI no anuncia el motor forzado",
+     [(CLI, "    if (engineOverride)\n      log(\n", "    if (false)\n      log(\n")],
+     [T_FMT], "R4-3 · el CLI export con --accept-engine"),
+    ("R4b forzado_sin_resumen_cli: la línea de resumen no dice que es forzado ni el motivo",
+     [(CLI, '${manifest.engineOverride ? `; forzado, API reporta ${manifest.engineOverride.detected}; motivo: ${manifest.engineOverride.reason}` : ""}', "")],
+     [T_FMT], "R4-3 · el CLI export con --accept-engine"),
+    ("R4c guarda_sin_consentimiento: el E2E corre sin S9_PORTABLE_E2E_LAB",
+     [(GUARD, '[ "${S9_PORTABLE_E2E_LAB:-}" != "1" ]', "false")],
+     [T_FMT], "R4-2 · sin consentimiento"),
+    ("R4d guarda_sin_senales: el E2E ignora los contenedores del producto en marcha",
+     [(GUARD, 'if [ -n "$hits" ]; then', "if false; then")],
+     [T_FMT], "R4-2 · con consentimiento PERO"),
+    ("R4e guarda_sin_hosts_vetados: se ignora S9_PORTABLE_FORBIDDEN_HOSTS",
+     [(GUARD, 'if [ "$(hostname)" = "$h" ]; then', "if false; then")],
+     [T_FMT], "R4-2 · S9_PORTABLE_FORBIDDEN_HOSTS"),
+    ("R4f guarda_sin_invocar: run.sh deja de invocar la guarda",
+     [("scripts/portable/e2e/run.sh", "s9_portable_guard || { echo STOP; exit 1; }", ": # sin guarda")],
+     [T_FMT], "R4-2 · run.sh y repeat.sh"),
     ("A1 sin_refresh: el cliente no renueva con el refresh token",
      [(API, "    if (await this.refresh()) return;\n", "")],
      [T_FMT], "cuenta con 2FA"),

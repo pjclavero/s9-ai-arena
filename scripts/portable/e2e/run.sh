@@ -4,11 +4,11 @@
 # aparte con credenciales de fichero 0600. SÓLO en el laboratorio de pruebas, nunca en el host de
 # orquestación ni en producción. Requiere: docker, Node (tsx en node_modules), imagen postgres:16-alpine.
 #
-# Uso: flock -o <FICHERO_LOCK> bash scripts/portable/e2e/run.sh
+# Uso: S9_PORTABLE_E2E_LAB=1 flock -o <FICHERO_LOCK> bash scripts/portable/e2e/run.sh
 set -euo pipefail
-# Anfitriones en los que NO debe correr (lista separada por espacios, p. ej. el de orquestación):
-# S9_PORTABLE_FORBIDDEN_HOSTS="host1 host2". Vacío por defecto.
-for h in ${S9_PORTABLE_FORBIDDEN_HOSTS:-}; do [ "$(hostname)" = "$h" ] && { echo STOP; exit 1; }; done
+# Guarda de anfitrión (consentimiento + señales de producción): ver guard.sh.
+source "$(dirname "$0")/guard.sh" || exit 1
+s9_portable_guard || { echo STOP; exit 1; }
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"

@@ -3,11 +3,11 @@
 # capturando la salida COMPLETA de cada ejecución en un directorio de evidencias, con su rc real, y
 # comprobando tras cada E2E que no queda ningún proceso ni contenedor huérfano.
 # SÓLO en el laboratorio (VM de pruebas). Uso:
-#   flock -o <FICHERO_LOCK> bash scripts/portable/e2e/repeat.sh [N] [DIR_EVIDENCIAS]
+#   S9_PORTABLE_E2E_LAB=1 flock -o <FICHERO_LOCK> bash scripts/portable/e2e/repeat.sh [N] [DIR_EVIDENCIAS]
 set -uo pipefail
-# Anfitriones en los que NO debe correr (lista separada por espacios, p. ej. el de orquestación):
-# S9_PORTABLE_FORBIDDEN_HOSTS="host1 host2". Vacío por defecto.
-for h in ${S9_PORTABLE_FORBIDDEN_HOSTS:-}; do [ "$(hostname)" = "$h" ] && { echo STOP; exit 1; }; done
+# Guarda de anfitrión (consentimiento + señales de producción): ver guard.sh.
+source "$(dirname "$0")/guard.sh" || exit 1
+s9_portable_guard || { echo STOP; exit 1; }
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 N=${1:-20}

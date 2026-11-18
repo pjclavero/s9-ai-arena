@@ -6,6 +6,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   chmodSync,
   existsSync,
@@ -1233,5 +1236,130 @@ describe("P2-3b · autenticación de larga duración (token de 15 min, 2FA)", ()
     expect((err as { code?: string }).code).toBe("auth_failed");
     expect((err as Error).message).toMatch(/15 min/);
     expect((err as Error).message).not.toContain("TOKEN-SECRETO");
+  });
+});
+
+describe("R4 · salida del CLI con el motor forzado y guarda de anfitrión del E2E", () => {
+  /** API mínima y real (HTTP en 127.0.0.1): sin bots ni equipos; la última batalla dice que el motor es 0.4.0. */
+  async function conApi<T>(fn: (url: string) => Promise<T>): Promise<T> {
+    const srv = createServer((req, res) => {
+      const path = (req.url ?? "").split("?")[0];
+      const send = (b: unknown) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(b));
+      };
+      if (path === "/users/me") return send(ME);
+      if (path === "/battles") return send({ items: [{ id: "b9", createdAt: "2026-11-01T00:00:00Z" }] });
+      if (path === "/battles/b9/audit") return send({ versions: { engine: "0.4.0" } });
+      if (path === "/system/status") return send({ commit: "abc1234" });
+      if (path === "/bots" || path === "/teams") return send({ items: [] });
+      res.statusCode = 404;
+      send({ error: "no" });
+    });
+    await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+    try {
+      return await fn(`http://127.0.0.1:${(srv.address() as AddressInfo).port}`);
+    } finally {
+      await new Promise((ok) => srv.close(ok));
+    }
+  }
+  const tokenFile = () => {
+    const p = join(dir, "token");
+    writeFileSync(p, "opaque-token-0123456789\n", { mode: 0o600 });
+    return p;
+  };
+  const capture = () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { out, err, io: { out: (s: string) => out.push(s), err: (s: string) => err.push(s) } };
+  };
+
+  it("R4-3 · el CLI export con --accept-engine anuncia el motor FORZADO, lo que reporta la API y el motivo", async () => {
+    await conApi(async (url) => {
+      const c = capture();
+      const rc = await cli(
+        [
+          "export",
+          "--out",
+          join(dir, "forzado"),
+          "--api-url",
+          url,
+          "--token-file",
+          tokenFile(),
+          "--engine-version",
+          "0.5.0",
+          "--accept-engine",
+          "0.5.0",
+          "--accept-engine-reason",
+          "despliegue nuevo sin batallas",
+        ],
+        c.io,
+      );
+      expect(rc).toBe(0);
+      const aviso = c.err.find((l) => l.startsWith("· AVISO: motor de origen FORZADO"));
+      expect(aviso).toBeDefined();
+      expect(aviso).toContain("0.5.0");
+      expect(aviso).toContain("0.4.0");
+      expect(aviso).toContain("despliegue nuevo sin batallas");
+      expect(c.out.join("\n")).toMatch(
+        /motor de origen 0\.5\.0 \(flag-forced; forzado, API reporta 0\.4\.0; motivo: despliegue nuevo sin batallas\)/,
+      );
+    });
+  });
+  it("R4-3 · sin forzar, el CLI no anuncia ningún motor forzado", async () => {
+    await conApi(async (url) => {
+      const c = capture();
+      const rc = await cli(
+        ["export", "--out", join(dir, "normal"), "--api-url", url, "--token-file", tokenFile()],
+        c.io,
+      );
+      expect(rc).toBe(0);
+      expect(c.err.join("\n")).not.toMatch(/FORZADO/);
+      expect(c.out.join("\n")).not.toMatch(/forzado/);
+    });
+  });
+
+  // Guarda del E2E: se ejecuta de verdad (bash) con un entorno limpio y una lista de contenedores inyectada.
+  const guard = (env: Record<string, string>) =>
+    spawnSync("bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
+      cwd: join(__dirname, "../../.."),
+      env: { PATH: process.env.PATH ?? "", ...env },
+      encoding: "utf8",
+    });
+  it("R4-2 · sin consentimiento explícito el E2E NO corre (protege por defecto)", () => {
+    const r = guard({ S9_PORTABLE_GUARD_CONTAINERS: "" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/S9_PORTABLE_E2E_LAB=1/);
+  });
+  it("R4-2 · con consentimiento y sin contenedores del producto, corre", () => {
+    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9portable-src-1\notro-servicio" });
+    expect(r.status).toBe(0);
+  });
+  it("R4-2 · con consentimiento PERO con contenedores del producto en marcha, se niega", () => {
+    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9-arena-api-1\ns9portable-src-1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/contenedores del producto/);
+    expect(r.stderr).toContain("s9-arena-api-1");
+  });
+  it("R4-2 · los contenedores del propio ensayo (s9portable-) no cuentan como producción", () => {
+    const r = guard({ S9_PORTABLE_E2E_LAB: "1", S9_PORTABLE_GUARD_CONTAINERS: "s9portable-src-9\ns9portable-dst-9" });
+    expect(r.status).toBe(0);
+  });
+  it("R4-2 · S9_PORTABLE_FORBIDDEN_HOSTS sigue vetando el anfitrión por su nombre", () => {
+    const host = execFileSync("hostname").toString().trim();
+    const r = guard({
+      S9_PORTABLE_E2E_LAB: "1",
+      S9_PORTABLE_GUARD_CONTAINERS: "",
+      S9_PORTABLE_FORBIDDEN_HOSTS: `x ${host}`,
+    });
+    expect(r.status).toBe(1);
+  });
+  it("R4-2 · run.sh y repeat.sh invocan la guarda antes de tocar nada", () => {
+    for (const f of ["run.sh", "repeat.sh"]) {
+      const t = readFileSync(join(__dirname, "../../../scripts/portable/e2e", f), "utf8");
+      expect(t).toMatch(/source "\$\(dirname "\$0"\)\/guard\.sh"/);
+      expect(t.indexOf("s9_portable_guard ||")).toBeGreaterThan(0);
+      expect(t.indexOf("s9_portable_guard ||")).toBeLessThan(t.search(/\b(docker|npx|node) /));
+    }
   });
 });

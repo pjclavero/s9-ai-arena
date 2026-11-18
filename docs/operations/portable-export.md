@@ -240,14 +240,14 @@ node scripts/portable/portable.mjs export --out "$T/portable-export"
 node scripts/portable/portable.mjs verify "$T/portable-export"
 ( cd "$T/portable-export" && sha256sum -c checksums.sha256 )
 
-# 3b) PREVIO al paso 4 (sólo lectura): el destino existe y tiene rsync, en ambos extremos
-ssh <USUARIO_BACKUP>@<HOST_BACKUP> "findmnt -T <RUTA_BACKUP_BASE>; command -v rsync; df -h <RUTA_BACKUP_BASE> | tail -1"
-command -v rsync
-#    Si falta el directorio <RUTA_BACKUP> (rsync no crea padres), crearlo antes: ssh … "mkdir -p <RUTA_BACKUP>"
+# 3b) PREVIO al paso 4 (sólo lectura): el directorio de destino existe y hay sitio; un extremo sin rsync no bloquea
+ssh <USUARIO_BACKUP>@<HOST_BACKUP> "findmnt -T <RUTA_BACKUP_BASE>; df -h <RUTA_BACKUP_BASE> | tail -1; ls -ld <RUTA_BACKUP>"
+#    Si falta <RUTA_BACKUP>, crearlo antes: ssh … "mkdir -p <RUTA_BACKUP>"  (ni scp ni rsync crean padres)
 
-# 4) copia al host del hipervisor (disco de backup), comprobando por contenido
-rsync -a --checksum "$T/portable-export/" <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/portable-export/
-#    (alternativa sin rsync: scp -r … y los pasos 5 y 6 siguen siendo obligatorios)
+# 4) copia al host de backup. Vía genérica, SIN rsync (sólo ssh/scp, presentes en cualquier extremo):
+scp -rp "$T/portable-export" <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/
+#    (si ambos extremos tienen rsync, equivale a: rsync -a --checksum "$T/portable-export/" <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/portable-export/ )
+#    La copia NO se da por buena por haber terminado el comando: la comprueba el paso 5.
 
 # 5) verificar el hash EN EL DESTINO y que la lista de hashes es idéntica a la del origen
 ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && sha256sum -c checksums.sha256"
@@ -255,10 +255,12 @@ ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && sha256su
 ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && find . -type f | LC_ALL=C sort | xargs sha256sum" > "$T/hash-destino.txt"
 diff "$T/hash-origen.txt" "$T/hash-destino.txt" && echo HASH_DESTINO_IGUAL
 
-# 6) verificación de LECTURA: traer la copia del disco de backup a un directorio NUEVO y verificarla
-mkdir "$T/lectura" && rsync -a <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/portable-export/ "$T/lectura/"
+# 6) verificación de LECTURA: traer la copia del host de backup a un directorio NUEVO y verificarla (sin rsync)
+mkdir "$T/lectura" && scp -rp <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/portable-export/. "$T/lectura/"
 node scripts/portable/portable.mjs verify "$T/lectura"
 ( cd "$T/lectura" && sha256sum -c checksums.sha256 )
+#    Alternativa sin scp ni rsync, con hash a ambos lados (para un fichero suelto F):
+#      ssh <USUARIO_BACKUP>@<HOST_BACKUP> 'cat > <RUTA_BACKUP>/portable-export/F' < F && sha256sum F && ssh … 'sha256sum <RUTA_BACKUP>/portable-export/F'
 
 # 7) SÓLO si 1–6 han salido bien: borrar el temporal y el fichero de credenciales
 rm -rf "$T"
@@ -360,6 +362,6 @@ informe da la correspondencia. Dos versiones con idéntico código, runtime y lo
 |---|---|
 | Formato y seguridad | `apps/api/src/portable-format.test.ts` |
 | Round-trip origen → destino nuevo contra la API real | `apps/api/src/portable-roundtrip.test.ts` |
-| Ensayo con procesos reales (Docker, APIs, CLI) | `bash scripts/portable/e2e/run.sh` (sólo en el laboratorio; puertos efímeros, limpieza por PID/grupo, registra su salida completa en `E2E_LOG_DIR`) |
-| Repetición (N vitest + N E2E con captura de cada salida y comprobación de huérfanos) | `bash scripts/portable/e2e/repeat.sh 20 <dir-evidencias>` (sólo en el laboratorio) |
+| Ensayo con procesos reales (Docker, APIs, CLI) | `S9_PORTABLE_E2E_LAB=1 bash scripts/portable/e2e/run.sh` (sólo en el laboratorio; la guarda `e2e/guard.sh` exige ese consentimiento explícito y se niega si hay contenedores del producto en marcha; puertos efímeros, limpieza por PID/grupo, registra su salida completa en `E2E_LOG_DIR`) |
+| Repetición (N vitest + N E2E con captura de cada salida y comprobación de huérfanos) | `S9_PORTABLE_E2E_LAB=1 bash scripts/portable/e2e/repeat.sh 20 <dir-evidencias>` (sólo en el laboratorio) |
 | Calibración (mutantes) | `python3 scripts/portable/mutants.py` (sólo en el laboratorio) |
