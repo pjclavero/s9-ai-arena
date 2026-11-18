@@ -12,6 +12,8 @@
  *  - TC-R  carrera cancel vs close-entries DE VERDAD concurrente (bloqueos reales de
  *          PostgreSQL): de las dos transiciones gana exactamente una.
  *  - TC-V  el detalle dice a quién pregunta si puede administrarlo (sin caché compartida).
+ *  - TC-K  contrato OpenAPI acotado a cancel y close-entries: lo que la implementación
+ *          responde está documentado (y al revés), y el rol mínimo del yaml se hace cumplir.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -21,6 +23,7 @@ import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "./db/seeds/dev.js";
 import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
+import { loadContract } from "./openapi.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { createPublishedBot, type TestBot } from "../../tournament-worker/src/testing/fixtures.js";
 
@@ -177,6 +180,20 @@ describe("TC-P · permisos (la API autoriza, no la UI)", () => {
       const [a] = await cancelAudits(id);
       expect(a.detail.by).toBe("staff");
     }
+  });
+
+  it("TC-P5 suelo de rol del contrato: el creador DEGRADADO a user ya no cancela su torneo (403, sin efectos)", async () => {
+    const email = `degradado-${randomUUID().slice(0, 8)}@tc288.example.internal`;
+    const [u] = await h.db("users").insert({ email, password_hash: "x", display_name: "degradado" }).returning("id");
+    await h.db("user_roles").insert({ user_id: u.id, role: "organizer" });
+    const token = await tokenFor(h.db, email);
+    const id = await createTournament(token);
+    await h.db("user_roles").where({ user_id: u.id }).del();
+    await h.db("user_roles").insert({ user_id: u.id, role: "user" });
+    const r = await cancel(id, token);
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    expect(await stateOf(id)).toBe("open");
+    expect((await cancelAudits(id)).length).toBe(0);
   });
 
   it("TC-P4 el organizador ajeno sí cancela el SUYO", async () => {
@@ -463,5 +480,84 @@ describe("TC-V · detalle: viewerCanManage", () => {
     expect((await get(tok.moderator)).body.viewerCanManage).toBe(true);
     expect((await get(tok.otherOrganizer)).body.viewerCanManage).toBe(false);
     expect((await get(tok.user)).body.viewerCanManage).toBe(false);
+  });
+});
+
+describe("TC-K · contrato OpenAPI de cancel y close-entries (acotado a las rutas de este PR)", () => {
+  type Seen = { status: number; error?: string };
+  const KEY_STATUSES = ["200", "400", "403", "404", "409"];
+
+  /** Respuestas documentadas de una operación por operationId (sin 401: ver nota P3 en el PR). */
+  function documented(operationId: string): Record<string, { description?: string; $ref?: string }> {
+    const paths = loadContract().raw.paths as Record<string, Record<string, Record<string, unknown>>>;
+    for (const methods of Object.values(paths)) {
+      const op = methods.post;
+      if (op && op.operationId === operationId) return op.responses as never;
+    }
+    throw new Error(`operación ${operationId} ausente del contrato`);
+  }
+  const refDescription = (r: { description?: string; $ref?: string }): string => {
+    if (r.description) return r.description;
+    const name = String(r.$ref).split("/").pop()!;
+    const comps = (loadContract().raw.components as { responses: Record<string, { description: string }> }).responses;
+    return comps[name]?.description ?? "";
+  };
+
+  function assertDocumented(operationId: string, seen: Seen[]) {
+    const doc = documented(operationId);
+    for (const s of seen.filter((x) => x.status !== 401)) {
+      const entry = doc[String(s.status)];
+      expect(entry, `${operationId}: el yaml no documenta el ${s.status} que responde la implementación`).toBeDefined();
+      if (s.error) {
+        expect(
+          refDescription(entry),
+          `${operationId}: el ${s.status} documentado no menciona el código "${s.error}"`,
+        ).toContain(s.error);
+      }
+    }
+    // Al revés (lo razonable): ningún 2xx/4xx clave documentado que los tests no ejerciten.
+    const seenCodes = new Set(seen.map((x) => String(x.status)));
+    for (const code of Object.keys(doc).filter((c) => KEY_STATUSES.includes(c))) {
+      expect(seenCodes.has(code), `${operationId}: el yaml documenta el ${code} pero ningún caso lo provoca`).toBe(true);
+    }
+  }
+
+  const take = (r: { status: number; body: { error?: string } }): Seen => ({ status: r.status, error: r.body?.error });
+
+  it("TC-K1 cancelTournament: 200/400/403/404/409 observados ⊆ documentados (con su código) y al revés", async () => {
+    const seen: Seen[] = [];
+    const id = await createTournament();
+    seen.push(take(await cancel(id, tok.otherOrganizer))); // 403
+    seen.push(take(await cancel(id, tok.owner, { reason: 42 }))); // 400
+    seen.push(take(await cancel(randomUUID(), tok.owner))); // 404
+    seen.push(take(await cancel(id, tok.owner))); // 200
+    const closed = await createTournament();
+    await h.db("tournaments").where({ id: closed }).update({ state: "closed" });
+    const c409 = await cancel(closed, tok.owner); // 409
+    expect(c409.body.error).toBe("tournament_not_cancellable");
+    seen.push(take(c409));
+    expect(seen.map((s) => s.status).sort()).toEqual([200, 400, 403, 404, 409]);
+    assertDocumented("cancelTournament", seen);
+  });
+
+  it("TC-K2 closeEntries: 200/403/404/409 observados ⊆ documentados (con su código)", async () => {
+    const seen: Seen[] = [];
+    const id = await createTournament();
+    await enter(id, 2);
+    seen.push(take(await close(id, tok.otherOrganizer))); // 403
+    seen.push(take(await close(randomUUID(), tok.owner))); // 404
+    const ok = await close(id); // 200
+    seen.push(take(ok));
+    const again = await close(id); // 409 illegal_transition
+    expect(again.body.error).toBe("illegal_transition");
+    seen.push(take(again));
+    expect(seen.map((s) => s.status).sort()).toEqual([200, 403, 404, 409]);
+    const doc = documented("closeEntries");
+    for (const s of seen) {
+      const entry = doc[String(s.status)];
+      expect(entry, `closeEntries: el yaml no documenta el ${s.status} que responde la implementación`).toBeDefined();
+      if (s.error) expect(refDescription(entry)).toContain(s.error);
+    }
+    for (const code of ["200", "403", "409"]) expect(doc[code], `closeEntries: falta ${code}`).toBeDefined();
   });
 });

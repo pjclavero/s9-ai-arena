@@ -21,6 +21,7 @@ RUNNER = "apps/tournament-worker/src/battle-runner.ts"
 RESULTS = "apps/tournament-worker/src/results.ts"
 NEWPAGE = "apps/web/src/pages/TournamentsPage.tsx"
 DETAIL = "apps/web/src/pages/TournamentDetailPage.tsx"
+YAML = "apps/api/openapi.yaml"
 
 # (id, descripción, [(fichero, ancla, sustitución)], test, ids que DEBEN fallar (alguno))
 M = [
@@ -82,6 +83,22 @@ M = [
     ("M10", "viewerCanManage para cualquiera", [(ROUTES,
         '        viewerCanManage: canManageTournament(req.auth, t),', '        viewerCanManage: true,')],
      API, ["TC-V1"]),
+    ("M12", "contrato: cancelTournament baja su rol mínimo a user (INT289 P2-2)", [(YAML,
+        "        calendario ni ejecuta batallas del torneo.\n      x-min-role: organizer",
+        "        calendario ni ejecuta batallas del torneo.\n      x-min-role: user")],
+     API, ["TC-P5"]),
+    ("M13", "contrato: se renombra el 409 de cancelTournament en el yaml (INT289 P2-1)", [(YAML,
+        "        '409': { description: 'tournament_not_cancellable",
+        "        'x409': { description: 'tournament_not_cancellable")],
+     API, ["TC-K1"]),
+    ("M13b", "contrato: se quita el código tournament_not_cancellable del 409 documentado", [(YAML,
+        "'409': { description: 'tournament_not_cancellable (currentState",
+        "'409': { description: 'conflicto (currentState")],
+     API, ["TC-K1"]),
+    ("M13c", "contrato: se renombra el 409 de closeEntries en el yaml", [(YAML,
+        "        '409': { description: 'illegal_transition (currentState, allowedTransitions; también",
+        "        'x409': { description: 'illegal_transition (currentState, allowedTransitions; también")],
+     API, ["TC-K2"]),
 ]
 
 
