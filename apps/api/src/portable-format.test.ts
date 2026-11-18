@@ -1339,7 +1339,7 @@ describe("R4 · salida del CLI con el motor forzado y guarda de anfitrión del E
       writeFileSync(join(bin, "ps.txt"), (docker.ps ?? []).join("\n") + "\n");
       writeFileSync(
         join(bin, "docker"),
-        `#!/bin/sh\n[ "$1" = ps ] || exit 2\n[ "$2" = -a ] || { echo "docker falso: ps sin -a (no ve contenedores parados)" >&2; exit 3; }\n[ "$3" = --format ] || exit 4\ncat "${join(bin, "ps.txt")}"\nexit ${docker.rc ?? 0}\n`,
+        `#!/bin/sh\n[ "$1" = ps ] || exit 2\n[ "$2" = -a ] || { echo "docker falso: ps sin -a (no ve contenedores parados)" >&2; exit 3; }\n[ "$3" = --format ] || exit 4\ncase "$4" in *'}}|{{'*) echo "docker falso: formato con | (ambiguo)" >&2; exit 5;; esac\ncase "$4" in *'{{json .Names}}'*'{{json (.Label "s9portable.e2e")}}'*) ;; *) echo "docker falso: el formato no codifica los campos como JSON" >&2; exit 6;; esac\ncat "${join(bin, "ps.txt")}"\nexit ${docker.rc ?? 0}\n`,
       );
       chmodSync(join(bin, "docker"), 0o755);
       return spawnSync("/bin/bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
