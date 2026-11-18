@@ -394,15 +394,17 @@ describe("#287 · atomicidad", () => {
   it("T287_CONCURRENT_CLOSE · inscribir y cerrar a la vez: nunca queda una inscripción sin congelar en un torneo cerrado", async () => {
     const A = await mkTeam(4);
     const B = await mkTeam(4);
+    const C = await mkTeam(4); // B (0.5.0): el cierre exige >=2 equipos con independencia de quién gane la carrera
     const t = await openTeamsTournament(4);
     expect((await enterTeam(devTok, t, A.teamId, members(A.bots))).status).toBe(201);
+    expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).status).toBe(201);
     const [enr, close] = await Promise.all([enterTeam(devTok, t, B.teamId, members(B.bots)), closeEntries(t)]);
     expect(close.status, JSON.stringify(close.body)).toBe(200);
     const rows = await entriesOf(t);
-    if (enr.status === 201) expect(rows).toHaveLength(8);
+    if (enr.status === 201) expect(rows).toHaveLength(12);
     else {
       expect(enr.body.error).toBe("entries_closed");
-      expect(rows).toHaveLength(4);
+      expect(rows).toHaveLength(8);
     }
     expect(rows.every((e: { frozen: boolean }) => e.frozen)).toBe(true);
   });
