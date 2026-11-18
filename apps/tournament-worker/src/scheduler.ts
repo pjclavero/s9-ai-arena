@@ -93,13 +93,16 @@ async function loadEntries(db: Knex, tournamentId: string): Promise<EntryInfo[]>
     .join("bots", "bots.id", "entries.bot_id")
     .where({ tournament_id: tournamentId })
     .orderBy("entries.created_at", "asc")
-    .select("entries.*", "bots.owner_id", "bots.team_id", "bots.name");
+    // #287 · equipo EFECTIVO: el de la inscripción por equipo (022) o, en las anteriores
+    // (NULL), el del bot como siempre. Un cambio de equipo tras el cierre no mueve de bando.
+    .select("entries.*", "bots.owner_id", "bots.name")
+    .select(db.raw("COALESCE(entries.team_id, bots.team_id) AS effective_team_id"));
   return rows.map((r: Record<string, unknown>) => ({
     botId: r.bot_id as string,
     version: r.version as number,
     loadoutRevision: r.loadout_revision as number,
     ownerId: r.owner_id as string,
-    teamId: (r.team_id as string) ?? null,
+    teamId: (r.effective_team_id as string) ?? null,
     name: r.name as string,
   }));
 }
@@ -121,6 +124,18 @@ async function resolveMapPool(db: Knex, t: TournamentRow): Promise<{ mapId: stri
 function mapForSlot(pool: { mapId: string; version: number }[], slot: string): { mapId: string; version: number } {
   const h = createHash("sha256").update(slot).digest();
   return pool[h[0] % pool.length];
+}
+
+// ------------------------------------------------------ cancelación (#288)
+
+/**
+ * #288 · ¿El torneo está cancelado AHORA? Se relee de la BD (no del contexto en
+ * memoria): un torneo cancelado no admite batallas nuevas ni ejecuta las que hubiera.
+ */
+export async function isTournamentCancelled(db: Knex, tournamentId: string | null | undefined): Promise<boolean> {
+  if (!tournamentId) return false;
+  const row = await db("tournaments").where({ id: tournamentId }).first("state");
+  return row?.state === "cancelled";
 }
 
 // ------------------------------------------------- materialización de batallas
@@ -145,6 +160,8 @@ export async function materializeBattles(
   pairing: Pairing,
 ): Promise<string[]> {
   const { db, tournament: t } = mctx;
+  // #288 · ninguna batalla nueva en un torneo cancelado (calendario, cuadros y suizo pasan por aquí).
+  if (await isTournamentCancelled(db, t.id)) return [];
   const games = t.rounds_per_pairing ?? 1;
   const isTeams = t.format === "teams";
   const battleIds: string[] = [];
@@ -236,6 +253,8 @@ export async function handleGenerateSchedule(job: JobRow, ctx: HandlerContext): 
   const t = (await db("tournaments").where({ id: tournamentId }).first()) as TournamentRow | undefined;
   if (!t) throw new Error(`generate_schedule: torneo ${tournamentId} inexistente`);
   if (t.state === "running" || t.state === "finished") return; // idempotencia
+  // #288 · un torneo cancelado no genera calendario: no-op limpio (el trabajo termina `done`).
+  if (t.state === "cancelled") return;
   if (t.state !== "closed") throw new Error(`generate_schedule: el torneo está en estado '${t.state}', no 'closed'`);
 
   // --- Validaciones del 19.1: reglas, catálogo, mapas y semillas -------------

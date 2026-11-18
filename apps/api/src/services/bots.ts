@@ -115,10 +115,27 @@ export async function applyTransition(
   correlationId?: string,
 ): Promise<Record<string, unknown>> {
   const to = assertTransition(action, version.state as BotState);
+  // #287 (ronda 4, R3-1) · Transición CONDICIONAL: sólo si la versión sigue en el estado
+  // que se validó (`version.state`, leído por el llamador). Si otra transacción la cambió
+  // entretanto (p. ej. un cierre de torneo la congeló mientras este `retire` esperaba su
+  // bloqueo), el UPDATE no toca nada y se responde 409 `illegal_transition` con el estado
+  // REAL: nunca se aplica una transición validada contra una copia obsoleta (frozen→retired).
   const [updated] = await db("bot_versions")
-    .where({ id: version.id })
+    .where({ id: version.id, state: version.state })
     .update({ state: to, ...patch })
     .returning("*");
+  if (!updated) {
+    const cur = await db("bot_versions").where({ id: version.id }).first();
+    const now = (cur?.state ?? "inexistente") as BotState;
+    throw conflict(
+      "illegal_transition",
+      `La versión cambió de estado (${now}) mientras se procesaba: ${action} no aplica`,
+      {
+        currentState: now,
+        allowedTransitions: cur ? allowedTransitionsFrom(now) : [],
+      },
+    );
+  }
   // Toda transición legal queda auditada (DoD T7.3).
   await audit(db, {
     actorId: auth?.userId ?? null,

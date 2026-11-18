@@ -38,6 +38,7 @@ En «Crear torneo»:
 | **Formato** | Los de la tabla de arriba. |
 | **Modo** | Los cuatro modos ([Modos de juego](game-modes.md)). |
 | **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
+| **Tamaño** | Sólo en torneos **Por equipos** de **Deathmatch por equipos**: 2 vs 2, 3 vs 3 o 4 vs 4. Fija cuántos bots inscribe cada equipo. |
 | **Retransmisión pública** | Si se marca, las batallas del torneo se pueden ver y emitir en público con los datos de competición de cada bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. **No se puede cambiar después** ([Visibilidad](visibility.md)). |
 
 El formulario se muestra a todos, pero sin el rol verás «Requiere rol organizer» al pulsar. Desde la web no se configuran el conjunto de mapas, el presupuesto, las fechas ni el número de partidas por enfrentamiento; por defecto el torneo se juega en el mapa de serie `mvp-arena-01`. La plataforma guarda una **copia inmutable de las reglas** del torneo al crearlo: aunque un conjunto de reglas cambie después, el torneo conserva las suyas.
@@ -55,9 +56,38 @@ En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → el
 | «Las inscripciones no están abiertas» | Torneo cerrado. |
 | La versión «no es elegible» | Su equipamiento ya no cumple la validación: crea una versión nueva ([Bots](bots.md#publicar)). |
 
+## Inscribir un equipo (torneos por equipos)
+
+En un torneo **Por equipos** con tamaño (por ejemplo, 4 vs 4) no se inscriben bots sueltos: se inscribe el **equipo completo**. En el detalle del torneo, **«Inscribir equipo»** → elige uno de tus equipos → la web enseña su plantilla con la **versión** de cada bot (puedes cambiarla) → **«Inscribir equipo»**.
+
+- Se inscriben **exactamente** tantos bots como marque el tamaño; si el equipo tiene más, desmarca los que no juegan.
+- Cada bot tiene que ser **del equipo**, no estar retirado, y tener una versión **publicada o congelada («Frozen / Inmutable») y elegible**, como en la inscripción individual.
+- **Equipos de varios jugadores**: un bot de otro miembro sólo entra si **su dueño lo autoriza** para ese torneo con una versión concreta. El dueño lo hace en el mismo formulario con **«Autorizar a mi equipo (vN)»**; quien inscribe ve «vN · autorizado por su dueño» y no puede elegir otra versión. Tus propios bots quedan autorizados al inscribir. La autorización sólo muestra bot y versión, nunca el código.
+- Si un dueño **retira su autorización** («Retirar autorización») con el equipo ya inscrito, el equipo **sale entero** de la inscripción.
+- Si falta o sobra un bot, o alguno no tiene versión elegible, el botón queda **deshabilitado** y la web dice por qué.
+- Es **todo o nada**: o entra el equipo completo o no entra ningún bot.
+- Inscribir el equipo **no cambia** la visibilidad de los bots, la de su código ni su dueño.
+
+| Mensaje | Causa |
+|---|---|
+| «Equipo X inscrito (N bots)» | Correcto. |
+| «Hacen falta exactamente N bots del equipo» | Marca justo N bots. |
+| «Falta la autorización de su dueño para este torneo» | Ese bot es de otro jugador del equipo y aún no lo ha autorizado (o autorizó otra versión). |
+| «El equipo ya está inscrito en este torneo» | Ya inscrito. |
+| «Algún bot no pertenece a este equipo» | El bot salió del equipo mientras elegías. |
+
+Al **cerrar las inscripciones** la plataforma vuelve a comprobarlo todo: si un bot inscrito salió de su equipo, cambió de equipo o se retiró, su dueño retiró la autorización, o su versión dejó de ser elegible (o fue suspendida o retirada), el cierre se rechaza y no se congela nada. Siempre hay salida: el **organizador puede excluir** esas inscripciones (y, si un equipo queda a medias, también el resto de ese equipo), y el dueño puede retirarla o inscribir otra versión válida. Los torneos por equipos creados sin tamaño (anteriores a esta función) siguen inscribiéndose bot a bot.
+
 ## Cerrar inscripciones (organizadores)
 
 El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el equipo de moderación: un organizador no puede cerrar el torneo de otro. Al cerrar verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
+
+## Cancelar (organizadores)
+
+- **Al crear**: el botón **«Cancelar»**, junto a «Crear torneo», vacía el formulario y no crea nada.
+- **Un torneo ya creado**: quien lo creó (o la moderación y la administración) ve **«Cancelar torneo»** en el detalle mientras las **inscripciones siguen abiertas**. Pide confirmación. Un torneo cancelado no genera calendario, no juega ninguna batalla y no se puede reabrir; **no se borra nada**: inscripciones e historial se conservan.
+- Con las inscripciones **cerradas**, **en juego** o **terminado** ya no se puede cancelar, y el detalle dice por qué.
+- En un torneo **por equipos** la cancelación también conserva las inscripciones de los equipos y las autorizaciones que dieron los dueños de bots ajenos: quedan como historial, pero ya no se pueden dar ni retirar.
 
 ## Seguir el torneo
 

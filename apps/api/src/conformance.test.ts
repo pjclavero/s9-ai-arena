@@ -37,8 +37,12 @@ describe("T7.5 conformidad con el contrato de E1", () => {
   // + 12 de Administración → Streaming (EQ5b, contrato 0.13.0, tag streaming).
   // + 1 de equipos (#255, contrato 0.17.0: publishTeamBots).
   // + 2 de ajustes de runtime (MG, contrato 0.18.0: getPublicAccessSettings, updatePublicAccessSettings).
-  it("el contrato tiene 101 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C + 3 de replays TD-004 + 2 ELIG + 1 R-RULES + 14 streaming + 1 VISIBILIDAD + 1 #255 + 2 MG)", () => {
-    expect(loadContract().operations.length).toBe(101);
+  // + 4 de torneos por equipos (#290, contrato 0.24.0: enterTournamentTeam, listTeamEntryConsents,
+  //   putTeamEntryConsent, deleteTeamEntryConsent).
+  // + 1 de cancelación de torneos (#289, contrato 0.23.0: cancelTournament).
+  // Contrato 0.25.0 (B/0.5.0): sólo documenta el 409 not_enough_participants de closeEntries; no añade operaciones.
+  it("el contrato tiene 106 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C + 3 de replays TD-004 + 2 ELIG + 1 R-RULES + 14 streaming + 1 VISIBILIDAD + 1 #255 + 2 MG + 1 #289 + 4 #290)", () => {
+    expect(loadContract().operations.length).toBe(106);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

@@ -28,6 +28,7 @@ import { handleGenerateSchedule, handleTournamentDryRun } from "./scheduler.js";
 import { handleProcessResult } from "./results.js";
 import { handleUpdateStandings } from "./standings.js";
 import { TournamentWorker } from "./worker.js";
+import { buildLoadConfig, executorLoadOptions, workerLoadOptions } from "./load-config.js";
 import { defaultBattleResources } from "./battle-resources.js";
 import { startReaper } from "./battle-reaper.js";
 import { LABEL_BATTLE_ID, LABEL_ROLE, ROLE_BATTLE_BOT } from "../../bot-manager/src/container-runner.js";
@@ -88,6 +89,14 @@ const spectate = new SpectateGateway({
 // HunterBot. Lo dice al arrancar.
 let artifactGuard: DbArtifactLaunchGuard | undefined;
 let proxyRunner: ProxyContainerRunner | undefined;
+// Valor inválido ⇒ lanza aquí y el worker no arranca (no se degrada al defecto).
+const loadConfig = buildLoadConfig(process.env);
+log("worker_load_config", {
+  concurrency: loadConfig.effectiveConcurrency,
+  concurrencyFromEnv: loadConfig.concurrency !== undefined,
+  cpuSampleMs: loadConfig.cpuSampleMs,
+});
+
 async function buildExecutor() {
   const proxyUrl = process.env.DOCKER_PROXY_URL;
   const engineHost = process.env.ARENA_ENGINE_HOST;
@@ -114,6 +123,7 @@ async function buildExecutor() {
         // TD-034 · dos relojes del arranque (SANDBOX_STARTUP_TIMEOUT_MS /
         // BOT_EXECUTION_TIMEOUT_MS); valor inválido ⇒ el worker no ejecuta batallas y lo anuncia.
         timeouts: startupTimeoutsFromEnv(process.env),
+        ...executorLoadOptions(loadConfig),
       }),
     });
     return { executor, reason: undefined };
@@ -140,6 +150,7 @@ if (process.env.REDIS_URL) {
 
 const worker = new TournamentWorker({
   db,
+  ...workerLoadOptions(loadConfig),
   handlers: {
     ...(executor
       ? {

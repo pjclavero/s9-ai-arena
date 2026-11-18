@@ -338,7 +338,8 @@ export async function leagueTableDetailed(
     .join("bots", "bots.id", "entries.bot_id")
     .where({ tournament_id: tournamentId })
     .orderBy("entries.created_at", "asc")
-    .select("entries.bot_id", "bots.team_id");
+    // #287 · equipo EFECTIVO (el de la inscripción por equipo o, si es anterior, el del bot).
+    .select("entries.bot_id", db.raw("COALESCE(entries.team_id, bots.team_id) AS team_id"));
   const ids = isTeams
     ? [...new Set(entries.map((e: Record<string, unknown>) => e.team_id as string))]
     : entries.map((e: Record<string, unknown>) => e.bot_id as string);
