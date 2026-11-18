@@ -10,29 +10,56 @@ case "$(hostname)" in ia-server) echo STOP; exit 1 ;; esac
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
+set -m # cada trabajo en segundo plano es su propio grupo de procesos: se limpia por PGID, sin pkill
 W=$(mktemp -d)
-PIDS=()
-SRC=s9portable-src
-DST=s9portable-dst
+# Salida COMPLETA de cada ejecución (script + logs de las APIs y de las migraciones), siempre capturada.
+LOGDIR=${E2E_LOG_DIR:-${TMPDIR:-/tmp}/s9-portable-e2e-logs}
+mkdir -p "$LOGDIR"
+RUN_ID="$(date +%Y%m%dT%H%M%S)-$$"
+exec > >(tee "$LOGDIR/e2e-$RUN_ID.log") 2>&1
+PIDS=()       # PID de cada API (= PGID de su grupo)
+CONTAINERS=() # contenedores propios de ESTA ejecución
+SRC=s9portable-src-$$
+DST=s9portable-dst-$$
 PW=pg-efimera-e2e
 cleanup() {
-  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
-  docker rm -f "$SRC" "$DST" >/dev/null 2>&1 || true
+  rc=$?
+  trap - EXIT
+  for p in "${PIDS[@]:-}"; do
+    [ -n "$p" ] || continue
+    kill -TERM -- "-$p" 2>/dev/null || true
+  done
+  for _ in $(seq 1 20); do
+    left=0
+    for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -0 -- "-$p" 2>/dev/null && left=1; done
+    [ "$left" = 0 ] && break
+    sleep 0.25
+  done
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -KILL -- "-$p" 2>/dev/null || true; done
+  [ "${#CONTAINERS[@]}" -gt 0 ] && docker rm -f "${CONTAINERS[@]}" >/dev/null 2>&1 || true
+  for f in "$W"/*.log; do [ -f "$f" ] && cp "$f" "$LOGDIR/e2e-$RUN_ID-$(basename "$f")" || true; done
   rm -rf "$W"
+  exit "$rc"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 pass() { echo "PASS  $*"; }
 fail() { echo "FAIL  $*"; exit 1; }
 
 DEVPW='dev-password-s9-arena!'
 NEWMAIL='operador.nuevo@example.test'
 NEWPW='contrasena-nueva-del-operador!'
-P_SRC=55441; P_DST=55442; A_SRC=18081; A_DST=18082
 export ARENA_DEV_INSECURE_SECRETS=1
 
-start_db() { # nombre puerto
+# Puertos EFÍMEROS: se piden al sistema (nunca fijos). La API se arranca con reintento y se comprueba
+# que el proceso que escucha en el puerto es el PROPIO (mismo grupo), no uno ajeno ni un huérfano.
+free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
+
+start_db() { # nombre -> deja el puerto asignado en $DB_PORT
   docker rm -f "$1" >/dev/null 2>&1 || true
-  docker run -d --name "$1" -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=arena -p "127.0.0.1:$2:5432" postgres:16-alpine >/dev/null
+  CONTAINERS+=("$1")
+  docker run -d --name "$1" -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=arena -p "127.0.0.1::5432" postgres:16-alpine >/dev/null
+  DB_PORT=$(docker port "$1" 5432/tcp | head -1 | sed 's/.*://')
   for _ in $(seq 1 60); do
     docker exec "$1" pg_isready -U postgres -d arena >/dev/null 2>&1 && return 0
     sleep 1
@@ -41,19 +68,37 @@ start_db() { # nombre puerto
 }
 sql() { docker exec "$1" psql -U postgres -d arena -tA -c "$2"; }
 db_url() { echo "postgres://postgres:$PW@127.0.0.1:$1/arena"; }
-start_api() { # puerto-bd puerto-api log
-  DATABASE_URL=$(db_url "$1") PORT="$2" npx tsx apps/api/src/server.ts >"$3" 2>&1 &
-  PIDS+=("$!")
-  for _ in $(seq 1 60); do
-    curl -fs "http://127.0.0.1:$2/healthz" >/dev/null 2>&1 && return 0
+owns_port() { # puerto pgid -> ¿el que escucha en el puerto pertenece a nuestro grupo?
+  local lp
+  for lp in $(ss -Htlnp "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2); do
+    [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" = "$2" ] && return 0
+  done
+  return 1
+}
+start_api() { # puerto-bd log -> deja el puerto de la API en $API_PORT
+  local port pid try
+  for try in 1 2 3; do
+    port=$(free_port)
+    DATABASE_URL=$(db_url "$1") PORT="$port" npx tsx apps/api/src/server.ts >"$2" 2>&1 &
+    pid=$!
+    PIDS+=("$pid")
+    for _ in $(seq 1 60); do
+      kill -0 "$pid" 2>/dev/null || break
+      if curl -fs "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && owns_port "$port" "$pid"; then
+        API_PORT=$port
+        return 0
+      fi
+      sleep 1
+    done
+    kill -TERM -- "-$pid" 2>/dev/null || true # no arrancó o el puerto no es nuestro: se reintenta con otro
     sleep 1
   done
-  tail -20 "$3"; fail "API en :$2 no arrancó"
+  tail -20 "$2"; fail "API no arrancó con puerto propio tras 3 intentos"
 }
 
 echo "== bases de datos (Docker) =="
-start_db "$SRC" "$P_SRC"
-start_db "$DST" "$P_DST"
+start_db "$SRC"; P_SRC=$DB_PORT
+start_db "$DST"; P_DST=$DB_PORT
 DATABASE_URL=$(db_url "$P_SRC") npx tsx apps/api/src/db/cli.ts migrate >"$W/mig-src.log" 2>&1
 DATABASE_URL=$(db_url "$P_SRC") npx tsx apps/api/src/db/cli.ts seed >>"$W/mig-src.log" 2>&1
 DATABASE_URL=$(db_url "$P_DST") npx tsx apps/api/src/db/cli.ts migrate >"$W/mig-dst.log" 2>&1
@@ -63,8 +108,8 @@ DATABASE_URL=$(db_url "$P_DST") npx tsx apps/api/src/db/cli.ts bootstrap >>"$W/m
 pass "origen (con usuarios de desarrollo) y destino NUEVO sin bots ni usuarios"
 
 echo "== APIs =="
-start_api "$P_SRC" "$A_SRC" "$W/api-src.log"
-start_api "$P_DST" "$A_DST" "$W/api-dst.log"
+start_api "$P_SRC" "$W/api-src.log"; A_SRC=$API_PORT
+start_api "$P_DST" "$W/api-dst.log"; A_DST=$API_PORT
 U_SRC="http://127.0.0.1:$A_SRC"
 U_DST="http://127.0.0.1:$A_DST"
 
@@ -103,7 +148,7 @@ pass "export corrupto: falla antes de escribir (0 bots en el destino)"
 
 S9_API_URL="$U_DST" node scripts/portable/portable.mjs import --from "$W/export" --credentials-file "$W/cred-dst.json" --target-engine 0.5.0 --report "$W/report.json" || fail "import"
 N1="$(sql "$DST" 'select count(*) from bots')/$(sql "$DST" 'select count(*) from bot_versions')/$(sql "$DST" 'select count(*) from bot_loadouts')/$(sql "$DST" 'select count(*) from teams')"
-[ "$N1" = "7/8/8/2" ] || fail "recuentos tras el import: $N1 (esperado 7/8/8/2)"
+[ "$N1" = "7/9/8/2" ] || fail "recuentos tras el import: $N1 (esperado 7/9/8/2)"
 [ "$(sql "$DST" "select count(*) from bot_versions where state<>'draft'")" = 0 ] || fail "el import publicó algo"
 pass "import real: bots/versiones/loadouts/equipos = $N1, todo en draft"
 

@@ -2,7 +2,11 @@
  * Cliente HTTP mínimo de la API de S9 AI Arena para export/import portable.
  *
  * - Credenciales SIEMPRE de fichero (0600) o stdin; nunca por argv ni por entorno visible.
- * - Un 401 con credenciales de usuario/contraseña reautentica una vez (el token de acceso caduca).
+ * - Un 401 renueva la sesión una vez por petición (el token de acceso dura 15 min): primero con el
+ *   refresh token (POST /auth/refresh, rotatorio: se guarda el nuevo; NO necesita TOTP, así que
+ *   sirve a cuentas con 2FA) y, si no hay o falla, con usuario/contraseña SIN TOTP (un código TOTP
+ *   ya consumido no se puede reutilizar). Un token suelto (--token-file/--token-stdin) no se puede
+ *   renovar: el error lo dice.
  * - 429 (límite de creación de versiones: 60/h por usuario) y 5xx transitorios se reintentan
  *   con espera; agotada la espera máxima el error dice cómo reanudar (el import es idempotente).
  * - Los mensajes de error llevan método, ruta, estado y el código/mensaje de la API; jamás el
@@ -55,31 +59,67 @@ export class ApiClient {
     this.rateLimitMaxWaitMs = o.rateLimitMaxWaitMs ?? 65 * 60_000;
     this.log = o.log ?? (() => {});
     this.token = o.auth.token ?? null;
+    this.refreshToken = null;
+    this.reauths = 0;
     this.requests = 0;
     this.writes = 0;
   }
 
-  async login() {
+  /** Login con usuario/contraseña. `withTotp=false` en una reautenticación: el código ya está consumido. */
+  async login(withTotp = true) {
     if (!this.auth.email)
       throw new PortableError(
         "auth_failed",
-        "El token ha caducado o es inválido y no hay credenciales para reautenticar.",
+        "El token ha caducado o es inválido y no hay credenciales para reautenticar: un token suelto dura 15 min. Usa --credentials-file (usuario y contraseña).",
       );
     const res = await this.#raw("POST", "/auth/login", {
       json: {
         email: this.auth.email,
         password: this.auth.password,
-        ...(this.auth.totp ? { totp: this.auth.totp } : {}),
+        ...(withTotp && this.auth.totp ? { totp: this.auth.totp } : {}),
       },
       noAuth: true,
     });
     if (res.status !== 200 || typeof res.body?.accessToken !== "string") {
       throw new PortableError(
         "auth_failed",
-        `Login rechazado (HTTP ${res.status}${res.body?.error ? ` ${res.body.error}` : ""}).`,
+        `Login rechazado (HTTP ${res.status}${res.body?.error ? ` ${res.body.error}` : ""}).` +
+          (res.status === 401
+            ? ' Si la cuenta tiene 2FA, el fichero de credenciales necesita "totp" con un código VIGENTE (un código ya usado no sirve).'
+            : ""),
       );
     }
     this.token = res.body.accessToken;
+    this.refreshToken = typeof res.body.refreshToken === "string" ? res.body.refreshToken : null;
+  }
+
+  /** Renueva el token de acceso con el refresh token (rotatorio). Devuelve false si no se pudo. */
+  async refresh() {
+    if (!this.refreshToken) return false;
+    const res = await this.#raw("POST", "/auth/refresh", { json: { refreshToken: this.refreshToken }, noAuth: true });
+    if (res.status !== 200 || typeof res.body?.accessToken !== "string") {
+      this.refreshToken = null;
+      return false;
+    }
+    this.token = res.body.accessToken;
+    this.refreshToken = typeof res.body.refreshToken === "string" ? res.body.refreshToken : null;
+    return true;
+  }
+
+  /** Renovación tras un 401: refresh → login sin TOTP. Lanza auth_failed si no hay forma. */
+  async reauthenticate() {
+    this.reauths++;
+    if (await this.refresh()) return;
+    if (this.auth.email && !this.auth.totp) return this.login(false);
+    if (this.auth.email && this.auth.totp)
+      throw new PortableError(
+        "auth_failed",
+        "La sesión caducó y no se pudo renovar con el refresh token; el código TOTP del fichero ya está consumido. Repite el comando con un TOTP nuevo en el fichero de credenciales (el import es reanudable).",
+      );
+    throw new PortableError(
+      "auth_failed",
+      "El token ha caducado (dura 15 min) y no hay credenciales para renovarlo. Usa --credentials-file (usuario y contraseña) en lugar de --token-file/--token-stdin.",
+    );
   }
 
   async ensureAuth() {
@@ -122,9 +162,9 @@ export class ApiClient {
         throw new PortableError("network", `${method} ${path}: ${e.message}`);
       }
       if (res.status >= 200 && res.status < 300) return res;
-      if (res.status === 401 && !reauthed && this.auth.email) {
+      if (res.status === 401 && !reauthed) {
         reauthed = true;
-        await this.login();
+        await this.reauthenticate();
         continue;
       }
       if (res.status === 429) {

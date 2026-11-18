@@ -7,7 +7,7 @@
  * ANTES de escribir nada en la instalación de destino.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, posix, sep } from "node:path";
 
 export const FORMAT_VERSION = 1;
@@ -80,6 +80,9 @@ export function slugify(name) {
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
+    // Un nombre con forma de UUID daría un slug (y una ruta) que el escáner tomaría por un id interno:
+    // se le quitan los guiones al tramo con forma de UUID (sigue siendo [a-z0-9-] y único tras assignSlugs).
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, (m) => m.replace(/-/g, ""))
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
     .replace(/-+$/g, "");
@@ -121,14 +124,19 @@ const PLAYABLE_ORDER = ["published", "frozen", "validated", "suspended", "retire
 
 /**
  * Qué versiones de un bot se exportan.
- *  - `heads` (por defecto): la «cabeza jugable» (última published; si no hay, la última frozen,
+ *  - `all` (POR DEFECTO): todas. Es la única política que no pierde nada: las versiones congeladas
+ *    para torneos (y las que fueron la cabeza jugable antes de otra posterior) sólo sobreviven a una
+ *    reinstalación si viajan. La migración es el uso normal de esta herramienta; el coste (el límite
+ *    de 60 versiones/hora al importar) lo absorbe la espera y la reanudación del import.
+ *  - `heads` (opt-in, `--versions heads`): la «cabeza jugable» (última published; si no hay, la última frozen,
  *    validated, suspended o retired, en ese orden de preferencia) + la última en borrador
  *    (state=draft, exista o no una publicada) + la última rejected/validating si es posterior a todo lo
- *    ya elegido. Todo bot con alguna versión exporta al menos una.
- *  - `all`: todas.
+ *    ya elegido. Todo bot con alguna versión exporta al menos una. PIERDE versiones congeladas
+ *    antiguas: sólo para copias parciales deliberadas.
  * Devuelve `{ selected, omitted }` (omitted lleva estado y motivo).
  */
-export function selectVersions(versions, policy = "heads") {
+export const DEFAULT_VERSIONS_POLICY = "all";
+export function selectVersions(versions, policy = DEFAULT_VERSIONS_POLICY) {
   const sorted = [...versions].sort((a, b) => a.version - b.version);
   if (policy === "all") return { selected: sorted, omitted: [] };
   if (policy !== "heads") throw new PortableError("bad_policy", `Política de versiones desconocida: ${policy}`);
@@ -188,6 +196,21 @@ const FORBIDDEN_KEYS = new Set([
   "ip",
 ]);
 
+/**
+ * Campos de TEXTO LIBRE puestos por el usuario: su nombre puede parecer un correo o un UUID sin ser un
+ * secreto («juan@club.es», «3f2c…»). En `meta`, EMAIL_RE y UUID_RE no miran estos valores. Lista
+ * blanca por NOMBRE DE CAMPO (`name` en bots, equipos, loadouts y externalBots) y por el campo
+ * `warnings` del manifest (llevan nombres de equipo). Los patrones de credencial de alta confianza
+ * (JWT, PEM, Bearer, tokens, streaming) y los valores sensibles conocidos siguen aplicándose a TODO el texto.
+ */
+export const FREE_TEXT_KEYS = new Set(["name"]);
+const stripFreeText = (value, key) => {
+  if (Array.isArray(value)) return key === "warnings" ? [] : value.map((v) => stripFreeText(v, key));
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, stripFreeText(v, k)]));
+  return typeof value === "string" && FREE_TEXT_KEYS.has(key) ? "" : value;
+};
+
 const keyHits = (value, path, out) => {
   if (Array.isArray(value)) value.forEach((v, i) => keyHits(v, `${path}[${i}]`, out));
   else if (value && typeof value === "object") {
@@ -217,13 +240,18 @@ export function scanBuffer(buf, kind, label, known = []) {
   if (TOKEN_LIKE_RE.test(text)) hits.push(`${label}: token de proveedor`);
   if (STREAM_KEY_RE.test(text)) hits.push(`${label}: clave o destino de streaming`);
   if (kind === "meta") {
-    if (EMAIL_RE.test(text)) hits.push(`${label}: contiene un correo electrónico`);
-    if (UUID_RE.test(text)) hits.push(`${label}: contiene un UUID (id interno)`);
+    let parsed;
     try {
-      keyHits(JSON.parse(text), label, hits);
+      parsed = JSON.parse(text);
     } catch {
       /* no es JSON: ya se rechaza en la verificación estructural */
     }
+    // Con JSON válido, correo y UUID se buscan fuera de los campos de texto libre; si no se puede
+    // parsear, se busca en todo el texto (falla seguro).
+    const probe = parsed === undefined ? text : JSON.stringify(stripFreeText(parsed, ""));
+    if (EMAIL_RE.test(probe)) hits.push(`${label}: contiene un correo electrónico`);
+    if (UUID_RE.test(probe)) hits.push(`${label}: contiene un UUID (id interno)`);
+    if (parsed !== undefined) keyHits(parsed, label, hits);
   }
   return hits;
 }
@@ -289,7 +317,31 @@ const readJson = (dir, rel) => {
  * cada equipo). Lanza PortableError en la primera inconsistencia; si todo cuadra devuelve
  * `{ manifest, bots, teams }` ya parseados.
  */
-export function verifyExport(dir) {
+export const DEFAULT_LIMITS = Object.freeze({
+  /** Por fichero (el código de un bot: la API acepta como máximo 10 MiB). */
+  maxFileBytes: 10 * 1024 * 1024,
+  /** manifest.json lista todos los ficheros: puede ser mucho mayor que un fichero normal. */
+  maxManifestBytes: 64 * 1024 * 1024,
+  /** Suma de todos los ficheros del export. */
+  maxTotalBytes: 2 * 1024 * 1024 * 1024,
+});
+
+/** Mira el TAMAÑO de lo que hay en disco ANTES de leer nada a memoria. */
+function enforceLimits(dir, real, limits) {
+  const lim = { ...DEFAULT_LIMITS, ...limits };
+  let total = 0;
+  for (const rel of real) {
+    const size = statSync(join(dir, ...rel.split("/"))).size;
+    total += size;
+    const cap = rel === MANIFEST || rel === CHECKSUMS ? lim.maxManifestBytes : lim.maxFileBytes;
+    if (size > cap)
+      fail("file_too_large", `${rel}: ${size} bytes superan el tope por fichero (${cap}). Ver --max-file-mb.`);
+    if (total > lim.maxTotalBytes)
+      fail("export_too_large", `El export supera el tope total (${lim.maxTotalBytes} bytes). Ver --max-total-mb.`);
+  }
+}
+
+export function verifyExport(dir, limits = {}) {
   let top;
   try {
     top = readdirSync(dir);
@@ -302,6 +354,7 @@ export function verifyExport(dir) {
   if (!top.includes(CHECKSUMS)) fail("no_checksums", "Falta checksums.sha256.");
 
   const real = listFiles(dir);
+  enforceLimits(dir, real, limits);
   const checks = parseChecksums(readFileSync(join(dir, CHECKSUMS), "utf8"));
 
   // 1) checksums.sha256 cubre TODO (incluido el manifest) y coincide con el disco.

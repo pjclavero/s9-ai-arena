@@ -195,18 +195,17 @@ afterAll(async () => {
 const newClient = () => new ApiClient({ baseUrl: apiB.url, auth: loadAuth({ credentialsFile: credFile }) });
 
 describe("export", () => {
-  it("manifest y recuentos: 7 bots, 2 equipos, versiones por política heads", () => {
+  it("manifest y recuentos: 7 bots, 2 equipos, TODAS las versiones (política por defecto `all`)", () => {
     const m = exported.manifest;
     expect(m.formatVersion).toBe(1);
     expect(m.engineVersion).toBe("0.5.0");
     expect(m.sourceSha).toBe("a".repeat(40));
     expect(m.counts).toMatchObject({ bots: 7, teams: 2 });
-    // Alfa: v2 (cabeza publicada) + v3 (borrador); v1 omitida. Beta: v1 draft. Gamma: v1. 4 escuadra: v1 cada una.
-    expect(m.counts.versions).toBe(2 + 1 + 1 + 4);
-    expect(m.counts.omittedVersions).toBe(1);
-    expect(m.omittedVersions).toEqual([
-      { bot: "alfa-tanque", version: 1, state: "published", reason: "not_selected_by_policy_heads" },
-    ]);
+    // Alfa: v1, v2 (publicadas) y v3 (borrador). Beta: v1. Gamma: v1. 4 escuadra: v1 cada una. Nada se omite.
+    expect(m.versionsPolicy).toBe("all");
+    expect(m.counts.versions).toBe(3 + 1 + 1 + 4);
+    expect(m.counts.omittedVersions).toBe(0);
+    expect(m.omittedVersions).toEqual([]);
     expect(m.warnings.join("\n")).toMatch(/otros usuarios/);
     expect(m.warnings.join("\n")).toMatch(/no capitán/);
     const v = verifyExport(exportDir);
@@ -254,8 +253,8 @@ describe("export", () => {
     const v2 = bot.versions.find((v: { version: number }) => v.version === 2);
     const bytes = readFileSync(join(exportDir, ...v2.source.file.split("/")));
     expect(bytes.equals(code("alfa-v2"))).toBe(true);
-    expect(v2.parentVersion).toBeNull();
-    expect(v2.parentVersionOmitted).toBe(1);
+    expect(v2.parentVersion).toBe(1); // con `all` el padre viaja
+    expect(v2.parentVersionOmitted).toBeUndefined();
     expect(v2.runtime).toBe("node");
     expect(bot.loadouts.map((l: { revision: number }) => l.revision)).toEqual([1, 2]);
   });
@@ -299,7 +298,7 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect(report.errors).toEqual([]);
     expect(report.summary).toMatchObject({
       bots: { created: 7, reused: 0 },
-      versions: { created: 8, reused: 0 },
+      versions: { created: 9, reused: 0 },
       teams: { created: 2, reused: 0 },
     });
     const me = await B.db("users").where({ email: NEW_EMAIL }).first();
@@ -308,7 +307,7 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect((await B.db("bot_versions").select("state")).every((v) => v.state === "draft")).toBe(true);
     expect(report.bots.find((b: { slug: string }) => b.slug === "alfa-tanque")!.id).toBeTruthy();
     afterFirst = await counts(B);
-    expect(afterFirst).toMatchObject({ bots: 7, versions: 8, teams: 2, teamBots: 6, builds: 0 });
+    expect(afterFirst).toMatchObject({ bots: 7, versions: 9, teams: 2, teamBots: 6, builds: 0 });
   });
 
   it("comparación SEMÁNTICA origen→destino: código, runtime, loadout (con radio), padre, retirado y equipos", async () => {
@@ -324,11 +323,15 @@ describe("import en una instalación NUEVA y vacía", () => {
       expect(versionsB).toHaveLength(meta.versions.length);
       for (const v of meta.versions) {
         const lo = meta.loadouts.find((l: { revision: number }) => l.revision === v.loadoutRevision);
-        const vb = versionsB.find((x: { runtime: string; loadoutRevision: number }) => {
-          const l = loadoutsB.find((q: { revision: number }) => q.revision === x.loadoutRevision);
-          return x.runtime === v.runtime && l && loadoutKey(l) === loadoutKey(lo);
-        });
+        // la versión del destino que corresponde a esta (según el informe de correspondencias)
+        const nv = report.bots
+          .find((b: { slug: string }) => b.slug === slug)!
+          .versions.find((x: { version: number }) => x.version === v.version)!.newVersion;
+        const vb = versionsB.find((x: { version: number }) => x.version === nv);
         expect(vb, `${meta.name} v${v.version}`).toBeTruthy();
+        const lB = loadoutsB.find((q: { revision: number }) => q.revision === vb.loadoutRevision);
+        expect(vb.runtime).toBe(v.runtime);
+        expect(loadoutKey(lB)).toBe(loadoutKey(lo));
         const src = await cB.request("GET", `/bots/${tgt!.id}/versions/${vb.version}/source`);
         expect(sha256Hex(src.bytes)).toBe(v.source.sha256);
         // el origen REAL (no sólo el fichero exportado) coincide con el destino
@@ -343,9 +346,12 @@ describe("import en una instalación NUEVA y vacía", () => {
     }
     const radio = JSON.parse(readFileSync(join(exportDir, "bots/escuadra-1/bot.json"), "utf8")).loadouts[0];
     expect(radio.modules.some((m: { slot: string }) => m.slot === "radio_a")).toBe(true);
-    // padre: la v2 de Alfa perdió su padre (omitido) y la v3 no tenía
+    // padre: con `all` la v2 de Alfa conserva su padre (v1, renumerada); la v1 y la v3 no tenían
     const vA = await cB.json("GET", `/bots/${botsB.get("Alfa Tanque")!.id}/versions`);
-    expect(vA.every((v: { parentVersion?: number }) => v.parentVersion === undefined)).toBe(true);
+    const withParent = vA.filter((v: { parentVersion?: number }) => v.parentVersion != null);
+    expect(withParent.map((v: { version: number; parentVersion: number }) => [v.version, v.parentVersion])).toEqual([
+      [2, 1],
+    ]);
     // equipos
     const teamsB = await cB.listAll("/teams");
     const rojo = teamsB.find((t: { name: string }) => t.name === "Equipo Rojo 4v4");
@@ -367,7 +373,7 @@ describe("import en una instalación NUEVA y vacía", () => {
     expect(r2.errors).toEqual([]);
     expect(r2.summary).toMatchObject({
       bots: { created: 0, reused: 7 },
-      versions: { created: 0, reused: 8 },
+      versions: { created: 0, reused: 9 },
       teams: { created: 0, reused: 2 },
     });
     expect(
@@ -410,17 +416,17 @@ describe("import en una instalación NUEVA y vacía", () => {
     const before = await counts(B);
     const r = await runImport({ client: newClient(), src: exportDir, targetEngine: "0.5.0", submit: true });
     expect(r.errors).toEqual([]);
-    // publicadas en origen: Alfa v2, Gamma v1, 4 de la escuadra = 6
+    // publicadas en origen: Alfa v1 y v2, Gamma v1, 4 de la escuadra = 7
     const queued = r.bots.flatMap((b: { versions: { queued?: boolean }[] }) => b.versions).filter((v) => v.queued);
-    expect(queued).toHaveLength(6);
-    expect((await counts(B)).builds).toBe(before.builds + 6);
+    expect(queued).toHaveLength(7);
+    expect((await counts(B)).builds).toBe(before.builds + 7);
     expect((await B.db("bot_versions").where({ state: "published" }).count({ c: "*" }).first())!.c).toBe("0");
     // y un tercer import no vuelve a encolar (ya no están en draft)
     const r3 = await runImport({ client: newClient(), src: exportDir, targetEngine: "0.5.0", submit: true });
     expect(
       r3.bots.flatMap((b: { versions: { queued?: boolean }[] }) => b.versions).filter((v) => v.queued),
     ).toHaveLength(0);
-    expect((await counts(B)).builds).toBe(before.builds + 6);
+    expect((await counts(B)).builds).toBe(before.builds + 7);
   });
 
   it("M5 · un equipo cuyo bot no se pudo importar queda marcado como incompleto (no se oculta)", async () => {

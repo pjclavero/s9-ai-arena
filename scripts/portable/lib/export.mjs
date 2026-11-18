@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { filenameFromDisposition } from "./api.mjs";
 import {
   CHECKSUMS,
+  DEFAULT_VERSIONS_POLICY,
   FORMAT_VERSION,
   INCOMPLETE_MARKER,
   MANIFEST,
@@ -27,16 +28,56 @@ import {
 const byCreated = (a, b) =>
   a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 
+/**
+ * Lee el motor REAL de la instalación de ORIGEN desde su propia API: la auditoría de la batalla
+ * terminada más reciente (`GET /battles/{id}/audit` → `versions.engine`) dice con qué motor se
+ * jugó. Devuelve `{ version, battleId }` o `null` si no hay ninguna batalla legible (instalación sin
+ * batallas o sin acceso a ellas): entonces `--engine-version` es obligatorio. Sólo lectura.
+ */
+export async function detectEngineVersion(client, { attempts = 5 } = {}) {
+  const page = await client.json("GET", "/battles?status=finished&limit=50").catch(() => null);
+  const items = [...(page?.items ?? [])].sort((a, b) =>
+    a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,
+  );
+  for (const b of items.slice(0, attempts)) {
+    const audit = await client.json("GET", `/battles/${b.id}/audit`).catch(() => null);
+    const v = audit?.versions?.engine;
+    if (typeof v === "string" && /^\d+\.\d+\.\d+$/.test(v)) return { version: v, battleId: b.id };
+  }
+  return null;
+}
+
+/**
+ * Decide el motor de origen a partir de `--engine-version` (opcional) y de lo detectado en la API.
+ * Con ambos, deben coincidir (se VALIDA); sin flag se usa lo detectado; sin ninguno, error.
+ * Devuelve `{ engineVersion, engineVersionSource }`.
+ */
+export function resolveEngineVersion(flag, detected) {
+  if (flag && detected && flag !== detected.version) {
+    throw new PortableError(
+      "engine_mismatch",
+      `--engine-version ${flag} no coincide con el motor que la API de origen declara en la auditoría de su última batalla (${detected.version}). Revisa cuál es el motor desplegado antes de exportar.`,
+    );
+  }
+  if (flag) return { engineVersion: flag, engineVersionSource: detected ? "flag+audit" : "flag" };
+  if (detected) return { engineVersion: detected.version, engineVersionSource: "audit" };
+  throw new PortableError(
+    "usage",
+    "Falta --engine-version <x.y.z>: la API de origen no tiene ninguna batalla terminada legible de la que leerlo. Es el motor de la instalación de ORIGEN y no se adivina (el checkout de esta herramienta puede ser de otra versión): léelo del despliegue (engine-deps.json del commit desplegado).",
+  );
+}
+
 export async function runExport({
   client,
   dest,
-  versionsPolicy = "heads",
+  versionsPolicy = DEFAULT_VERSIONS_POLICY,
   sourceSha = "unknown",
   engineVersion,
   engineVersionSource = "flag",
   now = () => new Date(),
   log = () => {},
   knownSecrets = [],
+  limits = {},
 }) {
   if (!engineVersion)
     throw new PortableError(
@@ -68,6 +109,7 @@ export async function runExport({
   const slugById = new Map(mine.map((b, i) => [b.id, slugs[i]]));
   const catalogs = new Set();
   const omittedAll = [];
+  const omittedLoadouts = []; // revisiones de loadout que NO viajan (ni usadas por versiones exportadas ni la última)
   let nVersions = 0;
   let nLoadouts = 0;
 
@@ -84,6 +126,8 @@ export async function runExport({
     const latestRev = Math.max(0, ...loadouts.map((l) => l.revision));
     if (latestRev > 0) neededRevs.add(latestRev);
     const keptLoadouts = loadouts.filter((l) => neededRevs.has(l.revision));
+    for (const l of loadouts.filter((x) => !neededRevs.has(x.revision)).sort((a, b) => a.revision - b.revision))
+      omittedLoadouts.push({ bot: slug, revision: l.revision, ...(l.name ? { name: l.name } : {}) });
     for (const v of selected) {
       if (!loadouts.some((l) => l.revision === v.loadoutRevision)) {
         throw new PortableError(
@@ -155,7 +199,19 @@ export async function runExport({
   // ---------------------------------------------------------------- equipos
   const allTeams = await client.listAll("/teams");
   const captainTeams = allTeams.filter((t) => t.isCaptain === true);
-  const notCaptain = allTeams.filter((t) => t.isMember === true && t.isCaptain !== true).length;
+  const notCaptainTeams = allTeams.filter((t) => t.isMember === true && t.isCaptain !== true);
+  const notCaptain = notCaptainTeams.length;
+  // Qué bots PROPIOS del operador estaban en equipos ajenos (por slug; ni nombre del equipo ni
+  // datos de otros usuarios): esa pertenencia se pierde y hay que rehacerla con el capitán.
+  const lostMembership = new Map(); // slug -> nº de equipos ajenos
+  for (const t of notCaptainTeams)
+    for (const b of Array.isArray(t.bots) ? t.bots : []) {
+      const s = slugById.get(b.id);
+      if (s) lostMembership.set(s, (lostMembership.get(s) ?? 0) + 1);
+    }
+  const botsInForeignTeams = [...lostMembership.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([bot, teams]) => ({ bot, teams }));
   const teamSlugs = assignSlugs(captainTeams.map((t) => t.name));
   const warnings = [];
   captainTeams.forEach((t, i) => {
@@ -196,7 +252,14 @@ export async function runExport({
   });
   if (notCaptain > 0)
     warnings.push(
-      `${notCaptain} equipo(s) donde el usuario es miembro pero no capitán: no se exportan (no son suyos).`,
+      `${notCaptain} equipo(s) donde el usuario es miembro pero no capitán: no se exportan (no son suyos)` +
+        (botsInForeignTeams.length
+          ? `; ${botsInForeignTeams.length} bot(s) propios pertenecían a ellos (manifest.botsInForeignTeams).`
+          : "."),
+    );
+  if (omittedLoadouts.length)
+    warnings.push(
+      `${omittedLoadouts.length} revisión(es) de loadout no usadas por ninguna versión exportada ni la última no se exportan (manifest.omittedLoadouts).`,
     );
 
   // ---------------------------------------------------------------- manifest + checksums
@@ -216,8 +279,11 @@ export async function runExport({
       versions: nVersions,
       loadouts: nLoadouts,
       omittedVersions: omittedAll.length,
+      omittedLoadouts: omittedLoadouts.length,
     },
     omittedVersions: omittedAll,
+    omittedLoadouts,
+    botsInForeignTeams,
     warnings,
     files,
   };
@@ -229,6 +295,7 @@ export async function runExport({
 
   // ---------------------------------------------------------------- verificación final
   const hits = scanExportDir(dest, files, known);
+  hits.push(...scanExportDir(dest, [{ path: MANIFEST }], known)); // el manifest también se escanea
   if (hits.length)
     throw new PortableError(
       "secret_in_export",
@@ -236,7 +303,7 @@ export async function runExport({
     );
   rmSync(join(dest, INCOMPLETE_MARKER)); // verifyExport rechaza el marcador; se quita para verificar y se repone si falla
   try {
-    const v = verifyExport(dest);
+    const v = verifyExport(dest, limits);
     if (v.bots.length !== mine.length)
       throw new PortableError("count_mismatch", "Se exportaron menos bots de los que lista la API.");
   } catch (e) {

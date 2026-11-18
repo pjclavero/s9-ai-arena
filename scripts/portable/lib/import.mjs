@@ -25,12 +25,19 @@ export async function runImport({
   dryRun = false,
   submit = false,
   restoreVisibility = false,
+  limits = {},
   log = () => {},
 }) {
   // (0) Todo lo que no necesita red, ANTES de tocar nada.
-  const { manifest, bots, teams } = verifyExport(src);
+  const { manifest, bots, teams } = verifyExport(src, limits);
   assertEngineCompatible(manifest.engineVersion, targetEngine);
 
+  const nVersions = bots.reduce((n, b) => n + b.versions.length, 0);
+  // La API admite 60 creaciones de versión por hora y usuario: el import espera y sigue solo.
+  if (nVersions > 60)
+    log(
+      `${nVersions} versiones a subir; con el límite de 60/h el import puede tardar ≥ ${Math.ceil(nVersions / 60) - 1} h de espera (reanudable repitiendo el mismo comando).`,
+    );
   const report = {
     formatVersion: manifest.formatVersion,
     sourceSha: manifest.sourceSha,
@@ -42,6 +49,13 @@ export async function runImport({
     bots: [],
     teams: [],
     errors: [],
+    // Lo que el export declaró que NO viaja (para que el informe del import lo repita).
+    exportNotes: {
+      warnings: manifest.warnings ?? [],
+      omittedVersions: manifest.omittedVersions ?? [],
+      omittedLoadouts: manifest.omittedLoadouts ?? [],
+      botsInForeignTeams: manifest.botsInForeignTeams ?? [],
+    },
     summary: {},
   };
   const fail = (scope, message) => report.errors.push({ scope, message });
