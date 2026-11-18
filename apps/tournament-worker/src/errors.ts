@@ -320,8 +320,12 @@ export function isTransientDbError(err: unknown, endpoint: DbEndpoint = dbEndpoi
  * Convierte un error desconocido en fallo de infraestructura: lo ya clasificado se deja
  * tal cual; un error transitorio de BD pasa a `db_unavailable`; el resto, a `fallback`.
  */
-export function toInfrastructureFailure(err: unknown, fallback: InfrastructureFailureCode): InfrastructureFailure {
+export function toInfrastructureFailure(
+  err: unknown,
+  fallback: InfrastructureFailureCode,
+  endpoint: DbEndpoint = dbEndpointFromEnv(),
+): InfrastructureFailure {
   if (err instanceof InfrastructureFailure) return err;
   const msg = err instanceof Error ? err.message : String(err);
-  return new InfrastructureFailure(classifyDbError(err) ?? fallback, msg);
+  return new InfrastructureFailure(classifyDbError(err, endpoint) ?? fallback, msg);
 }

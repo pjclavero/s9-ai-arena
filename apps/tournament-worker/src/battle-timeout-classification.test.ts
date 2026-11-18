@@ -146,7 +146,7 @@ describe("P1-1/P2-7 · errores REALES de pg/knex (capturados), decididos por ORI
       const err = real("nombre_sin_escucha", via);
       expect((err as { address?: string }).address).toMatch(/^\d+\.\d+\.\d+\.\d+$/); // IP, no «postgres»
       expect(isTransientDbError(err, PROD)).toBe(true);
-      expect(toInfrastructureFailure(err, "engine_start_failure").code).toBe("db_unavailable");
+      expect(toInfrastructureFailure(err, "engine_start_failure", PROD).code).toBe("db_unavailable");
     }
   });
 
