@@ -44,8 +44,18 @@ MUTANTES=(
 "apps/tournament-worker/src/errors.ts|if (!err \|\| typeof err !== \"object\" \|\| depth > 2) return false;|return false;|M3 errores de Knex/pool sin clasificar|KnexTimeoutError por nombre"
 "apps/tournament-worker/src/worker.ts|else if (isTransientDbError(err)) {|else if (false) {|M3b el worker no mapea BD transitoria|SIN pasar por el runner"
 "apps/tournament-worker/src/battle-runner.ts|throw toInfrastructureFailure(err, \"engine_start_failure\");|throw err instanceof InfrastructureFailure ? err : new InfrastructureFailure(\"engine_start_failure\", String(err));|M3c el runner envuelve todo como engine_start_failure|vuelve a la cola con backoff"
-"apps/tournament-worker/src/queue.ts|const parked = job.attempts >= maxAttempts;|const parked = false;|M4 reintento infinito|NO se reintenta sin fin"
-"apps/tournament-worker/src/queue.ts|Math.min(job.max_attempts, policy.maxAttempts ?? job.max_attempts)|job.max_attempts|M4b battle_timeout reintenta max_attempts veces|UN solo reintento"
+"apps/tournament-worker/src/queue.ts|parked = classFailures >= policy.maxFailures;|parked = false;|M4 db_unavailable sin tope: reintento infinito|tope PROPIO de db_unavailable"
+"apps/tournament-worker/src/errors.ts|battle_timeout: { maxFailures: 2,|battle_timeout: { maxFailures: 3,|M4b battle_timeout reintenta más de UNA vez|el primer timeout se reintenta"
+"apps/tournament-worker/src/battle-resources.ts|    if (err.code === \"engine_start_failure\") return \"ENGINE_ERROR\";|    if (/timeout global/.test(String(err.message))) return \"TIMEOUT\"; if (err.code === \"engine_start_failure\") return \"ENGINE_ERROR\";|M5 classifyEnd decide otra vez por el texto del mensaje|aunque el mensaje diga"
+"apps/tournament-worker/src/battle-resources.ts|    if (err.code === \"battle_timeout\") return \"TIMEOUT\";|    /* sin rama por codigo */|M6 classifyEnd sin rama por código battle_timeout (R9)|rama por código"
+"apps/tournament-worker/src/errors.ts|if (pointsAtDb(e, endpoint)) return true;|return true;|M7 todo código de red se atribuye a la BD|docker-proxy ECONNREFUSED"
+"apps/tournament-worker/src/errors.ts|typeof e.stack === \"string\" && DB_LIBRARY_STACK.test(e.stack)|false|M7b sin evidencia por pila de pg/knex|ECONNRESET sin dirección pero con pila de pg"
+"apps/tournament-worker/src/errors.ts|if (ep.port === undefined \|\| port !== ep.port) return false;|if (false) return false;|M7c el puerto no se compara|mismo host, otro puerto"
+"apps/tournament-worker/src/queue.ts|const classFailures = (counts[code] ?? 0) + 1;|const classFailures = job.attempts;|M8 el contador es el total de intentos, no por clase|sigue dando UN reintento"
+"apps/tournament-worker/src/errors.ts|maxFailures: 8,|maxFailures: 3,|M9 ventana de db_unavailable de ~30 s|tolerancia total de 5 a 10 minutos"
+"apps/tournament-worker/src/errors.ts|  \"53300\", // too_many_connections: el servidor está saturado, se libera solo|  /* sin 53300 */|M10 sin 53300|53300 too_many_connections"
+"apps/tournament-worker/src/errors.ts|  \"57014\",|  /* sin 57014 */|M10b sin 57014|57014 query_canceled"
+"packages/game-rules/battle-timing.ts|const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs;|const derivado = Math.min(Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs, MAX_CONTAINER_BATTLE_TIMEOUT_MS);|M11 recorte del guard silencioso|avisa por consola"
 )
 
 fallos=0

@@ -480,11 +480,18 @@ describe("classifyEnd · los nueve finales", () => {
         ok: false,
         error: new InfrastructureFailure("engine_start_failure", "timeout global de la batalla tras 9 ms"),
       }),
-    ).toBe("TIMEOUT");
+    ).toBe("ENGINE_ERROR"); // decide el CÓDIGO, no el texto: sin ticks el motor no arrancó
+    expect(classifyEnd({ ok: false, error: new InfrastructureFailure("battle_timeout", "se pasó de reloj") })).toBe(
+      "TIMEOUT",
+    ); // por código, con un mensaje SIN «timeout global»
     expect(classifyEnd({ ok: false, error: new InfrastructureFailure("engine_start_failure", "motor") })).toBe(
       "ENGINE_ERROR",
     );
     expect(classifyEnd({ ok: false, error: new InfrastructureFailure("container_unavailable", "x") })).toBe("FAILED");
+    // el texto no decide: un código ajeno con «timeout global» en el mensaje sigue siendo FAILED
+    expect(
+      classifyEnd({ ok: false, error: new InfrastructureFailure("map_unavailable", "timeout global del mapa") }),
+    ).toBe("FAILED");
     expect(classifyEnd({ ok: false, error: new InfrastructureFailure("battle_busy", "x") })).toBe("CANCELLED");
     expect(classifyEnd({ ok: false, error: new LostBattleClaim("b", "o") })).toBe("CANCELLED");
     expect(classifyEnd({ ok: false, abortReason: new BattleAbort("MANUAL_ABORT") })).toBe("MANUAL_ABORT");

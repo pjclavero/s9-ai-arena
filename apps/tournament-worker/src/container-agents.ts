@@ -598,8 +598,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 /**
  * Fallo del guard global. Si el motor llegó a avanzar (`tick > 0`) la batalla ARRANCÓ y
  * jugó: es `battle_timeout`, no un fallo de arranque. Sin ningún tick jugado es lo que
- * el nombre dice, `engine_start_failure`. El texto conserva «timeout global» (lo usa
- * la clasificación del final y los diagnósticos).
+ * el nombre dice, `engine_start_failure`. La clasificación del final decide SÓLO por el
+ * código, nunca por el texto (el mensaje es para diagnóstico).
  */
 export function battleGuardFailure(overallMs: number, tick: number, maxTicks: number): InfrastructureFailure {
   return tick > 0

@@ -135,7 +135,22 @@ export function proportionalBattleGuardMs(
 ): number {
   const f = Number.isFinite(factor) && factor >= 1 ? factor : 1;
   const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs;
-  return Math.min(derivado, MAX_CONTAINER_BATTLE_TIMEOUT_MS);
+  if (derivado <= MAX_CONTAINER_BATTLE_TIMEOUT_MS) return derivado;
+  // Igual que `containerBattleOverallTimeoutMs`: el recorte NO es silencioso. Un guard
+  // que tarda ~24,85 días en saltar equivale a no tener guard.
+  console.error(
+    JSON.stringify({
+      level: "warn",
+      service: "tournament-worker",
+      msg: "guard proporcional de la batalla por encima del máximo de setTimeout: se recorta. El guard tardará ~24,85 días en saltar, así que no protege de contenedores colgados: revisa `ticks`/`tickIntervalMs`/factor.",
+      requestedTimeoutMs: derivado,
+      appliedTimeoutMs: MAX_CONTAINER_BATTLE_TIMEOUT_MS,
+      ticks,
+      tickIntervalMs,
+      factor: f,
+    }),
+  );
+  return MAX_CONTAINER_BATTLE_TIMEOUT_MS;
 }
 
 /**
