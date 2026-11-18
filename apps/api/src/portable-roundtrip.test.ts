@@ -44,7 +44,10 @@ const L_RADIO = {
   name: "Con radio",
   catalogVersion: "mvp@1",
   chassis: "chassis.medium@1",
-  modules: [...BASE_MODULES, { slot: "radio_a", moduleId: "radio.short@1" }],
+  modules: [
+    ...BASE_MODULES.map((m) => (m.slot === "power" ? { slot: "power", moduleId: "power.generator@1" } : m)),
+    { slot: "radio_a", moduleId: "radio.short@1" },
+  ],
 };
 
 // Código sintético (nada del operador real): incluye bytes no UTF-8 y Unicode para probar fidelidad byte a byte.
