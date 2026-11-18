@@ -859,14 +859,14 @@ describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización expl
     const c = await request(app).post(`/tournaments/${t}/actions/cancel`).set(as(orgTok)).send({});
     expect(c.status, JSON.stringify(c.body)).toBe(200);
     expect(c.body.state).toBe("cancelled");
-    // No se borra nada: inscripciones (4) y autorización (1) quedan como historial; nada se congela.
+    // No se borra nada: inscripciones (4) y autorizaciones (4: las propias implícitas + la del otro dueño) quedan como historial.
     expect(await entriesOf(t)).toHaveLength(4);
-    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(1);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(4);
     expect((await h.db("bot_versions").where({ bot_id: M.theirs }).first()).state).toBe("published");
     // Las autorizaciones siguen siendo legibles por los miembros.
     const l = await request(app).get(`/tournaments/${t}/team-consents?teamId=${M.teamId}`).set(as(devTok));
     expect(l.status).toBe(200);
-    expect(l.body.items).toHaveLength(1);
+    expect(l.body.items).toHaveLength(2);
     // Pero ya no se pueden dar, retirar ni inscribir: el torneo no está abierto (409 entries_closed).
     const put = await consent(userTok, t, M.teamId, M.theirs);
     expect(put.status).toBe(409);
@@ -877,7 +877,7 @@ describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización expl
     const C = await mkTeam(2);
     expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).body.error).toBe("entries_closed");
     expect(await entriesOf(t)).toHaveLength(4);
-    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(1);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(4);
     // Y el cierre ya no es posible.
     const cl = await closeEntries(t);
     expect(cl.status).toBe(409);
