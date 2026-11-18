@@ -1,0 +1,12 @@
+[
+  {
+    "ghsa": "GHSA-fc5q-39xc-vjpf",
+    "paquete": "picomatch",
+    "rango": "<= 4.0.7",
+    "alcance": "dev",
+    "caduca": "2026-12-17",
+    "alta": "2026-11-17",
+    "motivo": "ReDoS con globs de extglob repetidos (+(*), +(*a)). Sin versión corregida publicada: 4.0.7 es la última y el aviso cubre todo el rango; el arreglo upstream (micromatch/picomatch#194) está abierto sin release. Sólo entra por herramientas de desarrollo (vite, vitest, tinyglobby/fdir, @changesets/*, json-schema-to-typescript) con globs escritos por el propio repo, nunca por entrada de usuario; ningún código de servicio lo importa. La excepción deja de aplicarse sola si picomatch aparece como dependencia de producción en el lockfile o si llega la fecha de caducidad.",
+    "seguimiento": "Revisar a diario la publicación de picomatch > 4.0.7; al salir, retirar esta entrada y actualizar el lockfile."
+  }
+]

@@ -52,6 +52,22 @@ export function entryPrivacyNote(visibility: string | undefined, broadcast: bool
 
 const POLL_MS = 5000;
 
+/** #288 · Estados con cancelación (los de la API: sin calendario ni batallas). */
+export const CANCELLABLE_STATES = ["draft", "open"];
+
+/** #288 · Por qué un torneo no se puede cancelar en su estado (null = sí se puede). */
+export function cancelBlockedReason(state: string): string | null {
+  if (CANCELLABLE_STATES.includes(state)) return null;
+  if (state === "cancelled") return "Este torneo está cancelado.";
+  if (state === "finished") return "Este torneo ya ha terminado: no se puede cancelar.";
+  return "Ya no se puede cancelar: las inscripciones están cerradas y el calendario generado o en juego.";
+}
+
+/** #288 · Texto de la confirmación: qué pasa al cancelar y qué no. */
+export const CANCEL_CONFIRM_TEXT =
+  "¿Cancelar el torneo? No se generará calendario ni se jugará ninguna batalla y no se podrá reabrir. " +
+  "No se borra nada: las inscripciones y el historial se conservan.";
+
 /** UX-D · por NOMBRE de bot y versión exacta (antes: UUID recortado). */
 function battleLabel(b: TournamentBattle): string {
   const names = b.participants.map(botVersionLabel);
@@ -182,6 +198,18 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
     }
   }
 
+  async function onCancelTournament() {
+    if (!window.confirm(CANCEL_CONFIRM_TEXT)) return;
+    setEntryMsg(null);
+    try {
+      await api("POST", `/tournaments/${encodeURIComponent(props.id)}/actions/cancel`, {});
+      setEntryMsg({ kind: "ok", text: "Torneo cancelado: no se jugará ninguna batalla" });
+      reloadDetail();
+    } catch (err) {
+      setEntryMsg({ kind: "error", text: (err as Error).message || "no se pudo cancelar el torneo" });
+    }
+  }
+
   async function onCloseEntries() {
     setEntryMsg(null);
     try {
@@ -282,11 +310,28 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                       </p>
                     ) : null;
                   })()}
-                  <button type="button" onClick={onCloseEntries}>
-                    Cerrar inscripciones
-                  </button>
+                  {/* #291 · sólo quien creó el torneo o el staff (la API también lo exige). */}
+                  {t.viewerCanManage && (
+                    <button type="button" onClick={onCloseEntries} data-testid="close-entries">
+                      Cerrar inscripciones
+                    </button>
+                  )}
                 </form>
               )}
+              {t.viewerCanManage &&
+                (cancelBlockedReason(t.state) === null ? (
+                  <p>
+                    <button type="button" onClick={() => void onCancelTournament()} data-testid="cancel-tournament">
+                      Cancelar torneo
+                    </button>
+                  </p>
+                ) : (
+                  t.state !== "cancelled" && (
+                    <p className="muted" data-testid="cancel-tournament-blocked">
+                      {cancelBlockedReason(t.state)}
+                    </p>
+                  )
+                ))}
               {entryMsg && (
                 <p
                   className={entryMsg.kind === "ok" ? "ok" : "error"}
