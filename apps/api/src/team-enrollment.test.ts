@@ -1272,10 +1272,24 @@ describe("#290 corrección · P2-2 · orden de id de los cerrojos (las dos orien
     });
 
     it(`T287_LOCK_ORDER_CLOSE_VERSIONS · closeEntries bloquea las versiones por id ascendente (${tag})`, async () => {
+      // CRUZADO: la versión de menor id pertenece al bot de MAYOR id y al revés. La consulta de
+      // `closeEntries` se resuelve por `bot_id = ANY(...)` con un Index Scan sobre
+      // (bot_id, version), así que sin ORDER BY devuelve las versiones en orden de `bot_id`
+      // (no el físico ni el de inserción): sólo con el orden de bot_id INVERSO al de id de
+      // versión se distingue «ORDER BY id» de «sin ORDER BY».
       const { lo, hi } = idPair();
-      const vids = loFirst ? [lo, hi] : [hi, lo];
+      const { lo: botLo, hi: botHi } = idPair();
+      const vers: [string, string][] = loFirst
+        ? [
+            [lo, botHi],
+            [hi, botLo],
+          ]
+        : [
+            [hi, botLo],
+            [lo, botHi],
+          ];
       const bots: string[] = [];
-      for (const versionId of vids) bots.push(await mkBot(devId, null, { versionId }));
+      for (const [versionId, id] of vers) bots.push(await mkBot(devId, null, { id, versionId }));
       const t = await indTournament();
       for (const b of bots) expect((await enterOne(devTok, t, b)).status).toBe(201);
       const holder = await h.db.transaction();
