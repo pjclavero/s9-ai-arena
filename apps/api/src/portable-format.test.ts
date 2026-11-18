@@ -1327,16 +1327,19 @@ describe("R4 · salida del CLI con el motor forzado y guarda de anfitrión del E
     const body = t.slice(t.indexOf("\nservices:") + 1).split(/\n(?=[a-z])/)[0];
     return [...body.matchAll(/^ {2}([a-z0-9-]+):\s*$/gm)].map((m) => m[1]);
   })();
-  /** Línea de `docker ps -a --format '{{.Names}}|{{.State}}|{{.Label "s9portable.e2e"}}|{{.Label "com.docker.compose.project"}}'`. */
-  const prod = (svc: string, state = "running") => `infrastructure-${svc}-1|${state}||infrastructure`;
-  const propio = (n: string) => `s9portable-${n}|running|1|`;
+  /** Línea tal como la emite `docker ps -a --format '{{json .Names}}<tab>{{json .State}}<tab>{{json (.Label …)}}…'`:
+   *  cada campo como cadena JSON, separados por un tabulador real. */
+  const row = (name: string, state: string, own: string, proj: string) =>
+    [name, state, own, proj].map((v) => JSON.stringify(v)).join("\t");
+  const prod = (svc: string, state = "running") => row(`infrastructure-${svc}-1`, state, "", "infrastructure");
+  const propio = (n: string) => row(`s9portable-${n}`, "running", "1", "");
   const guard = (env: Record<string, string>, docker: { ps?: string[]; rc?: number; sinDocker?: boolean } = {}) => {
     const bin = mkdtempSync(join(tmpdir(), "fake-docker-"));
     try {
       writeFileSync(join(bin, "ps.txt"), (docker.ps ?? []).join("\n") + "\n");
       writeFileSync(
         join(bin, "docker"),
-        `#!/bin/sh\n[ "$1" = ps ] || exit 2\ncat "${join(bin, "ps.txt")}"\nexit ${docker.rc ?? 0}\n`,
+        `#!/bin/sh\n[ "$1" = ps ] || exit 2\n[ "$2" = -a ] || { echo "docker falso: ps sin -a (no ve contenedores parados)" >&2; exit 3; }\n[ "$3" = --format ] || exit 4\ncat "${join(bin, "ps.txt")}"\nexit ${docker.rc ?? 0}\n`,
       );
       chmodSync(join(bin, "docker"), 0o755);
       return spawnSync("/bin/bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
@@ -1384,24 +1387,76 @@ describe("R4 · salida del CLI con el motor forzado y guarda de anfitrión del E
     expect(r.stderr).toMatch(/proyecto compose/);
   });
   it("R5-2 · un proyecto compose cualquiera (no sólo `infrastructure`) también se niega", () => {
-    const r = guard(LAB, { ps: ["otro-web-1|running||otro"] });
+    const r = guard(LAB, { ps: [row("otro-web-1", "running", "", "otro")] });
     expect(r.status).toBe(1);
   });
   it("R5-3 · un contenedor ajeno cualquiera (foo) en marcha ⇒ se niega", () => {
-    const r = guard(LAB, { ps: ["foo|running||"] });
+    const r = guard(LAB, { ps: [row("foo", "running", "", "")] });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("foo");
   });
   it("R5-3 · ajeno junto a uno del ensayo ⇒ se niega igualmente", () => {
-    expect(guard(LAB, { ps: [propio("src-1"), "foo|running||"] }).status).toBe(1);
+    expect(guard(LAB, { ps: [propio("src-1"), row("foo", "running", "", "")] }).status).toBe(1);
   });
   it("R5-3 · el NOMBRE s9portable- sin la etiqueta no basta (no se puede suplantar por nombre)", () => {
-    const r = guard(LAB, { ps: ["s9portable-api|running||"] });
+    const r = guard(LAB, { ps: [row("s9portable-api", "running", "", "")] });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("s9portable-api");
   });
   it("R5-3 · un contenedor ajeno PARADO y sin compose no bloquea (sólo importan los vivos)", () => {
-    expect(guard(LAB, { ps: ["foo|exited||"] }).status).toBe(0);
+    expect(guard(LAB, { ps: [row("foo", "exited", "", "")] }).status).toBe(0);
+  });
+  it("R6-1 · ESPOOFING: la etiqueta `s9portable.e2e=1|` (barra) NO se toma por propia ⇒ se niega", () => {
+    const r = guard(LAB, { ps: [row("ajeno-spoof", "running", "1|", "")] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("ajeno-spoof");
+  });
+  it("R6-1 · ESPOOFING: etiquetas con tabulador, comillas, barras o espacios tras el 1 tampoco son propias", () => {
+    for (const own of ["1\t", "1\tx", '1"', "1\\", "1|x|y", "1 ", " 1", "1\n"]) {
+      const r = guard(LAB, { ps: [row("ajeno-spoof", "running", own, "")] });
+      expect(r.status, JSON.stringify(own)).toBe(1);
+    }
+  });
+  it("R6-1 · un nombre con `|` o tabulador no desplaza campos ni oculta el contenedor", () => {
+    const r = guard(LAB, { ps: [row("x|running|1|", "running", "", ""), row("y\trunning\t1", "running", "", "")] });
+    expect(r.status).toBe(1);
+  });
+  it("R6-1 · salida de «docker ps» con formato inesperado ⇒ FALLA CERRADO", () => {
+    expect(guard(LAB, { ps: ["foo|running|1|"] }).status).toBe(1);
+    expect(guard(LAB, { ps: [propio("a") + "\textra"] }).status).toBe(1);
+  });
+  it("R6-2 · el docker falso EXIGE `ps -a`: sin -a falla (la guarda invoca docker ps -a)", () => {
+    const bin = mkdtempSync(join(tmpdir(), "fake-docker-"));
+    try {
+      writeFileSync(join(bin, "docker"), '#!/bin/sh\n[ "$2" = -a ] || exit 3\nexit 0\n');
+      chmodSync(join(bin, "docker"), 0o755);
+      const r = spawnSync("/bin/bash", ["-c", "source scripts/portable/e2e/guard.sh && s9_portable_guard"], {
+        cwd: REPO,
+        env: { PATH: `${bin}:/usr/bin:/bin`, ...LAB },
+        encoding: "utf8",
+      });
+      expect(r.status).toBe(0);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+  for (const v of ["true", "0", "", "yes", "2"]) {
+    it(`R6-3 · la etiqueta s9portable.e2e con valor ${JSON.stringify(v)} (≠ 1) es AJENA ⇒ se niega`, () => {
+      const r = guard(LAB, { ps: [row("etiqueta-rara", "running", v, "")] });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("etiqueta-rara");
+    });
+  }
+  it("R6-4 · ALLOW_PRODUCT_CONTAINERS definida pero VACÍA no anula la guarda", () => {
+    const r = guard({ ...LAB, S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS: "" }, { ps: [prod("api")] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).not.toMatch(/AVISO PELIGROSO/);
+  });
+  it("R6-4 · ALLOW_PRODUCT_CONTAINERS con otro valor (0, true, yes) tampoco anula la guarda", () => {
+    for (const v of ["0", "true", "yes"]) {
+      const r = guard({ ...LAB, S9_PORTABLE_E2E_ALLOW_PRODUCT_CONTAINERS: v }, { ps: [prod("api")] });
+      expect(r.status, v).toBe(1);
+    }
   });
   it("R5-4 · si «docker ps» falla, FALLA CERRADO", () => {
     const r = guard(LAB, { ps: [], rc: 1 });

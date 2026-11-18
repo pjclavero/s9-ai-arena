@@ -31,19 +31,30 @@ s9_portable_guard() {
     echo "STOP: no hay docker en el PATH; no se puede comprobar que el anfitrión no es producción." >&2
     return 1
   fi
-  local ps rc=0 line name state own proj foreign="" composes=""
-  ps=$(docker ps -a --format '{{.Names}}|{{.State}}|{{.Label "s9portable.e2e"}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null) || rc=$?
+  local ps rc=0 line name state own proj extra foreign="" composes=""
+  # Formato INEQUÍVOCO: cada campo va codificado como cadena JSON (`json` de Go escapa comillas, tabuladores,
+  # saltos de línea y barras) y los campos se separan con un tabulador REAL, que no puede aparecer dentro de
+  # ninguno. Así una etiqueta como `1|` o `1<tab>` NO se confunde con `1`: «propio» es exactamente `"1"`.
+  ps=$(docker ps -a --format '{{json .Names}}\t{{json .State}}\t{{json (.Label "s9portable.e2e")}}\t{{json (.Label "com.docker.compose.project")}}' 2>/dev/null) || rc=$?
   if [ "$rc" != 0 ]; then
     echo "STOP: «docker ps» falló (rc=$rc); no se puede comprobar que el anfitrión no es producción." >&2
     return 1
   fi
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    IFS='|' read -r name state own proj <<<"$line"
+    IFS=$'\t' read -r name state own proj extra <<<"$line"
+    # Cada campo JSON es no vacío (`""` como mínimo): si falta alguno o sobra uno, formato inesperado => STOP.
+    if [ -z "$name" ] || [ -z "$state" ] || [ -z "$own" ] || [ -z "$proj" ] || [ -n "$extra" ]; then
+      echo "STOP: salida de «docker ps» con formato inesperado; no se puede comprobar que el anfitrión no es producción." >&2
+      return 1
+    fi
+    name=${name#\"}; name=${name%\"}
+    state=${state#\"}; state=${state%\"}
+    if [ "$proj" = '""' ]; then proj=""; else proj=${proj#\"}; proj=${proj%\"}; fi
     if [ -n "$proj" ]; then composes="$composes $name($proj)"; fi
     case "$state" in
       exited | created | dead) ;;
-      *) if [ "$own" != "1" ]; then foreign="$foreign $name"; fi ;;
+      *) if [ "$own" != '"1"' ]; then foreign="$foreign $name"; fi ;;
     esac
   done <<<"$ps"
   if [ -n "$foreign" ]; then
