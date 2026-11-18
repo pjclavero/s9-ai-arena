@@ -217,8 +217,9 @@ const MUTANTS = [
     edits: [
       {
         file: T,
-        from: "        loadout_revision: v.loadout_revision,\n        frozen: false,",
-        to: '        loadout_revision: (await db("bot_loadouts").where({ bot_id: botId }).max("revision as m").first()).m,\n        frozen: false,',
+        // #287 ronda 2: el alta individual va en una transacción (un nivel más de sangría).
+        from: "          loadout_revision: v.loadout_revision,\n          frozen: false,",
+        to: '          loadout_revision: (await db("bot_loadouts").where({ bot_id: botId }).max("revision as m").first()).m,\n          frozen: false,',
       },
     ],
     tests: [API],

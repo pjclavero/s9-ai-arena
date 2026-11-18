@@ -115,7 +115,20 @@ info:
   # tournament_not_cancellable. No borra nada. closeEntries pasa a ser atómico frente a
   # la cancelación (409 illegal_transition si el torneo ya no está `open`).
   # El 409 de cancelTournament usa su propio esquema TournamentNotCancellableError.
-  version: 0.23.0
+  # Cancelar un torneo por equipos conserva sus inscripciones y autorizaciones de dueño (historial, sin borrar nada);
+  # las autorizaciones quedan inertes (poner/retirar/inscribir → 409 entries_closed).
+  # 0.24.0 · #290 (aditivo; antes 0.21.0 en la rama): enterTournamentTeam (POST /tournaments/{id}/team-entries) inscribe un
+  # EQUIPO COMPLETO en un torneo `teams` con reglas NvN, atómicamente (o entran los N bots o
+  # ninguno); `Entry` gana `teamId` (opcional). En esos torneos enterTournament ya no da de alta
+  # bots sueltos (409 team_enrollment_required; la sustitución de una versión pendiente no
+  # elegible sigue). closeEntries revalida pertenencia (409 team_roster_changed) y estado de cada
+  # versión (entries_not_eligible también si quedó suspendida o retirada), y es atómico.
+  # Ronda 2: equipos de VARIOS dueños con autorización explícita por bot y versión
+  # (listTeamEntryConsents, putTeamEntryConsent, deleteTeamEntryConsent; 409
+  # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
+  # cierre, excludeTournamentEntry y la sustitución de versión (lo que bloquea el cierre siempre
+  # se puede excluir); freeze condicional (una sola auditoría por versión).
+  version: 0.25.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1132,7 +1145,147 @@ paths:
       responses:
         '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
-        '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+        '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`) · team_enrollment_required (#287: torneo `teams` con reglas NvN, se inscribe el equipo completo con enterTournamentTeam). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+
+  /tournaments/{tournamentId}/team-entries:
+    post:
+      tags: [tournaments]
+      operationId: enterTournamentTeam
+      summary: >-
+        #287 · Inscribir un EQUIPO COMPLETO en un torneo `teams` con reglas NvN. Atómico: o entran
+        los N bots o ninguno (también ante concurrencia o un fallo a mitad). Cada bot debe
+        pertenecer al equipo, ser del solicitante (miembro del equipo) y no estar retirado; cada
+        versión, publicada o congelada (frozen) y elegible (la misma regla que enterTournament).
+        Congela la combinación versión+loadout de cada miembro como la inscripción individual.
+        No cambia la visibilidad del bot, la de su código ni su dueño. Ronda 2 · un bot de OTRO
+        dueño sólo entra con la autorización explícita de su dueño para esa versión, ese equipo
+        y ese torneo (putTeamEntryConsent); sin ella, 409 team_consent_required y no entra nadie.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teamId, members]
+              properties:
+                teamId: { type: string }
+                members:
+                  type: array
+                  minItems: 1
+                  maxItems: 16
+                  description: 'Exactamente `rules.params.teamSize` bots distintos del equipo, cada uno con la versión a inscribir.'
+                  items:
+                    type: object
+                    required: [botId, version]
+                    properties:
+                      botId: { type: string }
+                      version: { type: integer }
+      responses:
+        '201':
+          description: Equipo inscrito (N inscripciones)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  teamName: { type: string }
+                  entries: { type: array, items: { $ref: '#/components/schemas/Entry' } }
+        '400': { description: 'teamId o members mal formados, o un bot repetido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'forbidden (no eres miembro del equipo)', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
+        '404': { description: 'Torneo o equipo inexistente', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament · team_size_undefined (reglas sin tamaño de equipo) · rules_team_size (no son exactamente N; `teamSize`, `got`) · team_bot_not_member (`botIds`) · bot_retired (`botIds`) · bot_not_published (`notPublished` con `currentState`) · bot_version_not_eligible (`notEligible`) · team_consent_required (algún bot de otro dueño sin su autorización de esa versión; `botIds`) · team_already_entered · already_entered (`botIds`). Ninguno inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
+
+  /tournaments/{tournamentId}/team-consents:
+    get:
+      tags: [tournaments]
+      operationId: listTeamEntryConsents
+      summary: '#287 · Autorizaciones de los dueños para inscribir sus bots con un equipo en este torneo. Sólo miembros del equipo; sólo bot y versión (nunca código).'
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: teamId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Autorizaciones vigentes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { type: object, properties: { botId: { type: string }, version: { type: integer }, mine: { type: boolean } } }
+        '400': { description: teamId obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: No eres miembro del equipo, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Torneo inexistente, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /tournaments/{tournamentId}/team-consents/{botId}:
+    put:
+      tags: [tournaments]
+      operationId: putTeamEntryConsent
+      summary: >-
+        #287 · El DUEÑO de un bot autoriza que su equipo lo inscriba en este torneo (torneo `teams`
+        abierto con tamaño) con UNA versión concreta, publicada o congelada y elegible. Sólo el
+        dueño; el bot debe ser del equipo y el dueño miembro. Reemplaza una autorización previa
+        mientras el bot no esté inscrito.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teamId, version]
+              properties:
+                teamId: { type: string }
+                version: { type: integer }
+      responses:
+        '200':
+          description: Autorizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  botId: { type: string }
+                  version: { type: integer }
+        '400': { description: teamId o version mal formados, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: 'Torneo inexistente, o el bot no es tuyo (no se revela)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament · team_bot_not_member · bot_retired · already_entered · bot_not_published · bot_version_not_eligible', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+    delete:
+      tags: [tournaments]
+      operationId: deleteTeamEntryConsent
+      summary: >-
+        #287 · El dueño retira su autorización. Si el equipo ya estaba inscrito (pendiente), el
+        equipo ENTERO sale de la inscripción en la misma transacción (todo o nada), auditado.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Retirada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  botId: { type: string }
+                  revoked: { type: boolean, const: true }
+                  withdrawnEntries: { type: integer }
+        '404': { description: No hay autorización tuya para ese bot, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
@@ -1145,7 +1298,7 @@ paths:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
         '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #288) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #289) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots) · #287 team_roster_changed (algún bot inscrito con su equipo ya no está en él, se retiró o su dueño retiró la autorización, o una inscripción no tiene equipo; `changedEntries`) · entries_not_eligible también si una versión inscrita quedó suspendida o retirada. Todas las inscripciones señaladas (`notEligibleEntries`) las puede excluir el organizador (mismo predicado). not_enough_participants (B/0.5.0: menos de 2 inscripciones que compiten, o menos de 2 equipos con bots inscritos en formato `teams`; con `required`, `current` y `unit`; se evalúa dentro de la transacción del cierre, tras el resto de comprobaciones y antes de cualquier efecto). El cierre es atómico: ante cualquier 409 no se congela nada.', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/actions/cancel:
     post:
@@ -2433,6 +2586,22 @@ components:
               type: array
               description: 'ELIG · sólo con error=entries_not_eligible: ids de inscripción (sin motivo).'
               items: { type: object, properties: { entryId: { type: string } } }
+            changedEntries:
+              type: array
+              description: '#287 · sólo con error=team_roster_changed: inscripciones cuyo bot ya no está en su equipo (ids de inscripción y de equipo, sin datos del bot).'
+              items: { type: object, properties: { entryId: { type: string }, teamId: { type: string, nullable: true } } }
+
+    TeamEntryError:
+      allOf:
+        - $ref: '#/components/schemas/NotEligibleError'
+        - type: object
+          properties:
+            botIds: { type: array, items: { type: string }, description: '#287 · bots afectados (team_bot_not_member, team_bot_not_owned, bot_retired, already_entered): sólo los que envió el solicitante.' }
+            teamSize: { type: integer }
+            got: { type: integer }
+            notPublished:
+              type: array
+              items: { type: object, properties: { botId: { type: string }, version: { type: integer }, currentState: { type: string } } }
 
     EligibilityInventory:
       type: object
@@ -2653,6 +2822,7 @@ components:
         loadoutRevision: { type: integer }
         frozen: { type: boolean, description: 'Congelado al cerrar inscripciones: la combinación código+loadout ya no cambia (cap. 17.2).' }
         replacedVersion: { type: integer, description: 'ELIG · sólo en el 200 que sustituye una inscripción pendiente no elegible: la versión anterior.' }
+        teamId: { type: string, nullable: true, description: '#287 · equipo con el que se inscribió (enterTournamentTeam); ausente o null en la inscripción individual.' }
 
     PracticeBattleInput:
       type: object
@@ -3082,7 +3252,8 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate). Siempre null en un match failed (sin resultado: nadie ganó)' }
+        advancedBotId: { type: string, nullable: true, description: 'Sólo en un match failed de eliminatoria: el bot que avanza por seed (lado home del emparejamiento), NO un ganador. Ausente en el resto de estados' }
         winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
         winnerBotName: { type: string, description: 'VISIBILIDAD (0.15.0) · nombre de competición del ganador (nombre actual del bot), sólo si el solicitante puede identificarlo (torneo con broadcast o bot visible); ausente si winnerPrivate' }
         winnerTeamId: { type: string, nullable: true }

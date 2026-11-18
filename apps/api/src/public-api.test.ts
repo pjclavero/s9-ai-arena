@@ -362,6 +362,24 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
     expect(entry.body.loadoutRevision).toBe(1);
     expect(entry.body.frozen).toBe(false);
 
+    // B (0.5.0) · cerrar exige al menos 2 inscritos: un segundo bot publicado.
+    const auth2 = { Authorization: `Bearer ${dev}` };
+    const rival = await request(app).post("/bots").set(auth2).send({ name: "public-rival", visibility: "public" });
+    await request(app).post(`/bots/${rival.body.id}/loadouts`).set(auth2).send(GOOD_LOADOUT);
+    const rv = await request(app)
+      .post(`/bots/${rival.body.id}/versions`)
+      .set(auth2)
+      .field("runtime", "python")
+      .field("loadoutRevision", "1")
+      .attach("source", Buffer.from("print('y')"), "bot.py");
+    await request(app).post(`/bots/${rival.body.id}/versions/${rv.body.version}/actions/submit`).set(auth2);
+    await request(app).post(`/bots/${rival.body.id}/versions/${rv.body.version}/actions/publish`).set(auth2).send({});
+    const entry2 = await request(app)
+      .post(`/tournaments/${t.body.id}/entries`)
+      .set(auth2)
+      .send({ botId: rival.body.id, version: 1 });
+    expect(entry2.status).toBe(201);
+
     const closed = await request(app)
       .post(`/tournaments/${t.body.id}/actions/close-entries`)
       .set("Authorization", `Bearer ${organizer}`);

@@ -57,6 +57,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Ver métricas, alertas y logs | [observability.md](observability.md) | host (perfil `observability`) |
 | Comprobar las copias | [backup.md](backup.md) | host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |
+| Llevar bots y equipos a una instalación nueva (export/import portable) | [portable-export.md](portable-export.md) | cualquier host con Node y acceso a las dos APIs |
 | Saber si la instalación está lista | [readiness.md](readiness.md) | host |
 | Diagnosticar | [diagnostics.md](diagnostics.md) · [troubleshooting.md](troubleshooting.md) | host |
 | Actualizar o cambiar la versión de un servicio | [upgrades.md](upgrades.md) | host de build + host productivo |

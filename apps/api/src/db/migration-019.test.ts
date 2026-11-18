@@ -44,6 +44,8 @@ const strip = (rows: unknown[], col: string) =>
     const { [col]: _drop, ...rest } = r as Record<string, unknown>;
     return rest;
   });
+/** #287 · columnas de migraciones POSTERIORES a la 019 (022: entries.team_id), fuera de la comparación. */
+const withoutLater = (tn: string, rows: unknown) => (tn === "entries" ? strip(rows as unknown[], "team_id") : rows);
 async function lastMigration(): Promise<string> {
   return (await h.db("knex_migrations").orderBy("id", "desc").first()).name;
 }
@@ -107,7 +109,9 @@ describe("migración 019_visibility_broadcast", () => {
     const afterUp = await dump();
     expect(strip(afterUp.tournaments, "broadcast")).toEqual(before.tournaments);
     expect((afterUp.tournaments as { broadcast: boolean }[]).every((x) => x.broadcast === false)).toBe(true);
-    for (const tn of TABLES.filter((x) => x !== "tournaments")) expect(afterUp[tn]).toEqual(before[tn]);
+    // #287 · la 022 (posterior) añade entries.team_id: se compara sin esa columna.
+    for (const tn of TABLES.filter((x) => x !== "tournaments"))
+      expect(withoutLater(tn, afterUp[tn])).toEqual(withoutLater(tn, before[tn]));
     // Enmienda a D9: ahora sí se puede ocultar; el resto del guardián sigue.
     await hide(bot.botId);
     expect((await h.db("bot_versions").where({ bot_id: bot.botId, version: 1 }).first()).code_public).toBe(false);
@@ -134,7 +138,8 @@ describe("migración 019_visibility_broadcast", () => {
     expect(await columns("tournaments")).not.toContain("broadcast");
     const afterDown = await dump();
     expect(afterDown.tournaments).toEqual(strip(backup.tournaments, "broadcast"));
-    for (const tn of TABLES.filter((x) => x !== "tournaments")) expect(afterDown[tn]).toEqual(backup[tn]);
+    for (const tn of TABLES.filter((x) => x !== "tournaments"))
+      expect(withoutLater(tn, afterDown[tn])).toEqual(withoutLater(tn, backup[tn]));
     // Vuelve la irreversibilidad de D9.
     await expect(hide(bot.botId)).rejects.toThrow(/code_public es irreversible/);
 

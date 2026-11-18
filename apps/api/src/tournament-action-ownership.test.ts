@@ -331,6 +331,7 @@ describe("TAO-V · detalle: viewerCanManage (la web oculta lo que no se puede ha
 describe("TAO-N · torneo sin created_by (creador borrado): sólo staff", () => {
   it("TAO-N1 organizador → 403 en close y dry-run; moderador → 200/202", async () => {
     const id = await createTournament();
+    await enterBots(id, 2); // B (0.5.0): close-entries exige >=2 inscritos
     await h.db("tournaments").where({ id }).update({ created_by: null });
     expect((await close(id, tok.owner)).status).toBe(403);
     expect((await dryRun(id, tok.owner)).status).toBe(403);
