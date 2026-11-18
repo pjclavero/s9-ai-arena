@@ -240,6 +240,11 @@ node scripts/portable/portable.mjs export --out "$T/portable-export"
 node scripts/portable/portable.mjs verify "$T/portable-export"
 ( cd "$T/portable-export" && sha256sum -c checksums.sha256 )
 
+# 3b) PREVIO al paso 4 (sólo lectura): el destino existe y tiene rsync, en ambos extremos
+ssh <USUARIO_BACKUP>@<HOST_BACKUP> "findmnt -T <RUTA_BACKUP_BASE>; command -v rsync; df -h <RUTA_BACKUP_BASE> | tail -1"
+command -v rsync
+#    Si falta el directorio <RUTA_BACKUP> (rsync no crea padres), crearlo antes: ssh … "mkdir -p <RUTA_BACKUP>"
+
 # 4) copia al host del hipervisor (disco de backup), comprobando por contenido
 rsync -a --checksum "$T/portable-export/" <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_BACKUP>/portable-export/
 #    (alternativa sin rsync: scp -r … y los pasos 5 y 6 siguen siendo obligatorios)
