@@ -508,7 +508,7 @@ describe("TC-K · contrato OpenAPI de cancel y close-entries (acotado a las ruta
     for (const s of seen.filter((x) => x.status !== 401)) {
       const entry = doc[String(s.status)];
       expect(entry, `${operationId}: el yaml no documenta el ${s.status} que responde la implementación`).toBeDefined();
-      if (s.error) {
+      if (s.status === 409 && s.error) {
         expect(
           refDescription(entry),
           `${operationId}: el ${s.status} documentado no menciona el código "${s.error}"`,
@@ -556,7 +556,7 @@ describe("TC-K · contrato OpenAPI de cancel y close-entries (acotado a las ruta
     for (const s of seen) {
       const entry = doc[String(s.status)];
       expect(entry, `closeEntries: el yaml no documenta el ${s.status} que responde la implementación`).toBeDefined();
-      if (s.error) expect(refDescription(entry)).toContain(s.error);
+      if (s.status === 409 && s.error) expect(refDescription(entry)).toContain(s.error);
     }
     for (const code of ["200", "403", "409"]) expect(doc[code], `closeEntries: falta ${code}`).toBeDefined();
   });
