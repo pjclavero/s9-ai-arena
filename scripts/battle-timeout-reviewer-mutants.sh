@@ -23,7 +23,7 @@ M=(
 "apps/tournament-worker/src/errors.ts|if (e.name === \"KnexTimeoutError\") return true;|if (false) return true;|R7 EQUIV KnexTimeoutError por nombre"
 "apps/tournament-worker/src/errors.ts|\"57P03\", // cannot_connect_now|\"57P03\", \"42601\",|R8 42601 sintaxis transitorio"
 "apps/tournament-worker/src/battle-resources.ts|if (err.code === \"battle_timeout\") return \"TIMEOUT\";|/* sin linea */|R9 classifyEnd sin rama por codigo battle_timeout"
-"packages/game-rules/battle-timing.ts|return Math.min(derivado, MAX_CONTAINER_BATTLE_TIMEOUT_MS);|return derivado;|R10 guard sin techo setTimeout"
+"packages/game-rules/battle-timing.ts|const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs;|const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs; return derivado;|R10 guard sin techo setTimeout"
 "packages/game-rules/battle-timing.ts|const f = Number.isFinite(factor) && factor >= 1 ? factor : 1;|const f = factor;|R11 factor sin validar"
 "apps/tournament-worker/src/errors.ts|const DEFAULT_RETRY_POLICY: RetryPolicy = { backoffMs: (n) => Math.min(60_000, 1000 * 2 ** n) };|const DEFAULT_RETRY_POLICY: RetryPolicy = { backoffMs: (n) => 1000 * 2 ** n };|R13 backoff por defecto sin tope"
 )
