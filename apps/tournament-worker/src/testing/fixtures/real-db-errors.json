@@ -1,0 +1,597 @@
+{
+  "_meta": {
+    "node": "v22.15.1",
+    "pg": "pg",
+    "generado": "por scripts/capture-pg-errors.mjs"
+  },
+  "ipv4_cerrado": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 41179,
+      "message": "connect ECONNREFUSED 127.0.0.1:41179",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 41179,
+      "message": "connect ECONNREFUSED 127.0.0.1:41179",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "localhost_dualstack": {
+    "pg": {
+      "ctor": "AggregateError",
+      "name": "AggregateError",
+      "code": "ECONNREFUSED",
+      "message": "",
+      "stackFrames": [
+        "internalConnectMultiple (node:net)",
+        "afterConnectMultiple (node:net)"
+      ],
+      "hasCause": false,
+      "errors": [
+        {
+          "ctor": "Error",
+          "name": "Error",
+          "code": "ECONNREFUSED",
+          "errno": -111,
+          "syscall": "connect",
+          "address": "::1",
+          "port": 41179,
+          "message": "connect ECONNREFUSED ::1:41179",
+          "stackFrames": [
+            "createConnectionError (node:net)",
+            "afterConnectMultiple (node:net)"
+          ],
+          "hasCause": false
+        },
+        {
+          "ctor": "Error",
+          "name": "Error",
+          "code": "ECONNREFUSED",
+          "errno": -111,
+          "syscall": "connect",
+          "address": "127.0.0.1",
+          "port": 41179,
+          "message": "connect ECONNREFUSED 127.0.0.1:41179",
+          "stackFrames": [
+            "createConnectionError (node:net)",
+            "afterConnectMultiple (node:net)"
+          ],
+          "hasCause": false
+        }
+      ]
+    },
+    "knex": {
+      "ctor": "AggregateError",
+      "name": "AggregateError",
+      "code": "ECONNREFUSED",
+      "message": "",
+      "stackFrames": [
+        "internalConnectMultiple (node:net)",
+        "afterConnectMultiple (node:net)"
+      ],
+      "hasCause": false,
+      "errors": [
+        {
+          "ctor": "Error",
+          "name": "Error",
+          "code": "ECONNREFUSED",
+          "errno": -111,
+          "syscall": "connect",
+          "address": "::1",
+          "port": 41179,
+          "message": "connect ECONNREFUSED ::1:41179",
+          "stackFrames": [
+            "createConnectionError (node:net)",
+            "afterConnectMultiple (node:net)"
+          ],
+          "hasCause": false
+        },
+        {
+          "ctor": "Error",
+          "name": "Error",
+          "code": "ECONNREFUSED",
+          "errno": -111,
+          "syscall": "connect",
+          "address": "127.0.0.1",
+          "port": 41179,
+          "message": "connect ECONNREFUSED 127.0.0.1:41179",
+          "stackFrames": [
+            "createConnectionError (node:net)",
+            "afterConnectMultiple (node:net)"
+          ],
+          "hasCause": false
+        }
+      ]
+    }
+  },
+  "dns_no_resuelve": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENOTFOUND",
+      "errno": -3008,
+      "syscall": "getaddrinfo",
+      "hostname": "no-existe.invalid",
+      "message": "getaddrinfo ENOTFOUND no-existe.invalid",
+      "stackFrames": [
+        "GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENOTFOUND",
+      "errno": -3008,
+      "syscall": "getaddrinfo",
+      "hostname": "no-existe.invalid",
+      "message": "getaddrinfo ENOTFOUND no-existe.invalid",
+      "stackFrames": [
+        "GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns)"
+      ],
+      "hasCause": false
+    }
+  },
+  "reset_durante_conexion": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 43853,
+      "message": "connect ECONNRESET 127.0.0.1:43853",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 43853,
+      "message": "connect ECONNRESET 127.0.0.1:43853",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "backend_terminado_en_vuelo": {
+    "pg": {
+      "ctor": "DatabaseError",
+      "name": "error",
+      "code": "57P01",
+      "message": "terminating connection due to administrator command",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async casosHost (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)",
+        "async main (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    }
+  },
+  "backend_terminado_ocioso": {
+    "pg": {
+      "ctor": "DatabaseError",
+      "name": "error",
+      "code": "57P01",
+      "message": "terminating connection due to administrator command",
+      "stackFrames": [
+        "parseErrorMessage (node_modules/pg-protocol/dist/parser.js)",
+        "Parser.handlePacket (node_modules/pg-protocol/dist/parser.js)",
+        "Parser.parse (node_modules/pg-protocol/dist/parser.js)",
+        "Socket.<anonymous> (node_modules/pg-protocol/dist/index.js)",
+        "Socket.emit (node:events)",
+        "addChunk (node:internal/streams/readable)",
+        "readableAddChunkPushByteMode (node:internal/streams/readable)",
+        "Readable.push (node:internal/streams/readable)"
+      ],
+      "hasCause": false
+    }
+  },
+  "consulta_sobre_cliente_muerto": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "Client has encountered a connection error and is not queryable",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async casosHost (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)",
+        "async main (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    }
+  },
+  "statement_timeout": {
+    "pg": {
+      "ctor": "DatabaseError",
+      "name": "error",
+      "code": "57014",
+      "message": "canceling statement due to statement timeout",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async casosHost (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)",
+        "async main (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    }
+  },
+  "backend_terminado_knex": {
+    "knex": {
+      "ok": true
+    }
+  },
+  "reset_en_vuelo": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "read",
+      "message": "read ECONNRESET",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async casosHost (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)",
+        "async main (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    },
+    "evento_error_del_cliente": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "read",
+      "message": "read ECONNRESET",
+      "stackFrames": [
+        "TCP.onStreamRead (node:internal/stream_base_commons)"
+      ],
+      "hasCause": false
+    }
+  },
+  "reset_ocioso": {
+    "evento_error_del_cliente": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "read",
+      "message": "read ECONNRESET",
+      "stackFrames": [
+        "TCP.onStreamRead (node:internal/stream_base_commons)"
+      ],
+      "hasCause": false
+    }
+  },
+  "reset_en_vuelo_knex": {
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNRESET",
+      "errno": -104,
+      "syscall": "read",
+      "message": "select pg_sleep(30) - read ECONNRESET",
+      "stackFrames": [
+        "TCP.onStreamRead (node:internal/stream_base_commons)"
+      ],
+      "hasCause": false
+    }
+  },
+  "servidor_muerto_en_vuelo": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "Connection terminated unexpectedly",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async casosHost (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)",
+        "async main (file:///srv/s9-test/wt-a3/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    },
+    "evento_error_del_cliente": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "Connection terminated unexpectedly",
+      "stackFrames": [
+        "Connection.<anonymous> (node_modules/pg/lib/client.js)",
+        "Object.onceWrapper (node:events)",
+        "Connection.emit (node:events)",
+        "Socket.<anonymous> (node_modules/pg/lib/connection.js)",
+        "Socket.emit (node:events)",
+        "TCP.<anonymous> (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "servidor_muerto_reconexion": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 32772,
+      "message": "connect ECONNREFUSED 127.0.0.1:32772",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "127.0.0.1",
+      "port": 32772,
+      "message": "connect ECONNREFUSED 127.0.0.1:32772",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "nombre_sin_escucha": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "172.19.0.2",
+      "port": 5432,
+      "message": "connect ECONNREFUSED 172.19.0.2:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ECONNREFUSED",
+      "errno": -111,
+      "syscall": "connect",
+      "address": "172.19.0.2",
+      "port": 5432,
+      "message": "connect ECONNREFUSED 172.19.0.2:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "nombre_no_resuelve": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "timeout expired",
+      "stackFrames": [
+        "Timeout._onTimeout (node_modules/pg/lib/client.js)",
+        "listOnTimeout (node:internal/timers)",
+        "process.processTimers (node:internal/timers)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "KnexTimeoutError",
+      "name": "KnexTimeoutError",
+      "message": "Knex: Timeout acquiring a connection. The pool is probably full. Are you missing a .transacting(trx) call?",
+      "stackFrames": [
+        "Client_PG.acquireConnection (node_modules/knex/lib/client.js)",
+        "async Runner.ensureConnection (node_modules/knex/lib/execution/runner.js)",
+        "async Runner.run (node_modules/knex/lib/execution/runner.js)",
+        "async knexSelect (file:///repo/scripts/capture-pg-errors.mjs)",
+        "async interno (file:///repo/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": true,
+      "cause": {
+        "ctor": "TimeoutError",
+        "name": "Error",
+        "message": "operation timed out for an unknown reason",
+        "stackFrames": [
+          "(node_modules/tarn/dist/PendingOperation.js)",
+          "async Client_PG.acquireConnection (node_modules/knex/lib/client.js)",
+          "async Runner.ensureConnection (node_modules/knex/lib/execution/runner.js)",
+          "async Runner.run (node_modules/knex/lib/execution/runner.js)",
+          "async knexSelect (file:///repo/scripts/capture-pg-errors.mjs)",
+          "async interno (file:///repo/scripts/capture-pg-errors.mjs)"
+        ],
+        "hasCause": false
+      }
+    }
+  },
+  "nombre_servidor_matado_en_vuelo": {
+    "en_vuelo": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "Connection terminated unexpectedly",
+      "stackFrames": [
+        "(node_modules/pg/lib/client.js)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)",
+        "async interno (file:///repo/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": false
+    },
+    "evento_error_del_cliente": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "Connection terminated unexpectedly",
+      "stackFrames": [
+        "Connection.<anonymous> (node_modules/pg/lib/client.js)",
+        "Object.onceWrapper (node:events)",
+        "Connection.emit (node:events)",
+        "Socket.<anonymous> (node_modules/pg/lib/connection.js)",
+        "Socket.emit (node:events)",
+        "TCP.<anonymous> (node:net)"
+      ],
+      "hasCause": false
+    },
+    "reconexion_pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "message": "timeout expired",
+      "stackFrames": [
+        "Timeout._onTimeout (node_modules/pg/lib/client.js)",
+        "listOnTimeout (node:internal/timers)",
+        "process.processTimers (node:internal/timers)"
+      ],
+      "hasCause": false
+    },
+    "knex_tras_muerte": {
+      "ctor": "KnexTimeoutError",
+      "name": "KnexTimeoutError",
+      "message": "Knex: Timeout acquiring a connection. The pool is probably full. Are you missing a .transacting(trx) call?",
+      "stackFrames": [
+        "Client_PG.acquireConnection (node_modules/knex/lib/client.js)",
+        "async Runner.ensureConnection (node_modules/knex/lib/execution/runner.js)",
+        "async Runner.run (node_modules/knex/lib/execution/runner.js)",
+        "async interno (file:///repo/scripts/capture-pg-errors.mjs)"
+      ],
+      "hasCause": true,
+      "cause": {
+        "ctor": "TimeoutError",
+        "name": "Error",
+        "message": "operation timed out for an unknown reason",
+        "stackFrames": [
+          "(node_modules/tarn/dist/PendingOperation.js)"
+        ],
+        "hasCause": false
+      }
+    }
+  },
+  "ip_sin_asignar": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "EHOSTUNREACH",
+      "errno": -113,
+      "syscall": "connect",
+      "address": "172.29.73.77",
+      "port": 5432,
+      "message": "connect EHOSTUNREACH 172.29.73.77:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "EHOSTUNREACH",
+      "errno": -113,
+      "syscall": "connect",
+      "address": "172.29.73.77",
+      "port": 5432,
+      "message": "connect EHOSTUNREACH 172.29.73.77:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "red_sin_ruta_ipv4": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "10.99.0.5",
+      "port": 5432,
+      "message": "connect ENETUNREACH 10.99.0.5:5432 - Local (0.0.0.0:0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "10.99.0.5",
+      "port": 5432,
+      "message": "connect ENETUNREACH 10.99.0.5:5432 - Local (0.0.0.0:0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    }
+  },
+  "red_sin_ruta_ipv6": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "fd00:dead:beef::5",
+      "port": 5432,
+      "message": "connect ENETUNREACH fd00:dead:beef::5:5432 - Local (:::0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "fd00:dead:beef::5",
+      "port": 5432,
+      "message": "connect ENETUNREACH fd00:dead:beef::5:5432 - Local (:::0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    }
+  }
+}

@@ -34,7 +34,7 @@ import { Battle, type BattleResult, type BotAgent, type Participant } from "../.
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
 import { rulesOf } from "../../api/src/services/battle-rules.js";
-import { InfrastructureFailure } from "./errors.js";
+import { InfrastructureFailure, toInfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 import { BattleResourceRegistry, defaultBattleResources } from "./battle-resources.js";
@@ -409,7 +409,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       if (err instanceof InfrastructureFailure) throw err;
       if (err && typeof err === "object" && (err as Error).name === "SportingFailure") throw err;
       // El motor o los agentes murieron: fallo técnico (19.2), reintentable.
-      throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
+      throw toInfrastructureFailure(err, "engine_start_failure");
     } finally {
       try {
         engine.free();

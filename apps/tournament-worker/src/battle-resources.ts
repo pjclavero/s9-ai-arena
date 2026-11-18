@@ -531,7 +531,7 @@ export function classifyEnd(input: { ok: boolean; error?: unknown; abortReason?:
   if (err?.name === "InfrastructureFailure") {
     if (err.code === "battle_busy") return "CANCELLED";
     if (err.code === "battle_aborted") return "MANUAL_ABORT";
-    if (/timeout global/.test(String(err.message))) return "TIMEOUT";
+    if (err.code === "battle_timeout") return "TIMEOUT";
     if (err.code === "engine_start_failure") return "ENGINE_ERROR";
     return "FAILED";
   }
