@@ -442,6 +442,7 @@ describe("TC-F · FROZEN-REUSE con cierres concurrentes (ronda 2, H-1)", () => {
         loadout_revision: shared.loadoutRevision,
         frozen: false,
       });
+      await enter(t, 1); // B (0.5.0): el cierre exige >=2 inscritos; un bot propio distinto por torneo
     }
     // Retiene el INSERT del job de t1 (dedupe_key única): el cierre 1 queda bloqueado
     // DESPUÉS de congelar la versión y antes de su commit.

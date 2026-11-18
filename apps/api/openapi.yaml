@@ -128,7 +128,7 @@ info:
   # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
   # cierre, excludeTournamentEntry y la sustitución de versión (lo que bloquea el cierre siempre
   # se puede excluir); freeze condicional (una sola auditoría por versión).
-  version: 0.24.0
+  version: 0.25.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1298,7 +1298,7 @@ paths:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
         '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #289) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots) · #287 team_roster_changed (algún bot inscrito con su equipo ya no está en él, se retiró o su dueño retiró la autorización, o una inscripción no tiene equipo; `changedEntries`) · entries_not_eligible también si una versión inscrita quedó suspendida o retirada. Todas las inscripciones señaladas (`notEligibleEntries`) las puede excluir el organizador (mismo predicado). El cierre es atómico: ante cualquier 409 no se congela nada.', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #289) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots) · #287 team_roster_changed (algún bot inscrito con su equipo ya no está en él, se retiró o su dueño retiró la autorización, o una inscripción no tiene equipo; `changedEntries`) · entries_not_eligible también si una versión inscrita quedó suspendida o retirada. Todas las inscripciones señaladas (`notEligibleEntries`) las puede excluir el organizador (mismo predicado). not_enough_participants (B/0.5.0: menos de 2 inscripciones que compiten, o menos de 2 equipos con bots inscritos en formato `teams`; con `required`, `current` y `unit`; se evalúa dentro de la transacción del cierre, tras el resto de comprobaciones y antes de cualquier efecto). El cierre es atómico: ante cualquier 409 no se congela nada.', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/actions/cancel:
     post:
@@ -3252,7 +3252,8 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate). Siempre null en un match failed (sin resultado: nadie ganó)' }
+        advancedBotId: { type: string, nullable: true, description: 'Sólo en un match failed de eliminatoria: el bot que avanza por seed (lado home del emparejamiento), NO un ganador. Ausente en el resto de estados' }
         winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
         winnerBotName: { type: string, description: 'VISIBILIDAD (0.15.0) · nombre de competición del ganador (nombre actual del bot), sólo si el solicitante puede identificarlo (torneo con broadcast o bot visible); ausente si winnerPrivate' }
         winnerTeamId: { type: string, nullable: true }

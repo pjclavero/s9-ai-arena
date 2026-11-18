@@ -426,7 +426,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
  */
 export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?: string }) {
   // Import diferido para evitar ciclos en la carga de módulos.
-  return import("./battle-runner.js").then(async ({ makeRunBattleHandler, markBattleForReview }) => {
+  return import("./battle-runner.js").then(async ({ makeRunBattleHandler }) => {
+    const { onBattleJobExhausted } = await import("./battle-failure.js");
     const { handleGenerateSchedule, handleTournamentDryRun } = await import("./scheduler.js");
     const { handleProcessResult } = await import("./results.js");
     const { handleUpdateStandings } = await import("./standings.js");
@@ -438,7 +439,8 @@ export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?:
         update_standings: handleUpdateStandings,
         tournament_dry_run: handleTournamentDryRun,
       },
-      onExhausted: markBattleForReview,
+      onExhausted: (db: import("knex").Knex, job: import("./queue.js").JobRow) =>
+        onBattleJobExhausted(job, { db, workerId: "exhausted" }),
     };
   });
 }

@@ -40,6 +40,51 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export const CANCELLABLE_TOURNAMENT_STATES = ["draft", "open"] as const;
 
+/**
+ * B (0.5.0, hallazgo 5) · Mínimo de participantes para cerrar inscripciones: ≥2 inscripciones (≥2
+ * EQUIPOS con algún bot inscrito en formato `teams`). Antes sólo lo comprobaba el worker y el
+ * torneo se quedaba `closed` para siempre.
+ *
+ * Se llama DENTRO de la transacción de `closeEntries`, con el torneo bloqueado FOR UPDATE, las
+ * inscripciones ya leídas, sus bots FOR SHARE y DESPUÉS de `entryCompetitionGate`: así cuenta
+ * exactamente lo que va a competir (el gate rechaza antes cualquier inscripción que no compite,
+ * equipo incompleto o sin autorización incluidos, de modo que nada que la revalidación vaya a
+ * excluir infla el recuento) y es atómico con el resto del cierre: una retirada/exclusión
+ * concurrente espera al cierre (bloquean el torneo o los bots) y ve el torneo cerrado. Sólo
+ * LEE; se ejecuta antes de cualquier efecto (congelado, semillas, calendario).
+ */
+async function assertMinimumParticipants(
+  db: Db,
+  t: Record<string, unknown>,
+  entries: Record<string, unknown>[],
+): Promise<void> {
+  const isTeams = t.format === "teams";
+  let count = entries.length;
+  if (isTeams) {
+    const botIds = [...new Set(entries.map((e) => String(e.bot_id)))];
+    const bots = botIds.length
+      ? ((await db("bots").whereIn("id", botIds).select("id", "team_id")) as { id: string; team_id: string | null }[])
+      : [];
+    const teamOfBot = new Map(bots.map((b) => [String(b.id), b.team_id]));
+    // Equipo EFECTIVO como en #290: el de la inscripción (022) o, en altas previas, el del bot.
+    const teams = new Set<string>();
+    for (const e of entries) {
+      const team = (e.team_id as string | null) ?? teamOfBot.get(String(e.bot_id)) ?? null;
+      if (team) teams.add(team);
+    }
+    count = teams.size;
+  }
+  if (count < 2) {
+    throw conflict(
+      "not_enough_participants",
+      isTeams
+        ? "Un torneo por equipos necesita al menos 2 equipos con bots inscritos para cerrar inscripciones"
+        : "Un torneo necesita al menos 2 inscritos para cerrar inscripciones",
+      { required: 2, current: count, unit: isTeams ? "teams" : "entries" },
+    );
+  }
+}
+
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
 
@@ -100,7 +145,10 @@ export function tournamentMatchToJson(
     slot: m.slot ?? null,
     pairing,
     state: m.state,
-    winnerBotId: winnerHidden ? null : (m.winner_bot_id ?? null),
+    // B · un match `failed` (sin resultado) NO tiene ganador: `winnerBotId` va a null y quien
+    // avanza «por seed» en una eliminatoria se expone aparte en `advancedBotId`.
+    winnerBotId: winnerHidden || m.state === "failed" ? null : (m.winner_bot_id ?? null),
+    ...(m.state === "failed" && !winnerHidden ? { advancedBotId: m.winner_bot_id ?? null } : {}),
     ...(winnerHidden ? { winnerPrivate: true } : {}),
     ...(winnerName !== undefined ? { winnerBotName: winnerName } : {}),
     winnerTeamId: m.winner_team_id ?? null,
@@ -607,6 +655,8 @@ export function tournamentRoutes(
       // + tamaño), el mismo que permite al organizador excluir y al dueño sustituir: lo que
       // bloquea el cierre siempre se puede desbloquear.
       await entryCompetitionGate(db, t, entries);
+      // B · mínimo de participantes, tras el gate (cuenta sólo lo que compite) y antes de cualquier efecto.
+      await assertMinimumParticipants(db, t, entries);
       await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
       // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
       // FROZEN-REUSE (B3) · IDEMPOTENTE: una versión que ya llegó `frozen` (de un torneo

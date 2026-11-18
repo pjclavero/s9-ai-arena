@@ -233,3 +233,54 @@ describe("DEF-R3 · clasificación", () => {
     });
   }
 });
+
+describe("INTB-FIX (P2-5) · advancedBotId respeta la privacidad igual que winnerBotId", () => {
+  // Un match `failed` en una eliminatoria: no hay ganador, pero el bot que avanza «por seed» va en
+  // `advancedBotId`. Si ese bot es privado y ajeno al solicitante NO puede aparecer (ni su id ni
+  // su nombre), como `winnerBotId`; el dueño y el staff sí lo ven.
+  let failedTournament: string;
+  beforeAll(async () => {
+    const [t] = await h
+      .db("tournaments")
+      .insert({
+        name: "AUDIT-UXF-torneo-failed",
+        format: "single_elimination",
+        mode: "deathmatch",
+        ruleset_id: DEFAULT_RULESET_ID,
+        state: "running",
+      })
+      .returning("id");
+    failedTournament = t.id;
+    await h.db("matches").insert({
+      tournament_id: failedTournament,
+      round: 1,
+      slot: "R1M1",
+      state: "failed",
+      pairing: JSON.stringify({ slot: "R1M1", round: 1, bracket: "main", home: BOT.priv, away: BOT.pub1 }),
+      winner_bot_id: BOT.priv,
+    });
+  });
+
+  for (const [who, sees] of [
+    ["anon", false],
+    ["B", false],
+    ["A", true],
+    ["staff", true],
+  ] as const) {
+    it(`${who}: el bot privado que avanza ${sees ? "se ve en advancedBotId" : "NO se expone (ni id ni nombre)"}`, async () => {
+      const r = await get(`/tournaments/${failedTournament}/matches`, who);
+      expect(r.status).toBe(200);
+      const m = r.body.matches.find((x: any) => x.slot === "R1M1");
+      expect(m.state).toBe("failed");
+      expect(m.winnerBotId).toBeNull(); // un failed nunca tiene ganador
+      expect(leaks(r.body)).toBe(sees);
+      if (sees) {
+        expect(m.advancedBotId).toBe(BOT.priv);
+      } else {
+        expect(m.advancedBotId ?? null).toBeNull();
+        expect(m.winnerPrivate).toBe(true);
+        expect(m.pairing.home).toBeNull();
+      }
+    });
+  }
+});

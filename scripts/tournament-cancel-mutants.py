@@ -72,7 +72,7 @@ M = [
         '    if (!window.confirm(CANCEL_CONFIRM_TEXT)) return;\n', '')],
      WEB, ["TW-D1"]),
     ("M9", "process_result pisa cancelled con finished", [(RESULTS,
-        '      .whereNot({ state: "cancelled" })\n', '')],
+        '    .where({ id: tournamentId, state: "running" })\n', '    .where({ id: tournamentId })\n')],
      WRK, ["TW-4"]),
     # INT290 · tras integrar #290 hay DOS barreras contra el doble freeze (el bloqueo FOR NO KEY UPDATE de
     # las versiones y el UPDATE condicional): quitar sólo una es equivalente, así que M11/M11b quitan ambas.
