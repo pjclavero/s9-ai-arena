@@ -6,7 +6,7 @@ después.
 Uso:  python3 scripts/portable/mutants.py [M1 M2 ...]
 Serie, nunca en paralelo sobre el mismo árbol. COMMITEA ANTES: el script restaura cada fichero tras
 su mutante, pero no protege cambios sin commitear. Exige PostgreSQL de test (como `npm run test:db`).
-Ejecutar SÓLO en el laboratorio (VM111), no en ia02.
+Ejecutar SÓLO en el laboratorio de pruebas (no en el host de orquestación).
 """
 import os
 import re
@@ -149,6 +149,19 @@ M = [
     ("E2 motor_batalla_vieja: se lee el motor de la batalla MÁS ANTIGUA",
      [(EXP, "    a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,", "    a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,")],
      [T_FMT], "MÁS RECIENTE"),
+    ("R3a externos_con_nombre: el equipo vuelve a guardar el NOMBRE de bots de otros usuarios",
+     [(EXP, "      else externalCount += 1;", "      else { externalCount += 1; (globalThis.__ext ??= []).push(b.name); }"),
+      (EXP, "        externalBotsCount: externalCount,", "        externalBotsCount: externalCount,\n        externalBots: (globalThis.__ext ?? []).map((name) => ({ name })),")],
+     [T_FMT], "R3-3 ·"),
+    ("R3b accept_sin_exactitud: --accept-engine acepta un valor distinto del de --engine-version",
+     [(EXP, "      if (acceptVersion !== flag)\n", "      if (false)\n")],
+     [T_FMT], "R3-2 · --accept-engine"),
+    ("R3c accept_sin_motivo: --accept-engine no exige motivo",
+     [(EXP, 'if (typeof reason !== "string" || reason.trim().length < 10 || reason.length > 300)', "if (false)")],
+     [T_FMT], "R3-2 · --accept-engine"),
+    ("R3d accept_sin_auditar: el motor forzado no queda anotado en el manifest",
+     [(EXP, "    ...(engineOverride ? { engineOverride } : {}),\n", "")],
+     [T_FMT], "R3-2 · el manifest"),
     ("A1 sin_refresh: el cliente no renueva con el refresh token",
      [(API, "    if (await this.refresh()) return;\n", "")],
      [T_FMT], "cuenta con 2FA"),

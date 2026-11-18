@@ -118,6 +118,8 @@ export async function main(
       out: { type: "string" },
       versions: { type: "string" },
       "engine-version": { type: "string" },
+      "accept-engine": { type: "string" },
+      "accept-engine-reason": { type: "string" },
       "source-sha": { type: "string" },
     });
     if (!v.out) throw new PortableError("usage", "Falta --out <directorio>.");
@@ -126,7 +128,14 @@ export async function main(
     // Motor de ORIGEN: se lee de la auditoría de la última batalla terminada y se valida contra
     // --engine-version si se da. Nunca se toma del checkout de esta herramienta (puede ser otro).
     const detected = await detectEngineVersion(client);
-    const { engineVersion, engineVersionSource } = resolveEngineVersion(v["engine-version"], detected);
+    const { engineVersion, engineVersionSource, engineOverride } = resolveEngineVersion(v["engine-version"], detected, {
+      version: v["accept-engine"],
+      reason: v["accept-engine-reason"],
+    });
+    if (engineOverride)
+      log(
+        `AVISO: motor de origen FORZADO a ${engineOverride.accepted} (la API reporta ${engineOverride.detected}); motivo: ${engineOverride.reason}`,
+      );
     if (engineVersionSource === "audit") log(`motor de origen ${engineVersion} (auditoría de la batalla más reciente)`);
     let sourceSha = v["source-sha"];
     if (!sourceSha) {
@@ -143,6 +152,7 @@ export async function main(
       sourceSha,
       engineVersion,
       engineVersionSource,
+      engineOverride,
       limits,
       log,
     });
@@ -150,7 +160,7 @@ export async function main(
       `EXPORT OK · ${manifest.counts.bots} bots · ${manifest.counts.versions} versiones · ${manifest.counts.loadouts} loadouts · ${manifest.counts.teams} equipos · ${v.out}`,
     );
     io.out(
-      `motor de origen ${manifest.engineVersion} (${manifest.engineVersionSource}) · política de versiones ${manifest.versionsPolicy}`,
+      `motor de origen ${manifest.engineVersion} (${manifest.engineVersionSource}${manifest.engineOverride ? `; forzado, API reporta ${manifest.engineOverride.detected}; motivo: ${manifest.engineOverride.reason}` : ""}) · política de versiones ${manifest.versionsPolicy}`,
     );
     for (const w of manifest.warnings) io.err(`aviso: ${w}`);
     if (manifest.counts.omittedVersions)

@@ -52,11 +52,35 @@ export async function detectEngineVersion(client, { attempts = 5 } = {}) {
  * Con ambos, deben coincidir (se VALIDA); sin flag se usa lo detectado; sin ninguno, error.
  * Devuelve `{ engineVersion, engineVersionSource }`.
  */
-export function resolveEngineVersion(flag, detected) {
+export function resolveEngineVersion(flag, detected, accept = {}) {
   if (flag && detected && flag !== detected.version) {
+    const { version: acceptVersion, reason } = accept ?? {};
+    if (acceptVersion !== undefined) {
+      // Salida explícita y auditada: hay que repetir el valor EXACTO de --engine-version y dar motivo.
+      if (acceptVersion !== flag)
+        throw new PortableError(
+          "engine_accept_mismatch",
+          `--accept-engine ${acceptVersion} no coincide con --engine-version ${flag}: hay que repetir el valor exacto.`,
+        );
+      if (typeof reason !== "string" || reason.trim().length < 10 || reason.length > 300)
+        throw new PortableError(
+          "engine_accept_reason",
+          "--accept-engine exige --accept-engine-reason <motivo> (10 a 300 caracteres): queda en el manifest.",
+        );
+      return {
+        engineVersion: flag,
+        engineVersionSource: "flag-forced",
+        engineOverride: {
+          accepted: flag,
+          detected: detected.version,
+          detectedBattleId: detected.battleId ?? null,
+          reason: reason.trim(),
+        },
+      };
+    }
     throw new PortableError(
       "engine_mismatch",
-      `--engine-version ${flag} no coincide con el motor que la API de origen declara en la auditoría de su última batalla (${detected.version}). Revisa cuál es el motor desplegado antes de exportar.`,
+      `--engine-version ${flag} no coincide con el motor que la API de origen declara en la auditoría de su última batalla (${detected.version}). Revisa cuál es el motor desplegado antes de exportar; si es correcto de verdad, repite con --accept-engine ${flag} --accept-engine-reason <motivo>.`,
     );
   }
   if (flag) return { engineVersion: flag, engineVersionSource: detected ? "flag+audit" : "flag" };
@@ -74,6 +98,7 @@ export async function runExport({
   sourceSha = "unknown",
   engineVersion,
   engineVersionSource = "flag",
+  engineOverride = undefined,
   now = () => new Date(),
   log = () => {},
   knownSecrets = [],
@@ -214,19 +239,23 @@ export async function runExport({
     .map(([bot, teams]) => ({ bot, teams }));
   const teamSlugs = assignSlugs(captainTeams.map((t) => t.name));
   const warnings = [];
+  if (engineOverride)
+    warnings.push(
+      `Motor de origen FORZADO: se declara ${engineOverride.accepted} aunque la API de origen reporta ${engineOverride.detected} (motivo en manifest.engineOverride).`,
+    );
   captainTeams.forEach((t, i) => {
     const slug = teamSlugs[i];
     const members = Array.isArray(t.members) ? t.members : [];
     const tBots = Array.isArray(t.bots) ? t.bots : [];
     const ownBots = [];
-    const external = [];
+    let externalCount = 0;
     for (const b of tBots) {
       const s = slugById.get(b.id);
       if (s) ownBots.push(s);
-      else external.push({ name: b.name });
+      else externalCount += 1;
     }
-    if (external.length)
-      warnings.push(`El equipo «${t.name}» incluye ${external.length} bot(s) de otros usuarios: no se exportan.`);
+    if (externalCount)
+      warnings.push(`El equipo «${t.name}» incluye ${externalCount} bot(s) de otros usuarios: no se exportan.`);
     if (members.length > 1) {
       warnings.push(
         `El equipo «${t.name}» tiene ${members.length - 1} miembro(s) además del capitán: las cuentas no se migran; hay que volver a invitarlas.`,
@@ -239,7 +268,8 @@ export async function runExport({
         name: t.name,
         operatorRole: "captain",
         bots: ownBots.sort(),
-        externalBots: external.sort((a, b) => (a.name < b.name ? -1 : 1)),
+        // sólo un recuento: ni nombre ni id de bots de otros usuarios
+        externalBotsCount: externalCount,
         otherMembers: {
           count: Math.max(0, members.length - 1),
           roles: members
@@ -270,6 +300,7 @@ export async function runExport({
     sourceSha,
     engineVersion,
     engineVersionSource,
+    ...(engineOverride ? { engineOverride } : {}),
     createdAt: now().toISOString(),
     versionsPolicy,
     catalogVersions: [...catalogs].sort(),

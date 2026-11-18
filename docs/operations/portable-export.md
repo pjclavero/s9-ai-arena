@@ -37,7 +37,7 @@ Del usuario autenticado:
 | Versiones de código | **todas** por defecto (ver abajo) | los bytes exactos subidos, runtime, revisión de loadout, versión padre, código público sí/no, estado original |
 | Equipos de los que es capitán | sí | nombre y bots propios del equipo (por slug) |
 | Miembros de equipo que no son el operador | **no** | las cuentas no se migran: el export sólo cuenta cuántos hay y sus roles; hay que volver a invitarlos |
-| Bots de otros usuarios en un equipo | **no** | sólo queda su nombre en `externalBots` |
+| Bots de otros usuarios en un equipo | **no** | sólo queda un recuento (`externalBotsCount`) en el fichero del equipo: ni nombre ni id |
 | Equipos de los que sólo es miembro | **no** | se avisa en `manifest.warnings`, y `manifest.botsInForeignTeams` lista **qué bots propios** (por slug, con el nº de equipos) pertenecían a ellos: esa pertenencia hay que rehacerla con el capitán. No se guarda el nombre del equipo ni dato alguno de otros usuarios |
 
 La «estrategia» de un equipo no es un dato aparte: vive en el código de sus bots, que sí viaja. La radio es un
@@ -54,7 +54,7 @@ portable-export/
   checksums.sha256       formato de sha256sum -c: «<sha256>␣␣<ruta>» de TODOS los ficheros, incluido manifest.json
   bots/<slug>/bot.json   name, visibility, retired, loadouts[], versions[] (con source.file/filename/sha256/bytes)
   bots/<slug>/versions/v<N>/source.bin   los bytes del código tal cual se subieron
-  teams/<slug>.json      name, operatorRole, bots[] (slugs), externalBots[], otherMembers {count, roles}
+  teams/<slug>.json      name, operatorRole, bots[] (slugs), externalBotsCount, otherMembers {count, roles}
 ```
 
 - El `slug` sale del nombre (`[a-z0-9-]`, único y determinista); el nombre original va dentro del JSON.
@@ -103,6 +103,13 @@ El export lo **lee de la propia API de origen**: la auditoría de la batalla ter
 queda anotado en `manifest.engineVersionSource` (`audit`, `flag+audit` o `flag`). Si el origen no tiene ninguna
 batalla terminada legible, `--engine-version` es **obligatorio**: se obtiene del despliegue, con el commit que
 corre en producción: `git show <commit>:apps/arena-engine/src/engine-deps.json` (campo `engine.version`).
+
+**Forzar el motor (salida auditada).** Si la API reporta un motor distinto del real (p. ej. despliegue nuevo y ninguna
+batalla posterior), el export puede continuar con `--engine-version <x.y.z> --accept-engine <x.y.z>
+--accept-engine-reason "<motivo>"`: hay que repetir el valor **exacto** y dar un motivo (10 a 300 caracteres).
+Queda anotado en `manifest.engineOverride` (valor aceptado, valor detectado, batalla y motivo), el origen pasa a
+`flag-forced`, se añade un aviso en `manifest.warnings` y la salida del export lo imprime. El motivo se escanea como
+el resto del manifest (no puede llevar correos, UUID ni credenciales).
 
 ## Qué versiones se exportan
 
@@ -239,8 +246,8 @@ rsync -a --checksum "$T/portable-export/" <USUARIO_BACKUP>@<HOST_BACKUP>:<RUTA_B
 
 # 5) verificar el hash EN EL DESTINO y que la lista de hashes es idéntica a la del origen
 ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && sha256sum -c checksums.sha256"
-( cd "$T/portable-export" && find . -type f | sort | xargs sha256sum ) > "$T/hash-origen.txt"
-ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && find . -type f | sort | xargs sha256sum" > "$T/hash-destino.txt"
+( cd "$T/portable-export" && find . -type f | LC_ALL=C sort | xargs sha256sum ) > "$T/hash-origen.txt"
+ssh <USUARIO_BACKUP>@<HOST_BACKUP> "cd <RUTA_BACKUP>/portable-export && find . -type f | LC_ALL=C sort | xargs sha256sum" > "$T/hash-destino.txt"
 diff "$T/hash-origen.txt" "$T/hash-destino.txt" && echo HASH_DESTINO_IGUAL
 
 # 6) verificación de LECTURA: traer la copia del disco de backup a un directorio NUEVO y verificarla
@@ -334,7 +341,8 @@ informe da la correspondencia. Dos versiones con idéntico código, runtime y lo
 | `file_too_large`, `export_too_large` | un fichero o el total superan el tope (ver «Topes de tamaño») | sospechar de un export corrupto o ajeno; sólo si es legítimo, `--max-file-mb`/`--max-total-mb` |
 | `incomplete` | export interrumpido | repetir el export en un directorio vacío |
 | `engine_newer_than_target` / `engine_unsupported` | el destino es de un motor anterior o no soportado | desplegar el motor correcto o ampliar `SUPPORTED_ENGINE_VERSIONS` tras revisar |
-| `engine_mismatch` (export) | `--engine-version` no coincide con el motor que declara la API de origen | comprobar qué motor está desplegado; no forzar |
+| `engine_mismatch` (export) | `--engine-version` no coincide con el motor que declara la API de origen | comprobar qué motor está desplegado. Sólo si el valor de `--engine-version` es correcto de verdad (p. ej. despliegue nuevo sin batallas posteriores): repetir con `--accept-engine <el mismo valor> --accept-engine-reason "<motivo>"`; queda en `manifest.engineOverride`, en `manifest.warnings` y en la salida del export |
+| `engine_accept_mismatch` / `engine_accept_reason` (export) | `--accept-engine` no repite exactamente el valor de `--engine-version`, o falta el motivo (10 a 300 caracteres) | corregir el comando |
 | `credentials_argv` | se pasó `--password`, `--token`… por argumentos | usar `--credentials-file`, `--token-file` o `--token-stdin` |
 | `rate_limited` | más de 60 versiones por hora | repetir el mismo comando más tarde |
 | `auth_failed` (token caducado / TOTP consumido) | token suelto de 15 min o 2FA sin refresh válido | ver «Autenticación de larga duración y 2FA» |

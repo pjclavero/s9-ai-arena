@@ -102,7 +102,7 @@ function writeSyntheticExport(dir: string, o: Opts = {}) {
       name: "Rojo",
       operatorRole: "captain",
       bots: o.teamBots ?? ["alfa", "beta"],
-      externalBots: [],
+      externalBotsCount: 0,
       otherMembers: { count: 0, roles: [] },
     }),
   );
@@ -847,6 +847,39 @@ describe("P2-4 · pérdidas parcialmente silenciosas declaradas en el manifest",
   });
 });
 
+describe("R3-3 · el export no lleva NINGÚN dato de bots de otros usuarios", () => {
+  it("R3-3 · un bot ajeno en un equipo propio deja sólo un recuento: ni nombre ni id en ningún fichero", async () => {
+    const world: FakeWorld = {
+      bots: [bt("b1", "Uno", [{ version: 1, state: "draft" }])],
+      teams: [
+        {
+          id: "t1",
+          name: "Mi equipo",
+          isMember: true,
+          isCaptain: true,
+          members: [],
+          bots: [
+            { id: "b1", name: "Uno" },
+            { id: "bot-ajeno-1", name: "Nombre AJENO Alfa" },
+            { id: "bot-ajeno-2", name: "Nombre AJENO Beta" },
+          ],
+        },
+      ],
+    };
+    const out = join(dir, "e");
+    await runExport({ client: fakeApi(world), dest: out, engineVersion: "0.4.0" });
+    const team = JSON.parse(readFileSync(join(out, "teams", "mi-equipo.json"), "utf8"));
+    expect(team.externalBotsCount).toBe(2);
+    expect(team.externalBots).toBeUndefined();
+    expect(team.bots).toEqual(["uno"]);
+    for (const f of ["teams/mi-equipo.json", "manifest.json"]) {
+      const text = readFileSync(join(out, f), "utf8");
+      for (const leak of ["AJENO", "bot-ajeno"]) expect(text, `${f}: ${leak}`).not.toContain(leak);
+    }
+    expect(verifyExport(out).teams).toHaveLength(1);
+  });
+});
+
 describe("P2-5 · el escáner no aborta porque el NOMBRE de un bot parezca un correo o un UUID", () => {
   const uuidName = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
   it("scanBuffer: un `name` con forma de correo/UUID es válido; en cualquier otro campo sigue siendo un hallazgo", () => {
@@ -1019,6 +1052,45 @@ describe("P1-1 · el motor de origen se lee de la API y se valida", () => {
     expect(resolveEngineVersion("0.5.0", null)).toEqual({ engineVersion: "0.5.0", engineVersionSource: "flag" });
     expect(codeOf(() => resolveEngineVersion("0.5.0", det))).toBe("engine_mismatch");
     expect(() => resolveEngineVersion(undefined, null)).toThrow(/Falta --engine-version/);
+  });
+  it("R3-2 · --accept-engine: fuerza la discrepancia sólo repitiendo el valor exacto y con motivo, y queda auditado", () => {
+    const det = { version: "0.4.0", battleId: "b9" };
+    const motivo = "despliegue nuevo sin batallas posteriores";
+    // sin --accept-engine sigue siendo error
+    expect(codeOf(() => resolveEngineVersion("0.5.0", det, {}))).toBe("engine_mismatch");
+    // valor distinto al de --engine-version
+    expect(codeOf(() => resolveEngineVersion("0.5.0", det, { version: "0.5.1", reason: motivo }))).toBe(
+      "engine_accept_mismatch",
+    );
+    // sin motivo (o trivial)
+    expect(codeOf(() => resolveEngineVersion("0.5.0", det, { version: "0.5.0" }))).toBe("engine_accept_reason");
+    expect(codeOf(() => resolveEngineVersion("0.5.0", det, { version: "0.5.0", reason: "ok" }))).toBe(
+      "engine_accept_reason",
+    );
+    const r = resolveEngineVersion("0.5.0", det, { version: "0.5.0", reason: motivo });
+    expect(r).toEqual({
+      engineVersion: "0.5.0",
+      engineVersionSource: "flag-forced",
+      engineOverride: { accepted: "0.5.0", detected: "0.4.0", detectedBattleId: "b9", reason: motivo },
+    });
+  });
+  it("R3-2 · el manifest y los avisos del export dejan constancia del motor forzado", async () => {
+    const world: FakeWorld = { bots: [bt("b1", "Uno", [{ version: 1, state: "draft" }])] };
+    const out = join(dir, "forzado");
+    const ov = { accepted: "0.5.0", detected: "0.4.0", detectedBattleId: "b9", reason: "despliegue nuevo sin batallas" };
+    await runExport({
+      client: fakeApi(world),
+      dest: out,
+      engineVersion: "0.5.0",
+      engineVersionSource: "flag-forced",
+      engineOverride: ov,
+    });
+    const m = verifyExport(out).manifest;
+    expect(m.engineOverride).toEqual(ov);
+    expect(m.engineVersionSource).toBe("flag-forced");
+    expect(m.warnings.join("\n")).toMatch(/FORZADO/);
+    const normal = await runExport({ client: fakeApi(world), dest: join(dir, "normal"), engineVersion: "0.4.0" });
+    expect(normal.manifest.engineOverride).toBeUndefined();
   });
 });
 

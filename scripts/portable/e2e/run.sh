@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Ensayo E2E del export/import portable con PROCESOS REALES: dos PostgreSQL en contenedores Docker
 # (origen y destino NUEVO y vacío), dos APIs reales (apps/api/src/server.ts), y el CLI como procesos
-# aparte con credenciales de fichero 0600. SÓLO en el laboratorio (VM de pruebas), nunca en el host de
+# aparte con credenciales de fichero 0600. SÓLO en el laboratorio de pruebas, nunca en el host de
 # orquestación ni en producción. Requiere: docker, Node (tsx en node_modules), imagen postgres:16-alpine.
 #
-# Uso: flock -o /srv/s9-test/heavy.lock bash scripts/portable/e2e/run.sh
+# Uso: flock -o <FICHERO_LOCK> bash scripts/portable/e2e/run.sh
 set -euo pipefail
-case "$(hostname)" in ia-server) echo STOP; exit 1 ;; esac
+# Anfitriones en los que NO debe correr (lista separada por espacios, p. ej. el de orquestación):
+# S9_PORTABLE_FORBIDDEN_HOSTS="host1 host2". Vacío por defecto.
+for h in ${S9_PORTABLE_FORBIDDEN_HOSTS:-}; do [ "$(hostname)" = "$h" ] && { echo STOP; exit 1; }; done
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
