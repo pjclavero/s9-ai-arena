@@ -378,7 +378,7 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     expect(download.status).toBe(404);
     const idx = await request(app).get(`/replays/${state.battleDbId}/index`).set(owner);
     expect(idx.status).toBe(200);
-    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v2");
 
     evidence.paso5 = {
       replayPath: state.stored.path,

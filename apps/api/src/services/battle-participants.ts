@@ -72,5 +72,10 @@ export async function assertParticipantsUsable(
     }
   }
   // ELIG · publicada ≠ elegible: el loadout histórico se revalida con el validador actual.
-  await assertVersionsEligible(db, participants);
+  // OLA 2 (EQUIPMENT_PRIVATE): ver un bot público no da su loadout; el detalle del 409 sólo
+  // para su dueño y el staff (moderador+).
+  await assertVersionsEligible(db, participants, {
+    userId,
+    staff: (auth?.rank ?? 0) >= ROLE_RANK.moderator,
+  });
 }

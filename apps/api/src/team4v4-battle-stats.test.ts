@@ -27,6 +27,7 @@ import type { Replay } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { BLUE, RED, play4v4 } from "../../replay-service/tests/fixtures/team4v4.js";
+import { STATS_HITS_STEP } from "../../../packages/projection/policy.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -157,9 +158,19 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
         const bots = Object.values(r.body.perBot as Record<string, any>).filter((b) => b.team === team);
         const sum = (k: string) => bots.reduce((a, b) => a + b[k], 0);
         const t = r.body.perTeam[team];
-        for (const k of ["kills", "deaths", "shotsFired", "shotsHit"])
-          expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
-        for (const k of ["damageDealt", "damageTaken"]) expect(t[k]).toBeCloseTo(sum(k), 6);
+        for (const k of ["kills", "deaths", "shotsFired"]) expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
+        // OLA 2 · daño y aciertos: perTeam suma SIEMPRE lo cuantizado (igual para todo lector, TD-047);
+        // lo que el dueño ve de SUS bots es exacto, así que se cuantiza igual (idempotente en los ajenos).
+        const sumQ = (k: string, step: number) => bots.reduce((a, b) => a + Math.floor(b[k] / step) * step, 0);
+        expect(t.shotsHit, `${actor} ${team} shotsHit`).toBe(sumQ("shotsHit", STATS_HITS_STEP));
+        // M0 · sin daño ABSOLUTO en perTeam para ningún lector; perBot sólo lo lleva al dueño de ese bot.
+        expect(t, `${actor} ${team}`).not.toHaveProperty("damageDealt");
+        expect(t, `${actor} ${team}`).not.toHaveProperty("damageTaken");
+        for (const b of bots) {
+          const mine = actor === "admin" || (actor === "A" && team === "red") || (actor === "C" && team === "blue");
+          if (mine) expect(typeof b.damageDealt).toBe("number");
+          else expect(b).not.toHaveProperty("damageDealt");
+        }
         expect(t.survivors).toBe(bots.filter((b) => b.aliveAtEnd).length);
       }
     }
@@ -174,21 +185,25 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
     }
   });
 
-  it("radio: la actividad es pública en perBot; los descartes, sólo diagnóstico del dueño", async () => {
+  it("radio: actividad y descartes sólo para el dueño (R2: la radio revela el equipamiento)", async () => {
     const r1 = botOf.r1;
     const rival = await get("C");
-    // El rival ve cuánto habló r1 y cuánto oyó cada uno (actividad de juego)...
-    expect(rival.body.perBot[r1].radio.sent).toBeGreaterThan(0);
-    for (const r of RED.filter((x) => x !== "r1"))
-      expect(rival.body.perBot[botOf[r]].radio.receivedFromTeammates).toBeGreaterThan(0);
-    // La radio es de equipo: los azules no oyen a r1 (RADIO_SCOPE=TEAM).
-    for (const b of BLUE) expect(rival.body.perBot[botOf[b]].radio.receivedFromEnemies).toBe(0);
-    // ...pero no cuánto le falla el código: ni descartes ni rechazos ni diagnóstico.
+    // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2): la actividad de radio y el desglose por
+    // ranura revelan el loadout; un tercero ya no los recibe.
+    // (C es dueño de los azules: de los rojos, ajenos, no ve nada de eso).
+    for (const r of RED) {
+      expect(rival.body.perBot[botOf[r]]).not.toHaveProperty("radio");
+      expect(rival.body.perBot[botOf[r]]).not.toHaveProperty("perModule");
+    }
+    // ...ni cuánto le falla el código: ni descartes ni rechazos ni diagnóstico.
     for (const k of DIAGNOSTIC_KEYS) expect(rival.body.perBot[r1]).not.toHaveProperty(k);
-    expect(rival.body.perBot[r1].perModule.radio_a).not.toHaveProperty("rejections");
     expect(rival.body.diagnostics).not.toHaveProperty(r1);
 
     const owner = await get("A");
+    // El dueño sí ve su radio (cuánto habló r1 y cuánto oyeron sus compañeros).
+    expect(owner.body.perBot[r1].radio.sent).toBeGreaterThan(0);
+    for (const r of RED.filter((x) => x !== "r1"))
+      expect(owner.body.perBot[botOf[r]].radio.receivedFromTeammates).toBeGreaterThan(0);
     expect(owner.body.perBot[r1]).not.toHaveProperty("radioDroppedByReason");
     const drops = owner.body.diagnostics[r1].radioDroppedByReason;
     expect(drops.rate_limited).toBeGreaterThan(0);

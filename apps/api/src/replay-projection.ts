@@ -22,21 +22,38 @@
  *  Nadie más: ni anónimos, ni usuarios ajenos, ni miembros de equipo, ni con el
  *  flag público activado.
  *
- * La PROYECCIÓN es una lista BLANCA, no una lista negra sobre el crudo: sólo sale
- * lo que el espectador en directo ya recibe (snapshot público, eventos públicos,
- * resultado deportivo, mundo y nómina pública). Nunca: semilla, ruleset completo,
+ * La PROYECCIÓN es una lista BLANCA, no una lista negra sobre el crudo, y desde la
+ * OLA 2 (MA) la hace la frontera ÚNICA `packages/projection` (audiencia
+ * `public_replay`): ids PÚBLICOS densos por primera visibilidad (#261), casco
+ * cuantizado (hullLevel) y equipamiento privado (R2: sin ranuras, sin hullHpMax,
+ * sin chasis en la nómina). El mapping se calcula UNA vez sobre todo el stream: un
+ * segmento usa los mismos ids que el documento completo. Nunca: semilla, ruleset completo,
  * comandos (ni con `debugOpen`), `radio[].data`, `deployMine`, `participants[].spec`,
  * hashes por tick, ni metadatos del almacén (sha, algoritmo, caducidad, ruta).
  * Sin semilla ni comandos la batalla NO se puede re-simular con lo publicado.
  */
+import { createHash } from "node:crypto";
 import type { Request } from "express";
+import {
+  AudienceProjector,
+  DEFAULT_DISCLOSURE_POLICY,
+  DEFAULT_SPECTATOR_POLICY,
+  PROJECTION_VERSION,
+  PUBLIC_EVENT_KIND_SET,
+  policyRef,
+  ProjectionCache,
+  audienceKey,
+  projectReplayStream,
+  type InternalRosterEntry,
+  type ProjectedReplayStream,
+} from "../../../packages/projection/index.js";
 import type { Db } from "./db/connection.js";
 import { ROLE_RANK } from "./openapi.js";
 
 type Auth = Request["auth"];
 
 /** Marca de formato de la proyección (para clientes y para los tests de fuga). */
-export const PUBLIC_PROJECTION_FORMAT = "s9.replay.public-competition.v1";
+export const PUBLIC_PROJECTION_FORMAT = "s9.replay.public-competition.v2";
 
 /** Rol interno mínimo para el crudo: moderator (y admin). */
 export function isRawReplayRole(auth: Auth): boolean {
@@ -65,9 +82,8 @@ export async function rawReplayAllowed(db: Db, battleId: string, auth: Auth): Pr
 
 // ------------------------------------------------------------- saneado
 /**
- * Claves que JAMÁS salen en una proyección, a cualquier profundidad. Es la red de
- * seguridad bajo la lista blanca (por si un evento o un objetivo de modo llevara
- * algo que no debe): `data` es la carga de la radio.
+ * Claves que JAMÁS salen en lo que no proyecta el paquete (la geometría del mundo).
+ * El stream (frames, eventos, objetivos) ya es lista blanca por campo en la frontera.
  */
 export const FORBIDDEN_PROJECTION_KEYS: ReadonlySet<string> = new Set([
   "seed",
@@ -89,26 +105,8 @@ export const FORBIDDEN_PROJECTION_KEYS: ReadonlySet<string> = new Set([
   "rng",
 ]);
 
-/**
- * Eventos PÚBLICOS que el motor emite a todos (los mismos que recibe el espectador
- * en directo). Un tipo nuevo NO sale hasta que se añade aquí a propósito: un test
- * compara esta lista con lo que el motor emite de verdad.
- */
-export const PUBLIC_EVENT_KINDS: ReadonlySet<string> = new Set([
-  "score_changed",
-  "vehicle_destroyed",
-  "vehicle_eliminated",
-  "mine_triggered",
-  "flag_taken",
-  "flag_dropped",
-  "flag_captured",
-  "flag_returned",
-  "zone_captured",
-  "juggernaut_assigned",
-  "juggernaut_down",
-  "overtime_started",
-  "technical_limit",
-]);
+/** Eventos PÚBLICOS: los de la lista blanca por tipo y campo de la frontera. */
+export const PUBLIC_EVENT_KINDS: ReadonlySet<string> = PUBLIC_EVENT_KIND_SET;
 
 /** Copia de datos planos sin las claves prohibidas (y sin funciones ni prototipos raros). */
 export function scrub(value: unknown, depth = 0): unknown {
@@ -130,90 +128,102 @@ export function scrub(value: unknown, depth = 0): unknown {
 }
 
 const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
-const pos = (p: any) => (p && typeof p === "object" ? { x: num(p.x), y: num(p.y) } : null);
-
-function numberRecord(r: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (r && typeof r === "object") {
-    for (const [k, v] of Object.entries(r as Record<string, unknown>)) if (typeof v === "number") out[k] = v;
-  }
-  return out;
-}
-
-/** Snapshot público, campo a campo (lista blanca = lo que el motor publica al espectador). */
-export function projectSnapshot(s: any): Record<string, unknown> {
-  const out: Record<string, unknown> = { tick: num(s?.tick) };
-  if (typeof s?.overtime === "boolean") out.overtime = s.overtime;
-  out.vehicles = (Array.isArray(s?.vehicles) ? s.vehicles : []).map((v: any) => {
-    const pv: Record<string, unknown> = {
-      id: String(v?.id ?? ""),
-      team: String(v?.team ?? ""),
-      alive: v?.alive === true,
-      position: pos(v?.position),
-      heading: num(v?.heading),
-      turretHeading: num(v?.turretHeading),
-      hullHp: num(v?.hullHp),
-      hullHpMax: num(v?.hullHpMax),
-      carryingFlag: typeof v?.carryingFlag === "string" ? v.carryingFlag : null,
-      juggernaut: v?.juggernaut === true,
-    };
-    if (typeof v?.respawnsLeft === "number") pv.respawnsLeft = v.respawnsLeft;
-    if (Array.isArray(v?.modules)) {
-      pv.modules = v.modules.map((m: any) => ({ slot: String(m?.slot ?? ""), state: String(m?.state ?? "") }));
-    }
-    return pv;
-  });
-  out.projectiles = (Array.isArray(s?.projectiles) ? s.projectiles : []).map((p: any) => ({
-    id: p?.id,
-    position: pos(p?.position),
-  }));
-  out.score = numberRecord(s?.score);
-  out.objectives = Array.isArray(s?.objectives) ? scrub(s.objectives) : [];
-  return out;
-}
-
-/** Evento público: tipo en la lista blanca y sin claves prohibidas. null = no sale. */
-export function projectEvent(e: any): Record<string, unknown> | null {
-  if (!e || typeof e !== "object" || !PUBLIC_EVENT_KINDS.has(String(e.kind))) return null;
-  return scrub(e) as Record<string, unknown>;
-}
-
-export function projectEvents(events: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(events)) return [];
-  const out: Record<string, unknown>[] = [];
-  for (const e of events) {
-    const p = projectEvent(e);
-    if (p) out.push(p);
-  }
-  return out;
-}
-
-/** Resultado deportivo: ganador, motivo de fin, ticks, marcador y hash final (auditoría pública). */
-export function projectResult(r: any): Record<string, unknown> {
-  const technical = r?.endReason === "technical_limit";
-  return {
-    winner: technical ? null : (r?.winner ?? null),
-    ...(technical ? { endReason: "technical_limit" } : {}),
-    ticks: num(r?.ticks),
-    score: numberRecord(r?.score),
-    ...(typeof r?.finalStateHash === "string" ? { finalStateHash: r.finalStateHash } : {}),
-  };
-}
 
 export interface ViewerMeta {
   world: unknown;
-  roster: { id: string; botId: string; team: string; chassis?: string; name?: string }[];
+  /** Nómina INTERNA (id del motor, chasis): la proyecta la frontera, nunca sale tal cual. */
+  roster: InternalRosterEntry[];
+  /** Ids PÚBLICOS del mapa (muros, destructibles, zonas) de la cabecera. */
+  mapEntityIds?: string[];
 }
 
-/** Nómina pública: id de vehículo, bot, bando, chasis (lo que ya recibe el directo) y nombre. */
-function projectRoster(roster: ViewerMeta["roster"] | undefined) {
-  return (roster ?? []).map((r) => ({
-    id: String(r.id),
-    botId: String(r.botId ?? ""),
-    team: String(r.team ?? ""),
-    ...(typeof r.chassis === "string" ? { chassis: r.chassis } : {}),
-    ...(typeof r.name === "string" ? { name: r.name } : {}),
-  }));
+/** Ids PÚBLICOS del mapa (lista blanca del mapper) desde la cabecera del replay. */
+function mapIdsOf(header: any, meta: ViewerMeta | null = null): string[] {
+  if (!header?.map && meta?.mapEntityIds) return meta.mapEntityIds;
+  const m = header?.map ?? {};
+  const ids = (xs: unknown) =>
+    (Array.isArray(xs) ? xs : []).map((x: any) => x?.id).filter((x: unknown): x is string => typeof x === "string");
+  return [...ids(m.walls), ...ids(m.destructibles), ...ids(m.zones)];
+}
+
+/** Nómina interna: la del meta (con nombres) o, si no, la de la cabecera. */
+function rosterOf(header: any, meta: ViewerMeta | null): InternalRosterEntry[] {
+  if (meta?.roster?.length) return meta.roster;
+  const ps: any[] = Array.isArray(header?.participants) ? header.participants : [];
+  return ps.map((p) => ({ id: String(p.id), botId: String(p.botId ?? ""), team: String(p.team ?? "") }));
+}
+
+const PUBLIC_REPLAY = audienceKey("public_replay");
+
+/** Digest de la nómina PÚBLICA (bando, botId, nombre; orden público, sin ids internos). */
+export function publicRosterDigest(roster: readonly InternalRosterEntry[]): string {
+  const rows = roster
+    .map((r) => [String(r.team ?? ""), String(r.botId ?? ""), typeof r.name === "string" ? r.name : null])
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16);
+}
+
+/** Proyector de la audiencia `public_replay` sin frames (nómina y resultado). */
+function rosterProjector(battleId: string, header: any, meta: ViewerMeta | null): AudienceProjector {
+  return new AudienceProjector({
+    battleId,
+    audience: PUBLIC_REPLAY,
+    roster: rosterOf(header, meta),
+    mapEntityIds: mapIdsOf(header, meta),
+  });
+}
+
+/**
+ * Caché de streams PROYECTADOS. Clave = `buildProjectionKey` (audiencia, políticas,
+ * versión de proyección, destino http) con el digest de epochs ligado al sha256 del
+ * crudo: en un stream cerrado los epochs son función del contenido, así que el sha lo
+ * refina (nunca sirve una proyección de otro contenido, audiencia o política).
+ */
+const streamCache = new ProjectionCache<ProjectedReplayStream>(16);
+
+export function projectedReplayStream(
+  replay: { header?: any; events?: unknown; snapshots?: unknown; result?: unknown },
+  meta: ViewerMeta | null,
+  sha?: string,
+): ProjectedReplayStream {
+  const h = replay.header ?? {};
+  const battleId = String(h.battleId ?? "");
+  const run = () =>
+    projectReplayStream({
+      battleId,
+      audience: PUBLIC_REPLAY,
+      roster: rosterOf(h, meta),
+      mapEntityIds: mapIdsOf(h, meta),
+      snapshots: Array.isArray(replay.snapshots) ? replay.snapshots : [],
+      events: Array.isArray(replay.events) ? replay.events : [],
+      result: replay.result,
+    });
+  if (!sha) return run();
+  const pr = rosterProjector(battleId, h, meta);
+  const key = pr.key("*", { renderTarget: "http", visibilityEpochDigest: `sha256:${sha}` });
+  // Subclave: lo que el llamador aporta además del stream (nómina con nombres, resultado).
+  // Lleva el DIGEST de la nómina pública (bando, botId, nombre): un cambio de nombre tras
+  // cachear no sirve nombres antiguos (el sha del crudo no cubre el nombre, que es de la BD).
+  const sub = `${meta ? "meta" : "nometa"}:${replay.result ? "result" : "noresult"}:${publicRosterDigest(rosterOf(h, meta))}`;
+  return streamCache.getOrProject(key, sub, run);
+}
+
+/** Conveniencia (tests y herramientas): proyección de UN frame interno aislado. */
+export function projectSnapshot(frame: any, meta: ViewerMeta | null = null): Record<string, unknown> {
+  const pr = rosterProjector(String(frame?.battleId ?? ""), {}, meta);
+  return pr.project(frame).body as unknown as Record<string, unknown>;
+}
+
+/** Conveniencia: eventos internos proyectados para `public_replay`. */
+export function projectEvents(events: unknown, meta: ViewerMeta | null = null): Record<string, unknown>[] {
+  if (!Array.isArray(events)) return [];
+  const pr = rosterProjector("", {}, meta);
+  const out: Record<string, unknown>[] = [];
+  for (const e of events) {
+    const p = pr.projectEvent(e);
+    if (p) out.push(p);
+  }
+  return out;
 }
 
 /**
@@ -221,9 +231,12 @@ function projectRoster(roster: ViewerMeta["roster"] | undefined) {
  * saltar. Sin sha/algoritmo/caducidad/checksum de mapa/versiones; `debugOpen`
  * siempre false (los comandos nunca salen proyectados).
  */
-export function projectIndex(index: any, meta: ViewerMeta | null): Record<string, unknown> {
+export function projectIndex(index: any, meta: ViewerMeta | null, header: any = null): Record<string, unknown> {
+  const pr = rosterProjector(String(index?.battleId ?? ""), header ?? {}, meta);
   return {
     projection: PUBLIC_PROJECTION_FORMAT,
+    projectionVersion: PROJECTION_VERSION,
+    mappingId: pr.mappingId,
     battleId: String(index?.battleId ?? ""),
     ticks: num(index?.ticks),
     snapshotCount: num(index?.snapshotCount),
@@ -231,22 +244,31 @@ export function projectIndex(index: any, meta: ViewerMeta | null): Record<string
       tick: num(k?.tick),
       snapshotIndex: num(k?.snapshotIndex),
     })),
-    result: projectResult(index?.result),
+    result: pr.projectResult(index?.result),
     official: index?.official === true,
     ...(typeof index?.createdAt === "string" ? { createdAt: index.createdAt } : {}),
     debugOpen: false,
-    ...(meta ? { world: scrub(meta.world), roster: projectRoster(meta.roster) } : {}),
+    ...(meta ? { world: scrub(meta.world), roster: pr.projectRoster() } : {}),
   };
 }
 
-/** Segmento PROYECTADO: snapshots y eventos públicos del rango, NUNCA comandos. */
-export function projectSegment(body: any): Record<string, unknown> {
+/**
+ * Segmento PROYECTADO: frames y eventos públicos del rango, NUNCA comandos. Los ids
+ * salen del stream COMPLETO proyectado (`full`), no del segmento: saltar a cualquier
+ * tick da los mismos ids que el documento entero.
+ */
+export function projectSegment(body: any, full: ProjectedReplayStream): Record<string, unknown> {
+  const ticks = new Set<number>((Array.isArray(body?.snapshots) ? body.snapshots : []).map((s: any) => num(s?.tick)));
+  const evTicks = (Array.isArray(body?.events) ? body.events : []).map((e: any) => num(e?.tick));
+  const evFrom = evTicks.length ? Math.min(...evTicks) : Infinity;
+  const evTo = evTicks.length ? Math.max(...evTicks) : -Infinity;
   return {
     projection: PUBLIC_PROJECTION_FORMAT,
+    mappingId: full.mappingId,
     battleId: String(body?.battleId ?? ""),
     fromKeyframeTick: num(body?.fromKeyframeTick),
-    snapshots: (Array.isArray(body?.snapshots) ? body.snapshots : []).map(projectSnapshot),
-    events: projectEvents(body?.events),
+    snapshots: full.snapshots.filter((s) => ticks.has(s.tick)),
+    events: full.events.filter((e) => num(e.tick) >= evFrom && num(e.tick) <= evTo),
   };
 }
 
@@ -257,16 +279,37 @@ export function projectSegment(body: any): Record<string, unknown> {
 export function projectReplayDocument(
   replay: { header?: any; events?: unknown; snapshots?: unknown; result?: any },
   meta: ViewerMeta | null,
+  sha?: string,
 ): Record<string, unknown> {
   const h = replay.header ?? {};
+  const full = projectedReplayStream(replay, meta, sha);
   return {
     projection: PUBLIC_PROJECTION_FORMAT,
+    projectionVersion: PROJECTION_VERSION,
+    mappingId: full.mappingId,
     battleId: String(h.battleId ?? ""),
     ...(typeof h.rulesetId === "string" ? { rulesetId: h.rulesetId } : {}),
     ...(typeof h.recordedAt === "string" ? { recordedAt: h.recordedAt } : {}),
-    ...(meta ? { world: scrub(meta.world), roster: projectRoster(meta.roster) } : {}),
-    snapshots: (Array.isArray(replay.snapshots) ? replay.snapshots : []).map(projectSnapshot),
-    events: projectEvents(replay.events),
-    result: projectResult(replay.result),
+    ...(meta ? { world: scrub(meta.world), roster: full.roster } : {}),
+    snapshots: full.snapshots,
+    events: full.events,
+    result: full.result,
   };
+}
+
+/**
+ * OLA 2 · MA · Caché HTTP de una respuesta PÚBLICA proyectada (`ProjectedHttpCachePolicy`):
+ * nunca `immutable` (no se podría invalidar ante un cambio de política o de proyección) y
+ * con un ETag que incluye projectionVersion y las dos políticas.
+ */
+export const PROJECTED_HTTP_CACHE_CONTROL = "public, max-age=300";
+
+export function projectedEtag(...parts: string[]): string {
+  const h = createHash("sha256")
+    .update(
+      JSON.stringify([PROJECTION_VERSION, DEFAULT_SPECTATOR_POLICY, policyRef(DEFAULT_DISCLOSURE_POLICY), ...parts]),
+    )
+    .digest("hex")
+    .slice(0, 32);
+  return `"${h}"`;
 }

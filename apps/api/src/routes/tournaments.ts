@@ -22,8 +22,8 @@ import {
   replaceIneligibleEntry,
   teamSizeOf,
 } from "../services/version-eligibility.js";
-import { ROLE_RANK } from "../openapi.js";
 import { pathParam } from "../params.js";
+import { assertCanManageTournament, canManageTournament } from "../services/tournament-access.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
@@ -31,6 +31,14 @@ import { buildTournamentRules, rulesOf, rulesToJson } from "../services/battle-r
 import { ApiError } from "../errors.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * #288 · Estados desde los que se puede cancelar un torneo: los que aún no tienen
+ * calendario ni batallas. `closed` (versiones congeladas, calendario encolado),
+ * `running` (batallas oficiales ya jugadas: Elo y clasificación aplicados) y
+ * `finished` (terminal) se rechazan; ninguna cancelación es destructiva.
+ */
+export const CANCELLABLE_TOURNAMENT_STATES = ["draft", "open"] as const;
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
@@ -218,7 +226,13 @@ export function tournamentRoutes(
         .catch(() => null);
       if (!t) throw notFound();
       const entries = await db("entries").where({ tournament_id: t.id }).count("* as n").first();
-      res.json({ ...tournamentToJson(t), entryCount: Number(entries?.n ?? 0) });
+      // #291 · `viewerCanManage` depende de quién pregunta: nunca en una caché compartida.
+      res.setHeader("Cache-Control", NO_STORE);
+      res.json({
+        ...tournamentToJson(t),
+        entryCount: Number(entries?.n ?? 0),
+        viewerCanManage: canManageTournament(req.auth, t),
+      });
     },
   );
 
@@ -284,7 +298,8 @@ export function tournamentRoutes(
       // FROZEN-REUSE (B2-B4) · `published` o `frozen` (congelada por un torneo anterior:
       // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
       // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
-      await assertTournamentEligible(db, v);
+      // OLA 2 (EQUIPMENT_PRIVATE) · sólo el dueño llega aquí: ve el motivo real de su loadout.
+      await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false });
       // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente que ya no compite se
       // puede cambiar por otra versión válida (nunca se sustituye sola).
       const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
@@ -464,7 +479,8 @@ export function tournamentRoutes(
           },
         );
       }
-      await assertVersionsEligible(trx, roster);
+      // OLA 2 (EQUIPMENT_PRIVATE) · el detalle del 409 sólo para los bots propios del solicitante.
+      await assertVersionsEligible(trx, roster, { userId, staff: false });
       if (await trx("entries").where({ tournament_id: t.id, team_id: teamId }).first()) {
         throw conflict("team_already_entered", "El equipo ya está inscrito en este torneo");
       }
@@ -539,7 +555,7 @@ export function tournamentRoutes(
     res.json(
       await excludeTournamentEntry(
         db,
-        { userId: req.auth!.userId, isOrganizer: req.auth!.rank >= ROLE_RANK.organizer },
+        { userId: req.auth!.userId, rank: req.auth!.rank },
         pathParam(req, "tournamentId"),
         pathParam(req, "entryId"),
         req.body?.reason,
@@ -561,6 +577,7 @@ export function tournamentRoutes(
         .first()
         .catch(() => null);
       if (!t) throw notFound();
+      assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff (tras el cerrojo, antes de tocar nada)
       if (t.state !== "open") {
         throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
           currentState: t.state,
@@ -730,7 +747,7 @@ export function tournamentRoutes(
         throw conflict("already_entered", "El bot ya está inscrito: retira antes la autorización para cambiarla");
       }
       const v = await tx("bot_versions").where({ bot_id: botId, version }).first();
-      await assertTournamentEligible(tx, v); // la regla única de #283 (estado + loadout)
+      await assertTournamentEligible(tx, v, { userId, staff: false }); // la regla única de #283 (estado + loadout)
       await tx("team_entry_consents")
         .insert({ tournament_id: t.id, bot_id: botId, team_id: teamId, version, owner_id: userId })
         .onConflict(["tournament_id", "bot_id"])
@@ -777,12 +794,66 @@ export function tournamentRoutes(
     res.json(done);
   });
 
+  /**
+   * #288 · Cancelar un torneo que aún no tiene calendario (`draft`/`open`). Dueño o
+   * staff. Sólo cambia el estado a `cancelled` (terminal): entries, matches, batallas,
+   * clasificación y auditoría se conservan. Auditado en la misma transacción.
+   * Idempotente: cancelar uno ya cancelado devuelve 200 sin otra entrada de auditoría.
+   */
+  defineOperation(router, "cancelTournament", async (req, res) => {
+    const reason = req.body?.reason;
+    if (reason !== undefined && (typeof reason !== "string" || reason.length > 256)) {
+      throw badRequest("reason debe ser un texto de hasta 256 caracteres");
+    }
+    const result = await db.transaction(async (trx) => {
+      const t = await trx("tournaments")
+        .where({ id: pathParam(req, "tournamentId") })
+        .forUpdate()
+        .first()
+        .catch(() => null);
+      if (!t) throw notFound();
+      assertCanManageTournament(req.auth, t); // #291 · predicado único (dueño del torneo o staff)
+      if (t.state === "cancelled") return t; // idempotente: ni cambio ni auditoría
+      if (!(CANCELLABLE_TOURNAMENT_STATES as readonly string[]).includes(t.state)) {
+        throw conflict(
+          "tournament_not_cancellable",
+          t.state === "finished"
+            ? "El torneo ya ha terminado: no se puede cancelar"
+            : "Las inscripciones ya están cerradas y el calendario generado o en juego: no se puede cancelar",
+          { currentState: t.state, allowedTransitions: [] },
+        );
+      }
+      const [cancelled] = await trx("tournaments")
+        .where({ id: t.id })
+        .whereIn("state", [...CANCELLABLE_TOURNAMENT_STATES])
+        .update({ state: "cancelled" })
+        .returning("*");
+      if (!cancelled) throw conflict("tournament_not_cancellable", "El torneo cambió de estado: no se puede cancelar");
+      const entries = await trx("entries").where({ tournament_id: t.id }).count("* as n").first();
+      await audit(trx, {
+        actorId: req.auth!.userId,
+        action: "tournament.cancelled",
+        target: `tournament:${t.id}`,
+        detail: {
+          from: t.state,
+          entries: Number(entries?.n ?? 0),
+          by: req.auth!.userId === t.created_by ? "owner" : "staff",
+          ...(reason ? { reason } : {}),
+        },
+        correlationId: req.correlationId,
+      });
+      return cancelled;
+    });
+    res.json(tournamentToJson(result));
+  });
+
   defineOperation(router, "dryRunTournament", async (req, res) => {
     const t = await db("tournaments")
       .where({ id: req.params.tournamentId })
       .first()
       .catch(() => null);
     if (!t) throw notFound();
+    assertCanManageTournament(req.auth, t); // #291 · dueño del torneo o staff
     // Simulacro con bots de ejemplo (E9.M): lo consume el tournament-worker de E9.
     await db("jobs").insert({ kind: "tournament_dry_run", payload: JSON.stringify({ tournamentId: t.id }) });
     res.status(202).json({ status: "queued" });

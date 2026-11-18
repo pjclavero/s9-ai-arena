@@ -9,15 +9,21 @@
  * apariciones de una cadena da falsos negativos en cuanto alguien mueve un
  * paso de sitio.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 // @ts-expect-error módulo .mjs sin tipos
-import { ESCANERES_ESPERADOS, clasificarInformeTrivy, resumir } from "../scripts/scan-gate.mjs";
+import {
+  ESCANERES_ESPERADOS,
+  cargarContextoExcepciones,
+  clasificarInformeTrivy,
+  ejecutarNpmAudit,
+  resumir,
+} from "../scripts/scan-gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(here, "..", "..");
@@ -334,4 +340,155 @@ describe("scan-gate · npm audit EJECUTADO de verdad contra un registro inalcanz
     expect(linea.intentos).toBe(2);
     expect(stdout).toMatch(/::warning::/);
   }, 180000);
+});
+
+// ── Cableado REAL de las excepciones de npm audit (PR #296, ronda 2) ─────────
+// `ejecutarNpmAudit` corre de verdad, con un `npm` falso en el PATH que devuelve
+// un informe fijo, el fichero de excepciones y el lockfile de un directorio
+// temporal y el reloj puesto con `vi.setSystemTime` (sólo Date: no se tocan los
+// temporizadores). Cada test es la prueba nombrada de una mutación del harness.
+describe("scan-gate · cableado real de las excepciones de npm audit", () => {
+  const GHSA = "GHSA-fc5q-39xc-vjpf";
+  const informe = JSON.stringify({
+    auditReportVersion: 2,
+    vulnerabilities: {
+      picomatch: {
+        name: "picomatch",
+        severity: "high",
+        via: [
+          {
+            source: 1,
+            name: "picomatch",
+            dependency: "picomatch",
+            title: "ReDoS",
+            url: `https://github.com/advisories/${GHSA}`,
+            severity: "high",
+            range: "<=4.0.7",
+          },
+        ],
+        nodes: ["node_modules/picomatch"],
+      },
+    },
+    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } },
+  });
+  const EXC = [
+    {
+      ghsa: GHSA,
+      paquete: "picomatch",
+      alcance: "dev",
+      alta: "2026-11-17",
+      caduca: "2026-12-17",
+      motivo: "sin versión corregida; sólo herramientas de desarrollo",
+    },
+  ];
+  const LOCK = { packages: { "": {}, "node_modules/picomatch": { version: "4.0.7", dev: true } } };
+
+  let dir: string;
+  let pathOriginal: string | undefined;
+  let log: ReturnType<typeof vi.spyOn>;
+
+  const escribir = (nombre: string, contenido: string) => {
+    const f = join(dir, nombre);
+    writeFileSync(f, contenido);
+    return f;
+  };
+  const ctx = (opciones: { exc?: string; lock?: string } = {}) => ({
+    contextoExcepciones: {
+      fichero: opciones.exc ?? escribir("exc.json", JSON.stringify(EXC)),
+      lock: opciones.lock ?? escribir("lock.json", JSON.stringify(LOCK)),
+    },
+  });
+  const correr = (opciones: Parameters<typeof ctx>[0] = {}) =>
+    ejecutarNpmAudit({ reintentos: 1, esperaMs: 0, ...ctx(opciones) });
+  const avisos = () =>
+    log.mock.calls.map((c: unknown[]) => String(c[0])).filter((l: string) => l.startsWith("::warning::"));
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "npm-exc-"));
+    // `npm` falso: imprime el informe y sale con 1, como `npm audit` con hallazgos.
+    const bin = join(dir, "bin");
+    execFileSync("mkdir", [bin]);
+    const falso = join(bin, "npm");
+    writeFileSync(falso, `#!/bin/sh\ncat "${join(dir, "informe.json")}"\nexit 1\n`);
+    chmodSync(falso, 0o755);
+    writeFileSync(join(dir, "informe.json"), informe);
+    pathOriginal = process.env.PATH;
+    process.env.PATH = `${bin}:${pathOriginal}`;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-20T12:00:00Z"));
+    log = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    process.env.PATH = pathOriginal;
+    vi.useRealTimers();
+    log.mockRestore();
+  });
+
+  it("control POSITIVO: excepción vigente y sólo-dev → CLEAN y un ::warning:: que nombra GHSA, paquete y caducidad [R3, R16, R18]", () => {
+    const r = correr();
+    expect(r.estado).toBe("CLEAN");
+    const w = avisos().filter((l: string) => /excepci/.test(l));
+    expect(w.length).toBe(1);
+    expect(w[0]).toContain(GHSA);
+    expect(w[0]).toContain("picomatch");
+    expect(w[0]).toContain("2026-12-17");
+  });
+
+  it("sin el contexto de excepciones el mismo informe es FINDINGS (el contexto llega al clasificador) [R16]", () => {
+    const r = correr({ exc: join(dir, "no-existe.json") });
+    expect(r.estado).toBe("FINDINGS");
+    expect(avisos().filter((l: string) => /excepci/.test(l))).toEqual([]);
+  });
+
+  it("fichero de excepciones PRESENTE pero ilegible → SCAN_ERROR, no «sin excepciones» [R4]", () => {
+    const r = correr({ exc: escribir("roto.json", "{ esto no es json") });
+    expect(r.estado).toBe("SCAN_ERROR");
+    expect(r.detalle).toMatch(/no válidas/);
+  });
+
+  it("fichero de excepciones con `null` → SCAN_ERROR", () => {
+    expect(correr({ exc: escribir("nulo.json", "null") }).estado).toBe("SCAN_ERROR");
+  });
+
+  it("la caducidad se compara con el reloj REAL (inyectable): el 17/12 exime, el 18/12 no [R5]", () => {
+    vi.setSystemTime(new Date("2026-12-17T23:59:00Z"));
+    expect(correr().estado).toBe("CLEAN");
+    vi.setSystemTime(new Date("2026-12-18T00:01:00Z"));
+    const r = correr();
+    expect(r.estado).toBe("FINDINGS");
+    expect(r.detalle).toMatch(/caducada/);
+  });
+
+  it("el contexto lleva la fecha de hoy leída del reloj, no una constante [R5]", () => {
+    vi.setSystemTime(new Date("2031-05-06T10:00:00Z"));
+    expect(cargarContextoExcepciones(ctx().contextoExcepciones).hoy).toBe("2031-05-06");
+  });
+
+  it("lockfile ausente, ilegible o vacío NO exime → FINDINGS [R18]", () => {
+    expect(correr({ lock: join(dir, "no-hay-lock.json") }).estado).toBe("FINDINGS");
+    expect(correr({ lock: escribir("lock-roto.json", "{ roto") }).estado).toBe("FINDINGS");
+    expect(correr({ lock: escribir("lock-vacio.json", "{}") }).estado).toBe("FINDINGS");
+    expect(correr({ lock: escribir("lock-sin-nodo.json", JSON.stringify({ packages: { "": {} } })) }).estado).toBe(
+      "FINDINGS",
+    );
+  });
+
+  it("el paquete llega a producción en el lockfile → FINDINGS", () => {
+    const prod = { packages: { "": {}, "node_modules/picomatch": { version: "4.0.7" } } };
+    expect(correr({ lock: escribir("lock-prod.json", JSON.stringify(prod)) }).estado).toBe("FINDINGS");
+  });
+
+  it("el CLI (`ejecutar npm-audit`) registra el estado y sale con 0 usando el npm falso", () => {
+    const estados = join(dir, "estados.jsonl");
+    writeFileSync(estados, "");
+    // el CLI usa los ficheros reales del repo: sólo se comprueba que corre y registra una línea.
+    execFileSync(process.execPath, [GATE, "ejecutar", "npm-audit"], {
+      cwd: RAIZ,
+      encoding: "utf8",
+      env: { ...process.env, S9_SCAN_ESTADOS: estados, S9_SCAN_REINTENTOS: "1" },
+    });
+    const linea = JSON.parse(readFileSync(estados, "utf8").trim().split("\n")[0]);
+    expect(linea.herramienta).toBe("npm-audit");
+    expect(["CLEAN", "FINDINGS"]).toContain(linea.estado);
+  });
 });

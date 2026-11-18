@@ -33,10 +33,10 @@ describe("effect-status: clasificación ACTIVE/PARTIAL/FUTURE del catálogo real
     expect(missing).toEqual([]);
   });
 
-  it("los campos que el motor ignora están marcados FUTURE (no se presentan como funcionales)", () => {
-    expect(effectOf("movement", "terrain")!.status).toBe("FUTURE");
-    expect(effectOf("weapon", "rangeM")!.status).toBe("FUTURE");
-    expect(effectOf("radio", "rangeM")!.status).toBe("FUTURE");
+  it("P-2 · los campos falsos se eliminaron y los alcances son reales", () => {
+    expect(effectOf("movement", "terrain")).toBeUndefined();
+    expect(effectOf("weapon", "rangeM")!.status).toBe("ACTIVE");
+    expect(effectOf("radio", "rangeM")!.status).toBe("ACTIVE");
     expect(categoryEffect("utility")).toBe("FUTURE");
     expect(categoryEffect("chassis")).toBe("ACTIVE");
   });

@@ -56,7 +56,8 @@ export function validateReplay(replay: Replay): string[] {
   const problems: string[] = [];
   const h = replay.header;
   if (!h) return ["sin cabecera"];
-  if (h.formatVersion !== 1) problems.push(`formatVersion no soportada: ${String(h.formatVersion)}`);
+  // OLA2-MD · replay v2: sólo formatVersion 2, con checkpoints por componente.
+  if (h.formatVersion !== 2) problems.push(`formatVersion no soportada: ${String(h.formatVersion)}`);
   if (!h.battleId) problems.push("cabecera sin battleId");
   if (!h.seed) problems.push("cabecera sin seed");
   if (!h.ruleset || !h.rulesetId) problems.push("cabecera sin ruleset");
@@ -72,6 +73,9 @@ export function validateReplay(replay: Replay): string[] {
     problems.push("sin hashes intermedios: verify() no podría localizar divergencias");
   }
   if (!replay.result?.finalStateHash) problems.push("sin resultado oficial (finalStateHash)");
+  if (!Array.isArray(replay.checkpoints) || replay.checkpoints.length === 0) {
+    problems.push("sin checkpoints: verify() v2 no podría decir qué componente divergió");
+  }
   if (!Array.isArray(replay.snapshots) || replay.snapshots.length === 0) {
     problems.push("sin snapshots: el reproductor no tendría nada que enseñar");
   }
@@ -195,7 +199,10 @@ export function loadStored(dir: string, battleId: string): LoadedReplay {
   try {
     replay = fromJsonl(decompress(bytes).toString("utf8"));
   } catch (e) {
-    return { valid: false, reason: `corrupt_file: ${(e as Error).message}`, index, replay: null };
+    const msg = (e as Error).message;
+    // OLA2-MD · un replay v1 NO está corrupto: es de un formato que este motor ya no lee.
+    if (msg.startsWith("format_version_mismatch")) return { valid: false, reason: msg, index, replay: null };
+    return { valid: false, reason: `corrupt_file: ${msg}`, index, replay: null };
   }
   const problems = validateReplay(replay);
   if (problems.length > 0) return { valid: false, reason: problems.join("; "), index, replay };
@@ -238,7 +245,11 @@ export interface StoredVerifyResult {
 export async function verifyStored(dir: string, battleId: string): Promise<StoredVerifyResult> {
   const loaded = loadStored(dir, battleId);
   if (!loaded.valid || !loaded.replay) {
-    return { battleId, valid: false, reason: loaded.reason, verification: null };
+    // OLA2-MD · formato antiguo: «otra versión», nunca «manipulado».
+    const message = loaded.reason?.startsWith("format_version_mismatch")
+      ? "Este replay usa un formato anterior al actual (v1) y este motor ya no lo re-simula. NO significa que esté manipulado."
+      : undefined;
+    return { battleId, valid: false, reason: loaded.reason, ...(message ? { message } : {}), verification: null };
   }
   return verifyLoaded(battleId, loaded.replay);
 }

@@ -438,8 +438,10 @@ export async function handleProcessResult(job: JobRow, ctx: HandlerContext): Pro
     .first();
   if (!openMatch && !openBattle) {
     const champion = await computeChampion(db, battle.tournament_id, isTeams);
+    // #288 · nunca pisa un `cancelled` (estado terminal).
     await db("tournaments")
       .where({ id: battle.tournament_id })
+      .whereNot({ state: "cancelled" })
       .update({ state: "finished", champion_bot_id: isTeams ? null : champion });
   }
 }

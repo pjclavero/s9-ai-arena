@@ -126,6 +126,18 @@ function mapForSlot(pool: { mapId: string; version: number }[], slot: string): {
   return pool[h[0] % pool.length];
 }
 
+// ------------------------------------------------------ cancelación (#288)
+
+/**
+ * #288 · ¿El torneo está cancelado AHORA? Se relee de la BD (no del contexto en
+ * memoria): un torneo cancelado no admite batallas nuevas ni ejecuta las que hubiera.
+ */
+export async function isTournamentCancelled(db: Knex, tournamentId: string | null | undefined): Promise<boolean> {
+  if (!tournamentId) return false;
+  const row = await db("tournaments").where({ id: tournamentId }).first("state");
+  return row?.state === "cancelled";
+}
+
 // ------------------------------------------------- materialización de batallas
 
 export interface MaterializeContext {
@@ -148,6 +160,8 @@ export async function materializeBattles(
   pairing: Pairing,
 ): Promise<string[]> {
   const { db, tournament: t } = mctx;
+  // #288 · ninguna batalla nueva en un torneo cancelado (calendario, cuadros y suizo pasan por aquí).
+  if (await isTournamentCancelled(db, t.id)) return [];
   const games = t.rounds_per_pairing ?? 1;
   const isTeams = t.format === "teams";
   const battleIds: string[] = [];
@@ -239,6 +253,8 @@ export async function handleGenerateSchedule(job: JobRow, ctx: HandlerContext): 
   const t = (await db("tournaments").where({ id: tournamentId }).first()) as TournamentRow | undefined;
   if (!t) throw new Error(`generate_schedule: torneo ${tournamentId} inexistente`);
   if (t.state === "running" || t.state === "finished") return; // idempotencia
+  // #288 · un torneo cancelado no genera calendario: no-op limpio (el trabajo termina `done`).
+  if (t.state === "cancelled") return;
   if (t.state !== "closed") throw new Error(`generate_schedule: el torneo está en estado '${t.state}', no 'closed'`);
 
   // --- Validaciones del 19.1: reglas, catálogo, mapas y semillas -------------

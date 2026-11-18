@@ -33,8 +33,14 @@ function roster(perSide: number, dm = false): Participant[] {
   return parts;
 }
 
-function battle(ruleset: Ruleset, parts: Participant[], map = emptyArena(), bot: "hunter" | "idle" = "hunter") {
-  const b = new Battle({ battleId: "rr", seed: "rules-seed", ruleset, map, participants: parts, recordReplay: true });
+function battle(
+  ruleset: Ruleset,
+  parts: Participant[],
+  map = emptyArena(),
+  bot: "hunter" | "idle" = "hunter",
+  seed = "rules-seed",
+) {
+  const b = new Battle({ battleId: "rr", seed, ruleset, map, participants: parts, recordReplay: true });
   for (const p of parts) b.attachBot(p.id, bot === "hunter" ? new HunterBot(p.botId) : new IdleBot(p.botId));
   return b;
 }
@@ -43,14 +49,26 @@ function runFor(b: Battle, ticks: number) {
   for (let t = 0; t < ticks && !b.isFinished(); t++) b.step();
 }
 
-// Medidos con el motor de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`).
+// Anclas de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`), RE-ANCLADAS en OLA2-MB
+// con los valores medidos en 741a2a7: las cambian (a) el orden por slot de los candidatos de módulo,
+// (b) el hp del blindaje (= hp del módulo) y (c) la normalización de turretHeading. Con las tres
+// revertidas vuelven EXACTAMENTE los hashes de 9aaad79 (experimento mb-atribucion.py).
+// RE-ANCLADAS otra vez en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con
+// nombre (MD) + las causas a/b/c de MB + armor.profile en el estado. Con a/b/c revertidas, los ticks
+// vuelven a ser los de MD (778/2801/1084…) y sólo difiere el componente `vehicles` (armor.profile).
+// tdm_4v4_norespawn llega ahora al límite de tiempo (6000) en vez de acabar por eliminación.
+// Diagnóstico G3: NO es munición (búsqueda de HunterBot, ver respawn-rearm.test.ts y game-modes.md).
+// RE-ANCLADO en OLA2-G3 (RESPAWN_REARM_POLICY = all_alive_participants en tdm_mvp@1/ctf_mvp@1): con la
+// pasada de rearme desactivada (script g3-revert del laboratorio) vuelven EXACTAMENTE los valores anteriores.
+// Antes de G3 (y hoy con rearmPolicy self, respawn-rearm.test.ts): tdm_1v1 df7b19ab…/3000,
+// tdm_2v2 0af19ee4…/3000, tdm_4v4 682cd1e9…/2371, ctf_1v1 960c80cc…/2000. dm_1v1 y norespawn no cambian.
 const HASHES_9AAAD79 = {
-  dm_1v1: { hash: "da5d6f4982980c3a8318793e77aba7085ab29107a14b72fd2094283e11468822", tick: 465 },
-  tdm_1v1: { hash: "db319ed9e07012637be5fbd2bcbe685046b8490eac1351e79869a62f7d5a30ca", tick: 3000 },
-  tdm_2v2: { hash: "b5c19955e9b904684c273b105ebb04be019d6241614df5e17f122a36ce1a546e", tick: 3000 },
-  tdm_4v4: { hash: "5bd33b9118f31e21b0b05f4c27837c079346e4ea72e8c42e741b7c764396cf6b", tick: 2528 },
-  tdm_4v4_norespawn: { hash: "3a24fcd0db010bbb7eb55bbfbfa54901157a9839bcf707bcb36d733830568ec2", tick: 1579 },
-  ctf_1v1: { hash: "7344d3906b8b130c9c80e5863471eb3de6e118a0ab7556709abfb4ecc0430b1a", tick: 2000 },
+  dm_1v1: { hash: "7b1b74e3c8b05e4e87aef8b56b10c44f4dc4139a6b4f94218448c802b226161f", tick: 469 },
+  tdm_1v1: { hash: "626dbae962a619f79d8a0887fac6ed4a087bf17f0ed8e41c42e07682871796e7", tick: 3000 },
+  tdm_2v2: { hash: "a9ca0c858792da3588f4c74dddedb3761c34a4a638b5b91261dca0468ed2d44c", tick: 3000 },
+  tdm_4v4: { hash: "da66d598db143623fff6fb30f0ec8e9c76ad4082d34e4dacfcdd95639944c795", tick: 2286 },
+  tdm_4v4_norespawn: { hash: "86544a85f9a0ae80752970b3fcaafb18a9e8a6b2295059db6734b14574092b98", tick: 6000 },
+  ctf_1v1: { hash: "5ca4f6688ffbf47a581faf70e4748c30dab6827c758e4cd4f12e5944169ad27f", tick: 2000 },
 };
 
 describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
@@ -88,6 +106,9 @@ function limited(maxRespawns: number, delayTicks = 30): Ruleset {
     respawn: { enabled: true, delayTicks, maxRespawns },
   });
 }
+
+/** OLA2-MD · semilla en la que los 2v2 de respawn limitado acaban por eliminación (buscada). */
+const SEED_2V2_ELIM = "rules-seed-3";
 
 function eliminations(b: Battle) {
   return b.publicEvents.filter((e: any) => e.kind === "vehicle_eliminated");
@@ -136,12 +157,35 @@ describe("respawn limitado", () => {
   });
 
   it("2v2 con 1 respawn: la batalla no acaba mientras un bando conserve vidas, y acaba al agotarlas", () => {
-    const b = battle(limited(1), roster(2));
-    runFor(b, 40_000);
+    // Termina POR CONSTRUCCIÓN: rojo caza, azul está inmóvil (IdleBot) y rojo parte con munición
+    // sobrada. Diagnóstico (MB, VM112): con la dotación de serie, el artillero rojo gasta sus 40 AP
+    // hacia el tick 1392 y la munición SÓLO se repone al reaparecer (regla de juego, no hay
+    // reabastecimiento de supervivientes), y el explorador rojo no lleva radar (HunterBot nunca ve
+    // contactos): el combate se estanca con azul vivo. Eso es idéntico en f07ff6f (previo a MB).
+    // Aquí la munición no es el factor: el resultado no depende de la trayectoria ni del RNG.
+    const parts = roster(2);
+    const b = new Battle({
+      battleId: "rr",
+      seed: "rules-seed",
+      ruleset: limited(1),
+      map: emptyArena(),
+      participants: parts,
+      recordReplay: true,
+    });
+    for (const p of parts) b.attachBot(p.id, p.team === "red" ? new HunterBot(p.botId) : new IdleBot(p.botId));
+    for (const v of b.getVehicles().filter((x) => x.team === "red"))
+      for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
+    const blue = () => b.getVehicles().filter((v) => v.team === "blue");
+    for (let t = 0; t < 40_000 && !b.isFinished(); t++) {
+      b.step();
+      // Invariante de vidas: mientras la batalla siga, algún azul vive o aún tiene un respawn por gastar.
+      if (!b.isFinished()) expect(blue().some((v) => v.alive || v.respawnsUsed < 1)).toBe(true);
+    }
+    expect(b.isFinished()).toBe(true);
     const r = b.getResult()!;
-    expect(r.winner).not.toBe("draw");
-    const losers = b.getVehicles().filter((v) => v.team !== r.winner);
-    for (const v of losers) {
+    expect(r.ticks).toBeLessThan(40_000); // eliminación, no tiempo
+    expect(r.winner).toBe("red");
+    for (const v of blue()) {
       expect(v.alive).toBe(false);
       expect(v.respawnsUsed).toBe(1);
     }
@@ -149,7 +193,13 @@ describe("respawn limitado", () => {
       eliminations(b)
         .map((e: any) => e.targetId)
         .sort(),
-    ).toEqual(expect.arrayContaining(losers.map((v) => v.id).sort()));
+    ).toEqual(
+      expect.arrayContaining(
+        blue()
+          .map((v) => v.id)
+          .sort(),
+      ),
+    );
     b.free();
   });
 
@@ -184,7 +234,7 @@ describe("respawn limitado", () => {
     b2.free();
   });
 
-  it("el contador de respawns entra en el hash SÓLO con respawn limitado", () => {
+  it("el contador de respawns entra en el hash (v2: siempre)", () => {
     const b = battle(limited(2), roster(1));
     runFor(b, 5);
     const h1 = b.stateHash();
@@ -195,14 +245,15 @@ describe("respawn limitado", () => {
     runFor(old, 5);
     const h2 = old.stateHash();
     old.getVehicles()[0].respawnsUsed = 1;
-    expect(old.stateHash()).toBe(h2);
+    // OLA2-MD · hash v2: TODO el estado de Vehicle entra, también sin respawn limitado.
+    expect(old.stateHash()).not.toBe(h2);
     old.free();
   });
 
   it("los bots NO reciben vehicle_eliminated (no está en el esquema EVENT de arena/1)", () => {
     // 2v2 con una sola vida: tras la PRIMERA eliminación la batalla sigue y todos los
     // bots vuelven a decidir, así que un evento repartido les llegaría por onEvent.
-    const b = battle(limited(0), roster(2));
+    const b = battle(limited(0), roster(2), emptyArena(), "hunter", SEED_2V2_ELIM);
     const seen: string[] = [];
     for (const v of b.getVehicles()) {
       const inner = new HunterBot(v.botId);
@@ -351,6 +402,7 @@ describe("engineRulesetFor", () => {
       enabled: true,
       delayTicks: 150,
       maxRespawns: 2,
+      rearmPolicy: "all_alive_participants", // OLA2-G3
     });
     expect(
       engineRulesetFor(
@@ -362,7 +414,7 @@ describe("engineRulesetFor", () => {
         },
         "x",
       ).respawn,
-    ).toEqual({ enabled: true, delayTicks: 210 });
+    ).toEqual({ enabled: true, delayTicks: 210, rearmPolicy: "all_alive_participants" });
     expect(
       engineRulesetFor({ ...base, respawn: { mode: "none", maxRespawns: null, delaySeconds: null } }, "x").respawn,
     ).toEqual({ enabled: false, delayTicks: 0 });

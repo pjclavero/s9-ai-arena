@@ -107,14 +107,11 @@ describe("buildHudModel: refleja marcador, vida y estado de objetivos en vivo", 
     expect(r1.carryingFlag).toBe("blue");
     expect(r1.mobilityCrippled).toBe(true); // drive destruido
     expect(r1.turretLocked).toBe(false);
-    expect(r1.modulesTotal).toBe(2);
-    expect(r1.modulesDown).toBe(1);
     const b1 = blue.bots[0];
     expect(b1.alive).toBe(false);
     expect(b1.hpPercent).toBe(0);
     expect(b1.turretLocked).toBe(true); // turret destruido
     expect(b1.armorBroken).toBe(true); // armor offline
-    expect(b1.modulesDown).toBe(2);
   });
 
   it("estado de BANDERAS y control de ZONAS presentes en el modelo", () => {

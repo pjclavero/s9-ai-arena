@@ -22,7 +22,7 @@ const T = "apps/api/src/routes/tournaments.ts";
 const VE = "apps/api/src/services/version-eligibility.ts";
 const MIG = "apps/api/src/db/migrations.ts";
 const WTE = "apps/web/src/tournament-entry.ts";
-const ENTRY_CHECK = "    await assertTournamentEligible(db, v);\n";
+const ENTRY_CHECK = "    await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false });\n";
 
 /** `edits[].anchor`: el patrón se busca DESPUÉS de esa marca (y debe ser único ahí). */
 const MUTANTS = [
@@ -127,15 +127,26 @@ const MUTANTS = [
     edits: [
       {
         file: VE,
-        from: "  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }]);\n}",
-        to: '  if (version.state === "frozen") return;\n  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }]);\n}',
+        // OLA 2 · reanclado: la llamada gana `viewer` (EQUIPMENT_PRIVATE); MISMA mutación.
+        from: "  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }], viewer);\n}",
+        to: '  if (version.state === "frozen") return;\n  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }], viewer);\n}',
       },
       {
         file: VE,
-        from: "  await assertVersionsEligible(db, [{ botId, version: n }]);",
-        to: '  if (version.state !== "frozen") await assertVersionsEligible(db, [{ botId, version: n }]);',
+        // OLA 2 · reanclado: el viewer del dueño (EQUIPMENT_PRIVATE); MISMA mutación.
+        from: "  await assertVersionsEligible(db, [{ botId, version: n }], { userId: actorId, staff: false });",
+        to: '  if (version.state !== "frozen") await assertVersionsEligible(db, [{ botId, version: n }], { userId: actorId, staff: false });',
       },
     ],
+    tests: [API],
+    kill: "frozen INVÁLIDA",
+  },
+  {
+    // 1a (ola2-into-main) · EQUIPMENT_PRIVATE: la inscripción la hace el DUEÑO y debe ver el
+    // motivo real; sin `viewer` recibe el 409 genérico (violations: []).
+    id: "M6v",
+    name: "la inscripción no pasa el viewer del dueño (409 genérico para el propio dueño)",
+    edits: [{ file: T, from: ENTRY_CHECK, to: "    await assertTournamentEligible(db, v);\n" }],
     tests: [API],
     kill: "frozen INVÁLIDA",
   },

@@ -85,8 +85,11 @@ M = [
      "  const live = view?.effective.broadcastLiveAvailable ?? false;",
      "  const live = true;",
      UI, "espectador apagado"),
+    # Reanclado (1a, ola2-into-main): #278 quitó `battle_not_started` de canBroadcast y el
+    # ancla quedó ausente en main (seguimiento P3 «anclas M17/M29»). MISMA mutación: la
+    # página ignora la disponibilidad efectiva y deja retransmitir siempre.
     ("M17 Streaming ignora el estado efectivo", "apps/web/src/pages/StreamingPage.tsx",
-     '  return d.broadcastAvailable || d.reason === "battle_not_started";',
+     "  return d.broadcastAvailable;",
      "  return true;",
      SPAGE, "MG · autorizada pero /broadcast no puede leerla"),
     ("M18 sin ventana de staleness (último valor para siempre)", "apps/api/src/runtime-settings.ts",
@@ -129,13 +132,16 @@ M = [
      "opts.publicSpectateEnabled ?? false",
      "opts.publicSpectateEnabled ?? true",
      FC, "SpectateGateway sin opción"),
+    # Reanclado (1a): tras #278 la condición cabe en una línea. MISMA mutación.
     ("M28 UI ignora el espectador apagado", "apps/web/src/pages/BattleDetailPage.tsx",
-     "    t.broadcastAvailable === false &&\n",
-     "    false &&\n",
+     "t.broadcastAvailable === false && ",
+     "false && ",
      LIVE, "espectador público APAGADO"),
+    # Reanclado (1a): #278 quitó `battle_not_started`. MISMA mutación: se pierde la excepción
+    # de `streaming_not_configured` y la UI bloquea también sin streamer.
     ("M29 UI bloquea también sin streamer", "apps/web/src/pages/BattleDetailPage.tsx",
-     '    t.reason !== "battle_not_started" &&\n    t.reason !== "streaming_not_configured"\n',
-     '    t.reason !== "battle_not_started"\n',
+     ' && t.reason !== "streaming_not_configured";',
+     ";",
      LIVE, "sin streamer configurado"),
 ]
 

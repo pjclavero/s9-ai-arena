@@ -78,7 +78,7 @@ Enciende o apaga módulos (hasta 16 por orden) para ahorrar energía. Un módulo
 
 ## Radio: `radio`
 
-Hasta 2 mensajes por orden: `[{"slot": "radio_a", "data": "<base64>", "to": "veh_2"}]`. Detalle en [Radio](radio.md).
+Hasta 2 mensajes por orden: `[{"slot": "radio_a", "data": "<base64>", "to": "v_2"}]`. Detalle en [Radio](radio.md).
 
 ## Rangos obligatorios
 

@@ -32,6 +32,15 @@ código de otro como librería, contratos compartidos, configuración y puntos d
 
 → [architecture.md](architecture.md)
 
+### Contratos del motor v2
+
+Contratos compartidos de la reforma del motor y del catálogo modular v2: la frontera entre
+simulación y proyección, ids públicos, visibilidad, daño, efectos, deployables, interferencia,
+guidance, replay y protocolo, y qué equipo es dueño de cada fichero crítico. Es diseño
+declarativo: todavía no hay implementación que lo use.
+
+→ [engine-v2-contracts.md](engine-v2-contracts.md)
+
 ### Servicios
 
 Ficha de cada uno de los 12 servicios del perfil `production` y del proxy Docker del host. Para

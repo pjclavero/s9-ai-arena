@@ -36,7 +36,7 @@ Ruleset base que heredan todos (`packages/game-rules/index.ts:124-133`):
 | `timeLimitTicks` | 9000 (5 min a 30 Hz) | Sí (fin por tiempo) |
 | `scoreToWin` | 3 | Sí (salvo LMS) |
 | `friendlyFire` | false | Sí (proyectiles, explosiones, minas) |
-| `respawn` | `{enabled:true, delayTicks:150}` | Sí (paso 7 del bucle) |
+| `respawn` | `{enabled:true, delayTicks:150, rearmPolicy:"all_alive_participants"}` | Sí (paso 7 del bucle; ver «Rearme al reaparecer») |
 | `maxConsecutiveTimeouts` | 20 | Sí (descalifica) |
 | `budgetCredits` | 1000 | Lo valida el validador de loadout. El motor sólo lo propaga |
 | `sharedTeamVision` | false | **No lo aplica la simulación**. Sólo se pasa al protocolo de bots (`protocol-server.ts:444`) |
@@ -49,6 +49,29 @@ Ganador por defecto (`BaseMode.winner`):
 1. Un equipo alcanza `scoreToWin`.
 2. Se agota el tiempo: gana la mayor puntuación, con empate si hay igualdad.
 3. Sin respawn y con un solo equipo vivo, gana ese equipo; si no queda nadie vivo, empate.
+
+## Rearme al reaparecer (`RESPAWN_REARM_POLICY`, OLA2-G3)
+
+Decisión del usuario (2026-11-12): una batalla válida con respawn no debe quedar estancada porque los supervivientes agoten su munición de forma irreversible. La munición es por vehículo (rondas de los módulos `ammo`, cargas de los módulos `mine`) y no hay otro reabastecimiento en la arena. La regla es un DATO del ruleset, no un `if` por modo:
+
+| `respawn.rearmPolicy` | Qué se rearma cuando un vehículo reaparece |
+|---|---|
+| `self` | Sólo el que reaparece (comportamiento anterior a G3). Es también el valor efectivo si el campo falta o si no hay respawn. |
+| `all_alive_participants` | El que reaparece y TODOS los vehículos vivos y no descalificados, de cualquier bando. **Valor por defecto** de todos los rulesets del catálogo con respawn y de `engineRulesetFor` (presets y personalizado con respawn limitado o ilimitado). |
+
+- **Tipos y validación:** `RespawnRearmPolicy`, `RESPAWN_REARM_POLICIES`, `DEFAULT_RESPAWN_REARM_POLICY`, `respawnRearmPolicyOf()` y `respawnRearmPolicyProblems()` en `packages/game-rules/index.ts`. `modeMapIncompatibilities` (motor) rechaza un valor desconocido y la política declarada con `respawn.enabled: false`: la batalla no se crea.
+- **No la elige el jugador:** el personalizado prohíbe `rearmPolicy` (`CUSTOM_FORBIDDEN_FIELDS`, error `forbidden_field`), igual que el resto de reglas de munición. Por eso NO está en `RulesParams`: la fija `engineRulesetFor` y viaja en la copia inmutable (`engineRuleset`).
+- **Semántica:** rearmar = munición al MÁXIMO de catálogo (`m.ammo = rounds`, `m.charges = charges`), asignación y no suma: idempotente, nunca por encima del máximo. No repara módulos, no recarga energía ni reinicia cooldowns.
+- **Orden dentro del tick:** PASO 5 (combate) → PASO 6 (reglas del modo, puntuación y fin) → PASO 7 (reapariciones de todos los vehículos cuyo `respawnAtTick` vence, en el orden de `this.vehicles`) → **rearme** (una sola pasada si en el PASO 7 reapareció al menos uno, aunque sean varios) → PASO 8 (snapshot y hash). Un vehículo que muere en el PASO 5 de ese mismo tick no está vivo y no se rearma; una batalla que el PASO 6 da por terminada no llega al PASO 7.
+- **Determinismo y replay:** el rearme cambia la munición de los vehículos, que entra en el componente `vehicles` del `stateHash`. La política viaja SIEMPRE explícita en la cabecera del replay y del checkpoint (`header.ruleset.respawn.rearmPolicy`): `buildHeaderV2` escribe la política EFECTIVA aunque la config en vivo la deje implícita (`rulesetForHeader`), de modo que la re-simulación no depende de ningún valor por defecto del motor que la lea. `verify()`/`verifyAndRecompute()`/`restoreCheckpoint()` rechazan una cabecera con respawn y sin política (`rules_incomplete`) o con un valor no admitido (`rules_invalid`), y `configFromHeader` (reconstrucción, también la de `resimulateWithEvents`) lanza en lugar de completarla. Cambiar la política en la cabecera hace divergir la verificación (tests `respawn-rearm.test.ts`; mutantes en `scripts/hardening/g3-rearm-mutants.py`). El ruleset no entra en el `stateHash`: declarar la política no cambia ningún hash. No se emite evento: la munición es privada (D-B1), y no hay evento público nuevo.
+- **Bots:** el WELCOME envía `rules.respawn` tal cual, así que el bot recibe `rearmPolicy` (añadido a `welcome.schema.json` y a los tipos generados del SDK de JavaScript).
+- **Sin respawn** la munición es finita. Si se agota, la batalla sigue hasta `timeLimitTicks` y se resuelve con el desempate del modo (ver el diagnóstico de `tdm_4v4_norespawn` justo debajo).
+
+### Batallas sin respawn que llegan al límite de tiempo (`tdm_4v4_norespawn`)
+
+El escenario de anclas `tdm_4v4_norespawn` (`rules-respawn-tiebreak.test.ts`, `tdm_mvp@1` sin respawn, HunterBot, semilla `rules-seed`) ya no acaba por eliminación. Diagnóstico de G3: **no es munición**. Tras la última baja (tick 768) quedan 3 azules y 1 rojo, todos con radar y con munición (19-25 AP de 40) y sin un solo `no_ammo`. Desde el tick 800 ningún rival se acerca a menos de 58,58 m (el radar alcanza 50 m), no hay proyectiles en vuelo y los supervivientes acaban contra los bordes: el patrón de búsqueda de `HunterBot` no los reencuentra. El ancla corta a 6000 ticks; con el `timeLimitTicks` real (9000) la batalla termina por tiempo y el desempate del ruleset (más puntos, 3 a 1) da la victoria a azul. Lo fija un test de caracterización en `respawn-rearm.test.ts`.
+
+La regla de rearme no aplica sin respawn. Cuando un modo sin respawn se queda sin munición, hoy termina por tiempo con desempate. Una regla aparte, por ejemplo `ammoExhaustionPolicy: "sudden_death_on_exhaustion"` (si todos los vivos se quedan sin munición útil, terminar en ese tick con el desempate del modo), queda **propuesta y sin implementar**: la decide el usuario.
 
 ## Inventario de modos
 
@@ -180,7 +203,7 @@ Con `?mode=X` devuelve los de ese modo y los agnósticos (`mode: null`).
 
 - **Referencia de reglas y desempates:** [../user/rules.md](../user/rules.md) / `rules.json`, GENERADOS desde el registro (`scripts/generate-rules-doc.ts`; `packages/game-rules/rules-doc.test.ts` exige que estén al día).
 - **Modelo:** `packages/game-rules/battle-rules.ts` (`RulesParams` con `game`/`ctf`/`maxRespawns`, `RULES_PRESETS` congelados con clave `id@versión`, `TIEBREAK_RULES`, `RULES_LIMITS`, `resolveRulesRequest`, `engineRulesetFor`, `checkComposition`, `statsProfileOf`). Compatibilidad mapa↔modo en `packages/game-rules/map-compat.ts`.
-- **Motor 0.4.0 (ADR-022):** campos opcionales del `Ruleset`: `respawn.maxRespawns`, `timeoutTiebreak` (`score`/`alive`/`lives`/`respawns_left`/`kills`/`hull`) y `overtime` (`next_score_wins` + `maxTicks`). Sin ellos, la simulación es la de 0.3.0 bit a bit (`engine.reproduces: ["0.3.0"]`; replays reales 0.3.0 en `apps/replay-service/tests/engine-0.3.0-compat.test.ts`). Eventos públicos `vehicle_eliminated` y `overtime_started` (no van a los bots).
+- **Motor 0.4.0 (ADR-022):** campos opcionales del `Ruleset`: `respawn.maxRespawns`, `timeoutTiebreak` (`score`/`alive`/`lives`/`respawns_left`/`kills`/`hull`) y `overtime` (`next_score_wins` + `maxTicks`). Desde la OLA 2 (enmienda de ADR-022) no hay compatibilidad con replays anteriores: `engine.reproduces` se eliminó y los replays 0.2.0/0.3.0 (y 0.4.0 previos al contrato) ya no se reproducen. La OLA 2 sube el motor a 0.5.0 ([ADR-024](../adr/ADR-024-motor-0-5-0-ola2.md)): un replay v2 de 0.4.0 da `engine_version_mismatch`. Eventos públicos `vehicle_eliminated` y `overtime_started` (no van a los bots).
 - **API:** `POST /battles` y `POST /tournaments` aceptan `rules: { preset | "custom", teamSize, params? }` y guardan la copia en `battles.rules` / `tournaments.rules` (migración `016_battle_rules`); 400 `rules_invalid` (incluye `forbidden_field`) / `rules_team_size`, 409 `rules_mode_mismatch` / `map_team_mismatch` / `map_mode_unsupported`, 422 `composition_invalid`. `POST /battles/rules-check` hace lo mismo sin crear. `GET /rulesets` añade `presets` (vigentes), `tiebreaks` y `custom` (límites y defectos, también de CTF). `GET /maps` añade `modeCompatibility`.
 - **Worker:** con copia juega `rules.engineRuleset` con `rules.catalogVersion`; el scheduler copia la del torneo en cada batalla; sin copia (anteriores), el camino de siempre. El temporizador de contenedores usa `maxBattleTicks()` (tiempo + prórroga).
 - **Stats:** con respawn limitado, `lives`, `respawnsRemaining`, `eliminated` por bot y `respawnsRemaining` por bando; `respawns` por bando siempre. `GET /battles/{id}/stats` añade `profile` (`elimination`, `limited_respawn`, `deathmatch`, `time`, `capture_the_flag`, `classic`).

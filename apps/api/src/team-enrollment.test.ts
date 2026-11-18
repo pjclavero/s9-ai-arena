@@ -849,6 +849,41 @@ describe("#287 ronda 2 · H5 · equipos de varios dueños con autorización expl
     expect((await h.db("bot_versions").where({ bot_id: M.theirs }).first()).state).toBe("published");
   });
 
+  it("T289X_CANCEL_CONSENTS · cancelar un torneo con equipos y autorizaciones: se conserva todo (historial) y ya nada se puede alterar", async () => {
+    const M = await mkMultiOwnerTeam();
+    const B = await mkTeam(2);
+    const t = await openTeamsTournament(2);
+    expect((await consent(userTok, t, M.teamId, M.theirs)).status).toBe(200);
+    expect((await enterTeam(devTok, t, M.teamId, members([M.mine, M.theirs]))).status).toBe(201);
+    expect((await enterTeam(devTok, t, B.teamId, members(B.bots))).status).toBe(201);
+    const c = await request(app).post(`/tournaments/${t}/actions/cancel`).set(as(orgTok)).send({});
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    expect(c.body.state).toBe("cancelled");
+    // No se borra nada: inscripciones (4) y autorización (1) quedan como historial; nada se congela.
+    expect(await entriesOf(t)).toHaveLength(4);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(1);
+    expect((await h.db("bot_versions").where({ bot_id: M.theirs }).first()).state).toBe("published");
+    // Las autorizaciones siguen siendo legibles por los miembros.
+    const l = await request(app).get(`/tournaments/${t}/team-consents?teamId=${M.teamId}`).set(as(devTok));
+    expect(l.status).toBe(200);
+    expect(l.body.items).toHaveLength(1);
+    // Pero ya no se pueden dar, retirar ni inscribir: el torneo no está abierto (409 entries_closed).
+    const put = await consent(userTok, t, M.teamId, M.theirs);
+    expect(put.status).toBe(409);
+    expect(put.body.error).toBe("entries_closed");
+    const rv = await revoke(userTok, t, M.theirs);
+    expect(rv.status).toBe(409);
+    expect(rv.body.error).toBe("entries_closed");
+    const C = await mkTeam(2);
+    expect((await enterTeam(devTok, t, C.teamId, members(C.bots))).body.error).toBe("entries_closed");
+    expect(await entriesOf(t)).toHaveLength(4);
+    expect(await h.db("team_entry_consents").where({ tournament_id: t })).toHaveLength(1);
+    // Y el cierre ya no es posible.
+    const cl = await closeEntries(t);
+    expect(cl.status).toBe(409);
+    expect(cl.body.error).toBe("illegal_transition");
+  });
+
   it("T287_MO_CLOSE_CONSENT_GONE · una inscripción de equipo sin autorización vigente no compite al cerrar", async () => {
     const M = await mkMultiOwnerTeam();
     const B = await mkTeam(2);

@@ -1,0 +1,25 @@
+{
+  "top": [
+    "deployables",
+    "objectives",
+    "projectiles",
+    "score",
+    "tick",
+    "vehicles"
+  ],
+  "vehicle": [
+    "alive",
+    "carryingFlag",
+    "heading",
+    "hullLevel",
+    "id",
+    "juggernaut",
+    "position",
+    "team",
+    "turretHeading"
+  ],
+  "projectile": [
+    "id",
+    "position"
+  ]
+}
