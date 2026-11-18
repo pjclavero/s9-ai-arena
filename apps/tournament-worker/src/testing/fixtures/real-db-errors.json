@@ -491,5 +491,107 @@
         "hasCause": false
       }
     }
+  },
+  "ip_sin_asignar": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "EHOSTUNREACH",
+      "errno": -113,
+      "syscall": "connect",
+      "address": "172.29.73.77",
+      "port": 5432,
+      "message": "connect EHOSTUNREACH 172.29.73.77:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "EHOSTUNREACH",
+      "errno": -113,
+      "syscall": "connect",
+      "address": "172.29.73.77",
+      "port": 5432,
+      "message": "connect EHOSTUNREACH 172.29.73.77:5432",
+      "stackFrames": [
+        "TCPConnectWrap.afterConnect [as oncomplete] (node:net)"
+      ],
+      "hasCause": false
+    }
+  },
+  "red_sin_ruta_ipv4": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "10.99.0.5",
+      "port": 5432,
+      "message": "connect ENETUNREACH 10.99.0.5:5432 - Local (0.0.0.0:0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "10.99.0.5",
+      "port": 5432,
+      "message": "connect ENETUNREACH 10.99.0.5:5432 - Local (0.0.0.0:0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    }
+  },
+  "red_sin_ruta_ipv6": {
+    "pg": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "fd00:dead:beef::5",
+      "port": 5432,
+      "message": "connect ENETUNREACH fd00:dead:beef::5:5432 - Local (:::0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    },
+    "knex": {
+      "ctor": "Error",
+      "name": "Error",
+      "code": "ENETUNREACH",
+      "errno": -101,
+      "syscall": "connect",
+      "address": "fd00:dead:beef::5",
+      "port": 5432,
+      "message": "connect ENETUNREACH fd00:dead:beef::5:5432 - Local (:::0)",
+      "stackFrames": [
+        "internalConnect (node:net)",
+        "defaultTriggerAsyncIdScope (node:internal/async_hooks)",
+        "node:net)",
+        "process.processTicksAndRejections (node:internal/process/task_queues)"
+      ],
+      "hasCause": false
+    }
   }
 }

@@ -168,6 +168,9 @@ export function hasOwnRetryPolicy(code: FailureCode): boolean {
  *    lleva el SQL delante (`select … - read ECONNRESET`) y la pila es sólo `node:internal`.
  *  · backend terminado: 57P01 (DatabaseError); servidor muerto: `Connection terminated unexpectedly`.
  *  · nombre que no resuelve: `ENOTFOUND` + `hostname`; en la red de Docker, pg da `timeout expired`.
+ *  · `EHOSTUNREACH` (IP sin asignar en la subred) y `ENETUNREACH` (sin ruta, IPv4/IPv6): `syscall:"connect"`,
+ *    `address` = IP literal, `port`, errno -113/-101, pila sólo `node:net`; `ENETUNREACH` añade ` - Local (…)` al mensaje.
+ *    `ECONNABORTED` NO está capturado (no se puede provocar en conexión): su fixture es construido.
  * Un error 'error' de un cliente OCIOSO muerto no llega al manejador del trabajo (lo absorbe el pool).
  */
 const NETWORK_CODES = new Set([

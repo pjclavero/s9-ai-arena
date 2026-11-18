@@ -10,6 +10,9 @@
 //   · el servidor Postgres muerto con la conexión abierta (docker kill)
 //   · un DSN POR NOMBRE (`postgres`) que Node resuelve a una IP: nada escucha / contenedor parado
 //   · 57014 (statement_timeout)
+//   · EHOSTUNREACH: IP sin asignar dentro de la subred de una red Docker propia (falla el ARP)
+//   · ENETUNREACH: IP sin ruta desde un contenedor con `--network none` (IPv4 e IPv6)
+//   · ECONNABORTED: NO se captura (no hay forma segura de provocarlo en conexión); sigue construido en el test
 //
 // Necesita Docker (postgres:16-alpine ya descargada) y se ejecuta en VM111:
 //   node scripts/capture-pg-errors.mjs <salida.json>
@@ -72,12 +75,12 @@ async function pgConnect(cfg) {
   }
 }
 
-async function knexSelect(cfg) {
+async function knexSelect(cfg, acquireMs = 4000) {
   const k = knexFactory({
     client: "pg",
     connection: { user: "arena", password: PASS, database: "arena", ...cfg },
     pool: { min: 0, max: 1 },
-    acquireConnectionTimeout: 4000,
+    acquireConnectionTimeout: acquireMs,
   });
   try {
     await k.raw("select 1");
@@ -383,8 +386,59 @@ async function casosPorNombre(out, nodeBin, raizRepo) {
   }
 }
 
+/**
+ * EHOSTUNREACH / ENETUNREACH EN VIVO, dentro de redes Docker propias y desechables (sin tocar nftables
+ * ni la red del host):
+ *  · EHOSTUNREACH: red bridge propia; el cliente conecta a una IP SIN ASIGNAR de su subred. Linux hace ARP,
+ *    nadie responde y `connect()` devuelve EHOSTUNREACH.
+ *  · ENETUNREACH: contenedor con `--network none` (sólo loopback): no hay ruta a la IP destino.
+ */
+async function casosSinRuta(out, nodeBin, raizRepo) {
+  const red = `s9cap-ruta-${process.pid}`;
+  const subred = "172.29.73.0/24";
+  const inalcanzable = "172.29.73.77"; // sin asignar
+  const base = (extra) => [
+    "run",
+    "--rm",
+    ...extra,
+    "-v",
+    `${nodeBin}:/node:ro`,
+    "-v",
+    `${raizRepo}:/repo:ro`,
+    "-w",
+    "/repo",
+    "debian:stable-slim",
+    "/node/bin/node",
+    "scripts/capture-pg-errors.mjs",
+  ];
+  const lanza = (extra, caso, host) => {
+    const r = spawnSync("docker", [...base(extra), "--inner", caso, host], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`inner ${caso} ${host} rc=${r.status}: ${r.stderr}`);
+    return JSON.parse(r.stdout.trim().split("\n").pop());
+  };
+  dockerOk(["network", "rm", red]);
+  sh("docker", ["network", "create", "--subnet", subred, red]);
+  try {
+    out.ip_sin_asignar = lanza(["--network", red], "conectar_ip", inalcanzable);
+    out.red_sin_ruta_ipv4 = lanza(["--network", "none"], "conectar_ip", "10.99.0.5");
+    out.red_sin_ruta_ipv6 = lanza(["--network", "none"], "conectar_ip", "fd00:dead:beef::5");
+  } finally {
+    dockerOk(["network", "rm", red]);
+  }
+}
+
 async function interno(caso) {
   const host = "postgres";
+  if (caso === "conectar_ip") {
+    const ip = process.argv[process.argv.indexOf("--inner") + 2];
+    console.log(
+      JSON.stringify({
+        pg: await pgConnect({ host: ip, port: 5432, connectionTimeoutMillis: 20000 }),
+        knex: await knexSelect({ host: ip, port: 5432 }, 20000),
+      }),
+    );
+    return;
+  }
   if (caso === "conectar") {
     console.log(
       JSON.stringify({ pg: await pgConnect({ host, port: 5432 }), knex: await knexSelect({ host, port: 5432 }) }),
@@ -431,8 +485,12 @@ async function main() {
   const out = {
     _meta: { node: process.version, pg: pg.Client ? "pg" : "?", generado: "por scripts/capture-pg-errors.mjs" },
   };
-  await casosHost(out);
-  await casosPorNombre(out, resolve(dirname(process.execPath), ".."), resolve(AQUI, ".."));
+  const soloRuta = process.argv.includes("--solo-ruta"); // sólo EHOSTUNREACH/ENETUNREACH (no regenera el resto)
+  if (!soloRuta) {
+    await casosHost(out);
+    await casosPorNombre(out, resolve(dirname(process.execPath), ".."), resolve(AQUI, ".."));
+  }
+  await casosSinRuta(out, resolve(dirname(process.execPath), ".."), resolve(AQUI, ".."));
   writeFileSync(salida, JSON.stringify(out, null, 2) + "\n");
   console.log("escrito", salida);
 }

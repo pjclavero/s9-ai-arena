@@ -8,7 +8,7 @@
  *  - política de reintento por código.
  */
 import { readFileSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, isIP, type AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import knex from "knex";
 import pg from "pg";
@@ -138,7 +138,10 @@ describe("P1-1/P2-7 · errores REALES de pg/knex (capturados), decididos por ORI
   it("ningún fixture lleva un NOMBRE en `address` (Node nunca lo produce: siempre es una IP)", () => {
     const dump = JSON.stringify(REAL);
     expect(dump).not.toMatch(/"address":\s*"postgres"/i);
-    expect(dump).not.toMatch(/"address":\s*"[A-Za-z]/);
+    // toda `address` es una IP literal (v4 o v6), nunca un nombre
+    const direcciones = [...dump.matchAll(/"address":\s*"([^"]*)"/g)].map((m) => m[1]);
+    expect(direcciones.length).toBeGreaterThan(0);
+    for (const a of direcciones) expect(isIP(a), `address no es una IP: ${a}`).not.toBe(0);
   });
 
   it("DSN por NOMBRE → IP: ECONNREFUSED real (pg y knex) hacia el puerto de la BD es db_unavailable", () => {
@@ -406,9 +409,11 @@ describe("F3 · errores transitorios de BD (decididos por ORIGEN)", () => {
     expect(isTransientDbError(muchos, DB)).toBe(false); // el transitorio queda más allá del tope de nodos
   });
 
-  // P2-12: host/red inalcanzables y conexión abortada. FORMAS NO CAPTURADAS EN VIVO (exigen una red sin
-  // ruta o un RST de aborto que no se puede provocar de forma segura aquí): se construyen con la forma
-  // DOCUMENTADA de Node (`connect EHOSTUNREACH ip:puerto`, errno negativo de libuv, syscall, address, port).
+  // P2-12/P2-13: EHOSTUNREACH y ENETUNREACH están CAPTURADOS EN VIVO con pg y knex (Node 22, ver
+  // `scripts/capture-pg-errors.mjs`): IP sin asignar dentro de la subred de una red Docker propia
+  // (EHOSTUNREACH, falla el ARP) y contenedor `--network none` hacia una IP sin ruta (ENETUNREACH, IPv4 e
+  // IPv6). ECONNABORTED NO se puede provocar de forma segura en `connect` (es un aborto del lado local de
+  // una conexión ya aceptada), así que sigue siendo un fixture CONSTRUIDO con la forma documentada de Node.
   const nodeNet = (code: string, errno: number, syscall: string, address?: string, port?: number) =>
     Object.assign(new Error(address ? `${syscall} ${code} ${address}:${port}` : `${syscall} ${code}`), {
       errno,
@@ -416,13 +421,46 @@ describe("F3 · errores transitorios de BD (decididos por ORIGEN)", () => {
       syscall,
       ...(address ? { address, port } : {}),
     });
+  const REALES_SIN_RUTA = [
+    ["EHOSTUNREACH", "ip_sin_asignar", -113],
+    ["ENETUNREACH", "red_sin_ruta_ipv4", -101],
+    ["ENETUNREACH", "red_sin_ruta_ipv6", -101],
+  ] as const;
 
-  it.each([
-    ["EHOSTUNREACH", nodeNet("EHOSTUNREACH", -113, "connect", "172.19.0.2", 5432)],
-    ["ENETUNREACH", nodeNet("ENETUNREACH", -101, "connect", "172.19.0.2", 5432)],
-    ["ECONNABORTED", nodeNet("ECONNABORTED", -103, "connect", "172.19.0.2", 5432)],
-  ])("P2-12 · %s hacia el puerto de la BD (DSN por nombre, address = IP resuelta) → db_unavailable", (_c, err) => {
-    expect(classifyDbError(err, DB)).toBe("db_unavailable");
+  it.each(REALES_SIN_RUTA)(
+    "P2-13 · %s REAL (%s): forma capturada (connect, IP literal, puerto, pila sólo node:net)",
+    (codigo, caso, errno) => {
+      for (const via of ["pg", "knex"]) {
+        const e = real(caso, via) as Error & Record<string, unknown>;
+        expect(e.code).toBe(codigo);
+        expect(e.errno).toBe(errno);
+        expect(e.syscall).toBe("connect");
+        expect(isIP(String(e.address))).not.toBe(0);
+        expect(e.port).toBe(5432);
+        expect(String(e.stack)).not.toMatch(/node_modules\/(pg|knex|tarn)/); // no pasa por pg/knex: sólo cuenta el origen
+      }
+    },
+  );
+
+  it.each(REALES_SIN_RUTA)("P2-12 · %s hacia el puerto de la BD (REAL, %s) → db_unavailable (pg y knex)", (_c, caso) => {
+    for (const via of ["pg", "knex"]) {
+      const e = real(caso, via);
+      expect(classifyDbError(e, { host: "postgres", port: 5432 })).toBe("db_unavailable"); // DSN por nombre
+      expect(classifyDbError(e, { host: (e as { address?: string }).address, port: 5432 })).toBe("db_unavailable"); // DSN por IP
+    }
+  });
+
+  it.each(REALES_SIN_RUTA)("P2-12 · %s REAL (%s) hacia OTRO puerto (docker-proxy/Redis) → NO es db_unavailable", (_c, caso) => {
+    for (const via of ["pg", "knex"]) {
+      const e = real(caso, via);
+      for (const puerto of [2375, 6379, 9001]) {
+        expect(classifyDbError(e, { host: "postgres", port: puerto })).toBeUndefined();
+      }
+    }
+  });
+
+  it("P2-12 · ECONNABORTED hacia el puerto de la BD (CONSTRUIDO: no capturable de forma segura) → db_unavailable", () => {
+    expect(classifyDbError(nodeNet("ECONNABORTED", -103, "connect", "172.19.0.2", 5432), DB)).toBe("db_unavailable");
   });
 
   it.each([

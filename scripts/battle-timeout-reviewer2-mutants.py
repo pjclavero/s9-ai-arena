@@ -17,7 +17,7 @@ M = [
  ("N5 contador por clase no se escribe", Q, "[FAILURE_COUNTS_KEY]: { ...counts, [code]: classFailures }", "[FAILURE_COUNTS_KEY]: counts"),
  ("N6 db_unavailable vuelve a limitarse por max_attempts", Q, "parked = classFailures >= policy.maxFailures;", "parked = classFailures >= policy.maxFailures || job.attempts >= job.max_attempts;"),
  ("N7 classifyEnd vuelve a mirar el mensaje", B, 'if (err.code === "battle_timeout") return "TIMEOUT";', 'if (err.code === "battle_timeout" || /timeout global/.test(String(err.message))) return "TIMEOUT";'),
- ("N8 el recorte del guard vuelve a ser silencioso", T, 'console.error(\n    JSON.stringify({\n      level: "warn",\n      service: "tournament-worker",', 'void (\n    JSON.stringify({\n      level: "warn",\n      service: "tournament-worker",'),
+ ("N8 el recorte del guard vuelve a ser silencioso", T, 'console.error(\n    JSON.stringify({\n      level: "warn",\n      service: "tournament-worker",', '((_aviso: unknown) => undefined)(\n    JSON.stringify({\n      level: "warn",\n      service: "tournament-worker",'),
  ("N9 tope de backoff db 120 s -> 600 s", E, "backoffMs: (n) => Math.min(120_000, 5000 * 2 ** n),", "backoffMs: (n) => Math.min(600_000, 5000 * 2 ** n),"),
  ("N10 la pila de pg ya no cuenta", E, "if (typeof e.stack === \"string\" && DB_LIBRARY_STACK.test(e.stack)) return true;", ""),
  ("N11 db_unavailable 8 -> 20 fallos", E, "maxFailures: 8,", "maxFailures: 20,"),
@@ -40,5 +40,6 @@ for nombre, f, a, n in M:
     if rc == 0: print("SOBREVIVE · " + nombre); bad += 1
     else:
         fails = [l.strip()[:170] for l in out.splitlines() if l.strip().startswith("×")][:2]
+        if not fails and ("SyntaxError" in out or "Transform failed" in out): fails = ["ERROR DE SINTAXIS DEL MUTANTE (no cuenta)"]; bad += 1
         print("MUERE · %s · %s" % (nombre, " ;; ".join(fails)))
 print("ARBOL_LIMPIO" if clean() else "ARBOL_SUCIO", "mutantes=%d sobreviven_o_fallos=%d" % (len(M), bad))
