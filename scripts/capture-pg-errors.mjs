@@ -120,9 +120,12 @@ async function casosHost(out) {
     // (1) backend terminado con una consulta en vuelo
     {
       const victima = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" });
+      let eventoVictima;
+      victima.on("error", (e) => (eventoVictima = forma(e)));
       await victima.connect();
       const pid = (await victima.query("select pg_backend_pid() as pid")).rows[0].pid;
       const admin = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" });
+      admin.on("error", () => {});
       await admin.connect();
       const enVuelo = victima.query("select pg_sleep(30)").then(
         () => ({ ok: true }),
@@ -130,7 +133,7 @@ async function casosHost(out) {
       );
       await new Promise((r) => setTimeout(r, 400));
       await admin.query("select pg_terminate_backend($1)", [pid]);
-      out.backend_terminado_en_vuelo = { pg: await enVuelo };
+      out.backend_terminado_en_vuelo = { pg: await enVuelo, evento_error_del_cliente: eventoVictima };
       await victima.end().catch(() => {});
       // (2) backend terminado con el cliente OCIOSO: el error llega por el evento 'error'
       const ocioso = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" });
@@ -143,6 +146,7 @@ async function casosHost(out) {
       out.consulta_sobre_cliente_muerto = { pg: await ocioso.query("select 1").then(() => ({ ok: true }), (e) => forma(e)) };
       // (4) 57014: statement_timeout real
       const lento = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena", statement_timeout: 300 });
+      lento.on("error", () => {});
       await lento.connect();
       out.statement_timeout = { pg: await lento.query("select pg_sleep(5)").then(() => ({ ok: true }), (e) => forma(e)) };
       await lento.end().catch(() => {});
@@ -160,6 +164,8 @@ async function casosHost(out) {
     // (5) el servidor muere (docker kill) con una conexión abierta y una consulta en vuelo
     {
       const c = new pg.Client({ host: "127.0.0.1", port, user: "arena", password: PASS, database: "arena" });
+      let eventoC;
+      c.on("error", (e) => (eventoC = forma(e)));
       await c.connect();
       const enVuelo = c.query("select pg_sleep(30)").then(
         () => ({ ok: true }),
@@ -167,7 +173,7 @@ async function casosHost(out) {
       );
       await new Promise((r) => setTimeout(r, 400));
       dockerOk(["kill", nombre]);
-      out.servidor_muerto_en_vuelo = { pg: await enVuelo };
+      out.servidor_muerto_en_vuelo = { pg: await enVuelo, evento_error_del_cliente: eventoC };
       await c.end().catch(() => {});
       // y la reconexión contra el puerto publicado, ya sin servidor
       out.servidor_muerto_reconexion = { pg: await pgConnect({ host: "127.0.0.1", port }), knex: await knexSelect({ host: "127.0.0.1", port }) };
@@ -230,6 +236,8 @@ async function interno(caso) {
   // (desde fuera) que lo mate vía fichero testigo; aquí sólo simulamos con un bucle de espera.
   await esperarPg(host, 5432);
   const c = new pg.Client({ host, port: 5432, user: "arena", password: PASS, database: "arena" });
+  let evento;
+  c.on("error", (e) => (evento = forma(e)));
   await c.connect();
   const k = knexFactory({ client: "pg", connection: { host, port: 5432, user: "arena", password: PASS, database: "arena" }, pool: { min: 1, max: 1 }, acquireConnectionTimeout: 4000 });
   await k.raw("select 1");
@@ -239,7 +247,7 @@ async function interno(caso) {
   await new Promise((r) => setTimeout(r, 500));
   const rec = await pgConnect({ host, port: 5432 });
   const rk = await k.raw("select 1").then(() => ({ ok: true }), (e) => forma(e));
-  console.log(JSON.stringify({ en_vuelo: pg1, reconexion_pg: rec, knex_tras_muerte: rk }));
+  console.log(JSON.stringify({ en_vuelo: pg1, evento_error_del_cliente: evento, reconexion_pg: rec, knex_tras_muerte: rk }));
   await k.destroy().catch(() => {});
 }
 

@@ -12,6 +12,8 @@
  *    batalla SÍ se reintenta, con límite, y al agotarlo pasa a revisión manual.
  */
 
+import { isIP } from "node:net";
+
 export const SPORTING_FAILURE_CODES = [
   "bot_timeout", // el código del bot no responde dentro del presupuesto de tiempo
   "bot_crash", // el proceso del bot murió por su propio código
@@ -26,6 +28,9 @@ export const INFRASTRUCTURE_FAILURE_CODES = [
   // v0.5.0 · la BD no respondió (pool sin conexión, ECONNREFUSED, EAI_AGAIN, backend
   // terminado…). Transitorio: se reintenta con backoff; no es un bug del worker.
   "db_unavailable",
+  // v0.5.0 · una consulta a la BD fue cancelada (57014: statement_timeout/lock_timeout). Política
+  // PROPIA y corta: una vez puede ser la carga del host; repetida, es una consulta lenta.
+  "db_query_timeout",
   "map_unavailable", // el mapa no se pudo cargar/descargar
   "artifact_unavailable", // el artefacto firmado del bot no está disponible
   "container_unavailable", // el bot-manager no pudo proporcionar el contenedor
@@ -99,7 +104,10 @@ export class SportingFailure extends Error {
  *    sólo daba ~30 s de tolerancia) y backoff 5 s·2^n con tope 120 s. 8 fallos dan
  *    esperas de 10+20+40+80+120+120+120 s = 510 s (~8,5 min): cubre el reinicio de un
  *    Postgres en contenedor (o su recuperación tras un OOM/failover) y la reconexión del
- *    pool, sin reintentar eternamente: al noveno intento va a revisión manual.
+ *    pool, sin reintentar eternamente: al octavo fallo va a revisión manual.
+ *  - `db_query_timeout` (57014): tope corto de 2 fallos (un reintento tras 30 s). Decisión (P2-8):
+ *    ir con `db_unavailable` hacía que una consulta crónicamente lenta se reintentara ~8,5 min
+ *    antes de llegar a revisión; una cancelación puntual por carga del host sí merece un reintento.
  */
 export interface RetryPolicy {
   /**
@@ -122,6 +130,8 @@ export const RETRY_POLICY: Partial<Record<FailureCode, RetryPolicy>> = {
     overridesJobMax: true,
     backoffMs: (n) => Math.min(120_000, 5000 * 2 ** n),
   },
+  // 57014: UN reintento tras una pausa de 30 s y a revisión al segundo fallo (~30 s de coste, no 8,5 min).
+  db_query_timeout: { maxFailures: 2, backoffMs: (n) => 30_000 * Math.max(1, n) },
 };
 
 export function retryPolicyFor(code: FailureCode): RetryPolicy {
@@ -139,20 +149,21 @@ export function hasOwnRetryPolicy(code: FailureCode): boolean {
  * Se decide por el ORIGEN, no por el código: ECONNREFUSED/ECONNRESET/ETIMEDOUT/EPIPE/
  * EAI_AGAIN los lanzan igual el docker-proxy, los WebSocket de los bots y Redis, y no
  * son un problema de la BD. Un código de red cuenta como de BD sólo si el error:
- *   · apunta al endpoint de la BD (`address`/`port`/`hostname` = DATABASE_URL/PGHOST), o
+ *   · apunta al endpoint de la BD (ver `pointsAtDb`), o
  *   · pasa por pg/pg-pool/knex/tarn (stack), o
- *   · lo envuelve (`cause`) un error que cumple lo anterior (se evalúa con los mismos criterios).
+ *   · lo envuelve (`cause`) o lo agrega (`AggregateError.errors[]`, el `localhost` dual-stack)
+ *     un error que cumple lo anterior (se evalúa con los mismos criterios).
  * Sin esa evidencia NO es `db_unavailable` (conserva su tratamiento anterior).
  * Los SQLSTATE (57P01…, 08xxx, 53300…) y el mensaje literal de knex/tarn/pg sólo los
- * emite la capa de BD, así que valen por sí mismos. Se mira también `cause`.
+ * emite la capa de BD, así que valen por sí mismos.
+ *
+ * FORMAS REALES (medidas con pg/knex y Node, ver `scripts/capture-pg-errors.mjs` y
+ * `testing/fixtures/real-db-errors.json`): Node rellena `address` con la IP YA RESUELTA, nunca con
+ * el nombre del DSN, y el error de conexión no pasa por pg/knex en su pila.
  */
-const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EAI_AGAIN", "ETIMEDOUT", "EPIPE"]);
+const NETWORK_CODES = new Set(__NETCODES__);
 const TRANSIENT_DB_SQLSTATES = new Set([
   "53300", // too_many_connections: el servidor está saturado, se libera solo
-  // query_canceled: en este sistema la causa es statement_timeout/lock_timeout bajo carga
-  // del host (las consultas del worker son pequeñas e indexadas); un caso permanente
-  // queda acotado por el tope de db_unavailable y acaba en revisión, no en bucle.
-  "57014",
   "57P01", // admin_shutdown
   "57P02", // crash_shutdown
   "57P03", // cannot_connect_now
@@ -161,9 +172,19 @@ const TRANSIENT_DB_SQLSTATES = new Set([
   "08003",
   "08006", // connection_failure
 ]);
+/**
+ * 57014 query_canceled (statement_timeout/lock_timeout/cancelación). Se trata APARTE
+ * (`db_query_timeout`, tope corto): bajo carga del host una consulta pequeña puede pasarse una
+ * vez (merece otra oportunidad), pero una consulta crónicamente lenta NO se arregla esperando
+ * ~8,5 min como una caída de la BD.
+ */
+const QUERY_TIMEOUT_SQLSTATE = "57014";
 const TRANSIENT_DB_MESSAGE =
   /Timeout acquiring a connection|Acquire connection error|terminating connection|Connection terminated|the database system is (?:starting up|shutting down)|Client has encountered a connection error/i;
 const DB_LIBRARY_STACK = /node_modules[\\/](?:pg|pg-pool|pg-protocol|knex|tarn)[\\/]/;
+/** Tope de profundidad de `cause`/`errors[]` y de nodos visitados en total (evita ciclos y grafos enormes). */
+const MAX_DEPTH = 3;
+const MAX_NODES = 32;
 
 /** Endpoint de la BD contra el que se comparan los errores de red. */
 export interface DbEndpoint {
@@ -186,44 +207,86 @@ export function dbEndpointFromEnv(env: NodeJS.ProcessEnv = process.env): DbEndpo
   return {};
 }
 
+/**
+ * ¿Este error de red apunta al endpoint de la BD?
+ *
+ * CRITERIO (decidido con las formas reales de Node, no con las que uno imagina):
+ *  · Con puerto en el error (ECONNREFUSED, ETIMEDOUT…): el PUERTO tiene que ser el de la BD
+ *    (`DATABASE_URL`/`PGPORT`, 5432 por defecto). Y además:
+ *      - si el error trae un nombre (`hostname`) o la dirección es un nombre, debe ser el del DSN;
+ *      - si el host del DSN es un NOMBRE (producción: `postgres`), Node deja en `address` la IP
+ *        resuelta, que no se puede comparar con el nombre: basta el puerto (con `address` IP o sin
+ *        `address`);
+ *      - si el host del DSN es una IP literal, `address` tiene que ser esa IP.
+ *  · Sin puerto (EAI_AGAIN/ENOTFOUND del DNS): sólo vale si el `hostname` es el del DSN.
+ *  Falsos positivos: el docker-proxy (2375), Redis (6379) y los WebSocket de los bots usan otros
+ *  puertos y no se atribuyen a la BD. Lo que queda abierto: un servicio ajeno en el MISMO puerto
+ *  que la BD (p. ej. 5432 en otro host) sería indistinguible por la sola forma del error.
+ */
 function pointsAtDb(e: { address?: unknown; port?: unknown; hostname?: unknown }, ep: DbEndpoint): boolean {
-  const hosts = [e.address, e.hostname].filter((h): h is string => typeof h === "string").map((h) => h.toLowerCase());
-  const host = ep.host?.toLowerCase();
-  const port = typeof e.port === "number" ? e.port : typeof e.port === "string" ? Number(e.port) : undefined;
-  if (port !== undefined) {
-    if (ep.port === undefined || port !== ep.port) return false;
-    return host === undefined || hosts.length === 0 || hosts.includes(host);
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v.toLowerCase() : undefined);
+  const address = str(e.address);
+  const hostname = str(e.hostname);
+  const host = str(ep.host)?.replace(/^\[|\]$/g, "");
+  const port = typeof e.port === "number" ? e.port : typeof e.port === "string" && e.port ? Number(e.port) : undefined;
+  if (port === undefined) {
+    // Sin puerto (EAI_AGAIN de DNS): sólo vale si el nombre es el de la BD.
+    return host !== undefined && (hostname === host || address === host);
   }
-  // Sin puerto (EAI_AGAIN de DNS): sólo vale si el nombre es el de la BD.
-  return host !== undefined && hosts.includes(host);
+  if (ep.port === undefined || port !== ep.port) return false;
+  if (host === undefined) return true;
+  if (hostname !== undefined) return hostname === host;
+  if (address === undefined || address === host) return true;
+  // `address` es una IP resuelta (o un nombre ajeno). Con un DSN por nombre la IP no es comparable:
+  // basta el puerto. Con un DSN por IP literal, tiene que coincidir. Un nombre ajeno no es la BD.
+  if (isIP(host) !== 0) return false;
+  return isIP(address) !== 0;
+}
+
+type DbFailureCode = "db_unavailable" | "db_query_timeout";
+
+/**
+ * Clasifica un error de BD/red como `db_unavailable`, `db_query_timeout` (57014) o ninguno.
+ * Recorre `cause` y `AggregateError.errors[]` con tope de profundidad y de nodos.
+ */
+export function classifyDbError(err: unknown, endpoint: DbEndpoint = dbEndpointFromEnv()): DbFailureCode | undefined {
+  const budget = { nodes: 0 };
+  const seen = new Set<object>();
+  let queryTimeout = false;
+  const visit = (x: unknown, depth: number): boolean => {
+    if (!x || typeof x !== "object" || depth > MAX_DEPTH || seen.has(x) || ++budget.nodes > MAX_NODES) return false;
+    seen.add(x);
+    const e = x as {
+      name?: unknown;
+      code?: unknown;
+      message?: unknown;
+      cause?: unknown;
+      errors?: unknown;
+      stack?: unknown;
+      address?: unknown;
+      port?: unknown;
+      hostname?: unknown;
+    };
+    if (e.name === "KnexTimeoutError") return true;
+    if (typeof e.code === "string") {
+      if (TRANSIENT_DB_SQLSTATES.has(e.code)) return true;
+      if (e.code === QUERY_TIMEOUT_SQLSTATE) queryTimeout = true;
+      if (NETWORK_CODES.has(e.code)) {
+        if (pointsAtDb(e, endpoint)) return true;
+        if (typeof e.stack === "string" && DB_LIBRARY_STACK.test(e.stack)) return true;
+      }
+    }
+    if (typeof e.message === "string" && TRANSIENT_DB_MESSAGE.test(e.message)) return true;
+    if (visit(e.cause, depth + 1)) return true;
+    if (Array.isArray(e.errors)) for (const sub of e.errors) if (visit(sub, depth + 1)) return true;
+    return false;
+  };
+  if (visit(err, 0)) return "db_unavailable";
+  return queryTimeout ? "db_query_timeout" : undefined;
 }
 
 export function isTransientDbError(err: unknown, endpoint: DbEndpoint = dbEndpointFromEnv()): boolean {
-  return transientDb(err, 0, endpoint);
-}
-
-function transientDb(err: unknown, depth: number, endpoint: DbEndpoint): boolean {
-  if (!err || typeof err !== "object" || depth > 2) return false;
-  const e = err as {
-    name?: unknown;
-    code?: unknown;
-    message?: unknown;
-    cause?: unknown;
-    stack?: unknown;
-    address?: unknown;
-    port?: unknown;
-    hostname?: unknown;
-  };
-  if (e.name === "KnexTimeoutError") return true;
-  if (typeof e.code === "string") {
-    if (TRANSIENT_DB_SQLSTATES.has(e.code)) return true;
-    if (NETWORK_CODES.has(e.code)) {
-      if (pointsAtDb(e, endpoint)) return true;
-      if (typeof e.stack === "string" && DB_LIBRARY_STACK.test(e.stack)) return true;
-    }
-  }
-  if (typeof e.message === "string" && TRANSIENT_DB_MESSAGE.test(e.message)) return true;
-  return transientDb(e.cause, depth + 1, endpoint);
+  return classifyDbError(err, endpoint) !== undefined;
 }
 
 /**
@@ -233,5 +296,5 @@ function transientDb(err: unknown, depth: number, endpoint: DbEndpoint): boolean
 export function toInfrastructureFailure(err: unknown, fallback: InfrastructureFailureCode): InfrastructureFailure {
   if (err instanceof InfrastructureFailure) return err;
   const msg = err instanceof Error ? err.message : String(err);
-  return new InfrastructureFailure(isTransientDbError(err) ? "db_unavailable" : fallback, msg);
+  return new InfrastructureFailure(classifyDbError(err) ?? fallback, msg);
 }

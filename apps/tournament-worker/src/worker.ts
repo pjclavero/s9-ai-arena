@@ -23,7 +23,7 @@ import {
   type JobKind,
   type JobRow,
 } from "./queue.js";
-import { InfrastructureFailure, SportingFailure, isTransientDbError } from "./errors.js";
+import { InfrastructureFailure, SportingFailure, classifyDbError } from "./errors.js";
 import type { RedisSignal } from "./redis-signal.js";
 
 export interface HandlerContext {
@@ -184,12 +184,13 @@ export class TournamentWorker {
       } else if (err instanceof InfrastructureFailure) {
         const { parked } = await failJobInfrastructure(db, job, err.code, err.message, { now });
         if (parked) await this.config.onExhausted?.(job, ctx);
-      } else if (isTransientDbError(err)) {
-        // F3 · la BD/DNS no respondió: infraestructura transitoria, no un bug del worker.
+      } else if (classifyDbError(err)) {
+        // F3 · la BD/DNS no respondió (`db_unavailable`) o una consulta fue cancelada
+        // (`db_query_timeout`, 57014): infraestructura transitoria, no un bug del worker.
         const { parked } = await failJobInfrastructure(
           db,
           job,
-          "db_unavailable",
+          classifyDbError(err) as "db_unavailable" | "db_query_timeout",
           err instanceof Error ? err.message : String(err),
           { now },
         );
