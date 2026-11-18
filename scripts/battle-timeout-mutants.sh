@@ -56,6 +56,7 @@ MUTANTES=(
 "apps/tournament-worker/src/errors.ts|  \"53300\", // too_many_connections: el servidor está saturado, se libera solo|  /* sin 53300 */|M10 sin 53300|53300 too_many_connections"
 "apps/tournament-worker/src/errors.ts|  \"57014\",|  /* sin 57014 */|M10b sin 57014|57014 query_canceled"
 "packages/game-rules/battle-timing.ts|const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs;|const derivado = Math.min(Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs, MAX_CONTAINER_BATTLE_TIMEOUT_MS);|M11 recorte del guard silencioso|avisa por consola"
+"apps/tournament-worker/src/errors.ts|if (!err \|\| typeof err !== \"object\" \|\| depth > 2) return false;|if (!err \|\| typeof err !== \"object\") return false;|M12 sin tope de profundidad en cause|cíclica o muy profunda"
 )
 
 fallos=0

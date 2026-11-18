@@ -142,6 +142,18 @@ describe("F3 · errores transitorios de BD (decididos por ORIGEN)", () => {
     expect(isTransientDbError(err, DB)).toBe(false);
   });
 
+  it("`cause` cíclica o muy profunda: sin recursión infinita y con tope de profundidad", () => {
+    const ciclo = new Error("a") as Error & { cause?: unknown };
+    ciclo.cause = ciclo;
+    expect(isTransientDbError(ciclo, DB)).toBe(false);
+    const hondo = new Error("n0", {
+      cause: new Error("n1", { cause: new Error("n2", { cause: new Error("n3", { cause: knexTimeout }) }) }),
+    });
+    expect(isTransientDbError(hondo, DB)).toBe(false); // más allá de la profundidad 2 no se mira
+    const cerca = new Error("n0", { cause: new Error("n1", { cause: knexTimeout }) });
+    expect(isTransientDbError(cerca, DB)).toBe(true);
+  });
+
   it("sin endpoint conocido, un código de red SIN más evidencia no se atribuye a la BD", () => {
     expect(isTransientDbError(net("ECONNREFUSED", { address: "postgres", port: 5432 }), {})).toBe(false);
     expect(isTransientDbError(knexTimeout, {})).toBe(true);
