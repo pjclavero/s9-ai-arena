@@ -12,12 +12,21 @@ registran en un **delta** aparte.
 
 ## Índice
 
+- [Auditoría de producto y preparación de versión (2026-11-19)](#auditoría-de-producto-y-preparación-de-versión-2026-11-19)
 - [Auditoría del roadmap de 2026-11](#auditoría-del-roadmap-de-2026-11)
 - [Informes de cierre de octubre](#informes-de-cierre-de-octubre)
 - [Auditoría del 2026-10-15](#auditoría-del-2026-10-15)
 - [Consolidación documental de 2026-10](#consolidación-documental-de-2026-10)
 - [Auditorías anteriores](#auditorías-anteriores)
 - [Qué no está en el repositorio](#qué-no-está-en-el-repositorio)
+
+## Auditoría de producto y preparación de versión (2026-11-19)
+
+Auditoría integral de producto sobre `main` `8f380eb` (motor 0.5.0): estado real, fortalezas, debilidades, deuda técnica, seguridad, experiencia de uso, instalación y operación, pruebas, streaming y documentación, con un plan priorizado para una versión presentable. Ocho especialistas, un revisor técnico hostil y un revisor de producto. FASE 1 (análisis estático) completada; FASE 2 (laboratorio y lectura de producción) pendiente.
+
+- [product-release-readiness/FINAL-PRODUCT-AUDIT.md](product-release-readiness/FINAL-PRODUCT-AUDIT.md): informe maestro (veredicto **NO LISTO**; opción recomendada **A+**).
+- [product-release-readiness/00-EXECUTIVE-SUMMARY.md](product-release-readiness/00-EXECUTIVE-SUMMARY.md): resumen ejecutivo.
+- Anexos 01-15 y evidencias en [product-release-readiness/](product-release-readiness/).
 
 ## Auditoría del roadmap de 2026-11
 
