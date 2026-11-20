@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { randomUUID } from "node:crypto";
+import { LIST_BOTS_CHUNK, LIST_BOTS_MAX_CHUNKS } from "./routes/bots.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { tokenFor } from "./testing/helpers.js";
@@ -57,10 +58,15 @@ async function seed(viewerBots: number, foreignPrivate: number) {
     name: `ajeno-${i}`,
     owner_id: other.id,
     visibility: "private",
-    created_at: new Date(base - i * 1000),
+    created_at: new Date(base + 3_600_000 - i * 1000), // MÁS NUEVOS que todo: salen primero
   }));
   for (let i = 0; i < foreign.length; i += 500) await h.db("bots").insert(foreign.slice(i, i + 500));
-  return { viewer, mineIds: mine.map((b) => b.id) };
+  return {
+    viewer,
+    mineIds: mine.map((b) => String(b.id)),
+    foreignIds: foreign.map((b) => String(b.id)),
+    foreignAt: foreign.map((b) => b.created_at.toISOString()),
+  };
 }
 
 async function walk(token: string, limit: number, ownerId: string) {
@@ -102,13 +108,28 @@ describe("V1-B · TD-068 · listBots con >200 bots ajenos privados delante", () 
     ).toBe(true);
   }, 120000);
 
-  it("con más filas ajenas que el tope de bloques: página corta pero CON nextCursor, y el recorrido llega al final", async () => {
-    const { viewer, mineIds } = await seed(3, 2300); // > 10 bloques de 200
+  // Literal a propósito (NO derivado de las constantes): si alguien sube el tope, este volumen deja de bastar
+  // para agotarlo y los tests se ponen rojos en vez de adaptarse en silencio.
+  const OVER_CAP = 2300; // > 10 bloques de 200
+  it("el coste por petición está acotado: bloques de 200 y como mucho 10 por petición (2000 filas)", () => {
+    expect(LIST_BOTS_CHUNK).toBe(200);
+    expect(LIST_BOTS_MAX_CHUNKS).toBe(10);
+    expect(OVER_CAP).toBeGreaterThan(LIST_BOTS_CHUNK * LIST_BOTS_MAX_CHUNKS);
+  });
+
+  let big: ReturnType<typeof seed> | undefined;
+  const bigSeed = () => (big ??= seed(3, OVER_CAP));
+
+  it("el tope de bloques se aplica: con más filas ajenas que tope×bloque, la primera página sale VACÍA pero CON nextCursor", async () => {
+    const { viewer } = await bigSeed();
     const first = await request(app).get("/bots?limit=3").set("Authorization", `Bearer ${viewer.token}`);
     expect(first.status).toBe(200);
-    if (first.body.items.length < 3)
-      expect(first.body.nextCursor, "página corta SIN cursor = lista truncada").toBeTruthy();
-    // Recorrido SIN filtrar por dueño: ve sus 3 bots y, antes o después, termina.
+    expect(first.body.items, "con tope 10 no se llega a los bots visibles, que están detrás").toEqual([]);
+    expect(first.body.nextCursor, "página corta SIN cursor = lista truncada").toBeTruthy();
+  }, 180000);
+
+  it("el recorrido por cursor termina y alcanza todos los bots visibles pese al tope", async () => {
+    const { viewer, mineIds } = await bigSeed();
     const ids: string[] = [];
     let cursor: string | undefined;
     let pages = 0;
@@ -124,5 +145,40 @@ describe("V1-B · TD-068 · listBots con >200 bots ajenos privados delante", () 
     expect(cursor, "el recorrido debe terminar").toBeUndefined();
     const mine = ids.filter((id) => mineIds.includes(id));
     expect([...mine].sort()).toEqual([...mineIds].sort());
+  }, 180000);
+
+  it("PRIVACIDAD: el nextCursor NO lleva el id ni el instante de ningún bot privado ajeno", async () => {
+    const { viewer, foreignIds, foreignAt } = await bigSeed();
+    const first = await request(app).get("/bots?limit=3").set("Authorization", `Bearer ${viewer.token}`);
+    const cursor = first.body.nextCursor as string;
+    expect(cursor).toBeTruthy();
+    // lo que ve cualquiera que decodifique el cursor: base64url en claro, y su JSON interno
+    const outer = Buffer.from(cursor, "base64url").toString("utf8");
+    const inner = (() => {
+      try {
+        const o = JSON.parse(outer) as { s?: string };
+        return o.s ? Buffer.from(o.s, "base64url").toString("latin1") : "";
+      } catch {
+        return "";
+      }
+    })();
+    for (const text of [outer, inner]) {
+      for (const id of foreignIds) expect(text.includes(id), `el cursor expone el id ${id}`).toBe(false);
+      expect(foreignAt.some((t) => text.includes(t.slice(0, 19))), "el cursor expone un instante ajeno").toBe(false);
+    }
+    // y sigue siendo utilizable
+    const next = await request(app)
+      .get(`/bots?limit=3&cursor=${encodeURIComponent(cursor)}`)
+      .set("Authorization", `Bearer ${viewer.token}`);
+    expect(next.status).toBe(200);
+  }, 180000);
+
+  it("un cursor sellado manipulado se rechaza con 400 (no 500)", async () => {
+    const { viewer } = await bigSeed();
+    const first = await request(app).get("/bots?limit=3").set("Authorization", `Bearer ${viewer.token}`);
+    const o = JSON.parse(Buffer.from(first.body.nextCursor, "base64url").toString("utf8")) as { v: number; s: string };
+    const bad = Buffer.from(JSON.stringify({ v: 3, s: o.s.slice(0, -4) + "AAAA" })).toString("base64url");
+    const r = await request(app).get(`/bots?cursor=${encodeURIComponent(bad)}`).set("Authorization", `Bearer ${viewer.token}`);
+    expect(r.status).toBe(400);
   }, 180000);
 });

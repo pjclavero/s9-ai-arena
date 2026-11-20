@@ -6,13 +6,14 @@ import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { pathParam } from "../params.js";
+import { pathParam, queryUuid } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import {
   applyCursor,
   cursorTsSql,
   decodeCursor,
   encodeCursor,
+  encodeSealedCursor,
   parseLimit,
   runCursorQuery,
   type PageCursor,
@@ -46,8 +47,8 @@ import { audit } from "../audit.js";
 const CODE_NO_STORE = "private, no-store";
 
 /** TD-068 · filas por bloque de lectura de `listBots` y tope de bloques por petición. */
-const LIST_BOTS_CHUNK = 200;
-const LIST_BOTS_MAX_CHUNKS = 10;
+export const LIST_BOTS_CHUNK = 200;
+export const LIST_BOTS_MAX_CHUNKS = 10;
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -228,7 +229,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBots", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    const ownerId = req.query.ownerId;
+    const ownerId = queryUuid(req, "ownerId");
     const chunkQuery = (cur: PageCursor | null) => {
       let q = db("bots")
         .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
@@ -237,7 +238,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
           { column: "id", order: "desc" },
         ])
         .limit(LIST_BOTS_CHUNK);
-      if (typeof ownerId === "string") q = q.where({ owner_id: ownerId });
+      if (ownerId !== undefined) q = q.where({ owner_id: ownerId });
       return applyCursor(q, cur, "bots.created_at", ["bots.id"]);
     };
 
@@ -294,7 +295,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     }
     res.json({
       items,
-      nextCursor: hasMore && cursorRow ? encodeCursor(cursorRow, [cursorRow.id as string]) : undefined,
+      // Frontera visible (último elemento de la página): cursor normal. Frontera ESCANEADA (puede ser un bot
+      // privado ajeno): cursor sellado, para no revelar su id ni su instante (R316-1).
+      nextCursor:
+        hasMore && cursorRow
+          ? (visible.length > limit ? encodeCursor : encodeSealedCursor)(cursorRow, [cursorRow.id as string])
+          : undefined,
       ...(counts ? { counts } : {}),
     });
   });

@@ -19,7 +19,30 @@
       "from": "const hasMore = visible.length > limit || !exhausted;",
       "to": "const hasMore = visible.length > limit;",
       "killedBy": [
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante con más filas ajenas que el tope de bloques: página corta pero CON nextCursor, y el recorrido llega al final"
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el tope de bloques se aplica: con más filas ajenas que tope×bloque, la primera página sale VACÍA pero CON nextCursor"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-04-tope-1000",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "export const LIST_BOTS_MAX_CHUNKS = 10;",
+      "to": "export const LIST_BOTS_MAX_CHUNKS = 1000;",
+      "killedBy": [
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el coste por petición está acotado: bloques de 200 y como mucho 10 por petición (2000 filas)",
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el tope de bloques se aplica: con más filas ajenas que tope×bloque, la primera página sale VACÍA pero CON nextCursor"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-05-cursor-en-claro",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "(visible.length > limit ? encodeCursor : encodeSealedCursor)(cursorRow,",
+      "to": "encodeCursor(cursorRow,",
+      "killedBy": [
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante PRIVACIDAD: el nextCursor NO lleva el id ni el instante de ningún bot privado ajeno"
       ],
       "controls": []
     }

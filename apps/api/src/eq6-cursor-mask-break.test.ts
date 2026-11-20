@@ -37,16 +37,48 @@ const validCursor = Buffer.from(
 ).toString("base64url");
 
 describe("EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro", () => {
-  // DEFECTO VIGENTE (issue #305) en main 8f380eb (medido en VM de pruebas): `GET /bots?ownerId=no-es-uuid` da 500 sin
-  // cursor y, con un cursor válido, un 400 «Cursor de paginación inválido» (runCursorQuery culpa al cursor
-  // de un error de filtro). `it.fails` fija el defecto: se pone ROJO cuando se corrija (validar ownerId
-  // como uuid → 400 en ambos casos); entonces basta con quitar `.fails`.
-  it.fails("ownerId no-UUID: con y sin cursor válido, MISMA respuesta (y nunca «cursor inválido»)", async () => {
+  // GARANTÍA (V1-B · #305, corregido): `GET /bots?ownerId=no-es-uuid` valida el filtro como uuid y
+  // responde 400 «ownerId debe ser un uuid» TANTO sin cursor como con un cursor válido
+  // (antes: 500 sin cursor y «cursor inválido» con cursor, porque runCursorQuery culpaba al cursor).
+  it("ownerId no-UUID: con y sin cursor válido, MISMA respuesta 400 (y nunca «cursor inválido»)", async () => {
     const sin = await request(app).get("/bots?ownerId=no-es-uuid").set("Authorization", `Bearer ${tok}`);
     const con = await request(app)
       .get(`/bots?ownerId=no-es-uuid&cursor=${validCursor}`)
       .set("Authorization", `Bearer ${tok}`);
+    expect(sin.status).toBe(400);
+    expect(String(sin.body.message)).toMatch(/ownerId debe ser un uuid/);
     expect(con.status, "el cursor válido cambió la respuesta de un error de filtro").toBe(sin.status);
     expect(JSON.stringify(con.body)).not.toMatch(/[Cc]ursor/);
+  });
+
+  it("ownerId vacío o repetido también es 400", async () => {
+    for (const q of ["ownerId=", "ownerId=a&ownerId=b"]) {
+      const r = await request(app).get(`/bots?${q}`).set("Authorization", `Bearer ${tok}`);
+      expect(r.status, q).toBe(400);
+    }
+  });
+
+  it("ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)", async () => {
+    const u = "00000000-0000-0000-0000-000000000000";
+    for (const v of [`${u}x`, `x${u}`, `${u}-0`, ` ${u}`]) {
+      const r = await request(app).get(`/bots?ownerId=${encodeURIComponent(v)}`).set("Authorization", `Bearer ${tok}`);
+      expect(r.status, JSON.stringify(v)).toBe(400);
+    }
+  });
+
+  it("un uuid válido SIGUE filtrando: con bots de dos dueños, sólo salen los del dueño pedido", async () => {
+    const mk = async (tag: string) => {
+      const [u] = await h.db("users").insert({ email: `own-${tag}@eq6.example.internal`, password_hash: "x", display_name: tag }).returning("id");
+      const [b] = await h.db("bots").insert({ name: `bot-${tag}`, owner_id: u.id, visibility: "public" }).returning("id");
+      return { owner: u.id as string, bot: b.id as string };
+    };
+    const a = await mk("a");
+    const b = await mk("b");
+    const r = await request(app).get(`/bots?ownerId=${a.owner}`).set("Authorization", `Bearer ${tok}`);
+    expect(r.status).toBe(200);
+    const ids = r.body.items.map((x: { id: string }) => x.id);
+    expect(ids).toContain(a.bot);
+    expect(ids).not.toContain(b.bot);
+    expect(r.body.items.every((x: { ownerId: string }) => x.ownerId === a.owner)).toBe(true);
   });
 });
