@@ -61,15 +61,23 @@ describe("EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de fil
   it("ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)", async () => {
     const u = "00000000-0000-0000-0000-000000000000";
     for (const v of [`${u}x`, `x${u}`, `${u}-0`, ` ${u}`]) {
-      const r = await request(app).get(`/bots?ownerId=${encodeURIComponent(v)}`).set("Authorization", `Bearer ${tok}`);
+      const r = await request(app)
+        .get(`/bots?ownerId=${encodeURIComponent(v)}`)
+        .set("Authorization", `Bearer ${tok}`);
       expect(r.status, JSON.stringify(v)).toBe(400);
     }
   });
 
   it("un uuid válido SIGUE filtrando: con bots de dos dueños, sólo salen los del dueño pedido", async () => {
     const mk = async (tag: string) => {
-      const [u] = await h.db("users").insert({ email: `own-${tag}@eq6.example.internal`, password_hash: "x", display_name: tag }).returning("id");
-      const [b] = await h.db("bots").insert({ name: `bot-${tag}`, owner_id: u.id, visibility: "public" }).returning("id");
+      const [u] = await h
+        .db("users")
+        .insert({ email: `own-${tag}@eq6.example.internal`, password_hash: "x", display_name: tag })
+        .returning("id");
+      const [b] = await h
+        .db("bots")
+        .insert({ name: `bot-${tag}`, owner_id: u.id, visibility: "public" })
+        .returning("id");
       return { owner: u.id as string, bot: b.id as string };
     };
     const a = await mk("a");
