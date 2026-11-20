@@ -403,6 +403,11 @@ export function authRoutes(deps: AuthDeps): Router {
       if (typeof newPassword !== "string" || newPassword.length < MIN_PASSWORD_LENGTH) {
         throw badRequest(`La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
       }
+      // Política ANTES de la reautenticación: una petición que se va a rechazar no debe gastar un código
+      // de recuperación (requireStrongReauth lo consume). Sólo compara el cuerpo consigo mismo: no revela nada.
+      if (newPassword === currentPassword) {
+        throw badRequest("La nueva contraseña debe ser distinta de la actual");
+      }
       const userId = req.auth!.userId;
       const key = `pwchange|${userId}`;
       if (await passwordChangeGuard.isBlocked(key)) {
@@ -424,9 +429,6 @@ export function authRoutes(deps: AuthDeps): Router {
           });
         }
         throw e;
-      }
-      if (newPassword === currentPassword) {
-        throw badRequest("La nueva contraseña debe ser distinta de la actual");
       }
       await passwordChangeGuard.recordSuccess(key);
 

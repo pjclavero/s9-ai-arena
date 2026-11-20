@@ -16,7 +16,7 @@ import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
-import { FailedLoginGuard } from "./middleware/rate-limit.js";
+import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.js";
 import { createPasswordReset } from "./routes/auth.js";
 
 let h: TestDbHandle;
@@ -174,5 +174,79 @@ describe("V1-B · cambio de contraseña autenticado", () => {
     // el 2FA sigue activo: la contraseña nueva sola no basta
     expect((await u.login(NEW)).status).toBe(401);
     expect((await u.login(NEW, await totpFromUri(url))).status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Ronda de revisión (P2-1, P2-2, P2-3 del informe independiente de #315)
+// ---------------------------------------------------------------------------------------------
+const changeVia = (a: Express, token: string, body: Record<string, unknown>) =>
+  request(a).post("/auth/password").set("Authorization", `Bearer ${token}`).send(body);
+
+describe("V1-B · guard POR DEFECTO de producción (sin passwordChangeGuard inyectado)", () => {
+  it("guard por defecto: 5 fallos y luego 429, también con la contraseña correcta, y se audita change_blocked", async () => {
+    const prod = createApp({ db: h.db, loginGuard: new FailedLoginGuard(1000, 60_000) });
+    const u = await newUser("guard-defecto");
+    for (let i = 0; i < 5; i++) {
+      const r = await changeVia(prod, u.a.accessToken, { currentPassword: `mala-${i}-zzzzzzzz`, newPassword: NEW });
+      expect(r.status, `intento ${i + 1}`).toBe(401);
+    }
+    const bloqueado = await changeVia(prod, u.a.accessToken, { currentPassword: OLD, newPassword: NEW });
+    expect(bloqueado.status).toBe(429);
+    expect((await u.login(OLD)).status).toBe(200); // la contraseña no cambió
+    const entry = await h
+      .db("audit_log")
+      .where({ action: "auth.password.change_blocked", target: `user:${u.userId}` })
+      .first();
+    expect(entry).toBeTruthy();
+  });
+});
+
+describe("V1-B · límite de la ruta y aislamiento por usuario", () => {
+  it("límite de peticiones de /auth/password: el 5.º intento seguido da 429 aunque el guard de fallos no se dispare", async () => {
+    const limited = createApp({
+      db: h.db,
+      loginGuard: new FailedLoginGuard(1000, 60_000),
+      passwordChangeGuard: new FailedLoginGuard(1000, 60_000), // el guard NO es quien corta
+      loginLimiter: new SlidingWindowLimiter(4, 60_000),
+    });
+    const u = await newUser("limite-ruta");
+    for (let i = 0; i < 4; i++) {
+      const r = await changeVia(limited, u.a.accessToken, { currentPassword: `mala-${i}-yyyyyyyy`, newPassword: NEW });
+      expect(r.status, `intento ${i + 1}`).toBe(401);
+    }
+    const r5 = await changeVia(limited, u.a.accessToken, { currentPassword: OLD, newPassword: NEW });
+    expect(r5.status).toBe(429);
+  });
+
+  it("aislamiento: los fallos de A bloquean a A, no a B (misma IP)", async () => {
+    const a = await newUser("aisla-a");
+    const b = await newUser("aisla-b");
+    for (let i = 0; i < 3; i++) {
+      expect((await change(a.a.accessToken, { currentPassword: `mala-${i}-xxxxxxxx`, newPassword: NEW })).status).toBe(401);
+    }
+    expect((await change(a.a.accessToken, { currentPassword: OLD, newPassword: NEW })).status).toBe(429);
+    const rb = await change(b.a.accessToken, { currentPassword: OLD, newPassword: NEW });
+    expect(rb.status, "B no debe heredar el bloqueo de A").toBe(204);
+  });
+});
+
+describe("V1-B · con 2FA, una petición rechazada por política NO gasta el código de recuperación", () => {
+  it("nueva == actual: 400 y el código de recuperación sigue valiendo para el cambio válido", async () => {
+    const u = await newUser("2fa-codigo");
+    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${u.a.accessToken}`);
+    expect(enable.status).toBe(200);
+    const url = enable.body.otpauthUrl as string;
+    const code = (enable.body.recoveryCodes as string[])[0];
+    const login = await u.login(OLD, await totpFromUri(url));
+    const access = login.body.accessToken as string;
+
+    const rechazada = await change(access, { currentPassword: OLD, newPassword: OLD, totp: code });
+    expect(rechazada.status).toBe(400);
+    const corta = await change(access, { currentPassword: OLD, newPassword: "corta", totp: code });
+    expect(corta.status).toBe(400);
+    // el MISMO código aún sirve
+    const ok = await change(access, { currentPassword: OLD, newPassword: NEW, totp: code });
+    expect(ok.status).toBe(204);
   });
 });
