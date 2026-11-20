@@ -37,7 +37,10 @@ const GOOD = {
 let seq = 0;
 async function mkBot(): Promise<string> {
   const n = ++seq;
-  const [bot] = await h.db("bots").insert({ name: `V1T1-bot-${n}`, owner_id: devId, visibility: "private" }).returning("*");
+  const [bot] = await h
+    .db("bots")
+    .insert({ name: `V1T1-bot-${n}`, owner_id: devId, visibility: "private" })
+    .returning("*");
   await createLoadoutRevision(h.db, bot.id, GOOD as never, { massKg: 0, costCredits: 0, energyBalanceEUs: 0 });
   await h.db("bot_versions").insert({
     bot_id: bot.id,
