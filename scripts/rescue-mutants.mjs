@@ -80,7 +80,7 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(sig, () => {
     activeChild?.kill("SIGKILL"); // por PID, nunca pkill -f
     restore();
-    process.exit(128 + ({ SIGINT: 2, SIGTERM: 15, SIGHUP: 1 })[sig]);
+    process.exit(128 + { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 }[sig]);
   });
 }
 

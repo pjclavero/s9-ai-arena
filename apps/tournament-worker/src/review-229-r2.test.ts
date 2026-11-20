@@ -576,9 +576,7 @@ describe("[R2 #229] P · réplica de un torneo finished de 6 inscritos (EQ4, dat
     );
     // Calibración de la réplica: la tabla de main da el mismo V-D-E antes del ajuste por bye.
     const main = await seasonTableMain(h.db, "PRD", "deathmatch");
-    expect(main.map((r) => `${nm(r.id)} ${r.wins}-${r.losses}-${r.draws}`)).toEqual(
-      TABLE.map(([n, v]) => `${n} ${v}`),
-    );
+    expect(main.map((r) => `${nm(r.id)} ${r.wins}-${r.losses}-${r.draws}`)).toEqual(TABLE.map(([n, v]) => `${n} ${v}`));
     // Libro mayor (before/delta/after) de dos bots, contra el oráculo.
     const ev = async (n: string) =>
       (await h.db("rating_events").where({ bot_id: by[n].botId }).orderBy("id")).map((e: Record<string, any>) => [
@@ -589,9 +587,7 @@ describe("[R2 #229] P · réplica de un torneo finished de 6 inscritos (EQ4, dat
     for (const n of ["BOT-5", "BOT-2"]) {
       const got = await ev(n);
       expect(got).toHaveLength(ledger.get(n)!.length);
-      got.forEach((row: number[], k: number) =>
-        row.forEach((v, c) => expect(v).toBeCloseTo(ledger.get(n)![k][c], 9)),
-      );
+      got.forEach((row: number[], k: number) => row.forEach((v, c) => expect(v).toBeCloseTo(ledger.get(n)![k][c], 9)));
     }
     expect(await ledgerAudit("PRD")).toEqual([]);
   });
