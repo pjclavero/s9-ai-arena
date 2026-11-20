@@ -119,7 +119,7 @@ export function parseCreateAdminArgs(argv: string[]): CreateAdminArgs {
       if (!v) throw new PasswordInputError("--password-file requiere una ruta");
       file = v;
     } else if (a === "--allow-additional-admin") allow = true;
-    else if (/^--?password(=|$)/.test(a) || a === "-p") {
+    else if (/^--?password(=|$)/.test(a) || /^-p/.test(a)) {
       throw new PasswordInputError(
         "La contraseña NO se pasa por argv: usa --password-stdin o --password-file <ruta 0600>",
       );
