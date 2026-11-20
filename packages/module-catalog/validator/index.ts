@@ -40,6 +40,51 @@ export interface Violation {
   acceptedAmmo?: string[];
 }
 
+/**
+ * V1 · B4 · ÚNICA fuente del coste de un loadout (D-OP-10, D-OP-15): chasis + módulos +
+ * la munición embebida (`ammo:` del arma) que resolveVehicle materializa como módulo y que
+ * no está además montada de forma explícita. La usan el validador (`budget_exceeded`), el
+ * editor, el `summary` guardado, el tope `botCredits`/`teamCredits` de las reglas de batalla
+ * y el presupuesto del torneo. Nunca lanza: una pieza que no resuelve cuenta 0 (lo reporta
+ * el validador, no esta suma).
+ */
+export function loadoutCostCredits(
+  loadout: { chassis: string; modules: readonly { moduleId: string; ammo?: unknown }[] },
+  catalog: ModuleDefinition[],
+): number {
+  let total = Number(findModule(catalog, loadout.chassis)?.costCredits) || 0; // coste nulo/ausente = 0
+  const explicitIds = new Set(loadout.modules.map((m) => m.moduleId));
+  for (const m of loadout.modules) {
+    const def = findModule(catalog, m.moduleId);
+    if (!def) continue;
+    total += Number(def.costCredits) || 0;
+    if (def.category !== "weapon" || typeof m.ammo !== "string" || explicitIds.has(m.ammo)) continue;
+    const ammoDef = findModule(catalog, m.ammo);
+    if (ammoDef && ammoDef.category === "ammo") total += Number(ammoDef.costCredits) || 0;
+  }
+  return total;
+}
+
+/** Códigos de presupuesto del contrato vigente de `validateLoadout` (D-OP-18/19). */
+export const BUDGET_VIOLATION_CODES: ReadonlySet<Violation["code"]> = new Set([
+  "budget_exceeded",
+  "module_cost_cap_exceeded",
+]);
+
+/**
+ * V1 · B4 · ÚNICO cálculo de presupuesto de torneo (inscripción, cierre y ejecución, D-OP-18/19):
+ * las violaciones de PRESUPUESTO que da `validateLoadout` con `budgetCredits` (total del loadout
+ * y tope por pieza = MAX_MODULE_COST_FRACTION × presupuesto; el contrato ya existente, sin
+ * límites nuevos). Ignora las demás violaciones (otra capa, `elegibilidad`).
+ */
+export function budgetViolations(
+  loadout: LoadoutInput,
+  catalog: ModuleDefinition[],
+  budgetCredits: number,
+): Violation[] {
+  return validateLoadout(loadout, catalog, budgetCredits).filter((v) => BUDGET_VIOLATION_CODES.has(v.code));
+}
+
 const SIZE_RANK: Record<Size, number> = { S: 0, M: 1, L: 2, XL: 3 };
 
 interface Accepted {
@@ -266,8 +311,8 @@ export function validateLoadout(
   }
 
   // ---------------------------------------------------------------------- presupuesto
-  const modulesCost = materialized.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
-  const totalCost = chassisDef.costCredits + modulesCost;
+  // Misma suma que `loadoutCostCredits` (una sola fuente), no una paralela.
+  const totalCost = loadoutCostCredits(loadout, catalog);
   if (totalCost > budgetCredits) {
     violations.push({
       code: "budget_exceeded",

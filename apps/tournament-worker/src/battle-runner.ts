@@ -41,7 +41,7 @@ import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
-import { eligibilityOf, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
+import { eligibilityKey, eligibilityOf, evaluateTournamentBudget, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
@@ -298,6 +298,7 @@ async function adminDisqualifications(
   battleId: string,
   participants: ParticipantRow[],
   deps: BattleRunnerDeps,
+  tournamentId: string | null = null,
 ): Promise<string[]> {
   const adminDq: string[] = [];
   for (const p of participants) {
@@ -313,6 +314,38 @@ async function adminDisqualifications(
   for (const p of participants) {
     if (!adminDq.includes(p.bot_id) && !eligibilityOf(elig, { botId: p.bot_id, version: p.version }).eligible) {
       adminDq.push(p.bot_id);
+    }
+  }
+  // V1 · B4 (D-OP-18 c) · ÚLTIMA GARANTÍA del presupuesto del torneo: con la versión y la
+  // revisión de loadout FIJADAS en la inscripción y el MISMO cálculo que la inscripción y el cierre
+  // (`evaluateTournamentBudget`), un participante que supera `budgetCredits` (total o tope por
+  // pieza) no juega: descalificación administrativa explícita (walkover), igual que ELIG. Sólo LEE;
+  // no toca resultados históricos ni la versión. Sin presupuesto propio no restringe.
+  if (tournamentId) {
+    const t = await db("tournaments").where({ id: tournamentId }).first("budget_credits");
+    const budget = t?.budget_credits as number | null | undefined;
+    if (typeof budget === "number") {
+      const live = participants.filter((p) => !adminDq.includes(p.bot_id));
+      const entries = (await db("entries")
+        .where({ tournament_id: tournamentId })
+        .whereIn(
+          "bot_id",
+          live.map((p) => p.bot_id),
+        )
+        .select("bot_id", "version", "loadout_revision")) as { bot_id: string; version: number; loadout_revision: number }[];
+      const revOf = new Map(entries.map((e) => [`${e.bot_id}@${e.version}`, e.loadout_revision]));
+      const verdicts = await evaluateTournamentBudget(
+        db,
+        live.map((p) => ({
+          botId: p.bot_id,
+          version: p.version,
+          loadoutRevision: revOf.get(`${p.bot_id}@${p.version}`),
+        })),
+        budget,
+      );
+      for (const p of live) {
+        if (verdicts.get(eligibilityKey(p.bot_id, p.version))?.over) adminDq.push(p.bot_id);
+      }
     }
   }
   if (deps.suspensions) {
@@ -389,7 +422,7 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
 
     try {
       const participants = await loadBattleParticipants(db, battleId);
-      const adminDq = await adminDisqualifications(db, battleId, participants, deps);
+      const adminDq = await adminDisqualifications(db, battleId, participants, deps, (battle.tournament_id as string | null) ?? null);
       const activeTeams = new Set(participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => p.team));
 
       // Walkover: si tras las DQ administrativas queda un solo bando, no hay batalla que lanzar.
