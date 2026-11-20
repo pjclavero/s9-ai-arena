@@ -72,6 +72,6 @@ En «Otros equipos» ves sólo el nombre y cuántos miembros y bots tiene cada u
 | Acción de capitán sin serlo | «Solo el capitán del equipo puede hacer esto» |
 | Fallo al cargar | Mensaje de error con «Reintentar» |
 
-El capitán no puede salir de su propio equipo ni ceder la capitanía. Los torneos de formato «Por equipos» no se pueden alimentar desde la web ([Torneos](tournaments.md)).
+El capitán no puede salir de su propio equipo ni ceder la capitanía. Los torneos de formato «Por equipos» se alimentan inscribiendo el equipo completo desde el detalle del torneo ([Torneos](tournaments.md)).
 
 Siguiente: [Batallas](battles.md) · [Torneos](tournaments.md).
