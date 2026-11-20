@@ -37,16 +37,29 @@ const validCursor = Buffer.from(
 ).toString("base64url");
 
 describe("EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro", () => {
-  // DEFECTO VIGENTE (issue #305) en main 8f380eb (medido en VM de pruebas): `GET /bots?ownerId=no-es-uuid` da 500 sin
-  // cursor y, con un cursor válido, un 400 «Cursor de paginación inválido» (runCursorQuery culpa al cursor
-  // de un error de filtro). `it.fails` fija el defecto: se pone ROJO cuando se corrija (validar ownerId
-  // como uuid → 400 en ambos casos); entonces basta con quitar `.fails`.
-  it.fails("ownerId no-UUID: con y sin cursor válido, MISMA respuesta (y nunca «cursor inválido»)", async () => {
+  // GARANTÍA (V1-B · #305, corregido): `GET /bots?ownerId=no-es-uuid` valida el filtro como uuid y
+  // responde 400 «ownerId debe ser un uuid» TANTO sin cursor como con un cursor válido
+  // (antes: 500 sin cursor y «cursor inválido» con cursor, porque runCursorQuery culpaba al cursor).
+  it("ownerId no-UUID: con y sin cursor válido, MISMA respuesta 400 (y nunca «cursor inválido»)", async () => {
     const sin = await request(app).get("/bots?ownerId=no-es-uuid").set("Authorization", `Bearer ${tok}`);
     const con = await request(app)
       .get(`/bots?ownerId=no-es-uuid&cursor=${validCursor}`)
       .set("Authorization", `Bearer ${tok}`);
+    expect(sin.status).toBe(400);
+    expect(String(sin.body.message)).toMatch(/ownerId debe ser un uuid/);
     expect(con.status, "el cursor válido cambió la respuesta de un error de filtro").toBe(sin.status);
     expect(JSON.stringify(con.body)).not.toMatch(/[Cc]ursor/);
+  });
+
+  it("ownerId vacío o repetido también es 400; un uuid válido sigue filtrando", async () => {
+    for (const q of ["ownerId=", "ownerId=a&ownerId=b"]) {
+      const r = await request(app).get(`/bots?${q}`).set("Authorization", `Bearer ${tok}`);
+      expect(r.status, q).toBe(400);
+    }
+    const ok = await request(app)
+      .get("/bots?ownerId=00000000-0000-0000-0000-000000000000")
+      .set("Authorization", `Bearer ${tok}`);
+    expect(ok.status).toBe(200);
+    expect(ok.body.items).toEqual([]);
   });
 });

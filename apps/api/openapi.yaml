@@ -541,7 +541,8 @@ paths:
         - { $ref: '#/components/parameters/Limit' }
         - name: ownerId
           in: query
-          schema: { type: string }
+          description: 'Filtra por dueño. Debe ser un uuid; con otro valor la API responde 400 `bad_request` (también con cursor).'
+          schema: { type: string, format: uuid }
         - name: includeCounts
           in: query
           description: 'EQ4 · con `true` y `ownerId` igual al usuario autenticado, añade `counts` (total/activos/retirados de TODOS sus bots, no sólo de la página). Con otro ownerId se ignora.'
