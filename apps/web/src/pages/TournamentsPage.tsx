@@ -26,6 +26,10 @@ export interface Tournament {
 // UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
 const FORMATS = Object.keys(TOURNAMENT_FORMAT_NAME);
 const MODES = Object.keys(MODE_NAME);
+/** V1-T1 · Los torneos «Por equipos» sólo se pueden crear con reglas NvN (preset `team_deathmatch`):
+ *  la API rechaza CTF en torneos y, sin preset, el torneo nace sin tamaño de equipo, no se monta
+ *  «Inscribir equipo» y los equipos no se pueden seleccionar. */
+const TEAM_TOURNAMENT_MODE = "team_deathmatch";
 
 export function TournamentsPage(_props: { me: Me }) {
   const [list, reload] = useResource(() => api<{ items: Tournament[] }>("GET", "/tournaments"), []);
@@ -36,7 +40,14 @@ export function TournamentsPage(_props: { me: Me }) {
   const [broadcast, setBroadcast] = useState(false);
   // #287 · tamaño de equipo de un torneo por equipos de Team Deathmatch (preset `team_deathmatch`).
   const [teamSize, setTeamSize] = useState("4");
-  const teamRules = format === "teams" && mode === "team_deathmatch";
+  const teamRules = format === "teams" && mode === TEAM_TOURNAMENT_MODE;
+  const modeOptions = format === "teams" ? [TEAM_TOURNAMENT_MODE] : MODES;
+  function onFormatChange(f: string) {
+    setFormat(f);
+    // «Por equipos» fija el modo de equipos; al salir de él se vuelve al modo por defecto.
+    if (f === "teams") setMode(TEAM_TOURNAMENT_MODE);
+    else if (mode === TEAM_TOURNAMENT_MODE && format === "teams") setMode("deathmatch");
+  }
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -129,7 +140,7 @@ export function TournamentsPage(_props: { me: Me }) {
           <p>
             <label>
               Formato{" "}
-              <select aria-label="formato" value={format} onChange={(e) => setFormat(e.target.value)}>
+              <select aria-label="formato" value={format} onChange={(e) => onFormatChange(e.target.value)}>
                 {FORMATS.map((f) => (
                   <option key={f} value={f}>
                     {labelOf(TOURNAMENT_FORMAT_NAME, f)}
@@ -140,7 +151,7 @@ export function TournamentsPage(_props: { me: Me }) {
             <label>
               Modo{" "}
               <select aria-label="modo" value={mode} onChange={(e) => setMode(e.target.value)}>
-                {MODES.map((m) => (
+                {modeOptions.map((m) => (
                   <option key={m} value={m}>
                     {modeName(m)}
                   </option>
