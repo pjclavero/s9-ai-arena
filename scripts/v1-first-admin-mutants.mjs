@@ -131,11 +131,10 @@ const MUTANTES = [
 ];
 
 function vitest(test, nombre) {
-  const r = spawnSync(
-    "npx",
-    ["vitest", "run", "--maxWorkers=1", test, "-t", nombre],
-    { encoding: "utf8", env: { ...process.env, CI: "1" } },
-  );
+  const r = spawnSync("npx", ["vitest", "run", "--maxWorkers=1", test, "-t", nombre], {
+    encoding: "utf8",
+    env: { ...process.env, CI: "1" },
+  });
   return { rc: r.status, out: r.stdout + r.stderr };
 }
 
@@ -169,7 +168,9 @@ for (const m of MUTANTES) {
   console.log(`${murio ? "MUERTO " : "VIVO   "} ${m.id}  (test: "${m.nombre}", rc=${r.rc})`);
   if (!murio) fallos++;
 }
-const sucio = spawnSync("git", ["status", "--porcelain", "--", "apps", "infrastructure", "scripts"], { encoding: "utf8" }).stdout.trim();
+const sucio = spawnSync("git", ["status", "--porcelain", "--", "apps", "infrastructure", "scripts"], {
+  encoding: "utf8",
+}).stdout.trim();
 if (sucio) {
   console.log(`ÁRBOL SUCIO tras los mutantes:\n${sucio}`);
   fallos++;

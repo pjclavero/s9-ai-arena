@@ -69,14 +69,18 @@ function main(argv) {
   try {
     texto = readFileSync(ruta, "utf8");
   } catch (e) {
-    console.error(`NO COMPROBADO: no se pudo leer ${ruta} (${e.code ?? e.message}). Copia infrastructure/.env.example y complétalo.`);
+    console.error(
+      `NO COMPROBADO: no se pudo leer ${ruta} (${e.code ?? e.message}). Copia infrastructure/.env.example y complétalo.`,
+    );
     return 2;
   }
   const r = validarEtiquetas(parseEnv(texto), process.env);
   if (!r.ok) {
     console.error(`ETIQUETAS NO VÁLIDAS en ${ruta}:`);
     for (const e of r.errores) console.error(`  - ${e}`);
-    console.error("Fija una etiqueta que la CI haya publicado (p. ej. sha-<commit> de main) antes de `docker compose pull`.");
+    console.error(
+      "Fija una etiqueta que la CI haya publicado (p. ej. sha-<commit> de main) antes de `docker compose pull`.",
+    );
     return 1;
   }
   console.log(`ETIQUETAS OK en ${ruta}`);
