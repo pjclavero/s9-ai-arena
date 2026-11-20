@@ -57,12 +57,24 @@
 # Qué copia:
 #   1. PostgreSQL: pg_dump lógico en formato custom comprimido. (crítica)
 #   2. Volúmenes arena_maps, arena_bot_sources y arena_assets completos.
-#   3. arena_replays: TODO el volumen dentro de la retención
-#      REPLAY_RETENTION_DAYS; los replays bajo official/ (si existe) se
-#      tratan como preferentes y se incluyen SIEMPRE, sin límite de
-#      retención. Cambio de alcance respecto a la versión anterior, que
-#      sólo copiaba official/ — un subdirectorio que en producción no
-#      existe, por lo que NUNCA se había copiado ni un solo replay.
+#   3. arena_replays: TODO lo que hay en el volumen, SIN límite de edad por
+#      defecto (V1-OPS, AUD2-03/D-OP-11). Antes se copiaba sólo `-mtime -180`,
+#      de modo que un replay permanente de más de 180 días seguía referenciado
+#      en la BD pero dejaba de entrar en los snapshots nuevos y desaparecía de
+#      la copia al caducar el último snapshot que lo contenía.
+#      Cuatro conceptos que NO deben confundirse:
+#        - retención/borrado: lo decide el replay-service (sólo borra los
+#          TEMPORALES caducados; un oficial/permanente no se borra nunca);
+#        - inclusión en el backup: lo decide este script; lo que está en el
+#          volumen entra, tenga la edad que tenga (REPLAY_BACKUP_MAX_AGE_DAYS=0);
+#        - restauración: restic devuelve los bytes tal cual; los snapshots
+#          siguen la política de restic (forget 14d/8s/12m);
+#        - compatibilidad (replays v1 frente a 0.5): el backup copia bytes,
+#          no interpreta el formato; si un replay restaurado se puede
+#          VERIFICAR depende del motor (ADR-022), no de la copia.
+#      REPLAY_BACKUP_MAX_AGE_DAYS=N>0 es una política opcional de ahorro de
+#      espacio: excluye del staging los replays con más de N días fuera de
+#      official/. El valor por defecto (0) incluye todo.
 #   4. Secretos (infrastructure/secrets): cifrados por el propio repositorio
 #      restic, en su PROPIO snapshot (tag s9-arena-secrets), NUNCA dentro
 #      del staging de datos; sus VALORES no aparecen jamás en logs,
@@ -86,8 +98,9 @@
 # cambio): volumen nombrado `backup_work` montado en /tmp/backup-work, para
 # que el crecimiento se vea y se limite por separado del resto del
 # contenedor, y quede visible con `docker system df -v`. Si el volumen de
-# datos crece mucho, subir REPLAY_RETENTION_DAYS con cuidado o mover
-# $WORK_DIR a un disco con más margen.
+# datos crece mucho, mover $WORK_DIR a un disco con más margen o, como último
+# recurso, fijar REPLAY_BACKUP_MAX_AGE_DAYS (ver docs/operations/backup.md,
+# estimación de almacenamiento).
 #
 # Modos:
 #   backup.sh            backup real (requiere restic, pg_dump y el repo).
@@ -127,7 +140,17 @@ ASSETS_DIR="${ASSETS_DIR:-/data/assets}"
 SECRETS_DIR="${SECRETS_DIR:-/secrets}"
 METRICS_DIR="${METRICS_DIR:-/textfile}"
 WORK_DIR="${WORK_DIR:-/tmp/backup-work}"
-REPLAY_RETENTION_DAYS="${REPLAY_RETENTION_DAYS:-180}"
+# 0 = sin límite de edad (todo replay del volumen entra en el backup).
+REPLAY_BACKUP_MAX_AGE_DAYS="${REPLAY_BACKUP_MAX_AGE_DAYS:-0}"
+# Verificación de integridad del repositorio (AUD2-02): `restic check` a secas
+# sólo comprueba ESTRUCTURA; una corrupción de un pack pasa con rc=0. Por
+# defecto se leen los datos de 1/7 del repositorio cada día, rotando por día
+# (cubre todo el repositorio cada 7 días). Modos: subset (defecto), all
+# (--read-data completo) y none (sólo estructura; la métrica lo declara).
+RESTIC_CHECK_MODE="${RESTIC_CHECK_MODE:-subset}"
+RESTIC_CHECK_SUBSET_PARTS="${RESTIC_CHECK_SUBSET_PARTS:-7}"
+# Franja forzada 1..PARTS (pruebas/operación); vacío = rotativa por día.
+RESTIC_CHECK_SLOT="${RESTIC_CHECK_SLOT:-}"
 # RESTIC_HOSTNAME (fix/restic-stable-hostname): `restic forget` agrupa la
 # retención por host+paths, y ese "host" es, por defecto, el hostname del
 # SISTEMA (`--host`, o el propio `hostname` si no se pasa). Dentro de un
@@ -215,6 +238,8 @@ declare -A SRC_STATUS=()
 declare -A SRC_FILES=()
 FULL_FAILURE=0
 PARTIAL=0
+CHECK_OK=-1
+CHECK_FRACTION=0
 
 # classify_source NOMBRE DIRECTORIO CRÍTICA(0/1)
 # Comprueba SOLO legibilidad/tamaño (no copia nada). Nunca aborta el script
@@ -357,6 +382,12 @@ write_metrics() { # $1 exit_code $2 duration_s $3 restic_snapshot_created(0/1)
     echo "# HELP s9_backup_restic_snapshot_created 1 si restic backup creó un snapshot en esta ejecución."
     echo "# TYPE s9_backup_restic_snapshot_created gauge"
     echo "s9_backup_restic_snapshot_created ${3:-0}"
+    echo "# HELP s9_backup_check_ok 1 si restic check terminó bien; 0 si falló; -1 si no se ejecutó en esta ejecución."
+    echo "# TYPE s9_backup_check_ok gauge"
+    echo "s9_backup_check_ok $CHECK_OK"
+    echo "# HELP s9_backup_check_read_data_fraction Fracción del repositorio cuyos DATOS (no sólo la estructura) leyó restic check: 0 = sólo estructura, 1 = todo."
+    echo "# TYPE s9_backup_check_read_data_fraction gauge"
+    echo "s9_backup_check_read_data_fraction $CHECK_FRACTION"
     echo "# HELP s9_backup_source_files Ficheros detectados por fuente en la última ejecución."
     echo "# TYPE s9_backup_source_files gauge"
     echo "# HELP s9_backup_source_empty 1 si la fuente estaba vacía (o ausente de forma esperable) en la última ejecución."
@@ -377,8 +408,51 @@ write_metrics() { # $1 exit_code $2 duration_s $3 restic_snapshot_created(0/1)
   mv "$METRICS_DIR/s9_backup.prom.tmp" "$METRICS_DIR/s9_backup.prom"
 }
 
+# ── restic check con lectura de datos (AUD2-02) ───────────────────────────────
+# Franja rotativa: día-época mod PARTS + 1 (o RESTIC_CHECK_SLOT si se fija).
+check_slot() {
+  if [ -n "$RESTIC_CHECK_SLOT" ]; then printf '%s' "$RESTIC_CHECK_SLOT"
+  else printf '%s' $(( ($(date +%s) / 86400) % RESTIC_CHECK_SUBSET_PARTS + 1 )); fi
+}
+check_args_text() {
+  case "$RESTIC_CHECK_MODE" in
+    all) printf '%s' "--read-data" ;;
+    none) printf '%s' "" ;;
+    *) printf '%s' "--read-data-subset=<n>/$RESTIC_CHECK_SUBSET_PARTS (n rotativo diario)" ;;
+  esac
+}
+run_restic_check() {
+  local args=() rc
+  case "$RESTIC_CHECK_MODE" in
+    all) args=(--read-data); CHECK_FRACTION=1 ;;
+    none) CHECK_FRACTION=0 ;;
+    *)
+      args=("--read-data-subset=$(check_slot)/$RESTIC_CHECK_SUBSET_PARTS")
+      CHECK_FRACTION="$(awk -v p="$RESTIC_CHECK_SUBSET_PARTS" 'BEGIN{printf "%.4f", 1/p}')"
+      ;;
+  esac
+  restic check ${args[@]+"${args[@]}"}
+  rc=$?
+  if [ "$rc" = 0 ]; then CHECK_OK=1; else CHECK_OK=0; log error "restic check ${args[*]:-(sólo estructura)} FALLÓ (rc=$rc): el repositorio puede estar corrupto"; fi
+  return "$rc"
+}
+
 # ── Validación de configuración (también en dry-run) ──────────────────────────
 errors=0
+case "$RESTIC_CHECK_MODE" in subset|all|none) ;; *)
+  log error "RESTIC_CHECK_MODE='$RESTIC_CHECK_MODE' inválido (subset|all|none)"; errors=1 ;; esac
+if ! [[ "$RESTIC_CHECK_SUBSET_PARTS" =~ ^[1-9][0-9]*$ ]]; then
+  log error "RESTIC_CHECK_SUBSET_PARTS='$RESTIC_CHECK_SUBSET_PARTS' inválido (entero >= 1)"; errors=1
+fi
+if [ -n "$RESTIC_CHECK_SLOT" ] && ! { [[ "$RESTIC_CHECK_SLOT" =~ ^[1-9][0-9]*$ ]] && [[ "$RESTIC_CHECK_SUBSET_PARTS" =~ ^[1-9][0-9]*$ ]] && [ "$RESTIC_CHECK_SLOT" -le "$RESTIC_CHECK_SUBSET_PARTS" ]; }; then
+  log error "RESTIC_CHECK_SLOT='$RESTIC_CHECK_SLOT' inválido (1..RESTIC_CHECK_SUBSET_PARTS)"; errors=1
+fi
+if ! [[ "$REPLAY_BACKUP_MAX_AGE_DAYS" =~ ^[0-9]+$ ]]; then
+  log error "REPLAY_BACKUP_MAX_AGE_DAYS='$REPLAY_BACKUP_MAX_AGE_DAYS' inválido (entero >= 0; 0 = sin límite)"; errors=1
+fi
+if [ -n "${REPLAY_RETENTION_DAYS:-}" ]; then
+  log warn "REPLAY_RETENTION_DAYS está OBSOLETA y se ignora: ya no limita el backup. Usa REPLAY_BACKUP_MAX_AGE_DAYS (0 = todo)."
+fi
 if [ -z "$RESTIC_REPOSITORY" ]; then
   log error "RESTIC_REPOSITORY sin definir (infrastructure/.env): el operador debe designar el destino (NAS/ZFS)"
   errors=1
@@ -471,8 +545,8 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f staging/pgdump-\$(fecha).dump [fuente crítica]"
   echo "PLAN 2/5 · clasificar fuentes (ok/empty/error): maps, bot_sources, replays, assets, secrets"
   echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
-  echo "PLAN 4/5 · restic backup --host $RESTIC_HOSTNAME del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
-  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME --group-by host,tags && restic check"
+  echo "PLAN 4/5 · restic backup --host $RESTIC_HOSTNAME del staging completo con replays de $( [ "$REPLAY_BACKUP_MAX_AGE_DAYS" = 0 ] && echo "cualquier edad" || echo "<= $REPLAY_BACKUP_MAX_AGE_DAYS días (official/ sin límite)") + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
+  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME --group-by host,tags && restic check $(check_args_text) [modo $RESTIC_CHECK_MODE]"
   if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
     echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
   fi
@@ -586,11 +660,16 @@ classify_source assets "$ASSETS_DIR" 0
 # respaldo (la fuente entera se excluía de restic sin ningún error visible).
 STAGING_REPLAYS="$STAGING/replays"
 mkdir -p "$STAGING_REPLAYS"
+# Filtro de edad: vacío (todo) salvo política explícita REPLAY_BACKUP_MAX_AGE_DAYS>0.
+REPLAY_AGE_FILTER=()
+if [ "$REPLAY_BACKUP_MAX_AGE_DAYS" != 0 ]; then
+  REPLAY_AGE_FILTER=( \( -path "$REPLAYS_DIR/official/*" -o -mtime "-$REPLAY_BACKUP_MAX_AGE_DAYS" \) )
+fi
 if [ ! -d "$REPLAYS_DIR" ]; then
   SRC_STATUS[replays]=empty
   SRC_FILES[replays]=0
 elif ! find "$REPLAYS_DIR" -type f \
-    \( -path "$REPLAYS_DIR/official/*" -o -mtime "-$REPLAY_RETENTION_DAYS" \) \
+    ${REPLAY_AGE_FILTER[@]+"${REPLAY_AGE_FILTER[@]}"} \
     -print0 > "$WORK_DIR/.replays.list" 2>"$WORK_DIR/.err-replays"; then
   log error "fuente 'replays' ($REPLAYS_DIR) ilegible: $(tail -c 300 "$WORK_DIR/.err-replays")"
   SRC_STATUS[replays]=error
@@ -769,7 +848,7 @@ if [ "$status" = 0 ]; then
   # construcción, a diferencia de la ruta) hace que la retención dependa
   # SÓLO de RESTIC_HOSTNAME + el tag, nunca de rutas del contenedor.
   restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host "$RESTIC_HOSTNAME" --group-by host,tags || status=1
-  restic check || status=1
+  run_restic_check || status=1
 fi
 
 # Si restic falló pese a tener fuentes críticas ok, es FULL FAILURE (no hay

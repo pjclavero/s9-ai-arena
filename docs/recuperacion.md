@@ -416,8 +416,9 @@ vía de custodia convierte un olvido en una pérdida total.
 - `arena_build_cache` NO se copia (decisión de retención del dosier 23.1): se
   regenera. Los replays SÍ se copian en su totalidad desde #110b (antes sólo
   se copiaba `official/`, un subdirectorio que en producción no existe, así
-  que nunca se había copiado ni un solo replay); quedan sujetos a
-  `REPLAY_RETENTION_DAYS`, salvo `official/` que se conserva sin límite.
+  que nunca se había copiado ni un solo replay). Desde V1 entran **sin límite
+  de edad** (`REPLAY_BACKUP_MAX_AGE_DAYS=0`); antes quedaban sujetos a 180 días
+  (AUD2-03). Ver `docs/operations/backup.md`.
 - El staging temporal de `backup.sh` ($WORK_DIR, por defecto
   `/tmp/backup-work`) puede llegar a pesar como la suma de
   maps+bot_sources+assets+replays retenidos: está en el volumen dedicado

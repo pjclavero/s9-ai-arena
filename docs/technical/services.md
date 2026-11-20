@@ -218,7 +218,7 @@ Rutas del replay-service (internas: el gateway ya no las enruta desde TD-004; el
 | Entrypoint | `infrastructure/backup/entrypoint.sh` → `backup.sh` |
 | Entrada | volúmenes de datos de sólo lectura; `./secrets` de sólo lectura |
 | Salida | repositorio restic en `<backup-host>` (SFTP); métricas textfile en `backup_metrics` |
-| Configuración | `BACKUP_CRON` (por defecto `15 4 * * *`, en UTC), `REPLAY_RETENTION_DAYS`, `RESTIC_HOSTNAME`, `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE`, `RESTIC_SSH_KEY_FILE`, `RESTIC_SSH_KNOWN_HOSTS_FILE`, `PG*`, `METRICS_DIR`, `WORK_DIR` |
+| Configuración | `BACKUP_CRON` (por defecto `15 4 * * *`, en UTC), `REPLAY_BACKUP_MAX_AGE_DAYS`, `RESTIC_CHECK_MODE`, `RESTIC_CHECK_SUBSET_PARTS`, `RESTIC_HOSTNAME`, `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE`, `RESTIC_SSH_KEY_FILE`, `RESTIC_SSH_KNOWN_HOSTS_FILE`, `PG*`, `METRICS_DIR`, `WORK_DIR` |
 | Healthcheck | `healthcheck.sh`: exige crond vivo **y** una última copia con exit 0, postgres correcto y antigüedad menor de 26 h |
 | Errores conocidos | sin alertas ([TD-007](../roadmap/technical-debt.md#td-007)). Versionado aparte con `BACKUP_TAG` |
 | Tests | `infrastructure/tests/backup*.test.ts`, `backup-sftp-e2e`, `restore-sftp-bootstrap`, `restore-snapshot-selection`, `manifest-pgdump` |
