@@ -1,0 +1,27 @@
+{
+  "_doc": "Mutantes de TD-068 (listBots por bloques). MUTANTS_SPEC=scripts/v1b-bots-pagination-mutants.json node scripts/rescue-mutants.mjs <id> base|mut.",
+  "mutants": [
+    {
+      "id": "V1B-BOTS-01-un-solo-bloque",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "cur = decodeCursor(encodeCursor(lastScanned!, [lastScanned!.id as string]));\n",
+      "to": "break;\n",
+      "killedBy": [
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante la primera página sale COMPLETA (antes: vacía y sin nextCursor)"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-02-sin-cursor-al-agotar-tope",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "const hasMore = visible.length > limit || !exhausted;",
+      "to": "const hasMore = visible.length > limit;",
+      "killedBy": [
+        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante con más filas ajenas que el tope de bloques: página corta pero CON nextCursor, y el recorrido llega al final"
+      ],
+      "controls": []
+    }
+  ]
+}

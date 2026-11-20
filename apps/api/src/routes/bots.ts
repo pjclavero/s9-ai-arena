@@ -8,7 +8,15 @@ import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
+import {
+  applyCursor,
+  cursorTsSql,
+  decodeCursor,
+  encodeCursor,
+  parseLimit,
+  runCursorQuery,
+  type PageCursor,
+} from "../serialize.js";
 import {
   applyTransition,
   assertLoadoutRevisionUsable,
@@ -36,6 +44,10 @@ import { audit } from "../audit.js";
  * 019): nunca en una caché compartida ni en la del navegador.
  */
 const CODE_NO_STORE = "private, no-store";
+
+/** TD-068 · filas por bloque de lectura de `listBots` y tope de bloques por petición. */
+const LIST_BOTS_CHUNK = 200;
+const LIST_BOTS_MAX_CHUNKS = 10;
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -216,23 +228,47 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBots", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("bots")
-      .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
-      .orderBy([
-        { column: "created_at", order: "desc" },
-        { column: "id", order: "desc" },
-      ])
-      .limit(200);
-    if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
-    q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
+    const ownerId = req.query.ownerId;
+    const chunkQuery = (cur: PageCursor | null) => {
+      let q = db("bots")
+        .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
+        .orderBy([
+          { column: "created_at", order: "desc" },
+          { column: "id", order: "desc" },
+        ])
+        .limit(LIST_BOTS_CHUNK);
+      if (typeof ownerId === "string") q = q.where({ owner_id: ownerId });
+      return applyCursor(q, cur, "bots.created_at", ["bots.id"]);
+    };
 
-    const rows = await runCursorQuery(q, cursor);
+    // TD-068 · la visibilidad se filtra en memoria (`canSeeBot`), así que se leen BLOQUES de
+    // LIST_BOTS_CHUNK filas hasta completar la página (limit + 1 para saber si hay más) o agotar la
+    // tabla. Antes se leía un único bloque de 200: con muchos bots ajenos privados intercalados la
+    // página salía corta y, peor, SIN nextCursor, de modo que el resto de la lista era inalcanzable.
+    // Tope de bloques por petición: si se alcanza, la página puede ser corta pero SIEMPRE lleva
+    // nextCursor (el cliente continúa); nunca se pierde el final en silencio.
     const visible: Record<string, unknown>[] = [];
-    for (const bot of rows) {
-      if (await canSeeBot(db, req.auth, bot)) visible.push(bot);
+    let cur = cursor;
+    let lastScanned: Record<string, unknown> | undefined;
+    let exhausted = false;
+    for (let chunk = 0; chunk < LIST_BOTS_MAX_CHUNKS && visible.length <= limit; chunk++) {
+      const rows = await runCursorQuery(chunkQuery(cur), cur);
+      for (const bot of rows) {
+        lastScanned = bot;
+        if (await canSeeBot(db, req.auth, bot)) visible.push(bot);
+        if (visible.length > limit) break;
+      }
       if (visible.length > limit) break;
+      if (rows.length < LIST_BOTS_CHUNK) {
+        exhausted = true;
+        break;
+      }
+      cur = decodeCursor(encodeCursor(lastScanned!, [lastScanned!.id as string]));
     }
     const page = visible.slice(0, limit);
+    // Hay más si ya hay un elemento visible de sobra o si quedan filas sin escanear (tope de bloques).
+    const hasMore = visible.length > limit || !exhausted;
+    const cursorRow = visible.length > limit ? page[page.length - 1] : lastScanned;
     const items = await Promise.all(
       page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
     );
@@ -258,8 +294,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     }
     res.json({
       items,
-      nextCursor:
-        visible.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
+      nextCursor: hasMore && cursorRow ? encodeCursor(cursorRow, [cursorRow.id as string]) : undefined,
       ...(counts ? { counts } : {}),
     });
   });
