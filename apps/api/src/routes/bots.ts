@@ -6,7 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { pathParam } from "../params.js";
+import { pathParam, queryUuid } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import {
@@ -223,7 +223,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         { column: "id", order: "desc" },
       ])
       .limit(200);
-    if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
+    const ownerId = queryUuid(req, "ownerId");
+    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });
     q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
 
     const rows = await runCursorQuery(q, cursor);

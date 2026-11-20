@@ -22,6 +22,7 @@ import { rateLimit } from "../middleware/rate-limit.js";
 import type { LoginGuardLike, RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { sessionToJson, userToJson } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
+import { isUuid } from "../params.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -320,7 +321,10 @@ export function authRoutes(deps: AuthDeps): Router {
   });
 
   defineOperation(router, "revokeSession", async (req, res) => {
-    const session = await db("sessions").where({ id: req.params.sessionId }).first();
+    const sessionId = String(req.params.sessionId);
+    // V1-B · un id que no es uuid no puede existir: 404, no el 500 de PostgreSQL.
+    if (!isUuid(sessionId)) throw notFound();
+    const session = await db("sessions").where({ id: sessionId }).first();
     if (!session) throw notFound();
     const isAdmin = req.auth!.rank >= ROLE_RANK.admin;
     if (session.user_id !== req.auth!.userId && !isAdmin) throw forbidden();

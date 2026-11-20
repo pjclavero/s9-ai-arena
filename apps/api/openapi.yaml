@@ -241,6 +241,7 @@ paths:
       responses:
         '204': { description: Revocada }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'La sesión no existe (también si el id no es un uuid)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/2fa:
     post:
@@ -541,13 +542,15 @@ paths:
         - { $ref: '#/components/parameters/Limit' }
         - name: ownerId
           in: query
-          schema: { type: string }
+          description: 'Filtra por dueño. Debe ser un uuid; con otro valor la API responde 400 `bad_request` (también con cursor).'
+          schema: { type: string, format: uuid }
         - name: includeCounts
           in: query
           description: 'EQ4 · con `true` y `ownerId` igual al usuario autenticado, añade `counts` (total/activos/retirados de TODOS sus bots, no sólo de la página). Con otro ownerId se ignora.'
           schema: { type: string, enum: ['true', 'false'] }
       responses:
         '200': { description: Bots, content: { application/json: { schema: { $ref: '#/components/schemas/BotPage' } } } }
+        '400': { description: 'ownerId no es un uuid (vacío, repetido o con otra forma) o cursor inválido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     post:
       tags: [bots]
       operationId: createBot
