@@ -32,8 +32,10 @@ import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { clearStandingsCache } from "../../api/src/services/standings.js";
 import { TournamentWorker } from "./worker.js";
-import { makeDefaultHandlers, inProcessAgents } from "./engine-executor.js";
-import { HunterBot, IdleBot } from "../../arena-engine/src/stubs.js";
+import { makeDefaultHandlers, type AgentDriver } from "./engine-executor.js";
+import { IdleBot } from "../../arena-engine/src/stubs.js";
+import { replayFromBattle } from "../../arena-engine/src/replay.js";
+import type { Battle, BotAgent } from "../../arena-engine/src/sim/battle.js";
 import { createPublishedBot, type TestBot } from "./testing/fixtures.js";
 
 type Row = Record<string, unknown>;
@@ -48,11 +50,72 @@ let developerId: string;
 let replaysDir: string;
 let seq = 0;
 /**
- * Dos niveles de agente EN PROCESO: los bots "fuertes" (HunterBot) ganan a los "débiles" (IdleBot,
- * que no dispara); entre iguales hay empate. Así hay victorias, derrotas y empates reales que el
- * oráculo puede contar (con todos iguales el motor empata a 0-0 y nada discrimina).
+ * Dos niveles de agente EN PROCESO: los bots "fuertes" (artillero oráculo) derriban a los "débiles"
+ * (IdleBot, que no dispara); entre débiles hay empate y entre fuertes decide quién acierta antes.
+ * Así hay victorias, derrotas y empates reales que el oráculo puede contar (con HunterBot contra
+ * HunterBot el motor termina siempre 0-0: no discrimina nada).
  */
 const strong = new Set<string>();
+
+/**
+ * Artillero oráculo: quieto, apunta la torreta al enemigo vivo más cercano leyendo la pose del
+ * motor y dispara al estar alineado. Sólo es el «piloto»: daño, muertes, puntuación, ganador y
+ * outcomes los resuelven motor y worker (mismo recurso que team4v4-runner.test.ts).
+ */
+class OracleGunner implements BotAgent {
+  constructor(
+    readonly botId: string,
+    private engine: Battle,
+    private selfId: string,
+    private team: string,
+  ) {}
+  decide(obs: any) {
+    const phys = this.engine.getPhysics();
+    const me = phys.pose(this.selfId)!.position;
+    const foes = this.engine
+      .getVehicles()
+      .filter((v) => v.team !== this.team && v.alive)
+      .map((v) => phys.pose(v.id)!.position)
+      .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+    const cmd: any = { forTick: obs.tick, move: { throttle: 0, steer: 0 } };
+    if (foes.length === 0) return cmd;
+    const t = foes[0];
+    cmd.turret = { targetPoint: t };
+    const bearing = Math.atan2(t.y - me.y, t.x - me.x);
+    let err = (obs.self.turretHeading ?? 0) - bearing;
+    while (err > Math.PI) err -= 2 * Math.PI;
+    while (err < -Math.PI) err += 2 * Math.PI;
+    if (Math.abs(err) < 0.1) cmd.fire = ["turret_main"];
+    return cmd;
+  }
+}
+
+/** Driver en proceso sobre el motor REAL: los fuertes son artilleros, los débiles IdleBot. */
+function duelDriver(): AgentDriver {
+  return {
+    kind: "in_process_stub",
+    async run({ engine, vehicles, signal }) {
+      const phys = engine.getPhysics();
+      const perSide = new Map<string, number>();
+      for (const v of vehicles) {
+        // Sólo física inicial: cada bando en su fila, a 25 m, para que el duelo se decida pronto.
+        const k = perSide.get(v.team) ?? 0;
+        perSide.set(v.team, k + 1);
+        phys.get(v.vehicleId)!.rb.setTranslation({ x: v.team === "A" ? 71 : 96, y: 30 + 6 * k }, true);
+        engine.attachBot(
+          v.vehicleId,
+          strong.has(v.botId) ? new OracleGunner(v.botId, engine, v.vehicleId, v.team) : new IdleBot(v.botId),
+        );
+      }
+      while (!engine.isFinished() && engine.tick < 5000) {
+        if (signal?.aborted) throw new Error(`batalla abortada: ${String(signal.reason)}`);
+        engine.step();
+      }
+      const result = engine.run(5000);
+      return { result, replay: replayFromBattle(engine, result) };
+    },
+  };
+}
 
 const as = (tok: string) => ({ Authorization: `Bearer ${tok}` });
 
@@ -76,8 +139,8 @@ beforeAll(async () => {
   replaysDir = mkdtempSync(join(tmpdir(), "v1c-replays-"));
   const wired = await makeDefaultHandlers({
     db: h.db,
-    agents: inProcessAgents((botId) => (strong.has(botId) ? new HunterBot(botId) : new IdleBot())),
-    rulesetOverrides: { timeLimitTicks: 360, scoreToWin: 1 },
+    agents: duelDriver(),
+    rulesetOverrides: { timeLimitTicks: 1500, scoreToWin: 1 },
     replaysDir,
   });
   worker = new TournamentWorker({
@@ -265,10 +328,10 @@ async function expectStandingsMatchOracle(tid: string, botIds: string[], mode: s
     const o = oracle.get(r.botId as string) ?? { points: 0, wins: 0, losses: 0, draws: 0 };
     expect({ w: r.wins, l: r.losses, d: r.draws }).toEqual({ w: o.wins, l: o.losses, d: o.draws });
   }
-  // Orden: el puesto sigue al rating (la temporada agrega torneos; los bots de este son propios).
+  // Orden: el puesto sigue a los PUNTOS del oráculo (puntos → directo → diferencia → seed).
   const byRank = [...rows].sort((a, b) => Number(a.rank) - Number(b.rank));
-  const ratings = byRank.map((r) => Number(r.rating));
-  expect(ratings).toEqual([...ratings].sort((a, b) => b - a));
+  const pts = byRank.map((r) => oracle.get(r.botId as string)!.points);
+  expect(pts).toEqual([...pts].sort((a, b) => b - a));
   return { rows, oracle };
 }
 
@@ -311,6 +374,9 @@ describe("V1-C · round robin 4 bots de principio a fin", () => {
     // El campeón tiene el máximo de puntos del oráculo (3·V + E calculado desde los outcomes).
     const maxPts = Math.max(...[...oracle.values()].map((o) => o.points));
     expect(oracle.get(t.champion_bot_id as string)!.points).toBe(maxPts);
+    // El oráculo DISCRIMINA: hay victorias y puntuaciones distintas (si todo fuera empate no probaría nada).
+    expect([...oracle.values()].some((o) => o.wins > 0)).toBe(true);
+    expect(new Set([...oracle.values()].map((o) => o.points)).size).toBeGreaterThan(1);
     // 6 batallas con 4 bots → V+D+E suma 12 participaciones
     expect(rows.reduce((s, r) => s + Number(r.wins) + Number(r.losses) + Number(r.draws), 0)).toBe(12);
   });
@@ -351,6 +417,8 @@ describe("V1-C · eliminación simple 4 bots de principio a fin", () => {
     expect(final.winner_bot_id).toBe(t.champion_bot_id);
     // Cada match lo gana quien el MOTOR declaró vencedor; si la batalla fue empate, desempata el seed.
     const rows = await battleOutcomes(tid);
+    // El oráculo DISCRIMINA: al menos una batalla decisiva (si todo fuera empate no probaría nada).
+    expect(rows.some((r) => r.parts.some((p) => p.outcome === "win"))).toBe(true);
     for (const { battle, parts } of rows) {
       const m = matches.find((x) => x.id === battle.match_id)!;
       const winners = parts.filter((p) => p.outcome === "win");
@@ -573,6 +641,9 @@ for (const n of [2, 3, 4])
       expect(pts).toEqual([...pts].sort((a, b) => b - a));
       const maxPts = Math.max(...[...oracle.values()].map((o) => o.points));
       expect(oracle.get((st.body as Row[])[0].teamId as string)!.points).toBe(maxPts);
+      // El oráculo DISCRIMINA: hay victorias por bando y puntuaciones distintas.
+      expect([...oracle.values()].some((o) => o.wins > 0)).toBe(true);
+      expect(new Set([...oracle.values()].map((o) => o.points)).size).toBeGreaterThan(1);
     });
 
     // V1C-D01 · el descanso (bye) de un round robin de equipos puntúa como victoria disputada.
