@@ -174,6 +174,10 @@ describe("#306 · lectura de batallas por rol", () => {
   it("GET /replays (listado): misma política que la lectura de batallas", async () => {
     for (const actor of ACTORS) {
       const r = await get(actor, "/replays?limit=100");
+      if (actor === "anon") {
+        expect(r.status).toBe(401); // el listado exige sesión
+        continue;
+      }
       expect(r.status).toBe(200);
       const ids = new Set((r.body.items as { battleId: string }[]).map((b) => b.battleId));
       for (const name of ["practice", "ta", "tb"] as const) {
