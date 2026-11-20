@@ -69,15 +69,16 @@ check M2 "enlace con '/' admitido" "jwt_secret.txt -> ../../victim (relativo)"
 # M3 · se ignoran los hardlinks (nlink > 1)
 mutate M3 '[ "$(stat -c '"'"'%h'"'"' -- "$n")" = 1 ] || die "$n tiene enlaces duros (nlink > 1)"' ':' || exit 2
 check M3 "sin comprobar nlink" "jwt_secret.txt = hardlink de la víctima"
-# M4 · el temporal se instala copiando (cp sigue el enlace) en vez de rename(2)
-mutate M4 'mv -fT -- "$tmp" "${RES:-$n}"' 'cp -- "$tmp" "${RES:-$n}"' || exit 2
-check M4 "instalación con cp en vez de mv -T" "enlace a destino INEXISTENTE"
+# M4 · se escribe EN EL SITIO sobre el nombre (abre el nombre final) en vez de rename(2)
+mutate M4 'mv -fT -- "$tmp" "${RES:-$n}"' 'cat -- "$tmp" > "${RES:-$n}"; rm -f -- "$tmp"' || exit 2
+check M4 "escritura en el sitio en vez de rename" "escritura por rename"
 # M5 · secrets/ puede ser un enlace
 mutate M5 '*) die "$DIR no es un directorio real (¿enlace?)" ;;' '*) ;;' || exit 2
 check M5 "secrets/ como enlace aceptado" "secrets/ sustituido por un enlace a otro directorio"
-# M6 · el destino de un enlace admitido no tiene que ser un fichero regular
-mutate M6 '[ "$(lkind "$t")" = file ] || die "$n -> $t: el destino no es un fichero regular existente"' ':' || exit 2
-check M6 "destino de enlace sin validar" "enlace a destino INEXISTENTE"
+# M6 · el destino de un enlace admitido no se valida (ni regular ni nlink): un enlace colgante crea el destino
+mutate M6 '      [ "$(lkind "$t")" = file ] || die "$n -> $t: el destino no es un fichero regular existente"
+      [ "$(stat -c '"'"'%h'"'"' -- "$t")" = 1 ] || die "$t tiene enlaces duros (nlink > 1)"' '      :' || exit 2
+check M6 "destino de enlace sin validar" "enlace con destino literal sin '/' COLGANTE"
 # M7 · tls/: se admiten enlaces
 mutate M7 'case "$(lkind "$n")" in absent|file) ;; *) die "$n existe y no es un fichero regular" ;; esac' ':' || exit 2
 check M7 "tls/ sin comprobar enlaces" "tls/fullchain.pem como enlace colgante"

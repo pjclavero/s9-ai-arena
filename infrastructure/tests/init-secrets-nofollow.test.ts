@@ -212,6 +212,30 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
     expect((lstatSync(target).mode & 0o777).toString(8)).toBe("644");
   });
 
+  it("enlace con destino literal sin '/' a un DIRECTORIO del mismo árbol: aborta", () => {
+    mkdirSync(join(secrets, "tls"), { mode: 0o755 });
+    symlinkSync("tls", join(secrets, "jwt_secret.txt"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(readdirSync(join(secrets, "tls"))).toEqual([]);
+  });
+
+  it("enlace con destino literal sin '/' COLGANTE: aborta y no crea el destino", () => {
+    symlinkSync("no-existe", join(secrets, "replay_ingest_secret.txt"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(existsSync(join(secrets, "no-existe"))).toBe(false);
+  });
+
+  it("escritura por rename: un fichero vacío existente se SUSTITUYE (nuevo inodo), nunca se escribe en el sitio", () => {
+    const f = join(secrets, "postgres_password.txt");
+    writeFileSync(f, "", { mode: 0o600 });
+    const ino = lstatSync(f).ino;
+    run();
+    expect(lstatSync(f).size).toBeGreaterThan(0);
+    expect(lstatSync(f).ino).not.toBe(ino);
+  });
+
   it("tls/fullchain.pem como enlace colgante (openssl req -out): no se crea fuera", () => {
     const target = join(base, "cert-fuera");
     mkdirSync(join(secrets, "tls"), { mode: 0o755 });
