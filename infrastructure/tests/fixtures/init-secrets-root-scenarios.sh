@@ -92,23 +92,23 @@ json R12-stream-priv-empty-victim "$rc" "$b" "$(vstate)"; printf 'victima\n' > "
 # R13: ADOPT, fichero REGULAR vacío plantado por el atacante con un descriptor abierto
 # antes. El atacante lo conserva abierto mientras corre root; después lee por ese fd.
 leak() { # $1 = fichero ya plantado; deja en $BASE/leak los bytes que el atacante lee por su fd
-  rm -f "$BASE/ready" "$BASE/done" "$BASE/leak"
+  RV=$BASE/rv; rm -rf "$RV"; mkdir -m 1777 "$RV"   # punto de encuentro escribible por el atacante
   ( cd / && setpriv --reuid=$APPUID --regid=$APPUID --clear-groups bash -c '
     exec 3<"$1"; : > "$2/ready"
     while [ ! -e "$2/done" ]; do sleep 0.05; done
-    wc -c <&3 > "$2/leak"' _ "$1" "$BASE" ) &
+    wc -c <&3 > "$2/leak"' _ "$1" "$RV" ) &
   LP=$!
-  for _ in $(seq 100); do [ -e "$BASE/ready" ] && break; sleep 0.05; done
+  for _ in $(seq 100); do [ -e "$RV/ready" ] && break; sleep 0.05; done
 }
 chmod 0711 "$BASE"
 mk; : > "$(S)/stream_secrets_private.pem"; chown $APPUID:$APPUID "$(S)/stream_secrets_private.pem"; chmod 0600 "$(S)/stream_secrets_private.pem"
-leak "$(S)/stream_secrets_private.pem"; rc=$(run S9_SECRETS_ADOPT=1); : > "$BASE/done"; wait "$LP"
-printf '{"id":"R13-stream-priv-planted-fd","rc":%s,"leaked":%s}\n' "$rc" "$(cat "$BASE/leak")"
+leak "$(S)/stream_secrets_private.pem"; rc=$(run S9_SECRETS_ADOPT=1); : > "$RV/done"; wait "$LP"
+printf '{"id":"R13-stream-priv-planted-fd","rc":%s,"leaked":%s}\n' "$rc" "$(cat "$RV/leak" 2>/dev/null || echo -1)"
 # R14: igual, pero el fichero ya es de root cuando corre el script (el fd del atacante
 # se abrió antes del chown): se debe SUSTITUIR por rename, no escribir en el sitio.
 mk; : > "$(S)/stream_secrets_private.pem"; chown $APPUID:$APPUID "$(S)/stream_secrets_private.pem"; chmod 0644 "$(S)/stream_secrets_private.pem"
-leak "$(S)/stream_secrets_private.pem"; chown 0:0 "$(S)/stream_secrets_private.pem"; rc=$(run S9_SECRETS_ADOPT=1); : > "$BASE/done"; wait "$LP"
-printf '{"id":"R14-stream-priv-rootowned-fd","rc":%s,"leaked":%s,"final_size_gt0":%s}\n' "$rc" "$(cat "$BASE/leak")" \
+leak "$(S)/stream_secrets_private.pem"; chown 0:0 "$(S)/stream_secrets_private.pem"; rc=$(run S9_SECRETS_ADOPT=1); : > "$RV/done"; wait "$LP"
+printf '{"id":"R14-stream-priv-rootowned-fd","rc":%s,"leaked":%s,"final_size_gt0":%s}\n' "$rc" "$(cat "$RV/leak" 2>/dev/null || echo -1)" \
   "$([ -s "$(S)/stream_secrets_private.pem" ] && echo true || echo false)"
 # R15 (H2/R1): secrets/ de root pero tls/ de otro usuario, sin ADOPT => se niega
 mk; chown 0:0 "$(S)"; mkdir "$(S)/tls"; chown $APPUID:$APPUID "$(S)/tls"; chmod 0755 "$(S)/tls"
@@ -122,4 +122,4 @@ mk; printf 'conocido\n' > "$(S)/jwt_secret.txt"; chown $APPUID:$APPUID "$(S)/jwt
 rc=$(run S9_SECRETS_ADOPT=1); printf '{"id":"R17-adopt-foreign-regular","rc":%s,"content":"%s","owner":"%s"}\n' "$rc" "$(cat "$(S)/jwt_secret.txt")" "$(stat -c %u "$(S)/jwt_secret.txt")"
 
 # Limpieza DENTRO del namespace o contenedor: fuera, los ficheros de subuids no se pueden borrar.
-rm -rf "$BASE/t" "$BASE/victim" "$BASE/out.log"
+rm -rf "$BASE/t" "$BASE/victim" "$BASE/out.log" "$BASE/rv"
