@@ -50,5 +50,27 @@ rmdir "$(S)"; ln -s evil "$(S)"; chown -h $APPUID:$APPUID "$(S)"
 b=$(vstate); rc=$(run S9_SECRETS_ADOPT=1)
 printf '{"id":"R7-secrets-is-link","rc":%s,"evil_files":%s}\n' "$rc" "$(find -P "$BASE/t/infrastructure/evil" -mindepth 1 | wc -l)"
 
+# R8: CARRERA. Tras la apropiación (root:root 0755) el antiguo dueño (uid 1002)
+# intenta plantar enlaces EN BUCLE mientras root trabaja. Debe fallar siempre
+# (EACCES): el directorio ya no es suyo. Víctima intacta, 0 enlaces plantados.
+mk; b=$(vstate); rm -f "$BASE/race.try"
+( cd / && setpriv --reuid=$APPUID --regid=$APPUID --clear-groups bash -c '
+  end=$((SECONDS+5)); n=0; ok=0
+  while [ $SECONDS -lt $end ]; do
+    # sólo cuenta intentos DESPUÉS de la apropiación (antes plantar es legítimo y bloquea)
+    [ "$(stat -c %u "$2")" = 0 ] || continue
+    for f in jwt_secret.txt artifact_verify_key.pem.tmp stream_key.txt restic_ssh_known_hosts; do
+      n=$((n+1)); ln -sf "$1/victim" "$2/$f" 2>/dev/null && ok=$((ok+1))
+    done
+  done
+  echo "$n $ok" > "$1/race.try"' _ "$BASE" "$(S)" ) &
+RP=$!
+sleep 0.2
+rc=$(run S9_SECRETS_ADOPT=1)
+wait "$RP"
+read -r tries planted < "$BASE/race.try"
+printf '{"id":"R8-race-after-adopt","rc":%s,"victim_before":"%s","victim_after":"%s","tries":%s,"planted":%s}\n' \
+  "$rc" "$(echo $b)" "$(echo $(vstate))" "$tries" "$planted"
+
 # Limpieza DENTRO del namespace: fuera, los ficheros de subuids no se pueden borrar.
 rm -rf "$BASE/t" "$BASE/victim" "$BASE/out.log"

@@ -271,5 +271,11 @@ describe.skipIf(!userns)("TD-064 · como root (user namespace con propietarios r
     expect(res["R6-root-dir-allowed-link"].victim_after).toBe("symbolic link 400 1000:1000");
     expect(res["R7-secrets-is-link"].rc).not.toBe(0);
     expect(res["R7-secrets-is-link"].evil_files).toBe(0);
+    // Carrera: tras apropiarse, el antiguo dueño ya no puede plantar nada.
+    const race = res["R8-race-after-adopt"];
+    expect(race.rc, "root debe completar").toBe(0);
+    expect(race.tries).toBeGreaterThan(0);
+    expect(race.planted, "ningún enlace plantado tras la apropiación").toBe(0);
+    expect(race.victim_after).toBe(race.victim_before);
   });
 });
