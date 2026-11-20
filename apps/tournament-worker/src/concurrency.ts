@@ -131,6 +131,15 @@ export function computeAutoConcurrency(
   botsPerBattle: number = DEFAULT_MAX_BOTS_PER_BATTLE,
   cap = 16,
 ): number {
+  // Fallo seguro: una entrada no finita (NaN, Infinity) nunca sube la concurrencia.
+  if (
+    !Number.isFinite(res.cpus) ||
+    !Number.isFinite(res.memGiB) ||
+    !Number.isFinite(botsPerBattle) ||
+    !Number.isFinite(cap)
+  ) {
+    return 1;
+  }
   const bots = Math.max(1, Math.floor(botsPerBattle));
   const porCpu = Math.floor(Math.max(0, res.cpus - RESERVED_CPU) / (BOT_CPU * bots));
   const porMem = Math.floor(res.memGiB / (BOT_MEM_GIB * bots + ENGINE_MEM_GIB));

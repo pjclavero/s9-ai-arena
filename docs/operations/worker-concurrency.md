@@ -43,6 +43,10 @@ concurrencia = max(1, min(16, porCPU, porRAM))        con bots = 8 (la 4v4)
 - `CPU_efectivas` y la RAM salen del cgroup del propio proceso (v2: `cpu.max`,
   `memory.max`/`memory.current`; v1: `cpu.cfs_*`, `memory.limit_in_bytes`) y nunca
   superan lo que ve el host; sin cgroup, se usa la RAM LIBRE del host.
+- Con `cgroupns=host`, o si el proceso está en la raíz del cgroup v2, `/sys/fs/cgroup`
+  muestra el cgroup del host o ninguno: `auto` usa entonces los valores del host (CPU
+  totales y memoria libre del host), no los del contenedor. Comprueba que el worker
+  corre en su propio espacio de nombres de cgroup antes de fiarte de `auto`.
 - Se dimensiona para la batalla más grande porque un hueco del worker puede recibir
   cualquiera.
 - Los contenedores de bot los crea el docker-proxy como hermanos del worker, no dentro

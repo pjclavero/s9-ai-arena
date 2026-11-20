@@ -33,7 +33,7 @@ L=$D/load-config.ts
 mut M-C1 $W '/function concurrencyFromEnv/,/^}/ s/  return n;/  return 3;/' "entero válido"
 mut M-C2 $W 's/n < 1 \|\| n > MAX_CONFIGURED_CONCURRENCY/n < 1/' "0, negativo, sobre el tope"
 mut M-C3 $W 's/n < 1 \|\| n > MAX/n < 0 || n > MAX/' "0, negativo, sobre el tope"
-mut M-C4 $W 's/this\.config\.concurrency \?\? computeConcurrency\(\)/computeConcurrency()/' "respeta la concurrencia configurada"
+mut M-C4 $W 's/this\.config\.concurrency \?\? DEFAULT_CONCURRENCY/DEFAULT_CONCURRENCY/' "respeta la concurrencia configurada"
 mut M-C5 $C 's/DEFAULT_CPU_SAMPLE_MS = 2_000/DEFAULT_CPU_SAMPLE_MS = 500/' "intervalo de muestreo acotado"
 mut M-C6 $C 's/Math.max\(MIN_CPU_SAMPLE_MS, Math.round\(ms\)\)/Math.round(ms)/' "intervalo de muestreo acotado"
 mut M-C7 $C 's/if \(this\.inFlight\[i\]\) \{/if (false) {/' "no se apilan"

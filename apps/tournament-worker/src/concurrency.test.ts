@@ -127,6 +127,14 @@ describe("recursos efectivos: el cgroup manda, no el host", () => {
     expect(r.cpus).toBe(2);
     expect(r.memGiB).toBe(3);
   });
+  it("cgroup de 4 GiB y host con 1 GiB libre ⇒ no supera la memoria libre del host [M-B1-O4: sin min con la libre del host]", () => {
+    const r = effectiveResources(
+      fakeFs({ "/sys/fs/cgroup/cpu.max": "400000 100000", "/sys/fs/cgroup/memory.max": String(4 * GiB) }),
+      host(8, 16, 1),
+    );
+    expect(r.memGiB).toBe(1);
+    expect(computeAutoConcurrency(r, 2, 16)).toBe(Math.floor(1 / (0.25 * 2 + 0.5)));
+  });
   it("sin cgroup usa la memoria LIBRE del host", () => {
     const r = effectiveResources(fakeFs({}), host(4, 8, 5));
     expect(r).toMatchObject({ cpus: 4, memGiB: 5, origen: "host" });
@@ -144,6 +152,13 @@ describe("cálculo automático por tamaño de batalla", () => {
   it("limita la memoria: 4v4 cuesta 2,5 GiB; 6 GiB ⇒ 2 aunque sobre CPU [M-B1-11: ignora la memoria]", () => {
     expect(computeAutoConcurrency({ cpus: 64, memGiB: 6 }, 8)).toBe(2);
     expect(computeAutoConcurrency({ cpus: 64, memGiB: 2.4 }, 8)).toBe(1);
+  });
+  it("entradas no finitas ⇒ 1 (fallo seguro) [M-B1-13: sin guarda isFinite]", () => {
+    expect(computeAutoConcurrency({ cpus: Infinity, memGiB: 64 })).toBe(1);
+    expect(computeAutoConcurrency({ cpus: 64, memGiB: NaN })).toBe(1);
+    expect(computeAutoConcurrency({ cpus: 64, memGiB: Infinity })).toBe(1);
+    expect(computeAutoConcurrency({ cpus: 64, memGiB: 64 }, NaN)).toBe(1);
+    expect(computeAutoConcurrency({ cpus: 64, memGiB: 64 }, 2, Infinity)).toBe(1);
   });
   it("mínimo 1 y tope", () => {
     expect(computeAutoConcurrency({ cpus: 0.1, memGiB: 0 })).toBe(1);
