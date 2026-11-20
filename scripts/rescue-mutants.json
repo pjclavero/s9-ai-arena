@@ -18,17 +18,18 @@
       ]
     },
     {
-      "id": "M09-cursor-mask-fix-flip",
-      "kind": "fix-flip",
+      "id": "M09-cursor-mask-ownerid-validation",
       "pr": 224,
       "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "    if (typeof req.query.ownerId === \"string\") q = q.where({ owner_id: req.query.ownerId });\n",
-      "to": "    if (typeof req.query.ownerId === \"string\") {\n      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.query.ownerId)) {\n        throw badRequest(\"ownerId debe ser un uuid\");\n      }\n      q = q.where({ owner_id: req.query.ownerId });\n    }\n",
+      "from": "    const ownerId = queryUuid(req, \"ownerId\");\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
+      "to": "    if (typeof req.query.ownerId === \"string\") q = q.where({ owner_id: req.query.ownerId });\n",
       "killedBy": [
-        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId no-UUID: con y sin cursor válido, MISMA respuesta (y nunca «cursor inválido»)"
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId no-UUID: con y sin cursor válido, MISMA respuesta 400 (y nunca «cursor inválido»)"
       ],
-      "controls": []
+      "controls": [
+        "apps/api/src/v1b-malformed-ids.test.ts"
+      ]
     },
     {
       "id": "M10-rating-revert-mark",
@@ -129,6 +130,51 @@
         "packages/module-catalog/resolve/index.test.ts",
         "packages/module-catalog/validator/ammo-compat.test.ts"
       ]
+    },
+    {
+      "id": "V1B-01-revoke-session-uuid",
+      "test": "apps/api/src/v1b-malformed-ids.test.ts",
+      "file": "apps/api/src/routes/auth.ts",
+      "from": "    if (!isUuid(sessionId)) throw notFound();\n",
+      "to": "",
+      "killedBy": [
+        "V1-B · #305 · ids mal formados nunca dan 5xx DELETE /auth/sessions/<no-uuid> es 404 (no el 500 de PostgreSQL)",
+        "V1-B · #305 · ids mal formados nunca dan 5xx POST/PUT/PATCH/DELETE con id de ruta inválido y cuerpo vacío: nunca 5xx"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-02-owner-filter-applied",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
+      "to": "",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro un uuid válido SIGUE filtrando: con bots de dos dueños, sólo salen los del dueño pedido"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-03-uuid-re-sin-ancla-fin",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/params.ts",
+      "from": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "to": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;\n",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-04-uuid-re-sin-ancla-inicio",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/params.ts",
+      "from": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "to": "const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)"
+      ],
+      "controls": []
     }
   ]
 }
