@@ -34,6 +34,10 @@ export interface Violation {
   moduleId?: string;
   slot?: string;
   message: string;
+  /** incompatible_ammo: munición (versionada) que no encaja, si la hay. */
+  ammoId?: string;
+  /** incompatible_ammo: tipos base de munición que admite el arma afectada. */
+  acceptedAmmo?: string[];
 }
 
 const SIZE_RANK: Record<Size, number> = { S: 0, M: 1, L: 2, XL: 3 };
@@ -166,40 +170,68 @@ export function validateLoadout(
       continue;
     }
 
+    if (entry.ammo !== undefined && typeof entry.ammo !== "string") {
+      violations.push({
+        code: "incompatible_ammo",
+        slot: entry.slot,
+        moduleId: entry.moduleId,
+        message: `Munición inválida asignada a ${entry.slot}`,
+      });
+      continue;
+    }
     accepted.push({ slot: entry.slot, moduleDef, ammo: entry.ammo });
   }
 
   // -------------------------------------------------------- compatibilidad arma-munición
+  violations.push(...ammoRule(accepted, catalog));
+
+  // ----------------------------------------- munición embebida = módulo que se simula
+  // OLA 2 · MC (hallazgo del gate CATALOG_CONTRACT): la munición canónica va como propiedad
+  // del arma (`ammo:`) y resolveVehicle la MATERIALIZA como módulo en la bahía de munición,
+  // con su masa, su consumo y su coste. Antes el validador no la contaba: su costCredits,
+  // massKg, size, requiresChassis y maxPerVehicle no validaban nada en la forma canónica.
+  // Se cuenta igual que la materializa resolveVehicle (misma regla de bahía y de módulo
+  // explícito no duplicado).
+  const explicitIds = new Set(loadout.modules.map((m) => m.moduleId));
+  const ammoSlots = chassisDef.slots.filter((s) => s.accepts.includes("ammo"));
+  let ammoCursor = 0;
+  const materialized: Accepted[] = [...accepted];
   for (const a of accepted) {
-    if (a.moduleDef.category !== "weapon" || !a.ammo) continue;
+    if (a.moduleDef.category !== "weapon" || typeof a.ammo !== "string" || explicitIds.has(a.ammo)) continue;
     const ammoDef = findModule(catalog, a.ammo);
-    const ammoBase = splitVersioned(a.ammo).base;
-    if (!ammoDef || ammoDef.category !== "ammo") {
-      violations.push({
-        code: "incompatible_ammo",
-        slot: a.slot,
-        moduleId: a.moduleDef.id,
-        message: `Munición desconocida asignada a ${a.slot}: ${a.ammo}`,
-      });
-      continue;
+    if (!ammoDef || ammoDef.category !== "ammo") continue; // lo reporta ammoRule
+    const bay = ammoSlots[ammoCursor++];
+    const slotId = bay?.id ?? `${a.slot}_ammo`;
+    if (bay && ammoDef.size) {
+      const r = safeLookup(SIZE_RANK, ammoDef.size);
+      const max = safeLookup(SIZE_RANK, bay.maxSize);
+      if (r === undefined || max === undefined || r > max) {
+        violations.push({
+          code: "slot_size_exceeded",
+          slot: slotId,
+          moduleId: a.ammo,
+          message: `${ammoDef.id} es de tamaño ${ammoDef.size}, la bahía "${slotId}" admite hasta ${bay.maxSize}`,
+        });
+      }
     }
-    if (!a.moduleDef.acceptsAmmo?.includes(ammoBase)) {
+    if (ammoDef.requiresChassis && !ammoDef.requiresChassis.includes(chassisDef.id)) {
       violations.push({
-        code: "incompatible_ammo",
-        slot: a.slot,
-        moduleId: a.moduleDef.id,
-        message: `${a.moduleDef.id} no acepta ${ammoBase} (acepta [${(a.moduleDef.acceptsAmmo ?? []).join(", ")}])`,
+        code: "incompatible_chassis",
+        slot: slotId,
+        moduleId: a.ammo,
+        message: `${ammoDef.id} requiere uno de [${ammoDef.requiresChassis.join(", ")}], montado en ${chassisDef.id}`,
       });
     }
+    materialized.push({ slot: slotId, moduleDef: ammoDef });
   }
 
   // -------------------------------------------------------- duplicados (maxPerVehicle)
   const countByBaseId = new Map<string, number>();
-  for (const a of accepted) {
+  for (const a of materialized) {
     countByBaseId.set(a.moduleDef.id, (countByBaseId.get(a.moduleDef.id) ?? 0) + 1);
   }
   const reportedDuplicate = new Set<string>();
-  for (const a of accepted) {
+  for (const a of materialized) {
     const limit = a.moduleDef.maxPerVehicle;
     const count = countByBaseId.get(a.moduleDef.id) ?? 0;
     if (limit != null && count > limit && !reportedDuplicate.has(a.moduleDef.id)) {
@@ -213,7 +245,7 @@ export function validateLoadout(
   }
 
   // -------------------------------------------------------------------------- masa
-  const moduleMass = accepted.reduce((sum, a) => sum + a.moduleDef.massKg, 0);
+  const moduleMass = materialized.reduce((sum, a) => sum + a.moduleDef.massKg, 0);
   if (chassisDef.maxLoadKg != null && moduleMass > chassisDef.maxLoadKg) {
     violations.push({
       code: "mass_exceeded",
@@ -222,10 +254,10 @@ export function validateLoadout(
   }
 
   // ----------------------------------------------------------------------- energía
-  const generationEUs = accepted
+  const generationEUs = materialized
     .filter((a) => a.moduleDef.category === "power")
     .reduce((sum, a) => sum + (a.moduleDef.generationEUs ?? 0), 0);
-  const passiveEUs = accepted.reduce((sum, a) => sum + (a.moduleDef.power?.passiveEUs ?? 0), 0);
+  const passiveEUs = materialized.reduce((sum, a) => sum + (a.moduleDef.power?.passiveEUs ?? 0), 0);
   if (generationEUs < passiveEUs) {
     violations.push({
       code: "energy_deficit",
@@ -234,7 +266,7 @@ export function validateLoadout(
   }
 
   // ---------------------------------------------------------------------- presupuesto
-  const modulesCost = accepted.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
+  const modulesCost = materialized.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
   const totalCost = chassisDef.costCredits + modulesCost;
   if (totalCost > budgetCredits) {
     violations.push({
@@ -251,7 +283,7 @@ export function validateLoadout(
       message: `${chassisDef.id} cuesta ${chassisDef.costCredits} créditos, por encima del ${MAX_MODULE_COST_FRACTION * 100}% del presupuesto efectivo (${perModuleCap.toFixed(2)})`,
     });
   }
-  for (const a of accepted) {
+  for (const a of materialized) {
     if (a.moduleDef.costCredits > perModuleCap) {
       violations.push({
         code: "module_cost_cap_exceeded",
@@ -263,6 +295,136 @@ export function validateLoadout(
   }
 
   return violations;
+}
+
+const versioned = (m: ModuleDefinition) => `${m.id}@${m.version}`;
+
+/**
+ * Regla arma ↔ munición, tal como dispara el motor (combat.ammoFor): un arma sólo dispara
+ * con munición montada en el vehículo cuyo tipo base esté en su `acceptsAmmo`. La munición
+ * puede ir como propiedad del arma (`ammo:`, forma canónica que resolveVehicle materializa
+ * en la bahía) o como módulo aparte (forma heredada). Antes sólo se miraba la primera: un
+ * cañón con `ammo.standard@1` como módulo pasaba con 0 violaciones y en batalla rechazaba
+ * cada disparo con `no_ammo`.
+ *
+ * 1. La munición embebida tiene que existir, ser munición y admitirla SU arma.
+ * 2. Toda arma que consuma munición necesita al menos una compatible entre las montadas.
+ * 3. Todo módulo de munición tiene que servir a algún arma del vehículo (más estricto que
+ *    el motor, que la ignoraría: munición que nadie usa es casi siempre un error de montaje).
+ * Un arma sin `acceptsAmmo` queda fuera de las reglas 2 y 3 (module.schema.json exige
+ * `acceptsAmmo` con al menos un tipo en toda arma, así que hoy no existe ninguna).
+ */
+function ammoRule(items: Accepted[], catalog: ModuleDefinition[]): Violation[] {
+  const out: Violation[] = [];
+  const pool: ModuleDefinition[] = [];
+  const weapons: Accepted[] = [];
+
+  for (const a of items) {
+    const def = a.moduleDef;
+    if (def.category === "ammo") pool.push(def);
+    if (def.category !== "weapon") continue;
+    weapons.push(a);
+    if (!a.ammo) continue;
+    const ammoDef = findModule(catalog, a.ammo);
+    if (!ammoDef || ammoDef.category !== "ammo") {
+      out.push({
+        code: "incompatible_ammo",
+        slot: a.slot,
+        moduleId: def.id,
+        message: `Munición desconocida asignada a ${a.slot}: ${a.ammo}`,
+      });
+      continue;
+    }
+    if (!def.acceptsAmmo?.includes(ammoDef.id)) {
+      out.push(ammoMismatch(a, versioned(ammoDef)));
+      continue;
+    }
+    pool.push(ammoDef);
+  }
+
+  // La munición que ya explica el error de un arma no se vuelve a denunciar sola.
+  const explained = new Set<ModuleDefinition>();
+  for (const w of weapons) {
+    const accepts = w.moduleDef.acceptsAmmo ?? [];
+    if (accepts.length === 0) continue;
+    if (out.some((v) => v.slot === w.slot)) continue; // su munición embebida ya falló
+    if (pool.some((p) => accepts.includes(p.id))) continue;
+    if (pool.length === 0) {
+      out.push({
+        code: "incompatible_ammo",
+        slot: w.slot,
+        moduleId: w.moduleDef.id,
+        acceptedAmmo: accepts,
+        message: `El módulo ${versioned(w.moduleDef)} necesita munición y no lleva ninguna. Municiones compatibles: ${accepts.join(", ")}.`,
+      });
+      continue;
+    }
+    const mounted = [...new Set(pool.map(versioned))];
+    for (const p of pool) explained.add(p);
+    out.push(ammoMismatch(w, mounted.join(", ")));
+  }
+
+  for (const a of items) {
+    if (a.moduleDef.category !== "ammo" || explained.has(a.moduleDef)) continue;
+    const users = weapons.filter((w) => w.moduleDef.acceptsAmmo?.includes(a.moduleDef.id));
+    if (users.length > 0) continue;
+    const id = versioned(a.moduleDef);
+    const armed = weapons.filter((w) => (w.moduleDef.acceptsAmmo?.length ?? 0) > 0);
+    out.push({
+      code: "incompatible_ammo",
+      slot: a.slot,
+      moduleId: a.moduleDef.id,
+      ammoId: id,
+      message:
+        armed.length === 0
+          ? `${id} está montada pero ningún arma del vehículo la usa.`
+          : `Ningún arma del vehículo admite ${id} (${armed
+              .map((w) => `${versioned(w.moduleDef)} admite ${(w.moduleDef.acceptsAmmo ?? []).join(", ")}`)
+              .join("; ")}).`,
+    });
+  }
+  return out;
+}
+
+function ammoMismatch(w: Accepted, ammo: string): Violation {
+  const accepts = w.moduleDef.acceptsAmmo ?? [];
+  return {
+    code: "incompatible_ammo",
+    slot: w.slot,
+    moduleId: w.moduleDef.id,
+    ammoId: ammo,
+    acceptedAmmo: accepts,
+    message:
+      accepts.length === 0
+        ? `El módulo ${versioned(w.moduleDef)} no usa munición y tiene asignada ${ammo}.`
+        : `El módulo ${versioned(w.moduleDef)} no admite ${ammo}. Municiones compatibles: ${accepts.join(", ")}.`,
+  };
+}
+
+/**
+ * Sólo la regla arma ↔ munición, para quien no tiene ruleset ni presupuesto (pipeline de
+ * build). Es la MISMA regla que aplica validateLoadout; los módulos desconocidos se ignoran
+ * aquí porque los informa el validador completo. Nunca lanza.
+ */
+export function validateAmmo(loadout: LoadoutInput, catalog: ModuleDefinition[]): Violation[] {
+  const out: Violation[] = [];
+  const items: Accepted[] = [];
+  for (const entry of Array.isArray(loadout?.modules) ? loadout.modules : []) {
+    if (!entry || typeof entry.moduleId !== "string") continue;
+    const moduleDef = findModule(catalog, entry.moduleId);
+    if (!moduleDef) continue;
+    if (entry.ammo !== undefined && typeof entry.ammo !== "string") {
+      out.push({
+        code: "incompatible_ammo",
+        slot: String(entry.slot),
+        moduleId: moduleDef.id,
+        message: `Munición inválida asignada a ${String(entry.slot)}`,
+      });
+      continue;
+    }
+    items.push({ slot: String(entry.slot), moduleDef, ammo: entry.ammo });
+  }
+  return [...out, ...ammoRule(items, catalog)];
 }
 
 export type { LoadoutInput, ModuleDefinition, ModuleCategory } from "../types.js";

@@ -24,3 +24,23 @@ export function canvasSizeFor(cssW: number, cssH: number, dpr: number): CanvasSi
     zoom: 1 / ratio,
   };
 }
+
+/** Lo que usa `applyCanvasSize` del ScaleManager de Phaser. */
+export interface ScaleLike {
+  resize(width: number, height: number): unknown;
+  setZoom(zoom: number): unknown;
+}
+
+/**
+ * UX-R · Aplica un tamaño al ScaleManager en el ORDEN que Phaser 4 necesita:
+ * primero `resize` y después `setZoom`. En modo NONE, `resize` sólo reescribe
+ * el tamaño CSS del canvas si el zoom es distinto de 1 (dpr distinto de 1); con
+ * dpr 1 lo deja como estaba y es `setZoom` quien lo recalcula, con el tamaño de
+ * juego VIGENTE. Al revés (setZoom y luego resize) el canvas iba un
+ * redimensionado por detrás: al estrechar la ventana conservaba el ancho
+ * anterior y desbordaba la página (UX-E: 208 px a 768 y 356 px a 390).
+ */
+export function applyCanvasSize(scale: ScaleLike, size: CanvasSize): void {
+  scale.resize(size.width, size.height);
+  scale.setZoom(size.zoom);
+}

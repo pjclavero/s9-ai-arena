@@ -3,8 +3,10 @@
 ## Resumen
 
 Explica cómo está construido S9 AI Arena: qué servicios hay, qué datos mueven, dónde se guardan y
-qué reglas aplican. Todo está verificado contra el código de `27f70bb`. Cada documento termina con
-una tabla de **Verificación** que da la línea de código de cada afirmación clave.
+qué reglas aplican. Verificado en `27f70bb` (octubre de 2026); el estado de funcionamiento que cita se
+revisó en `e3bf2fa` (2026-11-02), pero la estructura de varios documentos no se ha re-auditado entera
+(documentación técnica parcialmente re-verificada). Cada documento termina con una tabla de
+**Verificación** que da la línea de código y el SHA de evidencia de cada afirmación clave.
 
 Si solo vas a leer un documento, que sea [battles.md](battles.md). Recorre el sistema entero
 siguiendo una batalla.
@@ -30,6 +32,15 @@ código de otro como librería, contratos compartidos, configuración y puntos d
 
 → [architecture.md](architecture.md)
 
+### Contratos del motor v2
+
+Contratos compartidos de la reforma del motor y del catálogo modular v2: la frontera entre
+simulación y proyección, ids públicos, visibilidad, daño, efectos, deployables, interferencia,
+guidance, replay y protocolo, y qué equipo es dueño de cada fichero crítico. Es diseño
+declarativo: todavía no hay implementación que lo use.
+
+→ [engine-v2-contracts.md](engine-v2-contracts.md)
+
 ### Servicios
 
 Ficha de cada uno de los 12 servicios del perfil `production` y del proxy Docker del host. Para
@@ -44,6 +55,14 @@ El nginx que es el único punto de entrada: qué prefijo va a qué servicio, cab
 standalone o detrás de un proxy, y los casos conocidos de `/replays` y del endpoint de salud.
 
 → [gateway.md](gateway.md)
+
+### Streamer
+
+Arquitectura del streamer real, comprobada contra el código: el camino de una batalla hasta la
+ingesta RTMPS, el protocolo de control, los estados, START/STOP, el reconciliador, ffmpeg, el audio,
+los secretos, el aislamiento y la tabla de qué existe y qué falta.
+
+→ [streaming-architecture.md](streaming-architecture.md)
 
 ### Workers
 
@@ -133,7 +152,7 @@ qué efecto tiene de verdad cada campo en el motor (algunos no lo tienen).
 ### Mapas
 
 Formato, versionado, validación, generador procedural e importación Tiled. Dónde se guardan (en la
-API, no en map-service) y por qué el editor visual aún no guarda.
+API, no en map-service) y cómo guarda y reabre el editor visual.
 
 → [maps.md](maps.md)
 

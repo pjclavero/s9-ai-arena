@@ -113,11 +113,21 @@ in_cidr() { # ip cidr
 
 # DIGESTS.lock válido para el proxy: toda línea útil con 3 columnas y la 3ª una imagen por
 # digest completo; al menos una. Misma regla que parseImageAllowlist (docker-proxy.ts).
+# PORTABLE: sin intervalos `{n}` en la ERE. El mawk de Debian 12 (1.3.4-20200120, el awk
+# por defecto de VM108) no los soporta y rechazaba SIEMPRE una allowlist válida (RC3 P12).
+# Equivale a /^[a-z0-9][a-z0-9._\/:-]*@sha256:[0-9a-f]{64}$/: el repo no admite `@`, así
+# que el primer «@sha256:» separa repo y hex; el hex se valida por longitud y por clase.
+# Test con mawk y gawk reales: infrastructure/tests/lock-check-userland.test.ts.
 lock_check() {
   awk '
     { sub(/#.*/, ""); gsub(/^[ \t]+|[ \t]+$/, "") }
     $0 == "" { next }
-    NF != 3 || $3 !~ /^[a-z0-9][a-z0-9._\/:-]*@sha256:[0-9a-f]{64}$/ { bad++; next }
+    NF != 3 { bad++; next }
+    {
+      p = index($3, "@sha256:")
+      repo = substr($3, 1, p - 1); hex = substr($3, p + 8)
+      if (p == 0 || repo !~ /^[a-z0-9][a-z0-9._\/:-]*$/ || length(hex) != 64 || hex !~ /^[0-9a-f]+$/) { bad++; next }
+    }
     { ok++ }
     END { exit (bad == 0 && ok >= 1) ? 0 : 1 }
   ' "$1"

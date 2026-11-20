@@ -52,13 +52,25 @@ function runBattle(seed: string, extra: Partial<BattleConfig> = {}) {
  * HEAD (git show HEAD:apps/arena-engine/src/sim/battle.ts), sin ningún cambio de N2
  * aplicado. Si este test falla, algo en el camino "latencia ausente" ha cambiado
  * comportamiento o ha tocado el RNG: regresión real, no un falso positivo.
+ *
+ * REGENERADO en UX-07 (perímetro implícito de la arena), conscientemente: el motor
+ * añade ahora 4 muros de borde a TODO mundo físico y corrige la penetración residual
+ * de los vehículos contra el perímetro. Eso cambia la simulación (más cuerpos en
+ * Rapier, otro orden de handles, posiciones corregidas en el borde) y por tanto los
+ * hashes, también en `mvpArena`, que ya traía sus 4 muros de perímetro a mano. Lo
+ * que protege este test NO cambia: sigue siendo el valor capturado SIN latencia y
+ * cualquier divergencia de la ruta "latencia ausente" lo pone rojo.
+ * Valores anteriores: final 698a73c6…c78f, primeros 2f1afefc…/cab1982f…/42226433….
  */
-const PRE_N2_FINAL_HASH = "698a73c6215f2c1a553adbe065311660f43276fe6f4ce58a85632a00aac1c78f";
+// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
+// Integración OLA2 (M0-I, MD+MB) · regenerado: contrato de daño de MB (orden por slot, hp del blindaje =
+// hp del módulo, turretHeading normalizado, armor.profile en el estado). MD: final e559098f….
+const PRE_N2_FINAL_HASH = "22b1365aab9a8345fb1548dd7e38c95e59df187e9244319e7f5670a2da756620";
 const PRE_N2_HASH_COUNT = 20;
 const PRE_N2_FIRST_HASHES = [
-  "2f1afefcdf3a485d93a5fd98fbb0f2209e1e17521ddf2c16a78349cc9b64a988",
-  "cab1982f85df55519bd9fbade3d72cde37e1e662a418f34dfa1068277b0f8534",
-  "42226433a2ddfb44ccff7d02b828e9e8aac9978f1c0f1e95f35382aad992043f",
+  "27cc106b8478e59ff2031b83d33bc30900d6c7652e39e02bc04c99512454bd0e",
+  "41657ca974f7f12f9f5812083d5387688cd7020510f8b36220064c04f9cfe51f",
+  "5015b0109c5a49f5619e7a4a3fac0037b294074a3c17d673735d1d87f101ec86",
 ];
 
 describe("N2 · latencia simulada — garantía de cero regresión (latencia OFF)", () => {

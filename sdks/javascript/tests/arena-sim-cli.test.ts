@@ -1,6 +1,6 @@
 /**
  * R2.8 · E2E del CLI `arena-sim` de JS: el bot TypeScript de ejemplo
- * (example-bots/javascript/gunner.ts) completa una batalla REAL en el simulador
+ * (example-bots/javascript/gunner.js) completa una batalla REAL en el simulador
  * local invocado por CLI, sin Docker — cruzando de verdad el límite de proceso
  * (spawn de tsx), que es como lo usará un usuario, no llamando a la función.
  */
@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const TSX = resolve(REPO_ROOT, "node_modules", ".bin", "tsx");
 const CLI = resolve(REPO_ROOT, "sdks", "javascript", "src", "arena-sim.ts");
-const GUNNER = resolve(REPO_ROOT, "example-bots", "javascript", "gunner.ts");
+const GUNNER = resolve(REPO_ROOT, "example-bots", "javascript", "gunner.js");
 
 function runCli(args: string[]) {
   return spawnSync(TSX, [CLI, ...args], { cwd: REPO_ROOT, encoding: "utf8", timeout: 90_000 });

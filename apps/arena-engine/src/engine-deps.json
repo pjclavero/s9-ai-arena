@@ -1,7 +1,9 @@
 {
   "$comment": "D4 del ADR-000. El motor verifica estos hashes al arrancar y se niega a ejecutar si no coinciden. Cambiar un valor aquí exige un ADR y regenerar las batallas golden: una build distinta de Rapier puede alterar resultados deterministas e invalidar replays oficiales.",
+  "$comment_reproduces": "OLA2-MD · engine.reproduces ELIMINADO: con el replay v2 (hash por componentes, flujos de RNG con nombre) el verificador es de versión única (engine-compat.ts).",
+  "$comment_version": "OLA2 · 0.5.0 (ADR-024): una sola subida para toda la OLA 2 (MB daño, MC alcance real, G1 HE contra muro, G3 política de rearme en la cabecera). Un replay v2 de 0.4.0 da engine_version_mismatch, nunca «manipulado».",
   "engine": {
-    "version": "0.1.0",
+    "version": "0.5.0",
     "runtime": "node22"
   },
   "physics": {

@@ -6,10 +6,17 @@
  *
  * Errores: nunca se tragan (antes `refresh().catch(() => {})`). Un fallo de carga se
  * anuncia con role="alert" y botón de reintento; un fallo de acción, también.
+ *
+ * #255 · B5-B7 · «Hacer públicos los bots que administras» (`TeamBulkPublic`): la
+ * previsualización y el cambio salen del MISMO endpoint del servidor
+ * (POST /teams/{id}/actions/publish-bots, `dryRun`), que es quien decide qué bots
+ * puede cambiar cada uno (sólo su dueño). La web no repite esa regla: pinta lo que
+ * el servidor responde, también los no autorizados y los parciales.
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
 import { Panel, Button, ErrorState, FormError } from "../ui/primitives.js";
+import { TeamBulkPublic } from "./TeamBulkPublic.js";
 
 interface TeamMember {
   userId: string;
@@ -49,6 +56,9 @@ export function TeamsPage(props: { me: Me }) {
   const [invite, setInvite] = useState<Record<string, string>>({});
   const [rename, setRename] = useState<Record<string, string>>({});
   const [botPick, setBotPick] = useState<Record<string, string>>({});
+  // EQ4 · maestro-detalle: equipo seleccionado (id) o el que se acaba de crear (nombre).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectName, setSelectName] = useState<string | null>(null);
 
   async function refresh() {
     setLoadError(null);
@@ -83,10 +93,30 @@ export function TeamsPage(props: { me: Me }) {
 
   const mine = (teams ?? []).filter((t) => t.isMember);
   const others = (teams ?? []).filter((t) => !t.isMember);
+  // El recién creado se elige por NOMBRE en cuanto llega en la recarga; hasta
+  // entonces no se toca la selección (si no, el efecto la pisaría antes de tiempo).
+  const named = selectName ? mine.find((t) => t.name === selectName) : undefined;
+  const current = named ?? mine.find((t) => t.id === selectedId) ?? mine[0];
+  useEffect(() => {
+    if (named) {
+      setSelectedId(named.id);
+      setSelectName(null);
+    } else if (!selectName && current && current.id !== selectedId) {
+      setSelectedId(current.id);
+    }
+  }, [named, current, selectedId, selectName]);
 
   return (
     <Panel>
       <h2>Equipos</h2>
+      {/* UX-C · C1: qué es un equipo y qué NO es (antes no se explicaba en ninguna parte). */}
+      <p data-testid="teams-concepts">
+        Un <strong>equipo</strong> agrupa personas y <strong>bots</strong>: un bot del equipo con visibilidad «equipo»
+        lo pueden usar en batallas todos sus miembros, aunque no sea suyo. Cada bot pertenece como mucho a un equipo.
+        Una batalla no enfrenta equipos: enfrenta <strong>versiones publicadas de bots</strong>, cada una en un{" "}
+        <strong>bando</strong> (rojo o azul) que es sólo el lado del campo. Dos bots del mismo equipo pueden enfrentarse
+        entre sí.
+      </p>
       <input
         aria-label="nuevo-equipo"
         placeholder="nombre del equipo"
@@ -97,6 +127,7 @@ export function TeamsPage(props: { me: Me }) {
         onClick={() =>
           act(`Equipo «${name}» creado.`, async () => {
             await api("POST", "/teams", { name });
+            setSelectName(name.trim());
             setName("");
           })
         }
@@ -115,133 +146,180 @@ export function TeamsPage(props: { me: Me }) {
         </div>
       )}
       {teams === null && loadError === null && <p>Cargando equipos…</p>}
-      {mine.map((t) => (
-        <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
-          <h3>
-            {t.name} <small>{t.isCaptain ? "· eres capitán" : "· eres miembro"}</small>
-          </h3>
-          {t.isCaptain && (
-            <p>
-              <input
-                aria-label={`renombrar-${t.name}`}
-                placeholder="nuevo nombre"
-                value={rename[t.id] ?? ""}
-                onChange={(e) => setRename((s) => ({ ...s, [t.id]: e.target.value }))}
-              />{" "}
-              <Button
-                onClick={() =>
-                  act("Equipo renombrado.", () => api("PATCH", `/teams/${t.id}`, { name: rename[t.id] ?? "" }))
-                }
-              >
-                Renombrar
-              </Button>{" "}
-              <Button
-                onClick={() => {
-                  if (!window.confirm(`¿Borrar el equipo «${t.name}»? Sus bots no se borran.`)) return;
-                  void act(`Equipo «${t.name}» borrado.`, () => api("DELETE", `/teams/${t.id}`));
-                }}
-              >
-                Borrar equipo
-              </Button>
-            </p>
-          )}
-
-          <h4>Miembros ({t.memberCount})</h4>
-          <ul>
-            {(t.members ?? []).map((m) => (
-              <li key={m.userId}>
-                {m.displayName} <small>({m.role === "captain" ? "capitán" : "miembro"})</small>
-                {t.isCaptain && m.role !== "captain" && (
-                  <>
+      {teams !== null && mine.length === 0 && (
+        <p data-testid="teams-empty">
+          Todavía no perteneces a ningún equipo. Crea uno con el campo de arriba: serás su capitán.
+        </p>
+      )}
+      {mine.length > 0 && (
+        <div className="master-detail" data-testid="teams-master-detail">
+          <div className="card master-list">
+            <h3 id="teams-mine-title">Tus equipos ({mine.length})</h3>
+            <ul aria-labelledby="teams-mine-title" data-testid="teams-list">
+              {mine.map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    className="link master-item"
+                    aria-current={current?.id === t.id ? "true" : undefined}
+                    data-testid={`team-item-${t.name}`}
+                    onClick={() => {
+                      setSelectName(null);
+                      setSelectedId(t.id);
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                  <small>
                     {" "}
+                    {t.isCaptain ? "capitán" : "miembro"} · {t.memberCount} pers. · {t.botCount} bots
+                  </small>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {current &&
+            [current].map((t) => (
+              <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
+                <h3>
+                  Equipo «{t.name}» <small>{t.isCaptain ? "· eres capitán" : "· eres miembro"}</small>
+                </h3>
+                {t.isCaptain && (
+                  <p>
+                    <input
+                      aria-label={`renombrar-${t.name}`}
+                      placeholder="nuevo nombre"
+                      value={rename[t.id] ?? ""}
+                      onChange={(e) => setRename((s) => ({ ...s, [t.id]: e.target.value }))}
+                    />{" "}
                     <Button
-                      aria-label={`quitar-miembro-${m.displayName}`}
                       onClick={() =>
-                        act(`${m.displayName} ya no es miembro.`, () =>
-                          api("DELETE", `/teams/${t.id}/members/${encodeURIComponent(m.userId)}`),
-                        )
+                        act("Equipo renombrado.", () => api("PATCH", `/teams/${t.id}`, { name: rename[t.id] ?? "" }))
                       }
                     >
-                      Quitar
-                    </Button>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-          {t.isCaptain && (
-            <p>
-              <input
-                aria-label={`invitar-${t.name}`}
-                placeholder="email del usuario"
-                type="email"
-                value={invite[t.id] ?? ""}
-                onChange={(e) => setInvite((s) => ({ ...s, [t.id]: e.target.value }))}
-              />{" "}
-              <Button
-                onClick={() =>
-                  act("Miembro añadido.", async () => {
-                    await api("POST", `/teams/${t.id}/members`, { email: invite[t.id] ?? "" });
-                    setInvite((s) => ({ ...s, [t.id]: "" }));
-                  })
-                }
-              >
-                Añadir miembro
-              </Button>
-            </p>
-          )}
-
-          <h4>Bots del equipo ({t.botCount})</h4>
-          <ul>
-            {(t.bots ?? []).map((b) => (
-              <li key={b.id}>
-                {b.name}
-                {(b.mine || t.isCaptain) && (
-                  <>
-                    {" "}
+                      Renombrar
+                    </Button>{" "}
                     <Button
-                      aria-label={`quitar-bot-${b.name}`}
+                      onClick={() => {
+                        if (!window.confirm(`¿Borrar el equipo «${t.name}»? Sus bots no se borran.`)) return;
+                        void act(`Equipo «${t.name}» borrado.`, () => api("DELETE", `/teams/${t.id}`));
+                      }}
+                    >
+                      Borrar equipo
+                    </Button>
+                  </p>
+                )}
+
+                <h4>Miembros ({t.memberCount})</h4>
+                <ul>
+                  {(t.members ?? []).map((m) => (
+                    <li key={m.userId}>
+                      {m.displayName} <small>({m.role === "captain" ? "capitán" : "miembro"})</small>
+                      {t.isCaptain && m.role !== "captain" && (
+                        <>
+                          {" "}
+                          <Button
+                            aria-label={`quitar-miembro-${m.displayName}`}
+                            onClick={() =>
+                              act(`${m.displayName} ya no es miembro.`, () =>
+                                api("DELETE", `/teams/${t.id}/members/${encodeURIComponent(m.userId)}`),
+                              )
+                            }
+                          >
+                            Quitar
+                          </Button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {t.isCaptain && (
+                  <p>
+                    <input
+                      aria-label={`invitar-${t.name}`}
+                      placeholder="email del usuario"
+                      type="email"
+                      value={invite[t.id] ?? ""}
+                      onChange={(e) => setInvite((s) => ({ ...s, [t.id]: e.target.value }))}
+                    />{" "}
+                    <Button
                       onClick={() =>
-                        act(`Bot ${b.name} fuera del equipo.`, () => api("DELETE", `/teams/${t.id}/bots/${b.id}`))
+                        act("Miembro añadido.", async () => {
+                          await api("POST", `/teams/${t.id}/members`, { email: invite[t.id] ?? "" });
+                          setInvite((s) => ({ ...s, [t.id]: "" }));
+                        })
                       }
                     >
-                      Quitar del equipo
+                      Añadir miembro
                     </Button>
-                  </>
+                  </p>
                 )}
-              </li>
+
+                <h4>Bots del equipo ({t.botCount})</h4>
+                <ul>
+                  {(t.bots ?? []).map((b) => (
+                    <li key={b.id}>
+                      {b.name}
+                      {(b.mine || t.isCaptain) && (
+                        <>
+                          {" "}
+                          <Button
+                            aria-label={`quitar-bot-${b.name}`}
+                            onClick={() =>
+                              act(`Bot ${b.name} fuera del equipo.`, () => api("DELETE", `/teams/${t.id}/bots/${b.id}`))
+                            }
+                          >
+                            Quitar del equipo
+                          </Button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p>
+                  <select
+                    aria-label={`añadir-bot-${t.name}`}
+                    value={botPick[t.id] ?? ""}
+                    onChange={(e) => setBotPick((s) => ({ ...s, [t.id]: e.target.value }))}
+                  >
+                    <option value="">— uno de mis bots —</option>
+                    {myBots
+                      .filter((b) => b.teamId !== t.id)
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                  </select>{" "}
+                  <Button
+                    disabled={!botPick[t.id]}
+                    onClick={() =>
+                      act("Bot añadido al equipo.", () => api("POST", `/teams/${t.id}/bots`, { botId: botPick[t.id] }))
+                    }
+                  >
+                    Añadir bot
+                  </Button>
+                </p>
+                {(t.bots ?? []).length > 0 && <TeamBulkPublic team={t} onChanged={() => void refresh()} />}
+                <p>
+                  <small>
+                    Acciones disponibles:{" "}
+                    {t.isCaptain
+                      ? "como capitán puedes renombrar o borrar el equipo, añadir y quitar miembros y quitar cualquier bot."
+                      : "como miembro puedes añadir tus bots al equipo y quitar los tuyos; el resto lo gestiona el capitán."}{" "}
+                    <a href={`#/replays?team=${encodeURIComponent(t.id)}`} data-testid="team-replays-link">
+                      Replays del equipo
+                    </a>
+                  </small>
+                </p>
+              </section>
             ))}
-          </ul>
-          <p>
-            <select
-              aria-label={`añadir-bot-${t.name}`}
-              value={botPick[t.id] ?? ""}
-              onChange={(e) => setBotPick((s) => ({ ...s, [t.id]: e.target.value }))}
-            >
-              <option value="">— uno de mis bots —</option>
-              {myBots
-                .filter((b) => b.teamId !== t.id)
-                .map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-            </select>{" "}
-            <Button
-              disabled={!botPick[t.id]}
-              onClick={() =>
-                act("Bot añadido al equipo.", () => api("POST", `/teams/${t.id}/bots`, { botId: botPick[t.id] }))
-              }
-            >
-              Añadir bot
-            </Button>
-          </p>
-        </section>
-      ))}
+        </div>
+      )}
       {others.length > 0 && (
         <>
           <h3>Otros equipos</h3>
-          <table>
+          <table className="stack-table">
             <tbody>
               {others.map((t) => (
                 <tr key={t.id}>

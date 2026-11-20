@@ -48,7 +48,9 @@ export async function registerNewUser(page: Page): Promise<{ email: string; pass
   await page.getByLabel("email").fill(email);
   await page.getByLabel("contraseña").fill(password);
   await page.getByRole("button", { name: "Registrarse y entrar" }).click();
-  await expect(page.getByTestId("logout")).toBeVisible();
+  // Sesión iniciada = «Salir» montado. En ≤1024 px vive dentro del menú plegable
+  // (UX-MOBILE) y no está visible hasta abrirlo; la visibilidad la prueba responsive.spec.
+  await expect(page.getByTestId("logout")).toBeAttached();
   return { email, password };
 }
 
@@ -57,5 +59,7 @@ export async function login(page: Page, email: string, password: string) {
   await page.getByLabel("email").fill(email);
   await page.getByLabel("contraseña").fill(password);
   await page.getByRole("button", { name: "Entrar" }).click();
-  await expect(page.getByTestId("logout")).toBeVisible();
+  // Sesión iniciada = «Salir» montado. En ≤1024 px vive dentro del menú plegable
+  // (UX-MOBILE) y no está visible hasta abrirlo; la visibilidad la prueba responsive.spec.
+  await expect(page.getByTestId("logout")).toBeAttached();
 }

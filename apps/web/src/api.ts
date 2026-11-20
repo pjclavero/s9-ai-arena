@@ -4,6 +4,8 @@
  * R3.7 (ERR-VIS-03) · Sesión persistente + interceptor ÚNICO de 401:
  *  - el access token vive SOLO en memoria; la persistencia real es la cookie
  *    httpOnly `s9_refresh` que emite la API en el login (el JS no puede leerla);
+ *    en localStorage sólo hay una MARCA booleana de «puede haber sesión»
+ *    (UX-E, C-G13), nunca el token;
  *  - tras un F5, bootstrapSession() hace POST /auth/refresh (el navegador
  *    adjunta la cookie) y recupera al usuario sin tocar localStorage;
  *  - cualquier 401 de la API pasa por UN solo camino: intento de refresh
@@ -16,6 +18,7 @@
  * convertir un fallo en «lista vacía».
  */
 import { ApiRequestError, describeApiError } from "./errors.js";
+import { clearAllDrafts } from "./ui/draft.js";
 export { ApiRequestError, describeApiError } from "./errors.js";
 export type { ApiErrorKind, ApiErrorClass, DescribedError } from "./errors.js";
 
@@ -39,6 +42,35 @@ export const API_TIMEOUT_MS = 15_000;
 let accessToken: string | null = null;
 export function setToken(t: string | null): void {
   accessToken = t;
+  // Un token nuevo = hay sesión (login): se marca para el próximo F5.
+  if (t) writeSessionHint(true);
+}
+
+/**
+ * UX-E (C-G13) · MARCA de «puede haber sesión». Antes cada carga ANÓNIMA hacía
+ * POST /auth/refresh sin cookie y el servidor respondía 400: un error rojo en
+ * la consola y en la red de todo visitante nuevo, para nada. El JS no puede leer
+ * la cookie httpOnly, así que se guarda sólo un booleano (NUNCA el token) que se
+ * pone al iniciar sesión o renovar y se quita al salir o cuando el servidor dice
+ * que no hay sesión. Si el almacenamiento no está disponible (modo privado
+ * estricto) se vuelve al comportamiento anterior: intentar el refresh.
+ */
+export const SESSION_HINT_KEY = "s9_session_hint";
+/** `true`/`false` = marca leída; `null` = almacenamiento no disponible. */
+function readSessionHint(): boolean | null {
+  try {
+    return window.localStorage.getItem(SESSION_HINT_KEY) === "1";
+  } catch {
+    return null;
+  }
+}
+function writeSessionHint(on: boolean): void {
+  try {
+    if (on) window.localStorage.setItem(SESSION_HINT_KEY, "1");
+    else window.localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    // sin almacenamiento: el arranque intentará el refresh igual que antes
+  }
 }
 export function getToken(): string | null {
   return accessToken;
@@ -115,6 +147,16 @@ async function rawFetch(method: string, path: string, body?: unknown, opts: ApiO
   );
 }
 
+/** UX-E · `Retry-After` en segundos (o fecha HTTP); `undefined` si no viene o no se entiende. */
+function retryAfterOf(res: Response): number | undefined {
+  const h = res.headers.get("retry-after");
+  if (!h) return undefined;
+  const n = Number(h);
+  if (Number.isFinite(n) && n >= 0) return n;
+  const at = Date.parse(h);
+  return Number.isFinite(at) ? Math.max(0, Math.round((at - Date.now()) / 1000)) : undefined;
+}
+
 async function parseResponse<T>(res: Response, opts: { lenient?: boolean } = {}): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json");
@@ -139,7 +181,7 @@ async function parseResponse<T>(res: Response, opts: { lenient?: boolean } = {})
     // Un 502/504 del gateway llega como HTML: sin cuerpo JSON el mensaje sería
     // sólo «HTTP 502». Se nombra el estado para que el usuario sepa qué pasó.
     if (body.message === undefined) body.message = `el servidor respondió ${res.status}`;
-    throw new ApiRequestError(res.status, body);
+    throw new ApiRequestError(res.status, body, "http", retryAfterOf(res));
   }
   if (!isJson && contentType.includes("text/html")) {
     // 200 con HTML donde se esperaba JSON = una ruta que no llega a su servicio
@@ -176,14 +218,23 @@ function refreshSession(): Promise<boolean> {
           API_TIMEOUT_MS,
         );
         if (!res.ok) {
-          if (res.status >= 500) {
-            lastRefreshFailure = new ApiRequestError(res.status, { message: `el servidor respondió ${res.status}` });
+          if (res.status >= 500 || res.status === 429) {
+            lastRefreshFailure = new ApiRequestError(
+              res.status,
+              { message: `el servidor respondió ${res.status}` },
+              "http",
+              retryAfterOf(res),
+            );
+          } else {
+            // 400/401/403: el servidor dice que NO hay sesión (o caducó).
+            writeSessionHint(false);
           }
           return false;
         }
         const data = (await res.json()) as { accessToken?: string };
         if (!data.accessToken) return false;
         accessToken = data.accessToken;
+        writeSessionHint(true);
         return true;
       } catch (e) {
         lastRefreshFailure =
@@ -199,6 +250,7 @@ function refreshSession(): Promise<boolean> {
 
 function expireSession(reason: string): void {
   accessToken = null;
+  writeSessionHint(false);
   sessionExpiredHandler?.(reason);
 }
 
@@ -215,6 +267,11 @@ export async function api<T = unknown>(
     if (await refreshSession()) {
       return parseResponse<T>(await rawFetch(method, path, body, opts));
     }
+    // UX-E · si el refresh no llegó a contestar «no hay sesión» (red, plazo,
+    // 5xx, 429) la sesión NO ha caducado: echar al usuario al login desmontaba
+    // el panel y perdía lo no guardado (p. ej. el código del editor). Se lanza
+    // el fallo transitorio y la pantalla ofrece «Reintentar».
+    if (lastRefreshFailure) throw lastRefreshFailure;
     expireSession("Tu sesión ha caducado. Vuelve a iniciar sesión.");
   }
   return parseResponse<T>(res);
@@ -227,6 +284,9 @@ export async function api<T = unknown>(
  * y ofrezca reintentar en vez de mandar al login a quien tiene sesión válida.
  */
 export async function bootstrapSession(): Promise<Me | null> {
+  // UX-E (C-G13) · sin marca de sesión no se pregunta: un visitante anónimo no
+  // genera un 400 en cada carga. `null` (sin almacenamiento) sí lo intenta.
+  if (readSessionHint() === false) return null;
   if (!(await refreshSession())) {
     if (lastRefreshFailure) throw lastRefreshFailure;
     return null;
@@ -248,4 +308,7 @@ export async function logout(): Promise<void> {
     // sin red igualmente limpiamos el estado local
   }
   accessToken = null;
+  writeSessionHint(false);
+  // UX-F (DEF-R2) · «Salir» es explícito: lo escrito no sobrevive al cambio de cuenta.
+  clearAllDrafts();
 }

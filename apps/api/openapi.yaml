@@ -32,8 +32,103 @@ info:
   # y las nuevas aplican la política de acceso (staff, dueño o equipo de un bot
   # participante, o replay público por S9_PUBLIC_REPLAYS_ENABLED); el resto
   # recibe 404, igual que un id inexistente.
+  # 0.10.0 · ELIG elegibilidad histórica (aditivo): BotVersion.battleEligibility
+  # (calculado; sólo published/frozen), errores 409 bot_version_not_eligible
+  # (createPracticeBattle, enterTournament) y entries_not_eligible (closeEntries),
+  # 200 de enterTournament al cambiar una inscripción pendiente no elegible por otra
+  # versión, y getBotVersionEligibilityInventory (admin, solo lectura).
+  # 0.11.0 · ELIG (review): excludeTournamentEntry (excluir una inscripción pendiente,
+  # auditado) y esquemas declarados de notEligible / notEligibleEntries / replacedVersion.
+  # 0.12.0 · R-RULES (ADR-021) reglas de batalla: añade checkBattleRules
+  # (POST /battles/rules-check) y, de forma ADITIVA, `rules` opcional en
+  # PracticeBattleInput, `rules` en Battle, `presets`/`custom` en listRulesets y
+  # `profile`/`rules` en BattleStats. Nada se quita ni cambia de significado.
+  # ADR-022 (misma 0.12.0, aún sin publicar): `rules` en TournamentInput/Tournament,
+  # `modeCompatibility` en MapVersion, `tiebreaks` en listRulesets, `recordedWith`/
+  # `verifiedWith` en verifyReplay y códigos map_team_mismatch / engine_rules_mismatch.
+  # 0.13.0 · EQ5b Administración → Streaming (aditivo, admin): getStreamingAdmin,
+  # updateStreamingSettings, set/deleteStreamingCredential, getStreamingTarget,
+  # testStreaming, start/restart/stopStreaming, listStreamingRecordings,
+  # applyStreamingRetention y listStreamingAudit (tag streaming).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.9.0
+  # 0.14.0 · STREAMER (aditivo, admin): StreamingAdminState.lastSession (última
+  # sesión terminada: stoppedAt, stopReason, sin secretos) y `starting` en el enum
+  # de uxState (el código ya lo devolvía desde EQ5d; el contrato no lo declaraba).
+  # 0.15.0 · VISIBILIDAD (aditivo): setBotVersionCodeVisibility (PUT
+  # /bots/{botId}/versions/{version}/code-visibility, sólo el dueño; D9 enmendada:
+  # codePublic es reversible), `broadcast` en TournamentInput/Tournament (fijado al
+  # crear), y en StreamingTarget `broadcastable`, `broadcastBlockedReason`
+  # (battle_not_public | tournament_not_broadcastable) y `tournamentBroadcast`;
+  # `publicBroadcastable` queda como alias deprecado. startStreaming ya no responde
+  # 409 target_not_public sino con el motivo real. TournamentMatch.winnerBotName
+  # (nombre de competición del ganador, «bracket con nombre»). getBotSource,
+  # getBotVersionFiles y diffBotVersions responden con `Cache-Control: private, no-store`.
+  # 0.16.0 · STREAMING-UX (aditivo, admin): setStreamingIngests (PUT
+  # /admin/streaming/ingests/{platform}: servidor principal y de respaldo; `?backup=1`
+  # sólo en el respaldo de YouTube), listStreamingDestinations (selector sin UUID),
+  # `ingests` en StreamingAdminState, `backup` (none | ready | needs_key) en
+  # StreamingCredentialMeta y `primary`/`backup` en la respuesta de testStreaming
+  # (los campos de la principal siguen también en la raíz), y `actorName` en AuditEntry
+  # (listStreamingAudit: nombre del usuario; el UUID sigue en actorId).
+  # 0.17.0 · #255 (aditivo): publishTeamBots (POST /teams/{teamId}/actions/publish-bots):
+  # un miembro hace públicos, en UNA transacción, los bots del equipo de los que es
+  # DUEÑO (misma regla que updateBot); previsualización con dryRun y resultado por bot
+  # (not_authorized incluido). El código sólo con includeCode explícito.
+  # (#255 R1, mismo 0.17.0 aún no publicado: `expectBotIds` → 409 team_bots_changed si
+  # el conjunto de bots cambió tras la previsualización; outcome `retired` y
+  # summary.retired: los bots retirados del dueño no se tocan.)
+  # 0.18.0 · MG (aditivo, admin): getPublicAccessSettings / updatePublicAccessSettings
+  # (GET/PATCH /admin/settings/public-access): los flags de espectador y replays públicos
+  # pasan a ser ajustes de RUNTIME persistidos (el entorno es sólo bootstrap y fallback),
+  # con booleanos estrictos y auditoría. StreamingTarget y StreamingDestination ganan
+  # `broadcastAvailable`, `reason`, `publicSpectateEffective` y `publicReplaysEffective`
+  # (estado EFECTIVO: lo que /broadcast anónima puede leer de verdad con la política
+  # única); `publicBroadcastable` deja de ser alias de `broadcastable` y vale lo mismo
+  # que `broadcastAvailable`.
+  # 0.19.0 · FIX-BROADCAST (aditivo, admin): startStreaming exige `broadcastAvailable`
+  # (no basta `broadcastable`) y rechaza con 409 y motivo estable (public_replays_disabled,
+  # tournament_no_content, target_not_available, battle_not_available,
+  # tournament_not_started, target_not_found…); el destino inexistente pasa de 404 a 409
+  # target_not_found. StreamingTarget gana `targetType`, `tournament`, `battleCounts` y
+  # `broadcastPhase`. BroadcastUnavailableReason gana target_not_found,
+  # tournament_no_content y tournament_not_started; una batalla revertida es
+  # battle_not_available.
+  # 0.20.0 · FROZEN-REUSE (semántica, aditivo): enterTournament acepta versiones `frozen`
+  # (congeladas por un torneo anterior: inmutables, NO «usadas una vez») con las mismas
+  # comprobaciones de elegibilidad; la versión se inscribe tal cual (ni se clona, ni se
+  # republica, ni se descongela) y closeEntries no la vuelve a tocar. `bot_not_published`
+  # pasa a significar «estado fuera de published|frozen» también aquí (como en
+  # createPracticeBattle) y lleva `currentState` con el estado real.
+  # 0.21.0 · OLA 2 (motor 0.5.0, ADR-024) integrada en main: getSpectateTicket gana el
+  # query `audience` (public_live|broadcast, FIRMADA en el ticket); el replay público pasa a
+  # `s9.replay.public-competition.v2` (proyección pública, ids públicos); EQUIPMENT_PRIVATE:
+  # `damageDealt`/`damageTaken` absolutos y las cifras de composición de bots ajenos sólo
+  # para dueño y staff (rules-check y el 422 de createBattle), y el detalle de
+  # `bot_version_not_eligible` sólo para dueño y staff (en enterTournament, el dueño).
+  # 0.22.0 · #291 (autorización, sin operaciones nuevas): closeEntries y dryRunTournament
+  # exigen, además del rol organizer, ser quien creó el torneo o staff (moderator+): si no,
+  # 403. La vía de organizador de excludeTournamentEntry exige lo mismo (el dueño del bot
+  # sigue pudiendo retirar la suya). Regla única: canManageTournament.
+  # 0.23.0 · #289 (aditivo; antes 0.21.0 en la rama): añade cancelTournament (POST /tournaments/{id}/actions/cancel):
+  # `draft|open` → `cancelled` (terminal), dueño del torneo o staff, auditado como
+  # tournament.cancelled, idempotente; `closed|running|finished` → 409
+  # tournament_not_cancellable. No borra nada. closeEntries pasa a ser atómico frente a
+  # la cancelación (409 illegal_transition si el torneo ya no está `open`).
+  # El 409 de cancelTournament usa su propio esquema TournamentNotCancellableError.
+  # Cancelar un torneo por equipos conserva sus inscripciones y autorizaciones de dueño (historial, sin borrar nada);
+  # las autorizaciones quedan inertes (poner/retirar/inscribir → 409 entries_closed).
+  # 0.24.0 · #290 (aditivo; antes 0.21.0 en la rama): enterTournamentTeam (POST /tournaments/{id}/team-entries) inscribe un
+  # EQUIPO COMPLETO en un torneo `teams` con reglas NvN, atómicamente (o entran los N bots o
+  # ninguno); `Entry` gana `teamId` (opcional). En esos torneos enterTournament ya no da de alta
+  # bots sueltos (409 team_enrollment_required; la sustitución de una versión pendiente no
+  # elegible sigue). closeEntries revalida pertenencia (409 team_roster_changed) y estado de cada
+  # versión (entries_not_eligible también si quedó suspendida o retirada), y es atómico.
+  # Ronda 2: equipos de VARIOS dueños con autorización explícita por bot y versión
+  # (listTeamEntryConsents, putTeamEntryConsent, deleteTeamEntryConsent; 409
+  # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
+  # cierre, excludeTournamentEntry y la sustitución de versión (lo que bloquea el cierre siempre
+  # se puede excluir); freeze condicional (una sola auditoría por versión).
+  version: 0.25.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -64,6 +159,7 @@ tags:
   - name: replays
   - name: standings
   - name: admin
+  - name: streaming
   - name: system
 
 security:
@@ -336,6 +432,74 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /teams/{teamId}/actions/publish-bots:
+    post:
+      tags: [teams]
+      operationId: publishTeamBots
+      summary: |
+        #255 · Hacer PÚBLICOS los bots del equipo que administra quien lo pide. Lo puede pedir
+        un miembro del equipo (o admin); cada bot sólo cambia si quien lo pide es su DUEÑO
+        (la misma regla que updateBot: ser capitán no da autoridad sobre bots ajenos). Los
+        autorizados cambian en una sola transacción; el resto sale como `not_authorized` sin
+        tocarse. `dryRun: true` previsualiza sin escribir. El código fuente NUNCA se publica
+        salvo `includeCode: true` explícito, y entonces sólo el de la versión publicada más
+        reciente de cada bot autorizado. No toca versiones ni equipamiento. Auditado por bot.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean, default: false }
+                includeCode: { type: boolean, default: false }
+                expectBotIds:
+                  type: array
+                  maxItems: 1000
+                  items: { type: string }
+                  description: |
+                    Ids de TODOS los bots que salieron en la previsualización. Si el conjunto
+                    actual de bots del equipo es otro, 409 team_bots_changed y no se escribe nada.
+      responses:
+        '200':
+          description: Resultado por bot (también en los parciales)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  teamId: { type: string, format: uuid }
+                  dryRun: { type: boolean }
+                  includeCode: { type: boolean }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        botId: { type: string, format: uuid }
+                        name: { type: string }
+                        outcome: { type: string, enum: [made_public, would_make_public, already_public, not_authorized, retired] }
+                        previousVisibility: { type: string, enum: [private, team, public], description: 'Sólo en los bots autorizados.' }
+                        code:
+                          type: object
+                          description: 'Sólo con includeCode y en los bots autorizados.'
+                          properties:
+                            version: { type: integer, nullable: true }
+                            outcome: { type: string, enum: [made_public, would_make_public, already_public, no_published_version] }
+                  summary:
+                    type: object
+                    properties:
+                      changed: { type: integer }
+                      alreadyPublic: { type: integer }
+                      notAuthorized: { type: integer }
+                      retired: { type: integer }
+        '400': { description: dryRun o includeCode no booleanos o expectBotIds inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /teams/{teamId}/members:
     post:
       tags: [teams]
@@ -378,6 +542,10 @@ paths:
         - name: ownerId
           in: query
           schema: { type: string }
+        - name: includeCounts
+          in: query
+          description: 'EQ4 · con `true` y `ownerId` igual al usuario autenticado, añade `counts` (total/activos/retirados de TODOS sus bots, no sólo de la página). Con otro ownerId se ignora.'
+          schema: { type: string, enum: ['true', 'false'] }
       responses:
         '200': { description: Bots, content: { application/json: { schema: { $ref: '#/components/schemas/BotPage' } } } }
     post:
@@ -423,10 +591,14 @@ paths:
               properties:
                 name: { type: string, maxLength: 48 }
                 visibility: { $ref: '#/components/schemas/Visibility' }
+                retired: { type: boolean, description: 'EQ4 · true retira el bot de la lista principal (conserva la fecha si ya lo estaba); false lo reactiva. Organizativo.' }
       responses:
         '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # OLA 2 · EQUIPMENT_PRIVATE: la extensión GET /bots/{botId}/loadouts (listBotLoadouts, fuera del
+  # contrato) sólo responde al dueño y al staff; para cualquier otro es 404 uniforme, también
+  # con un bot de visibilidad pública.
   /bots/{botId}/loadouts:
     post:
       tags: [bots]
@@ -480,6 +652,7 @@ paths:
       responses:
         '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '413': { description: Código demasiado grande, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   /bots/{botId}/versions/{version}/source:
     get:
@@ -596,6 +769,7 @@ paths:
         '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   # -------- Transiciones de estado del capítulo 17.1 (acciones explícitas)
   /bots/{botId}/versions/{version}/actions/submit:
@@ -608,12 +782,13 @@ paths:
       responses:
         '202': { description: Pipeline encolado, content: { application/json: { schema: { $ref: '#/components/schemas/Build' } } } }
         '409': { $ref: '#/components/responses/IllegalTransition' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   /bots/{botId}/versions/{version}/actions/publish:
     post:
       tags: [bots]
       operationId: publishBotVersion
-      summary: 'validated → published. La versión pasa a ser INMUTABLE. codePublic es irreversible (D9).'
+      summary: 'validated → published. La versión pasa a ser INMUTABLE. codePublic=true publica también el código; se puede volver a ocultar con setBotVersionCodeVisibility (D9 enmendada).'
       x-min-role: developer
       parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
       requestBody:
@@ -626,6 +801,33 @@ paths:
       responses:
         '200': { description: Publicada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '409': { $ref: '#/components/responses/IllegalTransition' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
+
+  /bots/{botId}/versions/{version}/code-visibility:
+    put:
+      tags: [bots]
+      operationId: setBotVersionCodeVisibility
+      summary: |
+        VISIBILIDAD · Poner el CÓDIGO de una versión en privado (codePublic=false) o en público
+        (codePublic=true). Solo el dueño (ni el staff ni el equipo). Independiente de la visibilidad
+        del bot, de la publicación, de la elegibilidad y de los torneos. Volver a privado (enmienda a
+        D9) corta las lecturas públicas del código; quien ya lo descargó conserva su copia. Auditado.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codePublic]
+              properties:
+                codePublic: { type: boolean }
+      responses:
+        '200': { description: Hecho, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '400': { description: codePublic no booleano, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Bot o versión inexistente o no visible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /bots/{botId}/versions/{version}/actions/suspend:
     post:
@@ -868,6 +1070,17 @@ paths:
                         engineRulesetId: { type: string, nullable: true }
                         budgetCredits: { type: integer }
                         forbiddenCategories: { type: array, items: { type: string } }
+                  presets:
+                    type: array
+                    description: 'R-RULES (ADR-021) · Presets OFICIALES versionados (packages/game-rules/battle-rules.ts). Inmutables: un cambio sube version.'
+                    items: { $ref: '#/components/schemas/RulesPreset' }
+                  custom:
+                    type: object
+                    description: 'R-RULES · Defectos y LÍMITES del modo personalizado: los mismos que aplica el servidor (la web sólo ayuda).'
+                    properties:
+                      defaults: { type: object, additionalProperties: true }
+                      limits: { type: object, additionalProperties: { type: object, properties: { min: { type: integer }, max: { type: integer } } } }
+                      maxParticipants: { type: integer }
         '400': { description: mode inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /catalog/{catalogVersion}/modules:
@@ -909,6 +1122,8 @@ paths:
             schema: { $ref: '#/components/schemas/TournamentInput' }
       responses:
         '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '400': { description: 'Datos inválidos · ADR-022 rules_invalid / rules_team_size', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'ADR-022 · rules_mode_mismatch (el preset juega otro modo)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/entries:
     post:
@@ -928,29 +1143,243 @@ paths:
                 botId: { type: string }
                 version: { type: integer }
       responses:
+        '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
-        '409': { description: 'Inscripciones cerradas, bot no publicado o suspendido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`) · team_enrollment_required (#287: torneo `teams` con reglas NvN, se inscribe el equipo completo con enterTournamentTeam). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+
+  /tournaments/{tournamentId}/team-entries:
+    post:
+      tags: [tournaments]
+      operationId: enterTournamentTeam
+      summary: >-
+        #287 · Inscribir un EQUIPO COMPLETO en un torneo `teams` con reglas NvN. Atómico: o entran
+        los N bots o ninguno (también ante concurrencia o un fallo a mitad). Cada bot debe
+        pertenecer al equipo, ser del solicitante (miembro del equipo) y no estar retirado; cada
+        versión, publicada o congelada (frozen) y elegible (la misma regla que enterTournament).
+        Congela la combinación versión+loadout de cada miembro como la inscripción individual.
+        No cambia la visibilidad del bot, la de su código ni su dueño. Ronda 2 · un bot de OTRO
+        dueño sólo entra con la autorización explícita de su dueño para esa versión, ese equipo
+        y ese torneo (putTeamEntryConsent); sin ella, 409 team_consent_required y no entra nadie.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teamId, members]
+              properties:
+                teamId: { type: string }
+                members:
+                  type: array
+                  minItems: 1
+                  maxItems: 16
+                  description: 'Exactamente `rules.params.teamSize` bots distintos del equipo, cada uno con la versión a inscribir.'
+                  items:
+                    type: object
+                    required: [botId, version]
+                    properties:
+                      botId: { type: string }
+                      version: { type: integer }
+      responses:
+        '201':
+          description: Equipo inscrito (N inscripciones)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  teamName: { type: string }
+                  entries: { type: array, items: { $ref: '#/components/schemas/Entry' } }
+        '400': { description: 'teamId o members mal formados, o un bot repetido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'forbidden (no eres miembro del equipo)', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
+        '404': { description: 'Torneo o equipo inexistente', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament · team_size_undefined (reglas sin tamaño de equipo) · rules_team_size (no son exactamente N; `teamSize`, `got`) · team_bot_not_member (`botIds`) · bot_retired (`botIds`) · bot_not_published (`notPublished` con `currentState`) · bot_version_not_eligible (`notEligible`) · team_consent_required (algún bot de otro dueño sin su autorización de esa versión; `botIds`) · team_already_entered · already_entered (`botIds`). Ninguno inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
+
+  /tournaments/{tournamentId}/team-consents:
+    get:
+      tags: [tournaments]
+      operationId: listTeamEntryConsents
+      summary: '#287 · Autorizaciones de los dueños para inscribir sus bots con un equipo en este torneo. Sólo miembros del equipo; sólo bot y versión (nunca código).'
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: teamId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Autorizaciones vigentes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { type: object, properties: { botId: { type: string }, version: { type: integer }, mine: { type: boolean } } }
+        '400': { description: teamId obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: No eres miembro del equipo, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Torneo inexistente, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /tournaments/{tournamentId}/team-consents/{botId}:
+    put:
+      tags: [tournaments]
+      operationId: putTeamEntryConsent
+      summary: >-
+        #287 · El DUEÑO de un bot autoriza que su equipo lo inscriba en este torneo (torneo `teams`
+        abierto con tamaño) con UNA versión concreta, publicada o congelada y elegible. Sólo el
+        dueño; el bot debe ser del equipo y el dueño miembro. Reemplaza una autorización previa
+        mientras el bot no esté inscrito.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teamId, version]
+              properties:
+                teamId: { type: string }
+                version: { type: integer }
+      responses:
+        '200':
+          description: Autorizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  botId: { type: string }
+                  version: { type: integer }
+        '400': { description: teamId o version mal formados, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: 'Torneo inexistente, o el bot no es tuyo (no se revela)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament · team_bot_not_member · bot_retired · already_entered · bot_not_published · bot_version_not_eligible', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
+    delete:
+      tags: [tournaments]
+      operationId: deleteTeamEntryConsent
+      summary: >-
+        #287 · El dueño retira su autorización. Si el equipo ya estaba inscrito (pendiente), el
+        equipo ENTERO sale de la inscripción en la misma transacción (todo o nada), auditado.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Retirada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournamentId: { type: string }
+                  teamId: { type: string }
+                  botId: { type: string }
+                  revoked: { type: boolean, const: true }
+                  withdrawnEntries: { type: integer }
+        '404': { description: No hay autorización tuya para ese bot, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed · not_a_team_tournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
       tags: [tournaments]
       operationId: closeEntries
-      summary: 'Cierra inscripciones, congela versiones, revela las semillas del commit-reveal y genera el calendario (E9/T9.4).'
+      summary: 'Cierra inscripciones, congela versiones (published → frozen; una ya `frozen` no se toca), revela las semillas del commit-reveal y genera el calendario (E9/T9.4).'
       x-min-role: organizer
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
-        '409': { $ref: '#/components/responses/IllegalTransition' }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se congela ni cierra nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions; también si el torneo se canceló concurrentemente, #289) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots) · #287 team_roster_changed (algún bot inscrito con su equipo ya no está en él, se retiró o su dueño retiró la autorización, o una inscripción no tiene equipo; `changedEntries`) · entries_not_eligible también si una versión inscrita quedó suspendida o retirada. Todas las inscripciones señaladas (`notEligibleEntries`) las puede excluir el organizador (mismo predicado). not_enough_participants (B/0.5.0: menos de 2 inscripciones que compiten, o menos de 2 equipos con bots inscritos en formato `teams`; con `required`, `current` y `unit`; se evalúa dentro de la transacción del cierre, tras el resto de comprobaciones y antes de cualquier efecto). El cierre es atómico: ante cualquier 409 no se congela nada.', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+
+  /tournaments/{tournamentId}/actions/cancel:
+    post:
+      tags: [tournaments]
+      operationId: cancelTournament
+      summary: >-
+        #288 · Cancela un torneo que aún no tiene calendario (`draft` u `open`) → `cancelled`
+        (terminal). Sólo el organizador que lo creó o el staff (moderator+). No borra nada:
+        inscripciones, matches, batallas, clasificación e historial se conservan. Se audita como
+        tournament.cancelled en la misma transacción. Idempotente: un torneo ya cancelado
+        responde 200 sin nueva auditoría. Atómico frente a closeEntries (bloqueo de fila): de
+        una carrera sólo gana una de las dos transiciones. Tras cancelar, el worker no genera
+        calendario ni ejecuta batallas del torneo.
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 256, description: 'Motivo opcional; queda en audit_log.' }
+      responses:
+        '200': { description: Cancelado (o ya lo estaba), content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '400': { description: reason inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): predicado único canManageTournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'tournament_not_cancellable (currentState: closed, running o finished; allowedTransitions vacío)', content: { application/json: { schema: { $ref: '#/components/schemas/TournamentNotCancellableError' } } } }
+
+  /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
+    post:
+      tags: [tournaments]
+      operationId: excludeTournamentEntry
+      summary: >-
+        ELIG · Excluir una inscripción PENDIENTE (torneo open, sin congelar). El organizador sólo
+        puede excluir inscripciones NO elegibles, y sólo si creó ese torneo o es staff
+        (moderator+, #291); el dueño del bot puede retirar la suya. Se
+        quita de las inscripciones y su contenido completo (quién, cuándo, motivo, versión)
+        queda en audit_log como tournament.entry.excluded en la misma transacción. Una
+        inscripción pendiente no tiene batallas ni calendario: no se toca ningún dato histórico.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: entryId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '200':
+          description: Excluida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entryId: { type: string }
+                  tournamentId: { type: string }
+                  excluded: { type: boolean, const: true }
+                  by: { enum: [owner, organizer] }
+        '400': { description: reason obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'Ni dueño del bot ni organizador de ese torneo (quien lo creó, con rol organizer) ni staff (#291)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible) · entry_changed (la inscripción cambió de versión mientras se procesaba: no se borra ni se audita)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/dry-run:
     post:
       tags: [tournaments]
       operationId: dryRunTournament
-      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings.'
+      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings. Sólo quien creó el torneo o el staff (#291).'
       x-min-role: organizer
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '202': { description: Simulacro encolado }
+        '403': { description: '#291 · Ni quien creó el torneo ni staff (moderator+): no se encola nada', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/matches:
     get:
@@ -1058,17 +1487,33 @@ paths:
       tags: [battles]
       operationId: downloadPublicReplay
       summary: >-
-        R11 · Descarga del archivo de replay de una batalla FINALIZADA, sin
-        cuenta. Mismo gate y mismas condiciones que getPublicReplay (apagado o
-        batalla no finalizada/sin replay → 404).
+        R11 · Descarga de la PROYECCIÓN PÚBLICA de competición del replay de una
+        batalla FINALIZADA, sin cuenta (PRE-1: nunca el fichero crudo). Mismo gate
+        y mismas condiciones que getPublicReplay (apagado o batalla no
+        finalizada/sin replay → 404).
+      description: |
+        PRE-1 · Documento JSON con lo que ve un espectador: mundo, nómina pública,
+        snapshots públicos, eventos públicos y resultado deportivo. No incluye
+        semilla, comandos de los bots (radio, minas…), loadouts, hashes por tick
+        ni metadatos de almacenamiento: con él no se puede re-simular la batalla.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200':
-          description: Archivo de replay (binario)
+          description: Proyección pública del replay
           content:
-            application/octet-stream: { schema: { type: string, format: binary } }
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [projection, battleId, snapshots, events, result]
+                properties:
+                  projection: { type: string, enum: [s9.replay.public-competition.v2] }
+                  battleId: { type: string }
+                  snapshots: { type: array, items: { type: object, additionalProperties: true } }
+                  events: { type: array, items: { type: object, additionalProperties: true } }
+                  result: { type: object, additionalProperties: true }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -1076,7 +1521,13 @@ paths:
     get:
       tags: [battles]
       operationId: listBattles
-      summary: Batallas en directo, programadas y terminadas
+      summary: Batallas en directo, programadas y terminadas que el solicitante puede ver
+      description: |
+        UX-D (G-08 · TD-047) · Política de lectura de batallas (apps/api/src/battle-access.ts, que
+        reutiliza la de replays): staff (rol >= organizer) · dueño de un bot participante · miembro
+        del equipo de un bot participante no privado · cualquiera SÓLO si la batalla no tiene bots
+        no públicos y (S9_PUBLIC_REPLAYS_ENABLED y está finished) o (S9_PUBLIC_SPECTATE_ENABLED y
+        está running). Fuera de eso, 404 idéntico al de un id inexistente. Cache-Control: private, no-store.
       x-min-role: visitor
       security: []
       parameters:
@@ -1099,19 +1550,64 @@ paths:
             schema: { $ref: '#/components/schemas/PracticeBattleInput' }
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
-        '400': { description: Modo/participantes/team/ruleset/mapa inválidos o bot repetido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES; mismas reglas de privacidad que rules-check: cifras exactas sólo de bots propios o para el staff, sin cifras de bots ajenos ni totales de bandos mixtos).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa) · ADR-022 map_team_mismatch (en CTF un bando no tiene base y bandera en el mapa)' }
+
+  /battles/rules-check:
+    post:
+      tags: [battles]
+      operationId: checkBattleRules
+      summary: |
+        R-RULES (FASE 11) · Comprueba reglas y composición SIN crear la batalla: mismas validaciones que
+        POST /battles (contenido, participantes, visibilidad TD-005, versión publicada, reglas y topes de
+        créditos/masa con los loadouts REALES). Ayuda para la UI; la autoridad sigue siendo POST /battles.
+        EQUIPMENT_PRIVATE (OLA 2): `composition` lleva `costCredits`/`massKg` sólo de los bots PROPIOS del
+        solicitante (staff, rol >= moderator: de todos); de un bot ajeno sólo `ok` y `figuresHidden:true`.
+        Un bando con algún bot ajeno no lleva `totalCredits`/`totalMassKg` (`figuresHidden:true`), y las
+        `violations` de lo ajeno llevan `limit` pero no `actual`/`excess` (ni cifras en el mensaje).
+        Un bot no visible da 404 como en la creación. Cache-Control: private, no-store.
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PracticeBattleInput' }
+      responses:
+        '200':
+          description: 'ok=false con errors[] (reglas) o con composition.violations (topes)'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  rules: { $ref: '#/components/schemas/BattleRules' }
+                  composition: { type: object, nullable: true, additionalProperties: true }
+                  errors: { type: array, items: { type: object, additionalProperties: true } }
+        '400': { description: Contenido o participantes inválidos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: bot_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: bot_not_published · ruleset_mode_mismatch · map_mode_unsupported · map_team_mismatch · loadout_unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
       tags: [battles]
       operationId: getBattle
+      summary: Una batalla (misma política de lectura que listBattles)
+      description: |
+        UX-D (G-08 · TD-047) · Política de lectura de batallas (apps/api/src/battle-access.ts, que
+        reutiliza la de replays): staff (rol >= organizer) · dueño de un bot participante · miembro
+        del equipo de un bot participante no privado · cualquiera SÓLO si la batalla no tiene bots
+        no públicos y (S9_PUBLIC_REPLAYS_ENABLED y está finished) o (S9_PUBLIC_SPECTATE_ENABLED y
+        está running). Fuera de eso, 404 idéntico al de un id inexistente. Cache-Control: private, no-store.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200': { description: Batalla, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /battles/{battleId}/run:
     post:
@@ -1137,10 +1633,20 @@ paths:
       summary: |
         Ticket de un solo uso para abrir el WebSocket de espectador en el gateway.
         El canal de espectador transporta ÚNICAMENTE snapshots públicos: nunca observaciones
-        privadas de bots (D8, criterio del cap. 28).
+        privadas de bots (D8, criterio del cap. 28). UX-D (G-08): sólo para quien puede leer la
+        batalla (misma política que getBattle); sin sesión, además, exige S9_PUBLIC_SPECTATE_ENABLED.
       x-min-role: visitor
       security: []
-      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      parameters:
+        - { $ref: '#/components/parameters/BattleId' }
+        - name: audience
+          in: query
+          description: |
+            OLA 2 · audiencia del canal (va FIRMADA en el ticket). `broadcast` para la página de
+            emisión; por defecto `public_live`. Los roles de staff reciben siempre `staff` salvo
+            que pidan `broadcast`. No concede nada: todas las audiencias públicas reciben la misma
+            proyección, separada por mapper de ids e historial.
+          schema: { type: string, enum: [public_live, broadcast] }
       responses:
         '201':
           description: Ticket
@@ -1162,23 +1668,32 @@ paths:
       summary: |
         Todo lo necesario para re-simular y verificar la batalla (E9/T9.4): versiones de motor,
         física, reglas y catálogo; checksum del mapa; hashes y firmas de los artefactos de bots;
-        semilla y su prueba de commit-reveal. Público: la auditabilidad no exige revelar código.
+        semilla y su prueba de commit-reveal. La auditabilidad no exige revelar código. UX-D (G-08):
+        la ve quien puede leer la batalla (misma política que getBattle).
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200': { description: Auditoría, content: { application/json: { schema: { $ref: '#/components/schemas/BattleAudit' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /battles/{battleId}/stats:
     get:
       tags: [battles]
       operationId: getBattleStats
-      summary: Estadísticas por bot, equipo, módulo y mapa (cap. 20.3)
+      summary: Estadísticas por bot, equipo, módulo y mapa (cap. 20.3) y diagnóstico de TUS bots
+      description: |
+        Misma política de lectura que getBattle. `perBot` (deportivo) lo ve quien ve la batalla;
+        `diagnostics` (UX-06) sólo trae los bots del solicitante (o todos para el staff): nunca los
+        de un rival. TD-065: `status` = ready | pending (aún no calculadas: batalla en curso o job de
+        stats sin terminar) | unavailable (sin replay: walkover, fallo deportivo, fallida). Nunca se
+        cachea (private, no-store).
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
-        '200': { description: Estadísticas, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '200': { description: Estadísticas, content: { application/json: { schema: { $ref: '#/components/schemas/BattleStats' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # --------------------------------------------------------------- REPLAYS
   # PRC (TD-004) · Política de acceso (apps/api/src/replay-access.ts), común a
@@ -1193,9 +1708,54 @@ paths:
       operationId: listReplays
       summary: Replays que el solicitante puede ver (más recientes primero); sustituye al inventario anónimo del replay-service
       x-min-role: user
+      description: |
+        EQ4 · Filtros y paginación EN SERVIDOR (cambio aditivo: sin ninguno de los
+        parámetros nuevos la respuesta es idéntica a la anterior). Los filtros sólo
+        ESTRECHAN lo que la política de acceso a replays ya deja listar; los filtros
+        por bot, equipo, usuario y resultado win/loss sólo casan con bots que el
+        solicitante puede identificar (no sirven de oráculo sobre bots privados
+        ajenos). Valores fuera de forma ⇒ 400 bad_request. Las fechas filtran por la
+        creación de la batalla (la columna que ordena y pagina).
       parameters:
         - { $ref: '#/components/parameters/Cursor' }
         - { $ref: '#/components/parameters/Limit' }
+        - name: battleId
+          in: query
+          description: UUID completo de la batalla o un prefijo suyo (sólo 0-9, a-f y guiones)
+          schema: { type: string, pattern: '^[0-9a-fA-F][0-9a-fA-F-]{0,35}$', maxLength: 36 }
+        - name: from
+          in: query
+          description: Desde (inclusivo). AAAA-MM-DD (inicio del día UTC) o fecha-hora ISO 8601 con zona
+          schema: { type: string }
+        - name: to
+          in: query
+          description: Hasta (inclusivo). AAAA-MM-DD (final del día UTC) o fecha-hora ISO 8601 con zona
+          schema: { type: string }
+        - name: mode
+          in: query
+          schema: { type: string, enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+        - name: result
+          in: query
+          description: |
+            draw = empate · aborted = con incidencia (failure_kind distinto de none, walkover o fallo deportivo) ·
+            win/loss = de los bots que cumplen los filtros bot/team/user o, sin ellos, de los bots propios (loss incluye descalificación)
+          schema: { type: string, enum: [win, loss, draw, aborted] }
+        - name: bot
+          in: query
+          description: Bot participante por UUID exacto o por nombre (subcadena, sin distinguir mayúsculas)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: team
+          in: query
+          description: Equipo de algún bot participante, por UUID exacto o por nombre (subcadena)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: user
+          in: query
+          description: Dueño de algún bot participante, por UUID exacto o por nombre visible (subcadena)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: includeTotal
+          in: query
+          description: Si es true, la respuesta añade `total` (replays que cumplen los filtros, sin paginar)
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Replays visibles para el solicitante
@@ -1212,18 +1772,29 @@ paths:
                       properties:
                         battleId: { type: string }
                         ticks: { type: integer }
-                        winner: { type: string }
+                        winner: { type: string, description: "Equipo ganador, \"draw\", o \"none\" si se detuvo sin resultado deportivo (ADR-022)" }
+                        endReason: { type: string, description: "ADR-022 · technical_limit: detenida por la salvaguarda técnica de la prórroga (sin resultado deportivo)" }
                         official: { type: boolean }
                         createdAt: { type: string, format: date-time }
                         sizeBytes: { type: integer }
                   nextCursor: { type: string }
+                  total:
+                    type: integer
+                    minimum: 0
+                    description: Sólo con includeTotal=true
+        '400': { description: 'Filtro, fecha o cursor con forma inválida', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /replays/{battleId}:
     get:
       tags: [replays]
       operationId: getReplay
-      summary: Replay de datos (no vídeo), comprimido. Sujeto a la política de acceso a replays (404 si no es visible)
+      summary: Replay CRUDO de datos (no vídeo), comprimido. Sólo con acceso al crudo (PRE-1); 404 en otro caso
+      description: |
+        PRE-1 · El fichero crudo (semilla, comandos y loadouts) sólo lo reciben moderator/admin y el
+        dueño de TODOS los bots participantes. Cualquier otro lector (participante con rivales, equipo,
+        organizer, público aunque `S9_PUBLIC_REPLAYS_ENABLED` esté activado) recibe el mismo 404 que un
+        replay inexistente y usa el índice y los segmentos proyectados.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1239,7 +1810,7 @@ paths:
     get:
       tags: [replays]
       operationId: getReplayIndex
-      summary: Índice del replay (keyframes, resultado, nómina) para el reproductor. Sujeto a la política de acceso a replays
+      summary: Índice del replay (keyframes, resultado, nómina) para el reproductor. Sujeto a la política de acceso a replays; proyectado (PRE-1) salvo con acceso al crudo
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1251,7 +1822,7 @@ paths:
     get:
       tags: [replays]
       operationId: getReplaySegment
-      summary: Segmento decodificado por rango de ticks (salto temporal). Sujeto a la política de acceso a replays
+      summary: Segmento decodificado por rango de ticks (salto temporal). Sujeto a la política de acceso a replays; proyectado (sin comandos, PRE-1) salvo con acceso al crudo
       x-min-role: visitor
       security: []
       parameters:
@@ -1282,6 +1853,12 @@ paths:
                   matches: { type: boolean }
                   officialHash: { type: string }
                   recomputedHash: { type: string }
+                  valid: { type: boolean }
+                  reason: { type: string, description: "checksum_mismatch, corrupt_file, engine_version_mismatch, engine_rules_mismatch, final_state_hash_mismatch_with_db" }
+                  message: { type: string, description: "Explicación para personas (p. ej. replay grabado con otra versión del motor: no verificable, no manipulado)" }
+                  divergedAtTick: { type: integer }
+                  recordedWith: { type: string, description: "ADR-022 · versión del motor grabada en la cabecera del replay" }
+                  verifiedWith: { type: string, description: "ADR-022 · versión del motor que re-simuló el replay; sólo si es distinta de la grabada (compatibilidad declarada en engine.reproduces)" }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------- STANDINGS
@@ -1376,6 +1953,28 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/SecurityFinding' } }
 
+  /admin/bot-version-eligibility:
+    get:
+      tags: [admin]
+      operationId: getBotVersionEligibilityInventory
+      summary: >-
+        ELIG · Inventario SOLO LECTURA de las versiones published/frozen: validación actual,
+        elegibilidad y motivo (H5/H15). Corre en una transacción READ ONLY (no escribe nada,
+        tampoco en audit_log); el acceso queda en el log estructurado del servicio (actor,
+        correlationId). Sin datos de contacto: el propietario va por id. summaryOnly=true
+        devuelve sólo los agregados.
+      x-min-role: admin
+      parameters:
+        - name: summaryOnly
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Inventario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EligibilityInventory' }
+
   /admin/audit-log:
     get:
       tags: [admin]
@@ -1389,6 +1988,273 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
+  # ------------------------------------------------------------ STREAMING (EQ5b)
+  # Administración → Streaming. Todo admin. La clave de emisión ENTRA y nunca
+  # SALE (sólo `configured` y `masked: ****ABCD`): se sella con la clave pública
+  # y únicamente el streamer puede abrirla.
+  /admin/streaming:
+    get:
+      tags: [streaming]
+      operationId: getStreamingAdmin
+      summary: 'Estado de la administración de streaming: configuración, credenciales (enmascaradas), capacidades, estado del streamer, sesión activa y estado de UX.'
+      x-min-role: admin
+      responses:
+        '200':
+          description: Estado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamingAdminState' }
+
+  /admin/streaming/settings:
+    put:
+      tags: [streaming]
+      operationId: updateStreamingSettings
+      summary: >-
+        Cambia la configuración NO sensible (concurrencia optimista por `version`). Con una
+        emisión activa NUNCA reinicia en silencio: responde `pendingRestart` e `impact`
+        (hot | restart | stop). Desactivar con emisión activa exige `confirmStop`; pasar a
+        60 FPS exige `confirmHighFps`; NVENC sólo si el runtime lo confirma.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StreamingSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Configuración inválida, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/credentials/{platform}:
+    parameters:
+      - { name: platform, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9_-]{1,32}$' } }
+    put:
+      tags: [streaming]
+      operationId: setStreamingCredential
+      summary: 'Guarda (o cambia) la clave de emisión: se SELLA con la clave pública (RSA-OAEP-256 + AES-256-GCM) ATADA a su destino (plataforma + ingesta canónica; EQ5c) y sólo se devuelve `****ABCD`. Sin almacén sellado ⇒ 503 y no se guarda nada; RTMPS personalizado sin ingesta ⇒ 409 ingest_missing.'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamKey]
+              properties:
+                streamKey: { type: string, minLength: 8, maxLength: 256, x-private: true }
+      responses:
+        '200': { description: Guardada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Sin almacén sellado, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [streaming]
+      operationId: deleteStreamingCredential
+      summary: Elimina la clave de emisión de la plataforma (auditado).
+      x-min-role: admin
+      responses:
+        '200': { description: Eliminada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/streaming/ingests/{platform}:
+    parameters:
+      - { name: platform, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9_-]{1,32}$' } }
+    put:
+      tags: [streaming]
+      operationId: setStreamingIngests
+      summary: 'STREAMING-UX · Servidor principal y de respaldo de la plataforma, guardados TAL CUAL (sin transformar ni concatenar nada). Sólo rtmps:// con host público; la ÚNICA query admitida es `?backup=1` en el respaldo de YouTube. En YouTube la aplicación es EXACTAMENTE `live2` (y `live2?backup=1` en el respaldo); en cualquier plataforma se rechaza un path no canónico o con forma de clave de emisión (la clave va en su campo, nunca en la URL). Cambiar una URL invalida el sobre sellado para ella (hay que volver a introducir la clave). Auditado (streaming.ingests.update).'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [primaryIngestUrl]
+              additionalProperties: false
+              properties:
+                primaryIngestUrl: { type: string, maxLength: 512 }
+                backupIngestUrl: { type: string, nullable: true, maxLength: 512 }
+      responses:
+        '200': { description: Guardadas, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: URL inválida, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/destinations:
+    get:
+      tags: [streaming]
+      operationId: listStreamingDestinations
+      summary: 'STREAMING-UX · Destinos para el selector sin UUID: batallas en curso y terminadas (las en curso primero, de la más reciente a la más antigua) y torneos, con nombre legible y si se pueden retransmitir (misma regla que getStreamingTarget).'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Destinos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  battles: { type: array, items: { $ref: '#/components/schemas/StreamingDestination' } }
+                  tournaments: { type: array, items: { $ref: '#/components/schemas/StreamingDestination' } }
+
+  /admin/streaming/target:
+    get:
+      tags: [streaming]
+      operationId: getStreamingTarget
+      summary: 'Destino de emisión (batalla o torneo): existencia, si /broadcast (anónima) puede mostrarlo y el retardo que aplica su copia de reglas (fuente única; aquí sólo se lee).'
+      x-min-role: admin
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [battle, tournament] } }
+        - { name: id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Destino, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingTarget' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/streaming/test:
+    post:
+      tags: [streaming]
+      operationId: testStreaming
+      summary: 'Prueba de configuración SIN emisión pública: TLS (certificado verificado) + handshake RTMP + connect a la aplicación. No publica, así que no valida la clave.'
+      x-min-role: admin
+      responses:
+        '200': { description: Resultado de la prueba, content: { application/json: { schema: { type: object } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/start:
+    post:
+      tags: [streaming]
+      operationId: startStreaming
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si el destino no existe (target_not_found) o si está autorizado pero /broadcast no tiene nada que mostrar (FIX-BROADCAST: exige broadcastAvailable; el código es el `reason` de getStreamingTarget, p. ej. public_replays_disabled, tournament_no_content, target_not_available o battle_not_available; una batalla programada que será pública al empezar SÍ se admite: espera legítima, WAITING_VALID), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie; restart revalida el destino igual que start.'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target]
+              properties:
+                target:
+                  type: object
+                  required: [kind, id]
+                  properties:
+                    kind: { type: string, enum: [battle, tournament] }
+                    id: { type: string, format: uuid }
+      responses:
+        '200': { description: Ya activa (idempotente), content: { application/json: { schema: { type: object } } } }
+        '201': { description: Iniciada, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/restart:
+    post:
+      tags: [streaming]
+      operationId: restartStreaming
+      summary: 'Reinicia la emisión activa aplicando la configuración guardada (el único camino para aplicar cambios de tipo restart).'
+      x-min-role: admin
+      responses:
+        '200': { description: Reiniciada, content: { application/json: { schema: { type: object } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/streaming/stop:
+    post:
+      tags: [streaming]
+      operationId: stopStreaming
+      summary: 'Detiene la emisión o la grabación (idempotente). `force` marca la sesión como parada aunque el streamer no responda.'
+      x-min-role: admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: { type: boolean }
+      responses:
+        '200': { description: Parada, content: { application/json: { schema: { type: object } } } }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/recordings:
+    get:
+      tags: [streaming]
+      operationId: listStreamingRecordings
+      summary: 'Grabaciones MP4 del modo record: ruta lógica, número, tamaño y espacio libre.'
+      x-min-role: admin
+      responses:
+        '200': { description: Grabaciones, content: { application/json: { schema: { type: object } } } }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/retention:
+    post:
+      tags: [streaming]
+      operationId: applyStreamingRetention
+      summary: 'Aplica la política de retención de MP4 ahora (o la simula con dryRun). Nunca borra replays, otros ficheros ni la grabación en curso; cada borrado se audita.'
+      x-min-role: admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean }
+      responses:
+        '200': { description: Resultado, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/audit:
+    get:
+      tags: [streaming]
+      operationId: listStreamingAudit
+      summary: 'Auditoría de streaming (acciones streaming.* de audit_log, sólo inserción). Nunca contiene la clave.'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Entradas
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
+  # ------------------------------------------- MG · ajustes de runtime (admin)
+  /admin/settings/public-access:
+    get:
+      tags: [admin]
+      operationId: getPublicAccessSettings
+      summary: >-
+        MG · Acceso público / Broadcast: valor VIGENTE del espectador público y de los
+        replays públicos (persistidos; el entorno es sólo el bootstrap y el fallback), su
+        origen, el último cambio, la latencia máxima de propagación a los demás procesos y
+        el estado efectivo global con su motivo. Sin secretos.
+      x-min-role: admin
+      responses:
+        '200': { description: Ajustes, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+    patch:
+      tags: [admin]
+      operationId: updatePublicAccessSettings
+      summary: >-
+        MG · Cambia en caliente (sin recrear servicios) el espectador público y/o los
+        replays públicos. Booleanos ESTRICTOS (ni cadenas, ni números, ni null; claves
+        desconocidas ⇒ 400). Cada cambio se audita en audit_log
+        (`settings.public_access.update`: actor, instante, valor anterior y nuevo). El
+        proceso que lo guarda lo aplica al instante; los demás (otras réplicas de la API y
+        el tournament-worker) en ≤ `propagationMaxMs`.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicAccessSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
@@ -1447,6 +2313,9 @@ components:
     NotFound:
       description: No existe o no es visible para el solicitante
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    BadRequest:
+      description: Petición inválida
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Conflict:
       description: Conflicto de estado
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -1472,6 +2341,7 @@ components:
             type: object
             properties:
               error: { type: string, const: loadout_invalid }
+              message: { type: string, description: 'Resumen legible de las violaciones (para pintarlo tal cual en la UI)' }
               violations:
                 type: array
                 items:
@@ -1483,6 +2353,8 @@ components:
                     moduleId: { type: string }
                     slot: { type: string }
                     message: { type: string }
+                    ammoId: { type: string, description: 'incompatible_ammo · munición (versionada) que no encaja, si la hay' }
+                    acceptedAmmo: { type: array, items: { type: string }, description: 'incompatible_ammo · tipos base de munición que admite el arma' }
     MapInvalid:
       description: 'El mapa no supera el validador (cap. 14.3). Nunca llega a publicarse.'
       content:
@@ -1617,11 +2489,19 @@ components:
         latestPublishedVersion: { type: integer }
         rating: { type: number }
         createdAt: { type: string, format: date-time }
+        retiredAt: { type: string, format: date-time, nullable: true, description: 'EQ4 · el dueño lo retiró de su lista principal (organizativo: no borra versiones ni historial ni cambia qué versiones juegan). null = activo.' }
     BotPage:
       type: object
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Bot' } }
         nextCursor: { type: string }
+        counts:
+          type: object
+          description: 'EQ4 · sólo con includeCounts=true sobre los bots propios.'
+          properties:
+            total: { type: integer }
+            active: { type: integer }
+            retired: { type: integer }
 
     BotVersion:
       type: object
@@ -1632,13 +2512,129 @@ components:
         runtime: { $ref: '#/components/schemas/Runtime' }
         loadoutRevision: { type: integer }
         artifactHash: { type: string, description: 'sha256 del artefacto firmado. Público: permite auditar sin revelar código.' }
-        codePublic: { type: boolean, description: 'Irreversible una vez publicada (D9).' }
+        codePublic: { type: boolean, description: 'El código de esta versión es público. Lo cambia sólo el dueño (setBotVersionCodeVisibility; D9 enmendada).' }
         rejectionReason: { type: string }
         createdAt: { type: string, format: date-time }
         id: { type: string, description: 'bot_versions.id (uuid); la clave natural es (botId, version)' }
         parentVersion: { type: integer, description: 'Versión de la que se creó (clonado), si aplica' }
         validatedBuildId: { type: string, description: 'Build que produjo el artefacto de esta versión' }
         publishedAt: { type: string, format: date-time }
+        battleEligibility: { $ref: '#/components/schemas/BattleEligibility' }
+
+    BattleEligibility:
+      type: object
+      description: >-
+        ELIG · Calculado en cada lectura (no se guarda), sólo para versiones published/frozen:
+        el loadout histórico EXACTO, su catálogo inmutable y el validador actual. Publicada
+        y elegible son conceptos distintos: una versión no elegible se conserva en el
+        histórico y sus replays, pero no entra en batallas ni torneos nuevos.
+      required: [eligible, category, violations]
+      properties:
+        eligible: { type: boolean }
+        reason: { enum: [loadout_no_longer_valid, loadout_unverifiable] }
+        category: { enum: [VALID, INVALID_AMMO, MISSING_AMMO, ORPHAN_AMMO, OTHER_INVALID, UNKNOWN] }
+        message: { type: string }
+        suggestedAction: { type: string }
+        violations:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              category: { type: string }
+              message: { type: string }
+              slot: { type: string }
+              moduleId: { type: string }
+              ammoId: { type: string }
+
+    NotEligibleError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState:
+              $ref: '#/components/schemas/BotState'
+              description: 'FROZEN-REUSE · sólo con error=bot_not_published en enterTournament: estado real de la versión pedida (ausente si la versión no existe).'
+            notEligible:
+              type: array
+              description: 'ELIG · sólo con error=bot_version_not_eligible: cada versión no elegible y su motivo.'
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/BattleEligibility'
+                  - type: object
+                    properties:
+                      botId: { type: string }
+                      version: { type: integer }
+
+    TournamentNotCancellableError:
+      description: '#288 · 409 de cancelTournament: el estado actual no admite cancelación.'
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState: { enum: [closed, running, finished] }
+            allowedTransitions: { type: array, items: { type: string }, maxItems: 0 }
+
+    EntriesNotEligibleError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState: { type: string }
+            allowedTransitions: { type: array, items: { type: string } }
+            notEligibleEntries:
+              type: array
+              description: 'ELIG · sólo con error=entries_not_eligible: ids de inscripción (sin motivo).'
+              items: { type: object, properties: { entryId: { type: string } } }
+            changedEntries:
+              type: array
+              description: '#287 · sólo con error=team_roster_changed: inscripciones cuyo bot ya no está en su equipo (ids de inscripción y de equipo, sin datos del bot).'
+              items: { type: object, properties: { entryId: { type: string }, teamId: { type: string, nullable: true } } }
+
+    TeamEntryError:
+      allOf:
+        - $ref: '#/components/schemas/NotEligibleError'
+        - type: object
+          properties:
+            botIds: { type: array, items: { type: string }, description: '#287 · bots afectados (team_bot_not_member, team_bot_not_owned, bot_retired, already_entered): sólo los que envió el solicitante.' }
+            teamSize: { type: integer }
+            got: { type: integer }
+            notPublished:
+              type: array
+              items: { type: object, properties: { botId: { type: string }, version: { type: integer }, currentState: { type: string } } }
+
+    EligibilityInventory:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        rulesVersion: { type: string }
+        readOnly: { type: boolean, const: true }
+        scope: { type: string }
+        summary:
+          type: object
+          properties:
+            totalPublishedVersions: { type: integer }
+            currentlyValid: { type: integer }
+            currentlyInvalid: { type: integer }
+            invalidByReason: { type: object, additionalProperties: { type: integer } }
+            usersAffected: { type: integer }
+            botsAffected: { type: integer }
+            warningsByCode: { type: object, additionalProperties: { type: integer } }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              botId: { type: string }
+              botName: { type: string }
+              version: { type: integer }
+              state: { type: string }
+              ownerId: { type: string }
+              loadoutRevision: { type: integer }
+              currentValidation: { type: string }
+              eligible: { type: boolean }
+              reason: { type: string }
+              violations: { type: array, items: { type: object, additionalProperties: true } }
 
     BotArtifact:
       type: object
@@ -1727,6 +2723,15 @@ components:
         widthM: { type: number }
         heightM: { type: number }
         supportedModes: { type: array, items: { type: string } }
+        modeCompatibility:
+          type: object
+          description: 'ADR-022 · por modo de plataforma: ok (declarado y estructuralmente válido), declared y reasons (por qué no es compatible)'
+          additionalProperties:
+            type: object
+            properties:
+              ok: { type: boolean }
+              declared: { type: boolean }
+              reasons: { type: array, items: { type: string } }
         thumbnailUrl: { type: string }
         generation:
           type: object
@@ -1772,6 +2777,25 @@ components:
         seedCommitment:
           type: string
           description: 'Hash del lote de semillas, publicado ANTES del cierre (commit-reveal, E9/T9.4).'
+        broadcast:
+          type: boolean
+          default: false
+          description: |
+            VISIBILIDAD · el torneo AUTORIZA su retransmisión pública. Sus batallas se muestran en
+            /broadcast, en el directo y en el replay públicos con la proyección de competición de cada
+            participante (nombre, versión, bando, resultado) AUNQUE el bot sea privado o de equipo. No
+            cambia la visibilidad del bot ni la de su código. Se fija al crear el torneo y no cambia.
+        rules:
+          type: object
+          description: |
+            ADR-022 · OPCIONAL. Reglas del torneo con el mismo formato que en POST /battles
+            ({ preset | "custom", teamSize, params? }); teamSize = 1 salvo format teams (≥ 2). Sin él, copia
+            CLÁSICA del ruleset de plataforma. Se guarda una COPIA INMUTABLE que el scheduler copia en cada
+            batalla. En esta fase no se admiten topes de créditos/masa por bot o equipo (400 rules_invalid).
+          properties:
+            preset: { type: string }
+            teamSize: { type: integer, minimum: 1, maximum: 4 }
+            params: { $ref: '#/components/schemas/RulesParams' }
 
     Tournament:
       allOf:
@@ -1781,6 +2805,7 @@ components:
             id: { type: string }
             state: { enum: [draft, open, closed, running, finished, cancelled] }
             seedsRevealed: { type: array, items: { type: string }, description: 'Se rellena al cerrar inscripciones.' }
+            rules: { $ref: '#/components/schemas/BattleRules' }
     TournamentPage:
       type: object
       properties:
@@ -1796,6 +2821,8 @@ components:
         version: { type: integer }
         loadoutRevision: { type: integer }
         frozen: { type: boolean, description: 'Congelado al cerrar inscripciones: la combinación código+loadout ya no cambia (cap. 17.2).' }
+        replacedVersion: { type: integer, description: 'ELIG · sólo en el 200 que sustituye una inscripción pendiente no elegible: la versión anterior.' }
+        teamId: { type: string, nullable: true, description: '#287 · equipo con el que se inscribió (enterTournamentTeam); ausente o null en la inscripción individual.' }
 
     PracticeBattleInput:
       type: object
@@ -1806,6 +2833,16 @@ components:
         mapId: { type: string }
         mapVersion: { type: integer }
         seed: { type: string }
+        rules:
+          type: object
+          description: |
+            R-RULES (ADR-021) · OPCIONAL. Sin él, las reglas clásicas del ruleset de plataforma (como antes).
+            { preset: <id de GET /rulesets presets> | "custom", teamSize: 1..4, params?: RulesParams (sólo custom) }.
+            Validación estricta en servidor: claves desconocidas, tipos, rangos y combinaciones incompatibles ⇒ 400 rules_invalid.
+          properties:
+            preset: { type: string }
+            teamSize: { type: integer, minimum: 1, maximum: 4 }
+            params: { $ref: '#/components/schemas/RulesParams' }
         participants:
           type: array
           minItems: 1
@@ -1828,26 +2865,31 @@ components:
         mode: { type: string }
         mapId: { type: string }
         mapVersion: { type: integer }
+        rulesetId: { type: string }
+        mapName: { type: string, description: 'UX-D · nombre del mapa para la UI.' }
+        createdAt: { type: string, format: date-time }
         participants:
           type: array
           items:
             type: object
             properties:
               botId: { type: string }
-              version: { type: integer }
+              botName: { type: string, description: 'UX-D · nombre del bot (la UI no muestra UUIDs).' }
+              version: { type: integer, description: 'Versión EXACTA que jugó.' }
               team: { type: string }
               outcome: { enum: [win, loss, draw, disqualified] }
-              cpuMs: { type: number, nullable: true, description: 'CPU real del contenedor del bot (ms, cgroup). null = no medida.' }
+              diagnosticsVisible: { type: boolean, description: 'UX-D · el solicitante (dueño o staff) puede ver el diagnóstico de este bot.' }
+              cpuMs: { type: number, nullable: true, description: 'CPU real del contenedor del bot (ms, cgroup). null = no medida O no eres su dueño (diagnóstico, TD-047).' }
         result:
           type: object
           description: 'BATTLE_RESULT v1 (docs/technical/battles.md). El ganador POR BOT es participants[].outcome.'
           properties:
             schema: { enum: [battle-result/v1] }
-            winner: { type: string, description: 'Equipo ganador o "draw".' }
+            winner: { type: string, nullable: true, description: 'Equipo ganador o "draw"; null SÓLO con endReason technical_limit (ADR-022: detenida sin resultado deportivo).' }
             score: { type: object, additionalProperties: { type: number } }
             ticks: { type: integer }
             disqualified: { type: array, items: { type: string } }
-            endReason: { enum: [completed, walkover, sporting_failure] }
+            endReason: { enum: [completed, walkover, sporting_failure, technical_limit] }
             agents: { enum: [container, in_process_stub, scripted], description: 'Quién condujo los vehículos (container = código real del bot).' }
         failureKind:
           enum: [none, bot_timeout, bot_crash, infrastructure]
@@ -1856,6 +2898,199 @@ components:
         finishedAt: { type: string, format: date-time }
         replayAvailable: { type: boolean }
         replayHash: { type: string }
+        rules: { $ref: '#/components/schemas/BattleRules' }
+    BattleRules:
+      type: object
+      description: 'R-RULES (ADR-021/022) · COPIA INMUTABLE de las reglas con que se creó (y se juega) la batalla o el torneo. Ausente en batallas y torneos anteriores a R-RULES.'
+      properties:
+        schema: { type: integer, enum: [1, 2], description: 'ADR-022 · 2 = motor 0.4.0; las copias 1 se leen normalizadas y nunca se reescriben.' }
+        source: { enum: [preset, custom, classic] }
+        presetId: { type: string, nullable: true }
+        presetVersion: { type: integer, nullable: true }
+        name: { type: string }
+        mode: { type: string }
+        platformRulesetId: { type: string }
+        params: { allOf: [{ $ref: '#/components/schemas/RulesParams' }], nullable: true }
+        composition: { type: object, additionalProperties: { type: integer, nullable: true } }
+        catalogVersion: { type: string, nullable: true }
+        engineVersion: { type: string }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, capture_the_flag, classic], description: 'Métricas que tienen sentido (FASE 13).' }
+        summary: { type: array, items: { type: string } }
+        respawnLabel: { type: string, nullable: true, description: 'ADR-022 · lectura humana de maxRespawns, p. ej. «2 reapariciones por bot (3 vidas en total)»' }
+        tiebreak:
+          type: object
+          nullable: true
+          description: 'ADR-022 · desempate de la familia de reglas: criterios del motor y pasos legibles en orden'
+          properties:
+            family: { enum: [elimination, limited_respawn, deathmatch, capture_the_flag] }
+            label: { type: string }
+            criteria: { type: array, items: { type: string } }
+            steps: { type: array, items: { type: string } }
+        engine: { type: object, additionalProperties: true, description: 'Lo esencial del ruleset del motor copiado (tiempo, puntuación, respawn con maxRespawns, desempate).' }
+    RulesParams:
+      type: object
+      description: 'R-RULES · Parámetros de reglas COMPETITIVAS (nada de física, daño, HP, sensores ni munición). maxRespawns = REAPARICIONES (vidas = 1 + maxRespawns). Límites en GET /rulesets custom.limits.'
+      properties:
+        game: { enum: [combat, capture_the_flag], description: 'ADR-022 · combate (bajas) o capturar la bandera. Ausente = combat.' }
+        ctf:
+          type: object
+          nullable: true
+          description: 'ADR-022 · sólo con game = capture_the_flag'
+          properties:
+            flagReturnSeconds: { type: integer, minimum: 1, maximum: 60 }
+            requireOwnFlagAtBase: { type: boolean }
+        respawn:
+          type: object
+          properties:
+            mode: { enum: [none, limited, unlimited] }
+            maxRespawns: { type: integer, nullable: true }
+            delaySeconds: { type: integer, nullable: true }
+        victory: { enum: [elimination, score_limit, time_score] }
+        scoreLimit: { type: integer, nullable: true }
+        timeLimitMinutes: { type: integer }
+        botCredits: { type: integer, nullable: true }
+        teamCredits: { type: integer, nullable: true }
+        botMassKg: { type: integer, nullable: true }
+        teamMassKg: { type: integer, nullable: true }
+        friendlyFire: { type: boolean }
+        teamSize: { type: integer }
+    RulesPreset:
+      type: object
+      properties:
+        id: { type: string }
+        version: { type: integer }
+        format: { enum: ['1v1', team] }
+        game: { enum: [combat, capture_the_flag] }
+        name: { type: string }
+        tagline: { type: string }
+        description: { type: string }
+        teamSizes: { type: array, items: { type: integer } }
+        params: { $ref: '#/components/schemas/RulesParams' }
+    BattleStats:
+      type: object
+      description: 'UX-D · Respuesta de getBattleStats.'
+      properties:
+        battleId: { type: string }
+        status: { enum: [ready, pending, unavailable] }
+        perBot:
+          type: object
+          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions, rejectionsByReason ni radioDroppedByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
+          additionalProperties:
+            type: object
+            additionalProperties: true
+            properties:
+              team: { type: string }
+              shotsFired: { type: integer }
+              shotsHit: { type: integer }
+              accuracy: { type: number, nullable: true }
+              damageDealt: { type: number, description: 'HP absolutos: sólo dueño y staff (R2/EQUIPMENT_PRIVATE; reconstruyen el casco). Ausente para el resto.' }
+              damageTaken: { type: number, description: 'HP absolutos: sólo dueño y staff. Ausente para el resto.' }
+              kills: { type: integer, description: 'Bajas de ENEMIGOS causadas por este bot (todas, también con respawn).' }
+              teamKills: { type: integer, description: '4v4-STATS · Bajas de compañeros o propias (sólo con fuego amigo).' }
+              deaths: { type: integer, description: '4v4-STATS · Veces que fue destruido (con respawn puede ser > 1). Ausente en stats anteriores a 4v4-STATS.' }
+              respawns: { type: integer, description: '4v4-STATS · Veces que reapareció.' }
+              died: { type: boolean, description: 'deaths > 0: destruido al menos una vez (con respawn puede acabar vivo, ver aliveAtEnd).' }
+              aliveAtEnd: { type: boolean, description: '4v4-STATS · Vivo y no descalificado al terminar.' }
+              survivedTicks: { type: integer, description: 'Ticks vivo en total (suma de tramos entre aparición y muerte).' }
+              decisionTimeouts: { type: integer }
+              distanceM: { type: number, description: 'Recorrido en metros (entre snapshots públicos).' }
+              radio:
+                type: object
+                description: '4v4-STATS · Actividad de radio (juego, pública). La radio también llega al rival (contrato actual del motor); esto sólo lo mide.'
+                properties:
+                  sent: { type: integer, description: 'Mensajes ACEPTADOS por el motor (aplicados estando vivo, menos los descartados).' }
+                  received: { type: integer, description: 'Mensajes recibidos en sus observaciones (suma de obs.radio.length).' }
+                  receivedFromTeammates: { type: integer }
+                  receivedFromEnemies: { type: integer }
+              perModule:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    moduleId: { type: string, nullable: true }
+                    usesKind: { enum: [shots, mines, move_commands, radio_messages, passive], description: 'Qué cuenta uses: shots = disparos aceptados; mines = minas desplegadas; move_commands = órdenes de movimiento aplicadas; radio_messages = MENSAJES de radio aceptados por ese slot (no decisiones con radio); passive = el módulo actúa solo (uses 0 por definición).' }
+                    uses: { type: integer }
+                    rejections: { type: integer, description: 'Acciones rechazadas por el motor (en radio, mensajes descartados). Sólo dueño y staff.' }
+                    damageDealt: { type: number }
+                    efficiency: { type: number, nullable: true }
+                    finalState: { type: string }
+        perTeam:
+          type: object
+          description: '4v4-STATS · Por bando: SUMA de los campos deportivos de perBot (por construcción no revela nada que perBot no enseñe; idéntico para cualquier lector, TD-047). En team_deathmatch sin fuego amigo kills = score. Vacío si status != ready.'
+          additionalProperties: { $ref: '#/components/schemas/TeamBattleStats' }
+        diagnostics:
+          type: object
+          description: 'UX-06 · Por botId, SÓLO los bots del solicitante (todos para staff). null en un campo = no medido.'
+          additionalProperties: { $ref: '#/components/schemas/BotDiagnostics' }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, capture_the_flag, classic], description: 'R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla.' }
+        rules: { $ref: '#/components/schemas/BattleRules' }
+    BotDiagnostics:
+      type: object
+      description: 'UX-06 · Diagnóstico de un bot en una batalla. Códigos y contadores; nunca detalles del sandbox.'
+      properties:
+        botId: { type: string }
+        botName: { type: string }
+        version: { type: integer }
+        measured: { type: boolean, description: 'El ejecutor registró arranque/protocolo (false en batallas anteriores).' }
+        startup:
+          type: object
+          nullable: true
+          properties:
+            ok: { type: boolean }
+            reason: { enum: [bot_execution_timeout, bot_crash] }
+        hello:
+          type: object
+          nullable: true
+          properties:
+            ok: { type: boolean }
+            tick: { type: integer, nullable: true }
+            reconnects: { type: integer, nullable: true }
+        decisions: { type: integer, nullable: true, description: 'COMMAND aplicados por el motor.' }
+        decisionTimeouts: { type: integer, nullable: true }
+        maxConsecutiveTimeouts: { type: integer, nullable: true, description: 'Límite de timeouts seguidos que descalifica.' }
+        disqualified: { type: boolean }
+        disqualifiedReason: { type: string, nullable: true, description: "consecutive_timeouts | bot_execution_timeout | bot_crash | startup_failed | administrative | unknown" }
+        commands:
+          type: object
+          nullable: true
+          properties:
+            received: { type: integer, nullable: true }
+            invalid: { type: integer, nullable: true, description: 'COMMAND que no validan contra el esquema (el bot recibe rejected_action invalid_command).' }
+            firstInvalidReason: { type: string, nullable: true, description: 'Ruta JSON y regla del primer COMMAND inválido.' }
+            invalidJson: { type: integer, nullable: true }
+            late: { type: integer, nullable: true }
+            wrongTick: { type: integer, nullable: true }
+            extra: { type: integer, nullable: true }
+        rejectionsByReason: { type: object, nullable: true, additionalProperties: { type: integer }, description: 'cooldown, no_ammo, no_energy, out_of_arc, module_destroyed…' }
+        radioDroppedByReason: { type: object, nullable: true, additionalProperties: { type: integer }, description: '4v4-STATS · Mensajes de radio descartados por el motor: rate_limited, too_large, no_radio, queue_full. null = stats sin esta medida.' }
+        disconnectedAtTick: { type: integer, nullable: true }
+        container:
+          type: object
+          nullable: true
+          properties:
+            exitCode: { type: integer, nullable: true }
+            oomKilled: { type: boolean }
+            exitedDuringBattle: { type: boolean }
+        cpuMs: { type: number, nullable: true }
+        shotsFired: { type: integer, nullable: true }
+        shotsHit: { type: integer, nullable: true }
+        damageDealt: { type: number, nullable: true }
+    TeamBattleStats:
+      type: object
+      description: '4v4-STATS · Estadísticas de un bando (replay-service/src/team-stats.ts).'
+      properties:
+        team: { type: string }
+        score: { type: number, description: 'Marcador del motor (result.score).' }
+        bots: { type: integer }
+        kills: { type: integer }
+        teamKills: { type: integer }
+        deaths: { type: integer }
+        damageDealt: { type: number, description: 'Ausente en la API pública (daño absoluto privado, R2); no se publica en perTeam para ningún lector.' }
+        damageTaken: { type: number, description: 'Ausente en la API pública (idem damageDealt).' }
+        shotsFired: { type: integer }
+        shotsHit: { type: integer }
+        flagCaptures: { type: integer }
+        survivors: { type: integer, description: 'Bots vivos y no descalificados al terminar.' }
     BattlePage:
       type: object
       properties:
@@ -1957,8 +3192,9 @@ components:
       type: object
       properties:
         rank: { type: integer }
-        botId: { type: string }
-        botName: { type: string }
+        botId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null si es un bot privado que el solicitante no puede identificar' }
+        botName: { type: string, description: '«Bot privado» si el solicitante no puede identificarlo' }
+        private: { type: boolean, description: 'true = bot no identificable para el solicitante' }
         rating: { type: number }
         wins: { type: integer }
         losses: { type: integer }
@@ -2016,7 +3252,10 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate). Siempre null en un match failed (sin resultado: nadie ganó)' }
+        advancedBotId: { type: string, nullable: true, description: 'Sólo en un match failed de eliminatoria: el bot que avanza por seed (lado home del emparejamiento), NO un ganador. Ausente en el resto de estados' }
+        winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
+        winnerBotName: { type: string, description: 'VISIBILIDAD (0.15.0) · nombre de competición del ganador (nombre actual del bot), sólo si el solicitante puede identificarlo (torneo con broadcast o bot visible); ausente si winnerPrivate' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 
@@ -2042,10 +3281,229 @@ components:
       properties:
         id: { type: string }
         actorId: { type: string }
+        actorName: { type: string, description: 'Nombre visible del actor (listStreamingAudit); el UUID sigue en actorId' }
         action: { type: string }
         target: { type: string }
         correlationId: { type: string }
         at: { type: string, format: date-time }
+
+    # EQ5b · Administración → Streaming
+    StreamingBranding:
+      type: object
+      properties:
+        eventName: { type: string, maxLength: 80 }
+        logoUrl: { type: string, nullable: true, maxLength: 512, description: 'https:// o ruta del propio sitio' }
+        primaryColor: { type: string, pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$' }
+        accentColor: { type: string, pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$' }
+
+    StreamingRetention:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        maxAgeDays: { type: integer, nullable: true, minimum: 1, maximum: 3650 }
+        maxTotalBytes: { type: integer, nullable: true, minimum: 1048576 }
+
+    StreamingSettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        mode: { type: string, enum: [rtmps, record] }
+        platform: { type: string }
+        ingestUrl: { type: string, nullable: true, description: 'Sólo RTMPS personalizado; rtmps:// sin credenciales' }
+        encoder: { type: string, enum: [x264, nvenc] }
+        preset: { type: string, enum: [1080p, 720p] }
+        fps: { type: integer, enum: [30, 60] }
+        videoBitrateKbps: { type: integer, minimum: 1000, maximum: 12000 }
+        branding: { $ref: '#/components/schemas/StreamingBranding' }
+        retention: { $ref: '#/components/schemas/StreamingRetention' }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+        updatedBy: { type: string, nullable: true }
+
+    StreamingSettingsPatch:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer }
+        confirmStop: { type: boolean }
+        confirmHighFps: { type: boolean }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [rtmps, record] }
+        platform: { type: string }
+        ingestUrl: { type: string, nullable: true }
+        encoder: { type: string, enum: [x264, nvenc] }
+        preset: { type: string, enum: [1080p, 720p] }
+        fps: { type: integer, enum: [30, 60] }
+        videoBitrateKbps: { type: integer }
+        branding: { $ref: '#/components/schemas/StreamingBranding' }
+        retention: { $ref: '#/components/schemas/StreamingRetention' }
+
+    StreamingCredentialMeta:
+      type: object
+      description: 'Metadatos de la clave de emisión. NUNCA contiene la clave: como mucho los 4 últimos caracteres enmascarados.'
+      properties:
+        platform: { type: string }
+        configured: { type: boolean }
+        masked: { type: string, nullable: true, example: '****ABCD' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        compatible: { type: boolean, nullable: true }
+        incompatibleReason: { type: string, nullable: true, enum: [key_rotated, ingest_changed, null], description: 'EQ5c · por qué hay que volver a introducir la clave: se selló con otra clave pública o para otra URL de ingesta.' }
+        backup: { type: string, enum: [none, ready, needs_key], description: 'STREAMING-UX · sobre de la ingesta de respaldo: none = sin respaldo; ready = sellado para el respaldo actual; needs_key = volver a introducir la clave para usarlo.' }
+
+    StreamingTarget:
+      type: object
+      properties:
+        kind: { type: string, enum: [battle, tournament] }
+        id: { type: string, format: uuid }
+        label: { type: string }
+        status: { type: string }
+        broadcastable: { type: boolean, description: 'VISIBILIDAD · autorizado para retransmisión (misma regla que la lectura pública de /broadcast). No exige bots públicos.' }
+        broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null], description: 'battle_not_public · batalla suelta con bots no públicos (sólo un torneo con broadcast autoriza mostrarlos). tournament_not_broadcastable · batalla de un torneo sin broadcast con bots no públicos.' }
+        tournamentBroadcast: { type: boolean, nullable: true }
+        publicBroadcastable: { type: boolean, deprecated: true, description: 'MG · igual que broadcastAvailable (antes alias de broadcastable).' }
+        broadcastAvailable: { type: boolean, description: 'MG · /broadcast (anónima) puede mostrar el destino AHORA: misma política (whereBattleReadable para un anónimo) con los ajustes públicos vigentes, el estado de la batalla, la visibilidad de los bots y del torneo, y un streamer configurado.' }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean, description: 'MG · un anónimo puede ver este destino en directo ahora.' }
+        publicReplaysEffective: { type: boolean, description: 'MG · un anónimo puede leer esta batalla terminada ahora.' }
+        targetType: { type: string, enum: [standalone_battle, tournament_battle, tournament], description: 'FIX-BROADCAST · standalone_battle = batalla suelta (no pertenece a ningún torneo).' }
+        tournament:
+          type: object
+          nullable: true
+          description: 'FIX-BROADCAST · torneo al que pertenece la batalla (null si es suelta o si el destino es un torneo).'
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            state: { type: string }
+        battleCounts:
+          type: object
+          nullable: true
+          description: 'FIX-BROADCAST · batallas del torneo por estado (sólo destino torneo).'
+          properties:
+            scheduled: { type: integer }
+            running: { type: integer }
+            finished: { type: integer }
+            failed: { type: integer }
+        broadcastPhase: { type: string, enum: [LIVE, WAITING_VALID, TARGET_FINISHED, UNAVAILABLE], description: 'FIX-BROADCAST · qué mostrará /broadcast: directo, espera legítima (torneo abierto o en curso sin batalla en directo), final del destino, o no emitible.' }
+        delaySeconds: { type: number }
+        delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
+
+    StreamingDestination:
+      type: object
+      properties:
+        kind: { type: string, enum: [battle, tournament] }
+        id: { type: string, format: uuid }
+        label: { type: string }
+        status: { type: string }
+        mode: { type: string, nullable: true }
+        tournamentName: { type: string, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        broadcastable: { type: boolean }
+        broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null] }
+        tournamentBroadcast: { type: boolean, nullable: true }
+        broadcastAvailable: { type: boolean }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean }
+        publicReplaysEffective: { type: boolean }
+
+    BroadcastUnavailableReason:
+      type: string
+      nullable: true
+      description: >-
+        MG · motivo REAL por el que /broadcast no puede mostrar el destino (null si puede).
+        public_spectate_disabled · espectador público desactivado; public_replays_disabled ·
+        replays públicos desactivados (batalla o torneo terminado); battle_not_public /
+        tournament_not_broadcastable · la batalla no es retransmisible por la visibilidad
+        de sus bots o de su torneo; battle_not_started · (ya no se emite: una programada que será pública al empezar está disponible con broadcastPhase WAITING_VALID);
+        battle_not_available · fallida o revertida; target_not_available · torneo
+        cancelado; streaming_not_configured · sin streamer; target_not_found · el destino
+        no existe (start); tournament_no_content · torneo terminado sin ninguna batalla
+        que /broadcast pueda mostrar; tournament_not_started · torneo en borrador; other · otro.
+      enum:
+        - public_spectate_disabled
+        - public_replays_disabled
+        - battle_not_public
+        - tournament_not_broadcastable
+        - battle_not_started
+        - battle_not_available
+        - target_not_available
+        - streaming_not_configured
+        - target_not_found
+        - tournament_no_content
+        - tournament_not_started
+        - other
+        - null
+
+    PublicAccessSettings:
+      type: object
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
+        source: { type: string, enum: [database, environment, unavailable], description: 'De dónde sale el valor vigente en el proceso que responde.' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        propagationMaxMs: { type: integer, description: 'Latencia máxima de un cambio en los demás procesos (intervalo de relectura).' }
+        defaults:
+          type: object
+          description: 'Valores del entorno de este proceso (bootstrap y fallback).'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+        effective:
+          type: object
+          properties:
+            publicSpectate: { type: boolean }
+            publicReplays: { type: boolean }
+            broadcastLiveAvailable: { type: boolean, description: 'Requisitos GLOBALES para retransmitir una batalla en directo (espectador público y streamer). El detalle por destino lo da getStreamingTarget.' }
+            reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+            publicReplaysAvailable: { type: boolean, description: 'Replays públicos activos (estado global).' }
+            replaysReason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        changed: { type: boolean, description: 'Sólo en la respuesta del PATCH.' }
+        before:
+          type: object
+          description: 'Sólo en la respuesta del PATCH: valores anteriores.'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+
+    PublicAccessSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
+
+    StreamingIngests:
+      type: object
+      properties:
+        platform: { type: string }
+        primaryIngestUrl: { type: string, nullable: true }
+        backupIngestUrl: { type: string, nullable: true }
+        source: { type: string, enum: [configured, default] }
+        backupQueryAllowed: { type: boolean }
+
+    StreamingAdminState:
+      type: object
+      properties:
+        settings: { $ref: '#/components/schemas/StreamingSettings' }
+        platforms: { type: array, items: { type: object } }
+        ingests: { type: array, items: { $ref: '#/components/schemas/StreamingIngests' } }
+        credentials: { type: array, items: { $ref: '#/components/schemas/StreamingCredentialMeta' } }
+        capabilities: { type: object }
+        streamer: { type: object, nullable: true }
+        session: { type: object, nullable: true }
+        lastSession:
+          type: object
+          nullable: true
+          description: 'Última sesión TERMINADA (stopped/failed): id, modo, destino, startedAt, stoppedAt, stopReason. Nunca la clave ni la credencial.'
+        pendingRestart: { type: boolean }
+        uxState:
+          type: string
+          enum: [disabled, streamer_unreachable, ready, starting, live, recording, retrying, failed, interrupted]
+        bitrate: { type: object }
+        changeClasses: { type: object }
 
     SystemStatus:
       type: object
@@ -2062,10 +3520,10 @@ components:
           description: 'true si SMOKE_BOT_DIGEST está definido. NO se expone el valor.'
         publicSpectateEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_SPECTATE_ENABLED: si es false, /public/battles/live responde enabled=false, battles=[].'
+          description: 'R11 · Valor VIGENTE del espectador público (ajuste de runtime, MG; S9_PUBLIC_SPECTATE_ENABLED es sólo el bootstrap): si es false, /public/battles/live responde enabled=false, battles=[].'
         publicReplaysEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_REPLAYS_ENABLED: si es false, /public/replays responde enabled=false, items=[].'
+          description: 'R11 · Valor VIGENTE de los replays públicos (ajuste de runtime, MG; S9_PUBLIC_REPLAYS_ENABLED es sólo el bootstrap): si es false, /public/replays responde enabled=false, items=[].'
         battlesByStatus: { type: object, additionalProperties: { type: integer } }
         buildsByStatus: { type: object, additionalProperties: { type: integer } }
         botVersionsByState: { type: object, additionalProperties: { type: integer } }

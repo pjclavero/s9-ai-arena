@@ -5,19 +5,32 @@
  *
  * FC-D (D7, TD-022) · Cada batalla muestra RESULTADO (ganador/empate), marcador,
  * duración y fallo real; `failureKind = none` ya no se pinta como error.
+ *
+ * UX-D (D1) · Participantes con NOMBRE de bot y versión exacta (antes UUID
+ * recortado), mapa por nombre, modo en palabras y enlace al detalle
+ * (#/battles/<id>). La API sólo lista las batallas que puedes ver (G-08).
  */
 import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
-import { summarizeBattle, type BattleLike } from "../battle-result.js";
+import {
+  MODE_TEXT,
+  botVersionLabel,
+  summarizeBattle,
+  winnerText,
+  sidesTitle,
+  type BattleLike,
+  type ParticipantLike,
+} from "../battle-result.js";
 import { BattleLink } from "./TournamentDetailPage.js";
 
 interface Battle extends BattleLike {
   tournamentId?: string;
   mode: string;
   mapId: string;
-  participants: { botId: string; version: number; team?: string; outcome?: string }[];
+  mapName?: string;
+  participants: ParticipantLike[];
 }
 
 const STATUSES = ["", "scheduled", "running", "finished", "failed"];
@@ -39,7 +52,7 @@ export function BattlesPage(props: { botFilter?: string }) {
     <div className="card">
       <h2>Batallas</h2>
       <p>
-        <a href="#/battles/new">+ Nueva batalla de práctica</a>
+        <a href="#/battles/new">+ Nueva batalla</a>
       </p>
       {props.botFilter && (
         <p data-testid="bot-filter">
@@ -72,11 +85,11 @@ export function BattlesPage(props: { botFilter?: string }) {
                 message={
                   props.botFilter || status ? "No hay batallas que casen con el filtro." : "Aún no hay batallas."
                 }
-                action={<a href="#/battles/new">Crear una batalla de práctica</a>}
+                action={<a href="#/battles/new">Crear una batalla nueva</a>}
               />
             );
           return (
-            <table>
+            <table className="stack-table stack-table--wide">
               <thead>
                 <tr>
                   <th>Participantes</th>
@@ -95,18 +108,19 @@ export function BattlesPage(props: { botFilter?: string }) {
                   return (
                     <tr key={b.id} data-testid="battle-row" data-battle-id={b.id} data-status={b.status}>
                       <td>
-                        {b.participants
-                          .map((p) => `${p.botId.slice(0, 8)} v${p.version}${p.team ? ` (${p.team})` : ""}`)
-                          .join(" vs ") || b.id.slice(0, 8)}
+                        <a href={`#/battles/${encodeURIComponent(b.id)}`} data-testid="battle-detail-link">
+                          {sidesTitle(b.participants, botVersionLabel, { withSide: true }) ||
+                            "batalla sin participantes"}
+                        </a>
                       </td>
-                      <td>{b.mode}</td>
-                      <td>{b.mapId}</td>
+                      <td>{MODE_TEXT[b.mode] ?? b.mode}</td>
+                      <td>{b.mapName ?? b.mapId}</td>
                       <td>
                         {STATUS_TEXT[b.status] ?? b.status}
                         {v.failure ? <span className="error"> ({v.failure})</span> : null}
                       </td>
                       <td data-testid="battle-outcome">
-                        {v.outcome ?? "—"}
+                        {winnerText(b) ?? "—"}
                         {v.score ? <small> · {v.score}</small> : null}
                         {v.endReason ? <small> · {v.endReason}</small> : null}
                         {v.agentsNote ? <small className="warn"> · {v.agentsNote}</small> : null}

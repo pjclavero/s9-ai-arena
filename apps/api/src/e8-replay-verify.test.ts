@@ -6,8 +6,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
@@ -17,11 +20,13 @@ import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { record, type Replay } from "../../arena-engine/src/replay.js";
+import { fromJsonl, record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { ingestReplay, type StoredReplay } from "../../replay-service/src/store.js";
 import { implementedOperations } from "./registry.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let h: TestDbHandle;
 let app: Express;
@@ -130,6 +135,35 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     expect(r.status).toBe(200);
     expect(r.body.matches).toBe(false);
     expect(r.body.reason).toBe("final_state_hash_mismatch_with_db");
+  }, 120000);
+
+  it("UX-F (DEF-R1) + OLA2-MD: replay v1 real ⇒ «formato anterior», nunca «manipulado»", async () => {
+    const fixture = join(
+      __dirname,
+      "..",
+      "..",
+      "replay-service",
+      "tests",
+      "fixtures",
+      "engine-0.1.0-sin-perimetro.replay.jsonl.gz",
+    );
+    // OLA2-MD · el fixture es un replay v1 REAL: la ingesta v2 ya no lo admite, así que se
+    // deja en disco tal cual (como quedaría un replay histórico en producción).
+    const bytes = readFileSync(fixture);
+    expect(JSON.parse(gunzipSync(bytes).toString("utf8").split("\n")[0]).formatVersion).toBe(1);
+    const path = join(dir, "old-v1.replay");
+    writeFileSync(path, bytes);
+    const id = await insertBattle(h.db, path, {
+      replay_hash: createHash("sha256").update(bytes).digest("hex"),
+    });
+    const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
+    expect(r.status).toBe(200);
+    expect(r.body.valid).toBe(false);
+    expect(r.body.matches).toBe(false);
+    expect(r.body.reason).toMatch(/^format_version_mismatch/);
+    expect(r.body.message).toMatch(/formato anterior/);
+    expect(r.body.message).toMatch(/NO significa que esté manipulado/);
+    expect(r.body.divergedAtTick).toBeUndefined();
   }, 120000);
 
   it("batalla sin replay ⇒ 404; batalla inexistente ⇒ 404", async () => {

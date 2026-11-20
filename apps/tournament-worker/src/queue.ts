@@ -21,7 +21,7 @@
  *    manual). Las derrotas deportivas terminan el trabajo en `done`.
  */
 import type { Knex } from "knex";
-import { classifyFailure, type FailureCode } from "./errors.js";
+import { classifyFailure, hasOwnRetryPolicy, retryPolicyFor, type FailureCode } from "./errors.js";
 
 export type JobKind = "generate_schedule" | "run_battle" | "process_result" | "update_standings" | "tournament_dry_run";
 
@@ -146,6 +146,20 @@ export interface FailResult {
   parked: boolean;
 }
 
+/** Clave del payload donde se acumulan los fallos de infraestructura por clase. */
+export const FAILURE_COUNTS_KEY = "_failureCounts";
+
+/** Fallos de infraestructura ya sufridos por el trabajo, por código. */
+export function failureCountsOf(job: Pick<JobRow, "payload">): Record<string, number> {
+  const raw = (job.payload as Record<string, unknown> | undefined)?.[FAILURE_COUNTS_KEY];
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = Math.floor(v);
+  }
+  return out;
+}
+
 /**
  * Fallo de INFRAESTRUCTURA (19.2): reintenta con backoff hasta max_attempts;
  * agotados, el trabajo queda en `needs_review` para revisión manual.
@@ -163,8 +177,21 @@ export async function failJobInfrastructure(
     );
   }
   const now = opts.now ?? new Date();
-  const parked = job.attempts >= job.max_attempts;
-  const backoffMs = opts.backoffMs ?? Math.min(60_000, 1000 * 2 ** job.attempts);
+  const policy = retryPolicyFor(code);
+  // Fallos ya sufridos POR CLASE (persistidos en el payload del trabajo, sin migración):
+  // un fallo de otra clase no gasta el reintento de ésta. Esto es el contador tras sumar
+  // el fallo actual.
+  const counts = failureCountsOf(job);
+  const classFailures = (counts[code] ?? 0) + 1;
+  let parked: boolean;
+  if (policy.maxFailures === undefined) {
+    parked = job.attempts >= job.max_attempts;
+  } else if (policy.overridesJobMax) {
+    parked = classFailures >= policy.maxFailures;
+  } else {
+    parked = classFailures >= policy.maxFailures || job.attempts >= job.max_attempts;
+  }
+  const backoffMs = opts.backoffMs ?? policy.backoffMs(hasOwnRetryPolicy(code) ? classFailures : job.attempts);
   await db("jobs")
     .where({ id: job.id })
     .update({
@@ -174,6 +201,7 @@ export async function failJobInfrastructure(
       run_after: parked ? now : new Date(now.getTime() + backoffMs),
       last_error: `[${code}] ${message}`,
       error_class: "infrastructure",
+      payload: JSON.stringify({ ...job.payload, [FAILURE_COUNTS_KEY]: { ...counts, [code]: classFailures } }),
       updated_at: now,
     });
   return { parked };

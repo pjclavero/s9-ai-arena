@@ -12,11 +12,25 @@
  *
  * Regla de oro (cap. 21): esta vista consume el canal de espectador como un
  * cliente más; jamás toca motor ni tick.
+ *
+ * FIX-DIRECTOR-DELAY · el canal de espectador lo abre la LÍNEA TEMPORAL del director
+ * (SpectatorTimeline), no la pantalla en directo: el director decide inicio, fin y cambio de
+ * batalla con ese feed retrasado y LiveScreen pinta ESA MISMA conexión. Un solo reloj (el del
+ * gateway) para lo que se ve y para lo que se decide.
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BroadcastConfig } from "../broadcast/config.js";
-import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
+import {
+  BroadcastDirector,
+  createPublicApi,
+  directorStateOf,
+  type BattleSummary,
+  type BroadcastScreen,
+  type SourceErrorReason,
+} from "../broadcast/director.js";
+import { SpectatorTimeline, type LiveFeedSource } from "../broadcast/delayed-timeline.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
+import { delayedWaitText } from "../viewer/delay-wait.js";
 import { LiveFeed } from "../viewer/live-feed.js";
 import { rosterFromMeta } from "../viewer/art-direction.js";
 import { buildHudModel } from "../viewer/hud-model.js";
@@ -28,18 +42,41 @@ const TICKER_ITEMS = 6;
 
 export function BroadcastPage({ config }: { config: BroadcastConfig }) {
   const [screen, setScreen] = useState<BroadcastScreen | null>(null);
+  const [timeline, setTimeline] = useState<SpectatorTimeline | null>(null);
+  // Cambios de fase del feed (p. ej. el reintento de un feed no disponible) ⇒ re-render para
+  // que la pantalla en directo tome la conexión vigente.
+  const [, setFeedVersion] = useState(0);
 
   useEffect(() => {
     if (!config.target) return;
     const api = createPublicApi();
+    // FIX-DIRECTOR-DELAY · una conexión de espectador por batalla seguida, con ticket ANÓNIMO
+    // (la vista broadcast jamás lleva sesión: cero datos privados).
+    // OLA 2 · MA · audiencia `broadcast` FIRMADA en el ticket (proyector, mapper de ids e
+    // historial del retardo propios): es la conexión que sigue el director y la que pinta.
+    const tl = new SpectatorTimeline({
+      createClient: (battleId) =>
+        new SpectatorClient({
+          getTicket: () => api.post(`/battles/${battleId}/spectate-ticket?audience=broadcast`),
+        }),
+    });
+    const offFeed = tl.onChange(() => setFeedVersion((v) => v + 1));
+    setTimeline(tl);
     const director = new BroadcastDirector({
       target: config.target,
       fetchJson: api.get,
       onScreen: setScreen,
       pollIntervalMs: config.pollIntervalMs,
+      waitScheduled: config.waitScheduled,
+      timeline: tl,
     });
     director.start();
-    return () => director.stop();
+    return () => {
+      director.stop();
+      offFeed();
+      tl.stopAll();
+      setTimeline(null);
+    };
   }, [config]);
 
   const b = config.branding;
@@ -58,18 +95,33 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
   };
 
   return (
-    <div data-testid="broadcast-stage" style={stageStyle}>
+    // FIX-BROADCAST · el estado del director queda en el DOM: distinguible y reportable
+    // (WAITING_VALID / TARGET_FINISHED / TARGET_CANCELLED / SOURCE_ERROR…) aunque la slate sea limpia.
+    <div
+      data-testid="broadcast-stage"
+      data-director-state={config.target ? directorStateOf(screen) : undefined}
+      data-source-error={screen?.kind === "error" ? screen.reason : undefined}
+      style={stageStyle}
+    >
       <BroadcastHeader config={config} screen={screen} />
       {!config.target ? (
         <CenterCard accent={b.accentColor} title={b.eventName} subtitle="Configura ?battle=<id> o ?tournament=<id>" />
       ) : screen === null || screen.kind === "waiting" ? (
-        <WaitingScreen config={config} next={screen?.kind === "waiting" ? screen.nextBattle : null} />
+        <WaitingScreen
+          config={config}
+          next={screen?.kind === "waiting" ? screen.nextBattle : null}
+          delayNoticeMs={screen?.kind === "waiting" ? screen.delayNoticeMs : undefined}
+        />
       ) : screen.kind === "intermission" ? (
         <IntermissionScreen config={config} last={screen.lastBattle} next={screen.nextBattle} />
       ) : screen.kind === "finished" ? (
         <FinishedScreen config={config} last={screen.lastBattle} />
+      ) : screen.kind === "cancelled" ? (
+        <CancelledScreen config={config} />
+      ) : screen.kind === "error" ? (
+        <SourceErrorScreen config={config} reason={screen.reason} />
       ) : (
-        <LiveScreen config={config} battle={screen.battle} />
+        <LiveScreen config={config} battle={screen.battle} feed={timeline?.feed(screen.battle.id) ?? null} />
       )}
     </div>
   );
@@ -96,9 +148,16 @@ function BroadcastHeader({ config, screen }: { config: BroadcastConfig; screen: 
       <strong data-testid="broadcast-event" style={{ fontSize: 32, color: b.accentColor }}>
         {b.eventName}
       </strong>
-      {progress && progress.total > 0 && (
+      {progress && progress.total !== null && progress.total > 0 && (
         <span data-testid="broadcast-round" style={{ marginLeft: "auto", fontSize: 24 }}>
           Batalla {Math.min(progress.played + 1, progress.total)} / {progress.total}
+        </span>
+      )}
+      {/* EQ5 · torneo en curso: un visitante no ve las batallas programadas, así
+          que el total no es conocible; se rotula sólo el número de batalla. */}
+      {progress && progress.total === null && screen?.kind !== "waiting" && (
+        <span data-testid="broadcast-round" style={{ marginLeft: "auto", fontSize: 24 }}>
+          Batalla {screen?.kind === "live" ? progress.played + 1 : Math.max(progress.played, 1)}
         </span>
       )}
     </header>
@@ -118,7 +177,9 @@ function CenterCard({ accent, title, subtitle }: { accent: string; title: string
 
 function participantsLine(battle: BattleSummary | null): string {
   if (!battle) return "";
-  return battle.participants.map((p) => `${shortId(p.botId)} v${p.version} (${p.team})`).join("  ·  ");
+  // EQ5 · nombre humano del bot (battleToJson ya lo da); el id recortado sólo
+  // como respaldo de filas históricas sin nombre. Antes la emisión rotulaba UUIDs.
+  return battle.participants.map((p) => `${p.botName || shortId(p.botId)} v${p.version} (${p.team})`).join("  ·  ");
 }
 
 function scoreLine(battle: BattleSummary | null): string {
@@ -135,14 +196,36 @@ function shortId(id: string): string {
 
 // ─────────────────────────────────────────── pantallas de espera/entre batallas
 
-function WaitingScreen({ config, next }: { config: BroadcastConfig; next: BattleSummary | null }) {
+function WaitingScreen({
+  config,
+  next,
+  delayNoticeMs,
+}: {
+  config: BroadcastConfig;
+  next: BattleSummary | null;
+  delayNoticeMs?: number;
+}) {
+  // FIX-DIRECTOR-DELAY · aviso de retardo de la espera inicial (lo decide el director con el
+  // init del feed retrasado; ya no lo pinta la pantalla en directo antes de tener imagen).
+  const notice = delayNoticeMs ? delayedWaitText({ delayMs: delayNoticeMs }, false) : null;
   return (
     <section
       data-testid="broadcast-waiting"
       style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
     >
       <h1 style={{ fontSize: 64, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
-      <p style={{ fontSize: 36 }}>{next ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}</p>
+      <p style={{ fontSize: 36 }}>
+        {next || config.target?.kind === "battle" ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}
+      </p>
+      {notice && (
+        <p
+          data-testid="broadcast-delay-wait"
+          role="status"
+          style={{ fontSize: 40, color: config.branding.accentColor }}
+        >
+          {notice}
+        </p>
+      )}
       {next && (
         <p data-testid="broadcast-next" style={{ fontSize: 28, opacity: 0.9 }}>
           Próxima batalla: {participantsLine(next)} · {next.mode}
@@ -178,9 +261,14 @@ function IntermissionScreen({
         {scoreLine(last) || "batalla terminada"}
       </p>
       <p style={{ fontSize: 26, opacity: 0.9 }}>{participantsLine(last)}</p>
-      {next && (
+      {next ? (
         <p data-testid="broadcast-next" style={{ fontSize: 30 }}>
           A continuación: {participantsLine(next)} · {next.mode}
+        </p>
+      ) : (
+        // EQ5 · la próxima batalla existe pero un visitante no la ve (programada).
+        <p data-testid="broadcast-next-pending" style={{ fontSize: 30, opacity: 0.85 }}>
+          La siguiente batalla empezará en breve
         </p>
       )}
     </section>
@@ -194,33 +282,94 @@ function FinishedScreen({ config, last }: { config: BroadcastConfig; last: Battl
       style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
     >
       <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
-      <p style={{ fontSize: 36 }}>Torneo terminado. ¡Gracias por vernos!</p>
+      <p style={{ fontSize: 36 }}>
+        {/* EQ5 · en una batalla suelta no hay torneo que terminar (visto en el MP4 real). */}
+        {config.target?.kind === "battle"
+          ? "Batalla terminada. ¡Gracias por vernos!"
+          : "Torneo terminado. ¡Gracias por vernos!"}
+      </p>
       {last && (
         <p data-testid="broadcast-last-score" style={{ fontSize: 30, opacity: 0.9 }}>
           Última batalla: {scoreLine(last)} · {participantsLine(last)}
+        </p>
+      )}
+      {/* #256 · REPLAY_STREAMING_SUPPORTED = NO: se dice, no se finge una repetición. */}
+      {config.target?.kind === "battle" && (
+        <p data-testid="broadcast-no-replay" style={{ fontSize: 24, opacity: 0.75 }}>
+          La repetición de esta batalla no se retransmite.
         </p>
       )}
     </section>
   );
 }
 
+/** FIX-BROADCAST · torneo cancelado: estado terminal propio. */
+function CancelledScreen({ config }: { config: BroadcastConfig }) {
+  return (
+    <section
+      data-testid="broadcast-cancelled"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
+      <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
+      <p style={{ fontSize: 36 }}>Torneo cancelado. No hay nada más que emitir.</p>
+    </section>
+  );
+}
+
+/**
+ * FIX-BROADCAST · la fuente no da datos utilizables (404, JSON inválido, N fallos
+ * seguidos). Slate limpia, pero NUNCA una espera falsa: dice que la emisión no está
+ * disponible y lleva el código estable (pequeño) para poder reportarlo.
+ */
+function SourceErrorScreen({ config, reason }: { config: BroadcastConfig; reason: SourceErrorReason }) {
+  return (
+    <section
+      data-testid="broadcast-source-error"
+      role="alert"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
+      <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
+      <p style={{ fontSize: 36 }}>
+        {reason === "unreachable"
+          ? "Emisión interrumpida: no se puede obtener el estado del evento."
+          : "Emisión no disponible: este contenido no se puede mostrar."}
+      </p>
+      <p data-testid="broadcast-source-error-code" style={{ fontSize: 18, opacity: 0.6 }}>
+        código: {reason}
+      </p>
+    </section>
+  );
+}
+
 // ───────────────────────────────────────────────── batalla en directo (E8 real)
 
-function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: BattleSummary }) {
+export function LiveScreen({
+  config,
+  battle,
+  feed,
+}: {
+  config: BroadcastConfig;
+  battle: BattleSummary;
+  /**
+   * FIX-DIRECTOR-DELAY · el feed retrasado que sigue el director para ESTA batalla (la misma
+   * conexión con la que decide inicio, fin y cambio). La pantalla no abre otra.
+   */
+  feed: LiveFeedSource | null;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
+  const [scene, setScene] = useState<ViewerScene | null>(null);
   const [live, setLive] = useState(false);
   const [tick, setTick] = useState(0);
   const [initError, setInitError] = useState<string | null>(null);
+  // FIX-DELAY · directo con retardo: rótulo de espera hasta el primer snapshot diferido.
+  const [delayWait, setDelayWait] = useState<string | null>(null);
 
+  // 1 · El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
   useEffect(() => {
     if (!hostRef.current) return;
     let game: { destroy: (removeCanvas: boolean) => void } | null = null;
-    let client: SpectatorClient | null = null;
     let alive = true;
-    const api = createPublicApi();
-
-    // El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
     void import("../viewer/PhaserViewer.js")
       .then(async ({ createViewerGame, waitForViewerScene }) => {
         if (!alive || !hostRef.current) return;
@@ -228,42 +377,17 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
         // renderizar a más solo quema CPU del contenedor de Chromium.
         game = createViewerGame(hostRef.current, { targetFps: 30 });
         // FC-D (D3, TD-009): esperar al READY de Phaser y al create de la escena.
-        let scene: ViewerScene;
+        let s: ViewerScene;
         try {
-          scene = await waitForViewerScene(game as any);
+          s = await waitForViewerScene(game as any);
         } catch (e) {
           if (alive) setInitError((e as Error).message);
           return;
         }
         if (!alive) return;
-        scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
-        sceneRef.current = scene;
-        // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
-        const feed = new LiveFeed(scene);
-
-        client = new SpectatorClient({
-          // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
-          getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
-        });
-        const c = client;
-        client.on("init", (msg) => {
-          setLive(true);
-          if (msg.meta?.world) scene.setWorld(msg.meta.world);
-          if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
-          if (msg.finished && msg.result) scene.applyResult(msg.result);
-          feed.onInit(msg);
-        });
-        client.on("snapshot", (s) => {
-          feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
-          setTick(s.tick);
-        });
-        client.on("event", (e) => feed.onEvent(e));
-        // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
-        client.on("result", (result) => scene.applyResult(result));
-        client.on("disconnect", () => setLive(false));
-        client.on("reconnected", () => setLive(true));
-        client.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`));
-        void client.connect();
+        s.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
+        sceneRef.current = s;
+        setScene(s);
       })
       .catch((e: unknown) => {
         if (alive) setInitError((e as Error).message);
@@ -271,11 +395,66 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
 
     return () => {
       alive = false;
-      client?.stop();
       game?.destroy(true);
       sceneRef.current = null;
     };
   }, [battle.id]);
+
+  // 2 · El feed retrasado del director → escena. Se suscribe y SINCRONIZA con lo que el feed
+  //     ya trajo (el director puede haberlo conectado antes de poner esta batalla en antena).
+  useEffect(() => {
+    if (!scene || !feed) return;
+    const c = feed.client;
+    // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
+    const lf = new LiveFeed(scene);
+    let hasSnapshot = false;
+    const onInit = (msg: any, connected = true) => {
+      setLive(connected);
+      if (msg.snapshot) hasSnapshot = true;
+      setDelayWait(delayedWaitText(msg.spectator, hasSnapshot));
+      if (msg.meta?.world) scene.setWorld(msg.meta.world);
+      if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+      if (msg.finished && msg.result) scene.applyResult(msg.result);
+      lf.onInit(msg);
+    };
+    const offs = [
+      c.on("init", (msg) => onInit(msg)),
+      c.on("snapshot", (s) => {
+        if (!hasSnapshot) {
+          hasSnapshot = true;
+          setDelayWait(null);
+        }
+        lf.onSnapshot(s, c.state.serverTimeMs ?? undefined);
+        setTick(s.tick);
+      }),
+      c.on("event", (e) => lf.onEvent(e)),
+      // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+      c.on("result", (result) => scene.applyResult(result)),
+      c.on("disconnect", () => setLive(false)),
+      c.on("reconnected", () => setLive(true)),
+      c.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`)),
+    ];
+    const init = feed.lastInit();
+    if (init) {
+      // Estado acumulado del feed: el último snapshot RETRASADO recibido (nunca uno vivo).
+      onInit(
+        {
+          ...init,
+          snapshot: c.state.snapshot ?? init.snapshot,
+          serverTimeMs: c.state.serverTimeMs ?? init.serverTimeMs,
+          finished: Boolean(c.state.result) || init.finished,
+          result: c.state.result ?? init.result,
+        },
+        c.state.connected,
+      );
+      if (typeof c.state.snapshot?.tick === "number") setTick(c.state.snapshot.tick);
+    }
+    const rej = feed.rejection();
+    setInitError(rej ? `directo no disponible (${rej.code ?? rej.status ?? "?"})` : null);
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [scene, feed]);
 
   const overlay = sceneRef.current?.overlay;
   const accent = config.branding.accentColor;
@@ -288,6 +467,27 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
     <section data-testid="broadcast-live" style={{ flex: 1, position: "relative", minHeight: 0 }}>
       {/* Visor E8 a pantalla completa (el canvas llena el hueco). */}
       <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* FIX-DELAY · espera del primer snapshot diferido: estado claro, no un mapa vacío. */}
+      {delayWait && !initError && (
+        <div
+          data-testid="broadcast-delay-wait"
+          role="status"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: config.branding.primaryColor,
+            fontSize: 44,
+            color: accent,
+            zIndex: 2,
+          }}
+        >
+          {delayWait}
+        </div>
+      )}
 
       {/* HUD compartido (marcador, reloj, objetivo, equipos, kill feed, fin). */}
       {model ? (

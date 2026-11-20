@@ -12,7 +12,7 @@
  * SDK), en vez de lanzar apps/arena-engine/src/local-sim.ts con npx.
  *
  * Uso (desde la raíz del repo, tras `npm install`):
- *   npx arena-sim example-bots/javascript/gunner.ts --archetype gunner --opponent idle
+ *   npx arena-sim example-bots/javascript/gunner.js --archetype gunner --opponent idle
  *   npx tsx sdks/javascript/src/arena-sim.ts <bot.ts|js> [flags]   # equivalente
  */
 import { parseArgs } from "node:util";

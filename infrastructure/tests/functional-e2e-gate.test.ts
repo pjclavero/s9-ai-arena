@@ -155,6 +155,10 @@ describe("G3 · functional-e2e.yml ejecuta el E2E completo y activa el opt-in", 
     expect(env.S9_RUN_GATEWAY_SECURITY_E2E).toBe("1");
     // La imagen nginx del test del gateway es la MISMA fijada por digest que la del golden.
     expect(env.S9_GATEWAY_TEST_NGINX_IMAGE).toBe(FE.env.S9_E2E_NGINX_IMAGE);
+    // BROADCAST-PUBLIC-ACCESS · gate INTERNAL_BROADCAST_API_PROXY: nginx real de web,
+    // opt-in, en la imagen base de `web` fijada por digest.
+    expect(env.S9_RUN_WEB_PROXY_E2E).toBe("1");
+    expect(env.S9_WEB_PROXY_E2E_NGINX_IMAGE).toMatch(/^nginx:1\.27-alpine@sha256:[0-9a-f]{64}$/);
     const files = [
       "apps/bot-manager/tests/build-sandbox-docker.test.ts",
       // PRC REVIEW · TD-034: dos relojes con contenedores reales (SAN-5/6/7/9/10).
@@ -167,6 +171,8 @@ describe("G3 · functional-e2e.yml ejecuta el E2E completo y activa el opt-in", 
       "apps/tournament-worker/src/container-battle-e2e.test.ts",
       // PRC REVIEW · TD-004: bypass del gateway sobre las confs reales.
       "infrastructure/gateway/tests/replay-gateway.test.ts",
+      // BROADCAST-PUBLIC-ACCESS · /api/v1 y /ws del nginx de web (Chromium del streamer).
+      "infrastructure/tests/web-nginx-proxy-e2e.test.ts",
     ];
     const run = steps("docker-e2e").find((s) => s.run?.includes("npx vitest run"))!.run!;
     const check = steps("docker-e2e").find((s) => s.run?.includes("assert-functional-e2e.mjs vitest"))!.run!;

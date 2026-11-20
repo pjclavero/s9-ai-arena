@@ -473,6 +473,8 @@ async function verifyAndIngestReplay(
     events: recomputed.events,
     snapshots: recomputed.snapshots,
     stateHashes: recomputed.stateHashes,
+    // OLA2-MD · replay v2: los checkpoints por componente también son los recomputados.
+    checkpoints: recomputed.checkpoints,
     result: recomputed.result,
   };
 

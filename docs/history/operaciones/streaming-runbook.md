@@ -1,5 +1,10 @@
 # Runbook de streaming (E11 · cap. 21)
 
+> **Histórico.** Runbook original de E11, conservado. El runbook **vigente**, con
+> el estado verificado el 2026-11-02 (qué funciona de verdad y qué no), es
+> [docs/operations/streaming.md](../../operations/streaming.md). Ojo: §3 (NVENC)
+> no es aplicable a la imagen actual — su FFmpeg de Alpine no trae `h264_nvenc`.
+
 Operación de la retransmisión a YouTube. Regla de oro: **el streaming no toca
 jamás el motor ni el tick de batalla** — el streamer es un espectador más que
 carga la vista `/broadcast` (T11.1) y empuja vídeo hacia fuera.

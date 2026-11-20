@@ -12,6 +12,8 @@
  *                        frozen | suspended | retired
  */
 
+import type { LoadoutInput } from "../../../packages/module-catalog/types.js";
+
 /** Estados de un Build (OpenAPI Build.status). */
 export type BuildStatus = "queued" | "running" | "passed" | "failed";
 
@@ -93,8 +95,17 @@ export interface BotSubmission {
   ownerUserId: string;
   /** Runtime declarado en el manifiesto; debe existir en runtimes/. */
   runtime: Runtime;
-  /** Arquetipo/loadout con el que correr la partida de humo (ARCHETYPES de E3). */
+  /**
+   * Arquetipo de RESERVA de la partida de humo (ARCHETYPES de E3): sólo se usa si
+   * no llega `loadout` o éste no se puede resolver contra el catálogo del build.
+   */
   archetype: "scout" | "gunner" | "miner" | "heavy";
+  /**
+   * UX-01 · G-A05 · loadout REAL de la versión (bot_loadouts de su
+   * loadout_revision). La partida de humo juega ESTE vehículo, el mismo que
+   * jugará en batalla (engine-executor del tournament-worker).
+   */
+  loadout?: LoadoutInput;
   files: SourceFile[];
 }
 

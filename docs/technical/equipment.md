@@ -6,7 +6,7 @@ El equipamiento de un vehículo es su **loadout**: un chasis y un módulo por ra
 
 Este documento dice qué hace **de verdad** cada campo en el motor. Varios campos del catálogo **no tienen efecto** (alcance de armas y de radio, terreno, detectabilidad de minas…).
 
-**Lo decisivo, auditado en FC-C:** en el **camino real** de batalla (`battle-run-http-launcher.ts:141-146,638`), del loadout del usuario **sólo viaja la familia del chasis**, traducida a un arquetipo fijo. Los módulos elegidos **no llegan a la simulación**.
+**Lo decisivo (UX-01, recalibrado):** las batallas las ejecuta el tournament-worker, y su `engine-executor` resuelve el loadout **persistido** de la versión (`bot_loadouts` de su `loadout_revision`, o la congelada en la inscripción de torneo) con `resolveVehicle` y lo simula tal cual, conducido por el código del bot (`containerAgents()`). La partida de humo del build juega también ese loadout (`apps/bot-manager/src/smoke-vehicle.ts`); el arquetipo fijo del chasis queda sólo como **reserva** y se dice en el log de la etapa. El camino antiguo API → arena-engine `/run` (`battle-run-http-launcher.ts`), que sólo enviaba la familia del chasis, ya no ejecuta batallas.
 
 La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`packages/module-catalog/effect-status.ts`). La UI la muestra y la tabla de [efecto real](#efecto-real-en-batalla-active--partial--future) la resume ([TD-016](../roadmap/technical-debt.md#td-016), [TD-002](../roadmap/technical-debt.md#td-002)).
 
@@ -19,7 +19,7 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 - [Daño y estado de módulos](#daño-y-estado-de-módulos)
 - [Validación del loadout](#validación-del-loadout)
 - [Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)](#efecto-real-en-batalla-active--partial--future)
-- [Campos sin efecto en el motor](#campos-sin-efecto-en-el-motor)
+- [Campos eliminados en la OLA 2 y campos sólo de validación](#campos-eliminados-en-la-ola-2-y-campos-sólo-de-validación)
 - [Persistencia y API](#persistencia-y-api)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
@@ -34,9 +34,20 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 ## Cómo funciona
 
 1. La web (`LoadoutEditor`) usa el validador compilado al navegador para mostrar coste, energía y violaciones en vivo.
-2. `POST /bots/{id}/loadouts` vuelve a validar en servidor contra el ruleset `mvp-default` (presupuesto 1000). Responde `422 loadout_invalid` con `violations` o `201` con una nueva revisión.
+2. `POST /bots/{id}/loadouts` vuelve a validar en servidor contra el ruleset `mvp-default` (presupuesto 1000). Responde `422 loadout_invalid` con `violations` o `201` con una nueva revisión. Las revisiones guardadas son inmutables: si una antigua ya no valida (p. ej. cañón con munición estándar), se conserva, pero crear, clonar, enviar a build o publicar una versión con ella responde `422 loadout_invalid`; el pipeline también la para en `structure`.
 3. Cada versión de código fija una `loadout_revision`. En torneo, la inscripción congela la pareja código+loadout.
-4. Al empezar la batalla, el worker lee el loadout y llama a `resolveVehicle(loadout, catalog)`, que produce el `VehicleSpec`. La masa total es la del chasis más la de los módulos.
+4. **Elegibilidad** (ELIG): ver [abajo](#elegibilidad-de-versiones-históricas).
+5. Al empezar la batalla, el worker lee el loadout y llama a `resolveVehicle(loadout, catalog)`, que produce el `VehicleSpec`. La masa total es la del chasis más la de los módulos.
+
+## Elegibilidad de versiones históricas
+
+Publicada y elegible son conceptos distintos. Una versión `published`/`frozen` es inmutable (trigger `bot_version_immutable`) y se conserva con su loadout, su build, sus batallas y sus replays. Que pueda entrar en una competición **nueva** se **calcula** (no se guarda ni cambia su estado) en `apps/api/src/services/version-eligibility.ts`: loadout histórico exacto + su catálogo inmutable + validador actual (`validateLoadout`).
+
+- Clases (`VIOLATION_CLASS`, exhaustiva por tipo): `functional` (`incompatible_ammo`, `slot_type_mismatch`, `slot_size_exceeded`, `incompatible_chassis`) y `malformed` (`unknown_slot`, `duplicate_slot`, JSON ilegible) **bloquean**; `balance` (`budget_exceeded`, `module_cost_cap_exceeded`, `mass_exceeded`, `energy_deficit`, `duplicate_limit_exceeded`, `category_forbidden_by_ruleset`) sólo avisa: si una competición lo exige, lo aplica su ruleset. Un código desconocido falla cerrado.
+- Categorías del inventario: `VALID`, `INVALID_AMMO`, `MISSING_AMMO`, `ORPHAN_AMMO`, `OTHER_INVALID`, `UNKNOWN` (catálogo o revisión ausentes).
+- Dónde se aplica: `POST /battles` (409 `bot_version_not_eligible`), inscripción y cierre de torneos (409 `bot_version_not_eligible` / `entries_not_eligible`), y el worker antes de lanzar (descalificación administrativa de una batalla agendada antes del fix). La UI lo muestra como «Publicada · No elegible» (deshabilitada, con motivo), a partir del campo `battleEligibility` de `GET /bots/{id}/versions`.
+- Caché en memoria por (reglas, catálogo, huella del loadout); ambos son inmutables, así que no hay invalidación salvo despliegue (`ELIGIBILITY_RULES_VERSION`).
+- Inventario: `GET /admin/bot-version-eligibility` (admin, transacción `READ ONLY`, acceso en el log estructurado) y `scripts/ops/eligibility-inventory.mjs` (`S9_API_URL`, token en `S9_ADMIN_TOKEN_FILE` 0600 o `--token-stdin`; `--summary` para agregados).
 
 ## Chasis
 
@@ -72,7 +83,7 @@ Efecto real en el motor:
 - con varios módulos de movilidad manda el mejor; no se suman;
 - sin movilidad operativa, el vehículo queda inmóvil, pero la torreta sigue funcionando.
 
-**Sin efecto**: `terrain` (ni lo pasa `resolveVehicle` ni lo lee el motor).
+`terrain` se **eliminó** del esquema en la OLA 2 (P-2): el mapa no tiene tipos de terreno.
 
 ### Energía (`power`)
 
@@ -90,7 +101,7 @@ Efecto real en el motor:
 - los módulos apagados no consumen;
 - disparar y poner minas gasta `perActionEU`; si no hay energía, la acción se rechaza (`no_energy`).
 
-**Sin efecto**: `peakEUs`.
+`peakEUs` se **eliminó** en la OLA 2 (no hay modelo de potencia de pico).
 
 ### Sensores (`sensor_a`, `sensor_b`)
 
@@ -113,7 +124,7 @@ Efecto real en el motor:
 - **Proximidad**: rumbos de vehículos y minas dentro del alcance, **sin comprobar línea de visión**.
 - **Acústico**: rumbo, tipo e intensidad de disparos, motores y explosiones del ciclo anterior. Nunca da posición.
 
-**Sin efecto**: `fovRad` del radar (el radar es siempre de 360°) y `refreshEveryNDecisions`.
+El esquema es condicional por `sensorType` (OLA 2): `fovRad` y `rays` sólo se admiten (y son obligatorios) en lidar; `errorM`, sólo en radar. `refreshEveryNDecisions` se **eliminó** (exigiría observación en caché por sensor dentro del hash, sin diseño en los contratos).
 
 ### Armas (`turret_main`) y munición (`ammo_main`)
 
@@ -135,7 +146,7 @@ Efecto real en el motor:
 - daño = `damage × damageMultiplier × perf`;
 - el cooldown se divide por `perf` (con mínimo 0.25);
 - la dispersión sale del RNG del motor;
-- la torreta gira a `turretRateRads × perf` hacia el objetivo;
+- la torreta gira a `turretRateRads × perf` hacia el objetivo, donde `turretRateRads` (y `turretArcRad`) son de la **montura de la ranura del chasis** (`slots[].mount`, leída con `Vehicle.mountOf(slot)`), no del arma: dos armas en la misma ranura giran igual (OLA2-MB, D-B2);
 - el proyectil vive **90 ticks** e impacta por *raycast*;
 - con radio de explosión, el daño cae linealmente con la distancia y la explosión no atraviesa muros;
 - sin fuego amigo, el proyectil atraviesa a los aliados.
@@ -162,13 +173,13 @@ Acero (`steel_*`): reducción 0.35 frontal, 0.25 lateral y 0.20 trasera; más pe
 - el mensaje es base64 opaco, con un tope de `min(maxMessageBytes, 32)` bytes;
 - se limita a `maxMessagesPerSecond` por vehículo;
 - se entrega con 1 ciclo de decisión de retraso;
-- el destino puede ser uno concreto (`to`) o difusión.
+- el destino puede ser uno concreto (`to`) o difusión;
+- sólo la reciben los vehículos del **mismo equipo** que el emisor (`radioDeliverableTo`, `sensors.ts`), según el equipo del estado de batalla; el emisor no se oye a sí mismo, y un `to` a un rival o a un id inexistente no se entrega a nadie.
+- el replay sí guarda la radio de los dos bandos (son comandos grabados): tras la batalla la ve quien pueda leer el replay, un participante incluido ([replays.md](replays.md#autorización-de-acceso-td-004)).
 
-**Sin efecto**:
+- **alcance real** (OLA 2, P-2): al emitir, el motor fija en el mensaje la posición del emisor y su alcance efectivo `rangeM × perf` (`radioRangeOf`); en la entrega sólo lo reciben los compañeros que estén dentro de ese círculo (`radioDeliverableTo`). Fuera de alcance el mensaje no llega y el emisor no recibe aviso.
 
-- **`rangeM`**: `radioReaches()` existe pero no se llama.
-- **Equipo**: una difusión **llega también al equipo rival** a cualquier distancia.
-- **`encrypted`**.
+`encrypted` se **eliminó** en la OLA 2: sin escucha enemiga (RADIO_SCOPE=TEAM) no tiene sentido.
 
 Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../roadmap/technical-debt.md#td-016).
 
@@ -183,7 +194,7 @@ Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../
 - detona con un vehículo enemigo dentro del radio de activación (o cualquiera, con fuego amigo);
 - caduca al cumplir `lifetimeTicks`.
 
-**Sin efecto**: `detectable`. Toda mina es detectable por proximidad.
+`detectable` se **eliminó** en la OLA 2 (nunca se copiaba). Toda mina es detectable por proximidad; la firma por canal de un deployable (`DeployableVisibilityDef.signature`) lo sustituirá con su consumidor.
 
 ## Daño y estado de módulos
 
@@ -204,48 +215,44 @@ Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../
 
 Códigos de violación del validador (`packages/module-catalog/validator/index.ts`):
 
-`incompatible_chassis`, `duplicate_slot`, `unknown_slot` (p. ej. `mine_bay` en un chasis ligero), `slot_type_mismatch`, `slot_size_exceeded`, `category_forbidden_by_ruleset`, `incompatible_ammo`, `duplicate_limit_exceeded` (`maxPerVehicle`), `mass_exceeded` (`maxLoadKg`), `energy_deficit`, `budget_exceeded` y `module_cost_cap_exceeded` (ningún módulo puede costar más del 35 % del presupuesto).
+`incompatible_chassis`, `duplicate_slot`, `unknown_slot` (p. ej. `mine_bay` en un chasis ligero), `slot_type_mismatch`, `slot_size_exceeded`, `category_forbidden_by_ruleset`, `incompatible_ammo` (regla arma ↔ munición igual que `combat.ammoFor`: todo arma con `acceptsAmmo` necesita al menos una munición montada de un tipo base que acepte, tanto embebida en el arma (`ammo:`) como montada como módulo aparte; la munición embebida la tiene que admitir su arma; un módulo de munición que ningún arma usa también se rechaza; la violación trae `ammoId` y `acceptedAmmo`), `duplicate_limit_exceeded` (`maxPerVehicle`), `mass_exceeded` (`maxLoadKg`), `energy_deficit`, `budget_exceeded` y `module_cost_cap_exceeded` (ningún módulo puede costar más del 35 % del presupuesto).
 
 El presupuesto en servidor es el del ruleset `mvp-default` (1000), venga el loadout de donde venga (`services/bots.ts:134-160`).
 
 ## Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)
 
-Auditoría FC-C sobre `0b8c12b`. Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
+Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` (octubre de 2026) se midió en el camino `/run`, que ya no ejecuta batallas). Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
 
-**Qué llega del loadout al motor en el camino real:**
+**Qué llega del loadout al motor:**
 
-1. `resolveBot` (`battle-run-http-launcher.ts:627-641`) lee el loadout, pero sólo usa `loadout.chassis` → `archetypeForChassis` (`:141-146`):
-   - `chassis.light` → `scout`;
-   - `chassis.heavy` → `heavy`;
-   - cualquier otro → `gunner`.
-2. Se descarta la versión: `chassis.light@2` juega como `@1`. El arquetipo `miner` no se alcanza nunca.
-3. El cuerpo de `/run` lleva `{botId, version, archetype, imageDigest}` por bot (`:617-622,712-719`): ningún módulo.
-4. `container-battle.ts:134-141` simula el loadout **fijo** del arquetipo (`packages/module-catalog/resolve/archetypes.ts`).
-
-El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout completo, pero conduce los vehículos con stubs `HunterBot`, no con el código del usuario.
+1. `engine-executor.ts:193-227` toma la `loadout_revision` de la inscripción del torneo (congelada) o, fuera de torneo, la de la versión; lee esa fila de `bot_loadouts` y la resuelve con `resolveVehicle(loadout, catalog)`. Si la revisión no existe, la batalla falla con ese motivo; no se inventa un vehículo.
+2. Chasis **con su versión** y todos los módulos elegidos llegan a la simulación. Demostrado de extremo a extremo (loadout persistido = WELCOME del bot = vehículo simulado) en `apps/tournament-worker/src/ux01-loadout-welcome.test.ts`.
+3. Partida de humo del build: `smokeVehicle()` (`apps/bot-manager/src/smoke-vehicle.ts`) juega el mismo loadout. Sólo si la versión no trae loadout o es de otra versión de catálogo, juega el arquetipo del chasis (`light→scout`, `heavy→heavy`, resto `gunner`) y lo dice en el log.
 
 | Estado | Significado | Propiedades |
 |---|---|---|
-| **ACTIVE** | Lo que elige el usuario cambia la batalla real | **Sólo la familia del chasis** (decide el arquetipo) |
-| **PARTIAL** | El motor la sabe usar, pero en batalla real cuenta el valor del arquetipo, sólo cuenta en validación o el efecto es incompleto | `chassis.hullHp/radiusM/maxLoadKg/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (proximity y acoustic nunca llegan); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*` (`explosionRadiusM` sólo en `ammo.he`, que ningún arquetipo monta); `mine.*` (ningún arquetipo alcanzable monta minas); `armor.reduction/sector` (sólo el frontal); `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs`, y `costCredits`/`size`/`maxPerVehicle` (sólo validación) |
-| **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `weapon.turretArcRad` (todos los datos valen 2π: la comprobación nunca actúa); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
+| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/rangeM/spreadRad/acceptsAmmo/power.perActionEU`; `chassis.slots[].mount.turretRateRads/turretArcRad` (montura de la ranura, D-B2); `armor.hp` (hp del módulo de blindaje, fuente única); `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.rangeM/maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
+| **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
+| **FUTURE** | Ningún código de simulación la lee | Ninguna propiedad del catálogo (OLA 2). La categoría `utility` no tiene campos propios ni piezas; el comando `utility` no hace nada |
 
-**Seguirían sin efecto aunque se transportara el loadout completo** (hace falta cambiar el motor): `weapon.rangeM`, `radio.rangeM` (y la radio sin filtro de equipo), `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain`, `maxLoadKg`/`maxPerVehicle`/`size`/`costCredits` y `utility.*`.
+**Gate CATALOG_CONTRACT (OLA 2).** `packages/module-catalog/field-status.ts` clasifica cada campo del esquema (ACTIVE / VALIDATION_ONLY / FUTURE / REMOVE) con su consumidor y una mutación; `catalog-contract.test.ts` lo demuestra con una batalla de sonda (`catalog-probe.ts`) que pasa por `resolveVehicle`: un campo ACTIVE mutado tiene que cambiar la batalla, uno VALIDATION_ONLY tiene que cambiar el veredicto del validador y no la batalla. Un campo declarado sin consumidor pone el gate en rojo. Desde G1 (ronda 4), cada campo ACTIVE declara además los canales de comportamiento que GOBIERNA (`governs`: movimiento, torreta, proyectiles, minas, sensores, radio, daño a otros, casco, marcador; nunca la energía, el estado de los módulos ni los eventos, que son contabilidad o declaración): su mutación tiene que cambiar al menos uno, y con su consumidor anulado en el test (bloque D4, ablación) también. Un campo que sólo mueve su propio estado (energía que no limita nada, un estado de módulo que nada lee, un evento de rechazo que no ocurre) pone el gate en rojo. Desde la ronda 5, esas comprobaciones positivas (D1 y D4) se evalúan con el RNG de la sonda NEUTRALIZADO: el valor de cada tirada depende sólo del tick, no de cuántas se hayan consumido, así que un campo no puede «tener efecto» sólo porque cambie el número de tiradas; el bloque D5 lo comprueba inyectando tiradas que nadie usa. Las comprobaciones negativas (D0, D2, D3) siguen con el RNG del motor, donde ser más sensible es más estricto. El efecto real del error del radar lo cubre además `apps/arena-engine/tests/g1-radar-error.test.ts` (posición informada frente a real). Desde la ronda 6, los canales de proyectiles y minas no registran el id interno de la entidad (sale de un contador del motor) sino una etiqueta observable: propietario y orden de aparición; el bloque D6 lo comprueba gastando ids de entidad que nadie usa.
 
-## Campos sin efecto en el motor
+**`weapon.rangeM` es el alcance real** (OLA 2, P-2): `resolveVehicle` lo convierte en la vida del proyectil, `rangeM · TICK_HZ / projectileSpeedMs` ticks (entero, o el loadout no resuelve). Los datos se fijaron al alcance que ya tenían con el TTL fijo de 90 ticks (cañón 360 m, ametralladoras 600 m): mismo comportamiento, caracterizado en `range-characterization.test.ts`. Hay una sola regla: una spec sin `rangeM`/velocidad o con una vida incoherente no se simula (fail-closed); la regla heredada de 90 ticks se eliminó y los replays anteriores al contrato (0.2.0/0.3.0/0.4.0 previos) dejaron de reproducirse (integración OLA 2).
 
-| Campo | Categoría | Motivo |
+## Campos eliminados en la OLA 2 y campos sólo de validación
+
+| Campo | Categoría | Decisión (OLA 2) |
 |---|---|---|
-| `terrain` | movimiento | `resolveVehicle` no lo pasa |
-| `peakEUs` | energía | no se pasa |
-| `fovRad` | radar | el radar no lo lee |
-| `refreshEveryNDecisions` | sensor | no se pasa |
-| `rangeM` | arma | el alcance real lo da la vida del proyectil (90 ticks) |
-| `rangeM` | radio | `radioReaches` no se llama |
-| `encrypted` | radio | no se pasa |
-| `detectable` | mina | fijado a `true` |
-| `effect`, `magnitude`, `durationTicks` | utilidad | no se pasan; no hay módulos `utility` |
-| `costCredits`, `size`, `maxPerVehicle`, `requiresChassis`, `maxLoadKg`, ranuras | todas | sólo el validador |
+| `terrain` | movimiento | REMOVE (P-2) |
+| `peakEUs` | energía | REMOVE |
+| `refreshEveryNDecisions` | sensor | REMOVE |
+| `encrypted` | radio | REMOVE |
+| `detectable` | mina | REMOVE (lo sustituirá `DeployableVisibilityDef.signature`) |
+| `effect`, `magnitude`, `durationTicks`, `charges`, `cooldownTicks` | utilidad | REMOVE (lo sustituirá `actions`) |
+| `slots[].offsetM` | chasis | REMOVE (sin datos ni consumidor) |
+| `costCredits`, `size`, `maxPerVehicle`, `requiresChassis`, `maxLoadKg`, ranuras | todas | VALIDATION_ONLY: sólo el validador |
+
+Los bloques v2 (`actions`, efectos, deployables, guidance) se validan y resuelven en `packages/module-catalog/v2/` y sólo existen como fixtures `test.fixture_*` (`test-fixtures/`): el esquema de módulo no los admite hasta que el motor los consuma.
 
 ## Persistencia y API
 
@@ -258,10 +265,9 @@ El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout comple
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: catálogo, validación en cliente y servidor, revisiones, resolución a `VehicleSpec`. En el camino real de batalla, la elección de **familia de chasis**. La UI marca el efecto real de cada ranura y propiedad, sin presentar como funcional lo que el motor ignora.
-- **PARCIAL**: todo módulo elegido por el usuario. El motor sabe simularlo, pero el camino real juega el loadout fijo del arquetipo (tabla de [efecto real](#efecto-real-en-batalla-active--partial--future)).
-- **PARCIAL**: radio (sin alcance ni filtro de equipo) y minas, proximidad y acústica (simuladas, pero inútiles con `HunterBot`).
-- **PENDIENTE**: módulos `utility`, efecto de los campos de la tabla anterior y ejecución del código del bot para que el equipamiento de percepción y comunicación importe.
+- **FUNCIONA ACTUALMENTE**: catálogo, validación en cliente y servidor, revisiones, resolución a `VehicleSpec`. La batalla y la partida de humo del build juegan el **loadout real** de la versión. La UI marca el efecto real de cada ranura y propiedad, sin presentar como funcional lo que el motor ignora, y enseña la carga de módulos frente a `maxLoadKg`.
+- **PARCIAL**: radio (sin alcance; sí limitada al propio equipo).
+- **PENDIENTE**: módulos `utility` y efecto de los campos FUTURE de la tabla anterior.
 
 ## Documentación relacionada
 
@@ -273,7 +279,7 @@ El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout comple
 
 ## Verificación
 
-Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
+Verificado contra `27f70bb`; las filas del loadout real, contra `integration/ux-acceptance` (ronda UX-R). Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -287,10 +293,12 @@ Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funciona
 | Daño D6: suelo 10 %, 70/30, sorteo por masa | CODE_VERIFIED | `combat.ts:75-120`; `packages/game-rules/constants.ts:40-42` |
 | Estados de módulo y rendimientos | CODE_VERIFIED | `packages/game-rules/constants.ts:47-66`; `packages/game-rules/index.ts:42-49` |
 | Minas: máximo 3, `detectable` fijo | CODE_VERIFIED | `apps/arena-engine/src/sim/battle.ts:37,536-560`; `combat.ts:209-260` |
-| Radio sin alcance ni filtro de equipo | CODE_VERIFIED | `sensors.ts:192-194,227-232` (`radioReaches` sin llamadas); `apps/arena-engine/tests/radio-regression.test.ts:99-100` |
+| Radio sin alcance (`radioReaches` sin llamadas) | CODE_VERIFIED | `sensors.ts` (`radioReaches`) |
+| Radio limitada al propio equipo | CODE_VERIFIED | `sensors.ts` (`radioDeliverableTo`); `apps/arena-engine/tests/radio-team-isolation.test.ts` |
 | Validación en servidor con `mvp-default` | CODE_VERIFIED | `apps/api/src/services/bots.ts:134-160` |
 | `mine_bay` en chasis ligero → 422 `unknown_slot` | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 §B4 |
 | `HunterBot` sólo usa radar, lidar y `turret_main` | CODE_VERIFIED | `apps/arena-engine/src/stubs.ts:50-100` |
-| Camino real: del loadout sólo viaja la familia del chasis (arquetipo) | CODE_VERIFIED | `apps/api/src/services/battle-run-http-launcher.ts:141-146,617-622,638,712-719`; `apps/arena-engine/src/service.ts:124-125`; `apps/bot-manager/src/container-battle.ts:134-141` |
+| La batalla juega el loadout persistido de la versión (no el arquetipo) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:193-227`; `apps/tournament-worker/src/ux01-loadout-welcome.test.ts` (rc=0, ronda UX-R) |
+| La partida de humo juega el mismo loadout; el arquetipo es reserva declarada en el log | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/bot-manager/src/smoke-vehicle.ts`; `apps/bot-manager/tests/smoke-vehicle.test.ts` (rc=0, ronda UX-R) |
 | Toda propiedad del catálogo clasificada ACTIVE/PARTIAL/FUTURE | CODE_VERIFIED / RUNTIME_VERIFIED | `packages/module-catalog/effect-status.ts`; `packages/module-catalog/effect-status.test.ts` (rc=0) |
-| La UI muestra el efecto real (chasis ACTIVE, arma PARTIAL, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
+| La UI muestra el efecto real (chasis y arma ACTIVE, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |

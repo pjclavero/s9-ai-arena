@@ -52,6 +52,8 @@ describe("R3.7 torneos: crear y listar", () => {
         format: "single_elimination",
         mode: "deathmatch",
         rulesetId: "mvp-default",
+        // VISIBILIDAD · sin marcar la casilla, el torneo se crea SIN retransmisión pública.
+        broadcast: false,
       });
     });
     await waitFor(() => expect(window.location.hash).toBe("#/tournaments/t-nuevo"));

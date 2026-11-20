@@ -18,11 +18,26 @@ import deps from "../engine-deps.json" with { type: "json" };
 export type Vec2 = { x: number; y: number };
 
 let initialized = false;
+/**
+ * FASE 19 (R-RULES) · inicialización EN CURSO, compartida. Antes `initialized` se
+ * marcaba tras el `await`, así que dos `Battle.create` concurrentes (el worker arranca
+ * varias batallas a la vez) ejecutaban `RAPIER.init()` dos veces: la segunda instancia
+ * del WASM sustituía al módulo bajo los mundos ya creados y el siguiente `setLinvel`
+ * reventaba con «recursive use of an object… unsafe aliasing», matando el proceso.
+ */
+let initializing: Promise<void> | null = null;
 
 /** Verifica el checksum del WASM y arranca Rapier. Idempotente. */
 export async function initPhysics(opts: { skipChecksum?: boolean } = {}): Promise<void> {
   if (initialized) return;
+  initializing ??= doInitPhysics(opts).catch((err) => {
+    initializing = null; // un fallo (p. ej. checksum) no deja la promesa envenenada
+    throw err;
+  });
+  return initializing;
+}
 
+async function doInitPhysics(opts: { skipChecksum?: boolean }): Promise<void> {
   if (!opts.skipChecksum) {
     // El campo "exports" del paquete no publica ni el .wasm ni su package.json como
     // subpaths, así que resolvemos el entry point principal (que sí está exportado) y
@@ -60,6 +75,13 @@ export interface RayHit {
   kind: HitKind;
   entityId: string | null;
   point: Vec2;
+}
+
+/** G1.5 · Punto de impacto sobre la cara de un sólido, con su normal exterior. */
+export interface ImpactSurface {
+  readonly point: Vec2;
+  readonly entityId: string;
+  readonly normal: Vec2;
 }
 
 /**
@@ -186,6 +208,32 @@ export class PhysicsWorld {
     h.rb.setAngvel(st * turn, true);
   }
 
+  /**
+   * Restricción DURA de caja para un vehículo (UX-07): si su centro ha quedado fuera de
+   * [minX,maxX]×[minY,maxY] lo devuelve al borde y anula la componente de velocidad que
+   * apunta hacia fuera. Devuelve `true` si tuvo que corregir.
+   *
+   * Por qué hace falta además del muro: el contacto de Rapier es "blando" (corrige la
+   * penetración a lo largo de varios ticks) y `driveVehicle` impone la velocidad cada
+   * tick; un vehículo empujado contra el perímetro por otro se hunde así hasta ~0,35 m
+   * en el muro. El perímetro es una regla del juego, no una sugerencia del solver.
+   */
+  clampInsideBox(id: string, minX: number, maxX: number, minY: number, maxY: number): boolean {
+    const h = this.bodies.get(id);
+    if (!h) return false;
+    const t = h.rb.translation();
+    const x = clamp(t.x, minX, maxX);
+    const y = clamp(t.y, minY, maxY);
+    if (x === t.x && y === t.y) return false;
+    const v = h.rb.linvel();
+    const vx = (x > t.x && v.x < 0) || (x < t.x && v.x > 0) ? 0 : v.x;
+    const vy = (y > t.y && v.y < 0) || (y < t.y && v.y > 0) ? 0 : v.y;
+    h.rb.setTranslation({ x, y }, true);
+    h.rb.setLinvel({ x: vx, y: vy }, true);
+    this.dirty = true;
+    return true;
+  }
+
   /** Empuja un cuerpo (retroceso, explosiones). */
   applyImpulse(id: string, impulse: Vec2): void {
     this.bodies.get(id)?.rb.applyImpulse(impulse, true);
@@ -236,6 +284,181 @@ export class PhysicsWorld {
       return true;
     });
     return inside;
+  }
+
+  /**
+   * G1.5 · Punto de SUPERFICIE de un impacto: el proyectil que viajaba de `from` en
+   * dirección `angle` golpeó el sólido `entityId` (muro o destructible) en `point`.
+   * Devuelve la normal EXTERIOR de la cara por la que entró (la consulta de rayo de ese
+   * collider concreto, con la misma geometría que el impacto), o `null` si no es un
+   * sólido o ya no existe (destructible destruido por el propio impacto).
+   */
+  impactSurface(from: Vec2, angle: number, maxDistance: number, entityId: string, point: Vec2): ImpactSurface | null {
+    const kind = this.kinds.get(entityId);
+    if (kind !== "wall" && kind !== "destructible") return null;
+    const h = this.bodies.get(entityId);
+    if (!h) return null;
+    this.syncQueries();
+    const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+    // G1.5 ronda 2 (P1-1 de la revisión) · el ORIGEN del tramo ya está dentro (o sobre la
+    // frontera) del sólido golpeado: la boca del arma de un vehículo pegado al muro nace
+    // dentro de él. Rapier da entonces toi = 0, el impacto en el propio origen (DENTRO, no
+    // en la cara) y normal (0,0): la premisa de hasLineOfSightFromSurface (P en la frontera
+    // con normal exterior) no se cumple y la onda atravesaba el muro. No hay épsilon: el
+    // punto de impacto se RECALCULA en exacto como el punto por el que la recta del
+    // proyectil ENTRA en el cuboide, con la normal exterior de esa cara (`entryOnCuboid`).
+    // Es la misma definición que en el caso normal (el rayo hacia delante encuentra la cara
+    // de entrada), extendida hacia atrás cuando el origen ya está dentro.
+    if (h.collider.containsPoint(from)) return this.entrySurface(h.collider, from, dir, entityId, point);
+    const hit = h.collider.castRayAndGetNormal(new RAPIER.Ray(from, dir), maxDistance, true);
+    // Origen que justo TOCA la cara (containsPoint puede decir que no en la frontera): toi 0
+    // o normal nula significan lo mismo, el origen no está en espacio libre.
+    if (hit && (hit.timeOfImpact <= 0 || (hit.normal.x === 0 && hit.normal.y === 0)))
+      return this.entrySurface(h.collider, from, dir, entityId, point);
+    const normal = hit ? { x: hit.normal.x, y: hit.normal.y } : this.nearestFaceNormal(h.collider, point);
+    return { point: { x: point.x, y: point.y }, entityId, normal };
+  }
+
+  /** Superficie de ENTRADA de la recta del proyectil en el cuboide (ver `entryOnCuboid`). */
+  private entrySurface(collider: RAPIER.Collider, from: Vec2, dir: Vec2, entityId: string, point: Vec2): ImpactSurface {
+    const e = this.entryOnCuboid(collider, from, dir);
+    // La recta pasa por `from`, que está dentro o sobre el cuboide: siempre corta su frontera.
+    // (Red de seguridad: si no, la cara más próxima al punto, como en el caso sin impacto.)
+    if (!e) return { point: { x: point.x, y: point.y }, entityId, normal: this.nearestFaceNormal(collider, point) };
+    return { point: e.point, entityId, normal: e.normal };
+  }
+
+  /**
+   * G1.5 ronda 2 · Punto por el que la recta `from + t·dir` ENTRA en el cuboide (método de
+   * las placas, en coordenadas locales y en f64): t_entrada = max por eje del t de la placa
+   * cercana; la cara de entrada es la de ese eje, con normal exterior opuesta a `dir` en ese
+   * eje (dir·n < 0). Con el origen dentro, t_entrada ≤ 0 (la entrada queda detrás del
+   * origen, entre el vehículo y la boca); sobre la cara, t_entrada = 0. El punto queda en el
+   * plano de la cara salvo el redondeo f64 (~1e-15 m), así que vuelve a cumplirse la premisa
+   * de hasLineOfSightFromSurface. Un eje con dir exactamente 0 no acota t (recta paralela a
+   * esas caras); si además el origen está fuera de la placa, la recta no corta el cuboide.
+   */
+  private entryOnCuboid(collider: RAPIER.Collider, from: Vec2, dir: Vec2): { point: Vec2; normal: Vec2 } | null {
+    const c = collider.translation();
+    const th = collider.rotation();
+    const he = collider.halfExtents();
+    const cos = Math.cos(th);
+    const sin = Math.sin(th);
+    const o = [(from.x - c.x) * cos + (from.y - c.y) * sin, -(from.x - c.x) * sin + (from.y - c.y) * cos];
+    const u = [dir.x * cos + dir.y * sin, -dir.x * sin + dir.y * cos];
+    const h = [he.x, he.y];
+    let tEnter = -Infinity;
+    let axis = -1;
+    for (let a = 0; a < 2; a++) {
+      if (u[a] === 0) {
+        if (Math.abs(o[a]!) > h[a]!) return null;
+        continue;
+      }
+      const tNear = Math.min((-h[a]! - o[a]!) / u[a]!, (h[a]! - o[a]!) / u[a]!);
+      if (tNear > tEnter) {
+        tEnter = tNear;
+        axis = a;
+      }
+    }
+    if (axis < 0) return null;
+    const nl = axis === 0 ? { x: u[0]! > 0 ? -1 : 1, y: 0 } : { x: 0, y: u[1]! > 0 ? -1 : 1 };
+    return {
+      point: { x: from.x + dir.x * tEnter, y: from.y + dir.y * tEnter },
+      normal: { x: nl.x * cos - nl.y * sin, y: nl.x * sin + nl.y * cos },
+    };
+  }
+
+  /**
+   * G1.5 · Línea de visión desde un punto de SUPERFICIE (onda de un impacto contra un
+   * sólido). Geometría, sin épsilon:
+   *
+   * El punto de impacto P está, en exacto, sobre la frontera del sólido golpeado C; en
+   * coma flotante (Rapier calcula en f32) cae a ±1e-5 m de ella, a menudo DENTRO. Un rayo
+   * sólido que nace dentro de un collider lo «golpea» a distancia 0, así que
+   * `hasLineOfSight(P, víctima)` decía que el propio muro tapaba la onda (P2 «HE contra
+   * muro»). El arreglo no aleja P: decide C por su geometría.
+   *
+   * Todo collider de muro/destructible es un cuboide (convexo). Si P está en la frontera
+   * de un convexo C con normal exterior n, el semiplano H = {x : (x − P)·n ≤ 0} contiene a
+   * C (hiperplano soporte). Para una víctima V con (V − P)·n > 0, todo punto del segmento
+   * P + t(V − P), t ∈ (0, 1], cumple (·)·n = t(V − P)·n > 0: está FUERA de C. C no puede
+   * tapar. Si (V − P)·n < 0 y P está en el interior relativo de la cara, el segmento entra
+   * en el interior de C nada más salir: C SÍ tapa. (V − P)·n = 0 es rasante: el segmento
+   * va por la cara, no por el interior; no tapa.
+   *
+   * El mismo argumento vale para cualquier otro sólido cuya frontera pase por P (muros
+   * coplanarios: p. ej. un muro de borde del mapa y el perímetro implícito comparten la
+   * cara interior): son los colliders que CONTIENEN a P tras el redondeo, y se clasifican
+   * con la normal de su cara más próxima a P. El resto de sólidos se comprueba con el rayo
+   * de siempre, excluyendo esos.
+   *
+   * Por qué el signo es robusto sin tolerancia: la víctima es el centro de un vehículo,
+   * que nunca está a menos de su radio (≥ 1 m, menos la penetración blanda del solver)
+   * del plano de una cara, mientras que el error de P es del orden de 1e-5 m. El producto
+   * (V − P)·n no puede cambiar de signo por el redondeo de P.
+   *
+   * Residual documentado: si P cae exactamente en una ARISTA (esquina del cuboide) la
+   * normal es la de la cara por la que entró el rayo; una víctima detrás del plano de esa
+   * cara pero visible «doblando la esquina» se trata como tapada (conservador; medida cero).
+   */
+  hasLineOfSightFromSurface(surface: ImpactSurface, to: Vec2, ignoreId?: string): boolean {
+    const P = surface.point;
+    const dx = to.x - P.x;
+    const dy = to.y - P.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6) return true;
+    this.syncQueries();
+    // Sólidos cuya frontera pasa por P: el golpeado y los que contienen P tras el redondeo.
+    const touching = new Map<number, Vec2>();
+    const struck = this.bodies.get(surface.entityId);
+    if (struck) touching.set(struck.collider.handle, surface.normal);
+    this.world.intersectionsWithPoint(P, (c: any) => {
+      const handle: number = typeof c === "number" ? c : c.handle;
+      const id = this.colliderToId.get(handle);
+      const kind = id ? this.kinds.get(id) : undefined;
+      if ((kind === "wall" || kind === "destructible") && !touching.has(handle)) {
+        const col = this.bodies.get(id!)!.collider;
+        touching.set(handle, this.nearestFaceNormal(col, P));
+      }
+      return true;
+    });
+    for (const n of touching.values()) if (dx * n.x + dy * n.y < 0) return false;
+    // El resto de sólidos, con el rayo de siempre (los que tocan P ya están decididos).
+    const ignore = ignoreId ? this.bodies.get(ignoreId)?.collider.handle : undefined;
+    const ray = new RAPIER.Ray(P, { x: dx / dist, y: dy / dist });
+    const hit = this.world.castRay(
+      ray,
+      dist,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (c: RAPIER.Collider) => {
+        return c.handle !== ignore && !touching.has(c.handle);
+      },
+    );
+    if (!hit) return true;
+    const id = this.colliderToId.get(hit.collider.handle);
+    const kind = id ? this.kinds.get(id) : undefined;
+    return kind !== "wall" && kind !== "destructible";
+  }
+
+  /** Normal exterior de la cara de un cuboide más próxima a `p` (p cerca de su frontera). */
+  private nearestFaceNormal(collider: RAPIER.Collider, p: Vec2): Vec2 {
+    const c = collider.translation();
+    const th = collider.rotation();
+    const he = collider.halfExtents();
+    const cos = Math.cos(th);
+    const sin = Math.sin(th);
+    // Coordenadas locales del cuboide.
+    const lx = (p.x - c.x) * cos + (p.y - c.y) * sin;
+    const ly = -(p.x - c.x) * sin + (p.y - c.y) * cos;
+    // Distancia con signo a cada par de caras (≈ 0 en la cara de P).
+    const fx = Math.abs(lx) - he.x;
+    const fy = Math.abs(ly) - he.y;
+    const local = fx >= fy ? { x: Math.sign(lx) || 1, y: 0 } : { x: 0, y: Math.sign(ly) || 1 };
+    return { x: local.x * cos - local.y * sin, y: local.x * sin + local.y * cos };
   }
 
   /** ¿Hay línea de visión limpia entre dos puntos? Usado por radar y por el daño de área. */
@@ -296,7 +519,12 @@ export class PhysicsWorld {
     return { awakeBodies, contactPairs };
   }
 
+  private freed = false;
+
+  /** Idempotente (G2/MF): liberar dos veces la memoria WASM de Rapier lanza; aquí no. */
   free(): void {
+    if (this.freed) return;
+    this.freed = true;
     this.world.free();
   }
 }

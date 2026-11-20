@@ -2,6 +2,7 @@
  * T7.5 · Mapas: lectura pública, importación validada con el validador REAL de E4,
  * publicación inmutable y generación procedural determinista (generador real de E4).
  */
+import { mapModeCompatibility, type MapCompatInput } from "../../../../packages/game-rules/map-compat.js";
 import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
@@ -9,7 +10,7 @@ import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 // Código REAL de E4 (T4.2/T4.4): validador de seis comprobaciones y generador con semilla.
 import { validateMap, isPublishable } from "../../../map-service/src/validate/index.js";
 import { generateMap as e4GenerateMap } from "../../../map-service/src/generate/index.js";
@@ -102,6 +103,9 @@ export function mapVersionToJson(m: Record<string, unknown>, viewer?: { userId: 
     widthM: m.width_m ?? undefined,
     heightM: m.height_m ?? undefined,
     supportedModes: m.supported_modes ?? [],
+    // ADR-022 · por modo: ¿se puede elegir? y si no, POR QUÉ (lo enseña «Nueva batalla»).
+    modeCompatibility:
+      content && typeof content === "object" ? mapModeCompatibility(content as MapCompatInput) : undefined,
     thumbnailUrl: m.thumbnail_url ?? undefined,
     generation: m.generation ?? undefined,
   };
@@ -233,11 +237,12 @@ export function mapRoutes(db: Db): Router {
 
   defineOperation(router, "listMaps", async (req, res) => {
     const limit = parseLimit(req.query.limit);
-    const cursor = decodeCursor(req.query.cursor as string | undefined);
+    // Clave del orden: (created_at, map_id, version) → el cursor lleva los dos desempates.
+    const cursor = decodeCursor(req.query.cursor as string | undefined, ["text", "int4"]);
     const auth = req.auth;
     let q = db("map_versions")
       .join("maps", "maps.id", "map_versions.map_id")
-      .select("map_versions.*", "maps.created_by")
+      .select("map_versions.*", "maps.created_by", db.raw(cursorTsSql("map_versions.created_at")))
       .orderBy([
         { column: "map_versions.created_at", order: "desc" },
         { column: "map_versions.map_id", order: "desc" },
@@ -254,14 +259,15 @@ export function mapRoutes(db: Db): Router {
       if (!auth) throw badRequest("mine=true exige sesión");
       q = q.where("maps.created_by", auth.userId);
     }
-    if (cursor)
-      q = q.whereRaw("(map_versions.created_at, map_versions.map_id) < (?, ?)", [cursor.createdAt, cursor.id]);
-    const rows = await q;
+    q = applyCursor(q, cursor, "map_versions.created_at", ["map_versions.map_id", "map_versions.version"]);
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     res.json({
       items: page.map((r: Record<string, unknown>) => mapVersionToJson(r, auth)),
       nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].map_id) : undefined,
+        rows.length > limit
+          ? encodeCursor(page[page.length - 1], [page[page.length - 1].map_id, Number(page[page.length - 1].version)])
+          : undefined,
     });
   });
 

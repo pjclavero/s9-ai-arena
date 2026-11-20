@@ -109,6 +109,51 @@ export function containerBattleOverallTimeoutMs(
 }
 
 /**
+ * Factor del guard PROPORCIONAL del worker de torneos sobre la duración teórica.
+ *
+ * Medido en producción (16/17-nov-2026): las batallas que llegan a 9000 ticks tardan
+ * 315-323 s de reloj, un ratio real/teórico de 1,03-1,06. Con el guard anterior
+ * (`teórico + 15 s fijos`, 321 s) el margen real era de 0 a 6 s y un solo soft lockup
+ * del host lo rompía. Un margen FIJO no escala: crece con la duración teórica porque
+ * la deriva del reloj (ticks que se alargan y no se recuperan) es proporcional a los
+ * ticks. 1,25 deja ~20 puntos porcentuales sobre el peor ratio medido (1,06) y aun así
+ * acota una batalla colgada a ~6,6 min en vez de dejarla abierta.
+ */
+export const BATTLE_GUARD_FACTOR = 1.25;
+
+/**
+ * Plazo del guard global del worker de torneos: `ticks × ms × factor + arranque`.
+ * `ticks` es SIEMPRE `maxBattleTicks(ruleset)` (reglas reales del modo, con prórroga),
+ * nunca una constante. Acotado a `MAX_SET_TIMEOUT_MS` (ver arriba) y nunca por debajo
+ * de la duración teórica más el margen de arranque.
+ */
+export function proportionalBattleGuardMs(
+  ticks: number,
+  tickIntervalMs: number = DEFAULT_TICK_INTERVAL_MS,
+  graceMs: number = CONTAINER_BATTLE_GRACE_MS,
+  factor: number = BATTLE_GUARD_FACTOR,
+): number {
+  const f = Number.isFinite(factor) && factor >= 1 ? factor : 1;
+  const derivado = Math.ceil(theoreticalBattleMs(ticks, tickIntervalMs) * f) + graceMs;
+  if (derivado <= MAX_CONTAINER_BATTLE_TIMEOUT_MS) return derivado;
+  // Igual que `containerBattleOverallTimeoutMs`: el recorte NO es silencioso. Un guard
+  // que tarda ~24,85 días en saltar equivale a no tener guard.
+  console.error(
+    JSON.stringify({
+      level: "warn",
+      service: "tournament-worker",
+      msg: "guard proporcional de la batalla por encima del máximo de setTimeout: se recorta. El guard tardará ~24,85 días en saltar, así que no protege de contenedores colgados: revisa `ticks`/`tickIntervalMs`/factor.",
+      requestedTimeoutMs: derivado,
+      appliedTimeoutMs: MAX_CONTAINER_BATTLE_TIMEOUT_MS,
+      ticks,
+      tickIntervalMs,
+      factor: f,
+    }),
+  );
+  return MAX_CONTAINER_BATTLE_TIMEOUT_MS;
+}
+
+/**
  * Plazo del cliente HTTP de la API para `POST /run`: duración teórica + margen.
  * Con el margen por defecto es SIEMPRE mayor que el guard del motor (quien debe
  * rendirse primero es el motor, que es quien puede limpiar los contenedores).

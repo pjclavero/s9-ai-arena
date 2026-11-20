@@ -33,6 +33,9 @@ export class ProgressParser {
    * una lectura posterior heredando de `Object.prototype`.
    */
   private pending: Record<string, string> = emptyDict<string>();
+  /** EQ5b · instante (ms) del último bloque de progreso; null = ninguno aún. */
+  lastProgressAt: number | null = null;
+  constructor(private readonly clock: () => number = Date.now) {}
 
   /** Alimenta bytes del stdout de ffmpeg (troceados como lleguen). */
   push(chunk: string | Buffer): void {
@@ -55,6 +58,7 @@ export class ProgressParser {
 
   private commit(): void {
     const p = this.pending;
+    this.lastProgressAt = this.clock();
     // B8 · el reseteo también debe ser sin prototipo, o el fix duraría un ciclo.
     this.pending = emptyDict<string>();
     const num = (v: string | undefined) => {
@@ -67,7 +71,10 @@ export class ProgressParser {
       // ffmpeg emite "4500.1kbits/s" o "N/A"
       bitrateKbps: num((p.bitrate ?? "").replace(/kbits\/s$/, "")),
       outTimeSeconds: p.out_time_us ? num(p.out_time_us) / 1e6 : this.stats.outTimeSeconds,
-      droppedFrames: num(p.drop_frames) || this.stats.droppedFrames,
+      // Revisión #242 r2 (H3-1): un `drop_frames=0` del ffmpeg recién relanzado
+      // es un 0 real, no un dato ausente; sólo se conserva el anterior si ffmpeg
+      // no informa la clave. Así la métrica es exactamente la del ffmpeg en curso.
+      droppedFrames: p.drop_frames !== undefined ? num(p.drop_frames) : this.stats.droppedFrames,
       reporting: true,
     };
   }
@@ -89,6 +96,20 @@ export interface MetricsView {
   state: string;
   restarts: number;
   stats: StreamStats;
+  /** EQ5b · 1 si hay una emisión PEDIDA (streaming, retrying o failed). */
+  desired?: boolean;
+  /** EQ5b · segundos desde el último progreso de ffmpeg (-1 si no hay sesión). */
+  progressAgeSeconds?: number;
+  /** EQ5b · 1 si el relé RTMP está publicando. */
+  relayPublishing?: boolean;
+  /** STREAMER §28 · contadores de arranques, paradas y fallos terminales. */
+  counters?: { starts: number; stops: number; failures: number; killed: number };
+  /** STREAMER §28 · segundos desde el arranque de la emisión pedida (0 sin emisión). */
+  uptimeSeconds?: number;
+  /** #256 · puerta de render: 1 si la página está pintada en el display (frame visible). */
+  renderReady?: boolean;
+  /** #256 · veces que la puerta venció o el vigilante vio la pantalla en blanco. */
+  renderBlankEvents?: number;
 }
 
 /** Texto Prometheus (contrato con E10: scrape en la red platform). */
@@ -113,6 +134,58 @@ export function renderPrometheus(view: MetricsView): string {
     "# HELP streamer_restarts_total Reintentos de emision (cortes RTMPS)",
     "# TYPE streamer_restarts_total counter",
     `streamer_restarts_total ${view.restarts}`,
+    // EQ5b · señales para las alertas (alerts.yml, grupo streamer): todas se
+    // condicionan a `streamer_desired == 1`, así que con la emisión parada o
+    // el streaming desactivado ninguna alerta puede saltar.
+    "# HELP streamer_desired 1 si hay una emision pedida (activa, reintentando o agotada)",
+    "# TYPE streamer_desired gauge",
+    `streamer_desired ${view.desired ? 1 : 0}`,
+    "# HELP streamer_progress_age_seconds Segundos desde el ultimo progreso de ffmpeg (-1 sin sesion)",
+    "# TYPE streamer_progress_age_seconds gauge",
+    `streamer_progress_age_seconds ${view.progressAgeSeconds ?? -1}`,
+    "# HELP streamer_relay_publishing 1 si el rele RTMP esta publicando en la ingesta",
+    "# TYPE streamer_relay_publishing gauge",
+    `streamer_relay_publishing ${view.relayPublishing ? 1 : 0}`,
+    "# HELP streamer_failed 1 si la emision se abandono por reintentos agotados",
+    "# TYPE streamer_failed gauge",
+    `streamer_failed ${view.state === "failed" ? 1 : 0}`,
+    // STREAMER §28 · nombres del encargo, sobre el MISMO endpoint (sin sistema
+    // de métricas nuevo). `stream_active` = emisión en curso o reintentando (no
+    // «pedida»: una agotada no está activa).
+    "# HELP stream_active 1 si hay una emision en curso (emitiendo o reintentando)",
+    "# TYPE stream_active gauge",
+    `stream_active ${view.state === "streaming" || view.state === "retrying" ? 1 : 0}`,
+    "# HELP stream_start_total Arranques de emision desde que arranco el servicio",
+    "# TYPE stream_start_total counter",
+    `stream_start_total ${view.counters?.starts ?? 0}`,
+    "# HELP stream_stop_total Paradas de una emision pedida desde que arranco el servicio",
+    "# TYPE stream_stop_total counter",
+    `stream_stop_total ${view.counters?.stops ?? 0}`,
+    "# HELP stream_failures_total Emisiones abandonadas (reintentos agotados, sin credencial o ingesta invalida)",
+    "# TYPE stream_failures_total counter",
+    `stream_failures_total ${view.counters?.failures ?? 0}`,
+    "# HELP stream_reconnects_total Reintentos de emision (cortes de la ingesta o procesos caidos)",
+    "# TYPE stream_reconnects_total counter",
+    `stream_reconnects_total ${view.restarts}`,
+    "# HELP stream_uptime_seconds Segundos desde el arranque de la emision en curso (0 sin emision)",
+    "# TYPE stream_uptime_seconds gauge",
+    `stream_uptime_seconds ${view.uptimeSeconds ?? 0}`,
+    "# HELP stream_frames_total Frames codificados (alias de streamer_frames_total)",
+    "# TYPE stream_frames_total counter",
+    `stream_frames_total ${view.stats.frames}`,
+    "# HELP stream_dropped_frames_total Frames descartados (alias de streamer_dropped_frames_total)",
+    "# TYPE stream_dropped_frames_total counter",
+    `stream_dropped_frames_total ${view.stats.droppedFrames}`,
+    "# HELP stream_killed_total Procesos hijos que hubo que matar con SIGKILL",
+    "# TYPE stream_killed_total counter",
+    `stream_killed_total ${view.counters?.killed ?? 0}`,
+    // #256 · la emisión de YouTube salió en blanco con todas las métricas en verde.
+    "# HELP streamer_render_ready 1 si el display muestra la pagina pintada (frame no blanco ni uniforme)",
+    "# TYPE streamer_render_ready gauge",
+    `streamer_render_ready ${view.renderReady ? 1 : 0}`,
+    "# HELP streamer_render_blank_total Veces que la pagina no se pinto a tiempo o la pantalla se quedo en blanco",
+    "# TYPE streamer_render_blank_total counter",
+    `streamer_render_blank_total ${view.renderBlankEvents ?? 0}`,
     "",
   ].join("\n");
 }

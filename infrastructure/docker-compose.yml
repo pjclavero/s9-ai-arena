@@ -200,8 +200,10 @@ services:
       # entregaba (un valor en infrastructure/.env no tenía efecto). Defaults
       # IDÉNTICOS a los del código: declararlas no cambia el comportamiento.
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      # MG · valor INICIAL (bootstrap) de los ajustes de runtime; después manda la BD.
       S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
       S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      S9_RUNTIME_SETTINGS_REFRESH_MS: ${S9_RUNTIME_SETTINGS_REFRESH_MS:-}
       S9_METRICS_ENABLED: ${S9_METRICS_ENABLED:-}
       # GET /keys/artifact-signing publica la clave PÚBLICA de verificación.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
@@ -236,7 +238,15 @@ services:
       # igual que arena_engine_internal_secret. Sin él, la ingesta responde 401
       # y se reporta `replay.ingested: false` (fail-closed, nunca se finge).
       REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
-    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key]
+      # EQ5b · Administración → Streaming. La API habla con la API interna de
+      # control del streamer (red platform) con el secreto compartido, y SELLA
+      # las claves de emisión con la clave PÚBLICA (no puede descifrarlas).
+      # Sin streamer desplegado (perfil `streaming`), la pantalla lo dice.
+      STREAMER_CONTROL_URL: ${STREAMER_CONTROL_URL:-http://streamer:8090}
+      STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
+      STREAM_SECRETS_PUBLIC_KEY_FILE: /run/secrets/stream_secrets_public
+      STREAMER_BROADCAST_BASE_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
+    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public]
     volumes:
       # B7 · SOLO LECTURA, y justificado por el código: getReplay y
       # verifyReplay (apps/api/src/routes/battles.ts) hacen
@@ -338,6 +348,10 @@ services:
         APP_PATH: apps/tournament-worker
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
+    # OLA2-MF · el SIGTERM hace abortAll + worker.stop(): cada batalla en curso hace su teardown (TERM→KILL
+    # de 5 s + borrado, y el 409 de AutoRemove hasta 15 s). Con los 10 s por defecto Docker mataba el
+    # proceso a mitad; lo que quedara lo recoge el reaper, pero mejor no depender de él.
+    stop_grace_period: 45s
     # REVIEW (cierre funcional) · `arena`: los contenedores de los bots se conectan
     # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
     # en ESTE proceso. Deuda aceptada y registrada (TD-033, ex TD-A1): el proceso
@@ -359,11 +373,18 @@ services:
       # desde `ready` hasta su HELLO (docs/operations/configuration.md).
       SANDBOX_STARTUP_TIMEOUT_MS: ${SANDBOX_STARTUP_TIMEOUT_MS:-30000}
       BOT_EXECUTION_TIMEOUT_MS: ${BOT_EXECUTION_TIMEOUT_MS:-5000}
+      # Carga del host (PR C): vacío = automático; ver .env.example.
+      TOURNAMENT_WORKER_CONCURRENCY: ${TOURNAMENT_WORKER_CONCURRENCY:-}
+      TOURNAMENT_WORKER_CPU_SAMPLE_MS: ${TOURNAMENT_WORKER_CPU_SAMPLE_MS:-2000}
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # El gateway de espectador (en este proceso) aplica la MISMA capability
-      # pública que la API al emitir el ticket anónimo (TD-030).
+      # pública que la API al emitir el ticket anónimo (TD-030). MG · son sólo el
+      # FALLBACK hasta que la API cree la fila de ajustes; este proceso la relee cada
+      # S9_RUNTIME_SETTINGS_REFRESH_MS y no la crea.
       S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
+      S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      S9_RUNTIME_SETTINGS_REFRESH_MS: ${S9_RUNTIME_SETTINGS_REFRESH_MS:-}
       SPECTATE_PORT: "8081"
       REPLAYS_DIR: /data/replays
       # B7 · directorios de datos cuya propiedad ajusta el entrypoint de la
@@ -745,7 +766,11 @@ services:
     environment:
       BROADCAST_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
       RTMPS_URL: ${RTMPS_URL:-rtmps://a.rtmps.youtube.com/live2}
+      # Clave heredada de despliegue (opcional). Lo normal (EQ5b) es configurarla
+      # desde Administración → Streaming: llega SELLADA y se abre con la privada.
       STREAM_KEY_FILE: /run/secrets/stream_key
+      STREAM_SECRETS_PRIVATE_KEY_FILE: /run/secrets/stream_secrets_private
+      STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
       # E11/T11.2: rtmps (emitir) | record (solo grabación a arena_replays/video, E11.M)
       STREAM_MODE: ${STREAM_MODE:-rtmps}
       # x264 por software (base); nvenc exige GPU con passthrough en Proxmox (runbook)
@@ -771,10 +796,18 @@ services:
       # 1000:1000 igual que `node`: lo comprueba el build de la imagen con `stat`.
       ARENA_DATA_DIRS: /data/replays
       LOG_FORMAT: json
+      # DIAG · tap PASIVO de la señal FLV que recibe el relé (apps/streamer/src/tap.ts).
+      # APAGADO por defecto; sólo diagnóstico. Guarda el último keyframe (≤ MAX_FILES
+      # capturas, ≤ MAX_MB) en /tmp del contenedor; se lee por GET /diag/tap* (con el
+      # secreto de control). Ver docs/operations/streaming.md § Diagnóstico.
+      STREAM_TAP_ENABLED: ${STREAM_TAP_ENABLED:-false}
+      STREAM_TAP_INTERVAL_SEC: ${STREAM_TAP_INTERVAL_SEC:-10}
+      STREAM_TAP_MAX_FILES: ${STREAM_TAP_MAX_FILES:-10}
+      STREAM_TAP_MAX_MB: ${STREAM_TAP_MAX_MB:-32}
     volumes:
       # Solo para el modo grabación E11.M (clips a arena_replays/video).
       - arena_replays:/data/replays
-    secrets: [stream_key]
+    secrets: [stream_key, stream_secrets_private, streamer_control_secret]
     healthcheck:
       # La API interna de control responde aunque la emisión esté parada; el
       # estado de la emisión en sí lo vigila E10 por /metrics (streamer_up).
@@ -785,7 +818,22 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: { cpus: "4.0", memory: 4G }
+        limits: { cpus: "4.0", memory: 4G, pids: 512 }
+    # STREAMER §15-§16 · aislamiento:
+    #  - init: tini como PID 1 recoge a los descendientes huérfanos (Chromium
+    #    lanza zygote/GPU/renderers); sin él quedarían zombis en el contenedor.
+    #  - cap_drop ALL y sólo lo que necesita el entrypoint de datos como root
+    #    durante un instante (chown del volumen y su-exec a uid 1000); después
+    #    el proceso corre como `streamer` sin capacidades (no-new-privileges).
+    #  - limits.pids acota una fuga de procesos/hilos de Chromium y ffmpeg.
+    #  - shm_size: con el /dev/shm por defecto (64 MiB) Chromium llegó a usar
+    #    54 MiB en una emisión real de 12 min (tests/streaming-e2e/measure.sh);
+    #    agotarlo tumba el renderer (pantalla negra). 256 MiB deja margen.
+    #  - Sin docker.sock, sin red `data` (no alcanza la BD) y sólo sus secretos.
+    init: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    shm_size: 256m
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -924,6 +972,12 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 512M }
+    # OLA2-MF · tini como PID 1. Sin él, PID 1 era `crond` (exec del
+    # entrypoint), que sólo espera a SUS trabajos: los huérfanos reparentados a
+    # PID 1 —el `ssh` que lanza restic para el backend sftp:, los hijos de los
+    # `docker exec` del healthcheck— quedaban zombis para siempre (44 `ssh`
+    # zombis colgando de crond en producción). Mismo criterio que el streamer.
+    init: true
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -1231,6 +1285,15 @@ secrets:
     file: ./secrets/artifact_verify_key.pem
   stream_key:
     file: ./secrets/stream_key.txt
+  # EQ5b §19 · par RSA para sellar las claves de emisión configuradas desde la
+  # web (api: sólo la pública; streamer: la privada) y secreto del control
+  # interno api<->streamer. Los genera init-secrets.sh.
+  stream_secrets_private:
+    file: ./secrets/stream_secrets_private.pem
+  stream_secrets_public:
+    file: ./secrets/stream_secrets_public.pem
+  streamer_control_secret:
+    file: ./secrets/streamer_control_secret.txt
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
   restic_password:

@@ -75,5 +75,52 @@ export default class Bot extends ArenaBot {
 }
 `;
 
+/** UX-04 · hook mal escrito: arranca y responde, pero con el hook por defecto (inerte). */
+export const PY_HOOK_TYPO = `from arena_sdk import ArenaBot
+
+
+class Bot(ArenaBot):
+    def on_observaton(self, observation):
+        return {"move": {"throttle": 1.0, "steer": 0.0}}
+`;
+
+/** UX-04 · bot quieto A PROPÓSITO: implementa el hook y devuelve {}. Debe pasar. */
+export const PY_QUIET = `from arena_sdk import ArenaBot
+
+
+class Bot(ArenaBot):
+    def on_observation(self, observation):
+        return {}
+`;
+
+/** UX-04 · hook mal escrito en JS (onObservaton). */
+export const JS_HOOK_TYPO = `import { ArenaBot } from "@arena/sdk";
+
+export default class Bot extends ArenaBot {
+  onObservaton(observation) {
+    return { move: { throttle: 1, steer: 0 } };
+  }
+}
+`;
+
+/** UX-04 · bot JS quieto a propósito: implementa onObservation y devuelve {}. */
+export const JS_QUIET = `import { ArenaBot } from "@arena/sdk";
+
+export default class Bot extends ArenaBot {
+  onObservation() {
+    return {};
+  }
+}
+`;
+
+/** UX-02 · excepción en tiempo de ejecución en la línea 6 del código del usuario. */
+export const PY_NAME_ERROR = `from arena_sdk import ArenaBot
+
+
+class Bot(ArenaBot):
+    def on_observation(self, observation):
+        return {"move": {"throttle": velocidad}}
+`;
+
 export const pyFiles = (code: string): SourceFile[] => wrapSingleFile("python", code);
 export const jsFiles = (code: string): SourceFile[] => wrapSingleFile("node", code);

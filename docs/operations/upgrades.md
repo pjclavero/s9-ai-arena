@@ -338,7 +338,14 @@ La API no migra al arrancar. Tras desplegar una versión con migraciones nuevas:
 $DC exec -w /app api npx tsx apps/api/src/db/cli.ts migrate
 ```
 
-Hazlo con copia previa. `rollback:1` revierte exactamente una migración; `rollback:all` destruye el
+Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la última DE LA LISTA
+entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
+atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
+donde esté. Sólo admite una **lista cerrada** (`NAMED_ROLLBACK_ALLOWED` en
+`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`
+y `019_visibility_broadcast`, las que sólo tocan sus propias tablas o columnas; la 019 además
+reescribe la función compartida `s9_bot_version_guard`, ver su vuelta atrás); cualquier otra, `001_identity` incluida, se rechaza
+sin tocar la BD (#241, R4-2). `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 ## Vuelta atrás
@@ -348,6 +355,100 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 - **Datos:** sólo restauración desde restic ([restore.md](restore.md)). **No hay snapshots de VM**
   en la instalación de referencia: cualquier `qm rollback` de documentos anteriores apunta a
   snapshots que ya no existen ([TD-007](../roadmap/technical-debt.md#td-007)).
+- **Reglas de batalla y motor 0.4.0 (ADR-021/022, migración 016):**
+  - **Antes de desplegar:** que no haya batallas `running` (un checkpoint 0.3.0 no se reanuda con
+    0.4.0). Copia de seguridad (`pg_dump -Fc`, `backup.md`) inmediatamente antes de migrar.
+  - **Migración 016** (`016_battle_rules`, detrás de `015_bot_retired`) sólo añade `battles.rules` y `tournaments.rules` (jsonb, nullable); no toca
+    filas existentes. Probada en `apps/api/src/db/migration-016.test.ts` (upgrade con datos previos,
+    rollback, backup/restore lógico) y en un simulacro con `pg_dump -Fc`/`pg_restore` reales sobre
+    `postgres:16-alpine` (informe del EQUIPO 2, 2026-11-02).
+  - **Tras desplegar:** los replays 0.3.0 se verifican con 0.4.0 (`verifiedWith: "0.4.0"`); los 0.2.0
+    y anteriores siguen dando `engine_version_mismatch`.
+  - **Vuelta atrás a ≤ RC5.5:** restaurar la copia previa, o bien, ANTES de cambiar de versión, vaciar
+    las batallas pendientes con copia de reglas (el worker anterior ignora `battles.rules` y las
+    jugaría con otras reglas) y no dejar torneos con copia a medio jugar:
+
+  ```sql
+  -- Antes de la vuelta atrás, con copia hecha. Revisa los recuentos antes de ejecutar.
+  SELECT status, count(*) FROM battles WHERE rules IS NOT NULL AND status IN ('scheduled','running') GROUP BY status;
+  SELECT count(*) FROM tournaments WHERE rules IS NOT NULL AND state NOT IN ('finished','cancelled');
+  UPDATE battles SET status = 'failed', failure_kind = 'infrastructure', finished_at = now()
+   WHERE status = 'scheduled' AND rules IS NOT NULL;
+  ```
+
+  Las batallas `running` con copia deben terminar (o marcarse `failed` igual) antes de parar el
+  worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
+  replays 0.4.0. Revertir la 016 (`rollback:name 016_battle_rules`; ya no es la última) borra las
+  copias de reglas (no resultados ni replays).
+
+- **Motor 0.5.0 (OLA 2, ADR-024, sin migración):**
+  - **Antes de desplegar:** que no haya batallas `running`, porque un checkpoint no se reanuda entre versiones. Decidir qué se hace con los replays `formatVersion: 1` de producción (archivar o borrar): el motor 0.5.0 no los lee y dan `format_version_mismatch`, que no es «manipulado».
+  - **Tras desplegar:** las batallas nuevas graban `engine: "0.5.0"`. Las copias de reglas que ya existían conservan `engineVersion: "0.4.0"`: es sólo un metadato, y se juegan con 0.5.0 y `rearmPolicy` `self` si no la declaran.
+  - **Vuelta atrás:** el motor anterior no re-simula los replays 0.5.0. Antes, vaciar las batallas `scheduled` con copia de reglas (procedimiento de 0.4.0, arriba).
+
+- **Administración de streaming (ADR-023, migración 017):**
+  - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
+    `streamer_control_secret.txt` y el par `stream_secrets_private.pem` / `stream_secrets_public.pem`.
+    Sin ellos Compose no arranca la API (son secretos declarados). Copia de seguridad (`pg_dump -Fc`)
+    inmediatamente antes de migrar.
+  - **Migración 017** (`017_streaming_admin`) sólo CREA `streaming_settings` (una fila, streaming
+    DESACTIVADO), `streaming_credentials` (metadatos y sobre sellado; nunca la clave en claro) y
+    `streaming_sessions`; no toca ninguna tabla existente. En una BD que ya tenga la 018, `migrate`
+    aplica la 017 pendiente (queda DETRÁS de la 018 en `knex_migrations`). Probada en
+    `apps/api/src/db/migration-017.test.ts` (upgrade con datos, invariantes, rollback y backup/restore
+    lógico, también con la 018 detrás) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre
+    `postgres:16-alpine`.
+  - **Vuelta atrás:** parar antes la emisión desde la web y revertir la 017 POR NOMBRE, nunca con
+    `rollback:1` (ver «Orden 017/018» abajo: `rollback:1` revertiría la 018):
+
+    ```bash
+    $DC exec -w /app api npx tsx apps/api/src/db/cli.ts rollback:name 017_streaming_admin
+    ```
+
+    La 017 sólo crea sus tres tablas, así que revertirla no toca la 018 ni ninguna otra. Revertirla
+    borra la configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
+    (`audit_log`, acciones `streaming.*`) se conserva. Las claves habría que volver a introducirlas.
+
+- **Clasificación: marca de reversión (PR #229, migración 018):**
+  - **Migración 018** (`018_battle_reverted`) sólo añade
+    `battles.reverted_at` (timestamptz, nullable): la marca de reversión propia de la batalla
+    (política de clasificación `official_played_not_reverted`, PR #229). No toca filas existentes ni
+    marca nada como revertido. Probada en `apps/api/src/db/migration-018.test.ts` (upgrade con datos,
+    rollback y backup/restore lógico).
+  - **Vuelta atrás:** revertir la 018 (`rollback:name 018_battle_reverted`) borra SÓLO la marca: el
+    Elo de las batallas revertidas sigue devuelto en `rating_events`, pero el código anterior volvería
+    a contarlas en V-D-E. Antes de la vuelta atrás, comprobar
+    `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no es 0, hacer copia de esa
+    lista.
+  - **Orden 017/018 (P3, «N1»):** `rollback:1` (`rollbackLast`) revierte la última migración **de la
+    lista** entre las aplicadas, no la última aplicada. Con la lista 017 → 018, `rollback:1` revierte
+    SIEMPRE la 018, aunque la 017 se aplicara después (BD que ya tenía la 018): deshacer el
+    despliegue del streaming con `rollback:1` borraría `battles.reverted_at` y dejaría puesta la 017.
+    Instrucción segura: antes de cualquier vuelta atrás, comprobar
+    `SELECT name FROM knex_migrations ORDER BY id;` y revertir la migración que se quiere **por
+    nombre** con `rollback:name <NNN_tema>`, no con `rollback:1`.
+
+- **Visibilidad y retransmisión (encargo VISIBILIDAD, migración 019):**
+  - **Migración 019** (`019_visibility_broadcast`) hace dos cosas. Añade
+    `tournaments.broadcast` (boolean NOT NULL DEFAULT false), con el que el torneo autoriza su
+    retransmisión pública; todos los torneos existentes quedan en `false`, así que se comportan igual que
+    antes. Y reescribe `s9_bot_version_guard()` sin la cláusula que hacía irreversible `code_public`
+    (enmienda a D9); el resto del guardián no cambia. No toca ninguna fila. Probada en
+    `apps/api/src/db/migration-019.test.ts` (upgrade con datos, rollback y backup/restore lógico).
+  - **Vuelta atrás** (`rollback:name 019_visibility_broadcast`). El guardián vuelve a imponer D9: las
+    versiones cuyo código se ocultó siguen ocultas, porque no se toca ninguna fila; sólo deja de poder
+    volver a ocultarse lo público. Se pierde **sólo** la marca `broadcast` de los torneos: sus
+    batallas con bots no públicos vuelven a ser privadas y su emisión se rechaza. Antes de la vuelta
+    atrás, guardar `SELECT id FROM tournaments WHERE broadcast;` para restaurar la marca tras el
+    re-upgrade (`UPDATE tournaments SET broadcast = true WHERE id IN (…)`).
+  - **Por qué la 019 está en `NAMED_ROLLBACK_ALLOWED`** (#244, P2-1). El procedimiento anterior usa
+    `rollback:name`, y desde #242 esa orden sólo acepta la lista cerrada; sin la 019 en ella, la orden
+    se rechazaba y esta vuelta atrás no funcionaba (RV-M2, `review-244-migration.test.ts`). Su down
+    no sólo quita `tournaments.broadcast`: también **reescribe `s9_bot_version_guard`** con la
+    definición de la 012. Por eso **la 019 sale de la lista si otra migración posterior vuelve a
+    reescribir `s9_bot_version_guard`**: revertirla por nombre pisaría el guardián más nuevo. Quien
+    añada esa migración debe quitarla de la lista (y de la aserción de
+    `apps/api/src/streamer-real.test.ts`) y dejar aquí `rollback:1` en orden como única vía.
 
 ## Errores / limitaciones
 

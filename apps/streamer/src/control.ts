@@ -3,39 +3,202 @@
  * puerto JAMÁS se publica — el streamer solo asoma a `public` para la salida
  * RTMPS, sin puertos).
  *
- *   POST /control/start  {broadcastUrl?}  → arranca/re-apunta la emisión
- *   POST /control/stop                    → para la emisión
+ *   POST /control/start  {…SessionPlan}   → arranca/re-apunta la emisión
+ *   POST /control/stop  {ifSession?}      → para la emisión (idempotente; condicionada a la sesión)
+ *   POST /control/test   {ingestUrl, credential} → TLS + handshake + connect, SIN publicar
  *   GET  /status                          → estado + métricas (SIN clave)
+ *   GET  /recordings                      → grabaciones MP4, espacio en disco
+ *   POST /recordings/retention {policy, dryRun} → retención (devuelve lo borrado para auditar)
  *   GET  /metrics                         → Prometheus para E10
  *   GET  /healthz                         → healthcheck del Compose
  *   GET  /version                         → identidad de build (ADR-016)
+ *   GET  /diag/tap                        → DIAG: estado del tap pasivo de ingesta (OFF por defecto)
+ *   GET  /diag/tap/latest                 → DIAG: metadatos de la última captura (timestamp, PTS)
+ *   GET  /diag/tap/latest.flv             → DIAG: la última captura (FLV mínimo: secuencia AVC + keyframe)
+ *   GET  /diag/tap/latest.jpg             → DIAG: esa captura decodificada A DEMANDA (un fotograma)
+ *
+ * EQ5b · Con STREAMER_CONTROL_SECRET_FILE configurado, todo menos /metrics,
+ * /healthz y /version exige la cabecera `x-streamer-auth` (comparación en
+ * tiempo constante): otro contenedor de la red `platform` no puede arrancar
+ * una emisión ni leer el estado saltándose el RBAC de la API.
+ *
+ * EQ5c (revisión EQ6b, P2-3) · FALLA EN CERRADO: si el secreto se exige
+ * (STREAMER_CONTROL_SECRET_FILE definido) y no se puede leer o está vacío, todo
+ * lo autenticado responde 401 y /healthz 503 (contenedor `unhealthy`, visible);
+ * nunca queda abierto. El secreto se relee en cada petición (rotar sin reiniciar).
+ *
+ * EQ5c (P2-2) · La credencial sellada sólo se abre si la plataforma y la ingesta
+ * de la orden casan con las selladas (packages/stream-secrets, `bind`).
+ * EQ5c (P2-1) · /control/test tiene un plazo total: vencido, se cierra el socket.
  *
  * Ninguna respuesta ni log contiene la clave RTMPS: /status describe el
- * destino redactado y el body de /control/start solo admite broadcastUrl.
+ * destino redactado y la credencial sólo entra SELLADA.
  */
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { timingSafeEqual } from "node:crypto";
+import type { Duplex } from "node:stream";
 import { versionPayload } from "../../../packages/build-info/index.js";
+import { canonicalIngestUrl, openSecret, SealedSecretError } from "../../../packages/stream-secrets/index.js";
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
+import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
+import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
+import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
+import { checkWritableDataDir } from "../../../packages/data-dir/index.js";
+import { readFile } from "node:fs/promises";
+import { decodeTapJpeg, readLatestCapture, type IngestTap } from "./tap.js";
 
-const SAFE_URL = /^https?:\/\/[^\s]{1,512}$/;
+const MAX_BODY = 16 * 1024;
+/** Plazo total de /control/test (TLS + handshake + connect); vencido, se cierra el socket. */
+export const TEST_DEADLINE_MS = 15_000;
 
-export function createControlServer(opts: {
+export interface ControlOptions {
   supervisor: StreamSupervisor;
   config: StreamerConfig;
   logger: Logger;
-}): Server {
-  const { supervisor, config, logger } = opts;
+  capabilities?: Capabilities;
+  /**
+   * Secreto compartido con la API. `null` = control abierto (sólo compatibilidad,
+   * y sólo si `requireControlSecret` es falso). Una función se evalúa en cada
+   * petición (rotación sin reinicio).
+   */
+  controlSecret?: string | null | (() => string | null);
+  /**
+   * El despliegue EXIGE secreto (STREAMER_CONTROL_SECRET_FILE definido): si no
+   * se puede obtener, se deniega todo (fail-closed), nunca se abre.
+   */
+  requireControlSecret?: boolean;
+  /** Plazo de /control/test (pruebas). */
+  testDeadlineMs?: number;
+  /** Lee la clave privada de apertura de credenciales (null = no configurada). */
+  readPrivateKey?: () => string | null;
+  /** Lee la clave de despliegue heredada (STREAM_KEY_FILE); null = no hay. */
+  readLegacyKey?: () => string | null;
+  allowPlainRtmp?: boolean;
+  dial?: Dialer;
+  now?: () => number;
+  /** DIAG · tap pasivo de ingesta (null/ausente = apagado). */
+  tap?: IngestTap | null;
+  /** DIAG · binario para la decodificación PUNTUAL de /diag/tap/latest.jpg. */
+  ffmpegBin?: string;
+  /** DIAG · decodificador inyectable (pruebas). */
+  decodeJpeg?: (flvPath: string) => Promise<Buffer>;
+}
 
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_BODY) {
+        reject(new Error("too_large"));
+        req.destroy();
+        return;
+      }
+      raw += c;
+    });
+    req.on("end", () => resolve(raw));
+    req.on("error", reject);
+  });
+}
+
+function authorized(req: IncomingMessage, secret: string | null, required: boolean): boolean {
+  if (!secret) return !required;
+  const got = req.headers["x-streamer-auth"];
+  if (typeof got !== "string") return false;
+  const a = Buffer.from(got);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function sameIngest(a: string, b: string): boolean {
+  try {
+    return canonicalIngestUrl(a) === canonicalIngestUrl(b);
+  } catch {
+    return false;
+  }
+}
+
+export function createControlServer(opts: ControlOptions): Server {
+  const { supervisor, config, logger } = opts;
+  const caps: Capabilities = opts.capabilities ?? { nvenc: null };
+  const now = opts.now ?? Date.now;
+  const required = opts.requireControlSecret === true;
+  const currentSecret = (): string | null => {
+    const s = opts.controlSecret;
+    if (typeof s === "function") {
+      try {
+        return s() || null;
+      } catch {
+        return null;
+      }
+    }
+    return s || null;
+  };
+
+  /**
+   * Clave para una orden: sellada (web) —sólo si está atada al destino de la
+   * orden— o la heredada del despliegue.
+   */
+  function resolveKey(
+    credential: unknown,
+    expected: { ingest: string; platform: string | null } | null,
+  ): { key: string | null; error?: string; status?: number } {
+    if (credential) {
+      if (!expected || !expected.platform) {
+        return {
+          key: null,
+          status: 400,
+          error: "platform obligatoria con credencial (el sobre está atado a su destino)",
+        };
+      }
+      const pem = opts.readPrivateKey?.() ?? null;
+      if (!pem) return { key: null, status: 503, error: "el streamer no tiene la clave privada de credenciales" };
+      try {
+        return { key: openSecret(credential, pem, { ingest: expected.ingest, platform: expected.platform }) };
+      } catch (e) {
+        if (e instanceof SealedSecretError && e.code === "binding_mismatch") {
+          logger("warn", "control: credencial sellada para otro destino; orden rechazada", {
+            target: expected.ingest.replace(/\/[^/]*$/, "/***"),
+          });
+        } else {
+          // EQ5d (revisión EQ6c, P3) · también se registran los sobres que no se
+          // pueden abrir (etiqueta manipulada o truncada, otra clave, formato): un
+          // goteo de `undecryptable` es la huella de alguien probando sobres.
+          logger("warn", "control: credencial sellada rechazada; orden rechazada", {
+            code: e instanceof SealedSecretError ? e.code : "invalid",
+            target: expected.ingest.replace(/\/[^/]*$/, "/***"),
+          });
+        }
+        return { key: null, status: 409, error: e instanceof SealedSecretError ? e.message : "credencial inválida" };
+      }
+    }
+    // Clave heredada del despliegue (STREAM_KEY_FILE): sólo hacia la ingesta del
+    // PROPIO despliegue (STREAM_RTMPS_URL). Si la orden apunta a otra ingesta, la
+    // clave no sale (misma propiedad que el sobre atado a su destino).
+    if (expected && !sameIngest(expected.ingest, config.rtmpsUrl)) return { key: null };
+    try {
+      return { key: opts.readLegacyKey?.() ?? null };
+    } catch {
+      return { key: null };
+    }
+  }
+
+  let jpegBusy = false;
   return createServer((req, res) => {
     const respond = (status: number, body: unknown, contentType = "application/json") => {
-      res.writeHead(status, { "content-type": contentType });
+      res.writeHead(status, { "content-type": contentType, "cache-control": "no-store" });
       res.end(typeof body === "string" ? body : JSON.stringify(body));
     };
     const url = (req.url ?? "").split("?")[0];
 
     if (req.method === "GET" && url === "/healthz") {
+      // Secreto exigido e ilegible ⇒ unhealthy (visible), nunca «ok» con el control abierto.
+      if (required && !currentSecret()) {
+        return respond(503, { ok: false, state: supervisor.state, error: "control_secret_unavailable" });
+      }
       return respond(200, { ok: true, state: supervisor.state });
     }
 
@@ -47,56 +210,334 @@ export function createControlServer(opts: {
       return respond(200, versionPayload(process.env, "streamer"));
     }
 
-    if (req.method === "GET" && url === "/status") {
-      return respond(200, {
-        state: supervisor.state,
-        mode: config.mode,
-        encoder: config.encoder,
-        broadcastUrl: supervisor.currentBroadcastUrl,
-        target: config.mode === "record" ? config.recordDir : `${config.rtmpsUrl}/***`,
-        restarts: supervisor.restarts,
-        stats: supervisor.metrics.snapshot(),
-      });
-    }
-
     if (req.method === "GET" && url === "/metrics") {
+      const started = supervisor.startedAtMs;
+      const last = Math.max(supervisor.metrics.lastProgressAt ?? 0, started ?? 0);
       const text = renderPrometheus({
         state: supervisor.state,
         restarts: supervisor.restarts,
         stats: supervisor.metrics.snapshot(),
+        desired: supervisor.desired,
+        progressAgeSeconds:
+          supervisor.desired && started !== null ? Math.max(0, Math.round((now() - last) / 1000)) : -1,
+        relayPublishing: supervisor.relayState === "publishing",
+        counters: supervisor.counters,
+        uptimeSeconds: supervisor.active && started !== null ? Math.max(0, Math.round((now() - started) / 1000)) : 0,
+        renderReady: supervisor.render.state === "ready",
+        renderBlankEvents: supervisor.render.blankEvents,
       });
       return respond(200, text, "text/plain; version=0.0.4");
     }
 
-    if (req.method === "POST" && (url === "/control/start" || url === "/control/stop")) {
-      let raw = "";
-      req.on("data", (c) => (raw += c));
-      req.on("end", () => {
-        if (url === "/control/stop") {
-          supervisor.stop();
-          return respond(200, { state: supervisor.state });
-        }
-        let broadcastUrl: string | undefined;
+    const secret = currentSecret();
+    if (!authorized(req, secret, required)) {
+      return respond(401, { error: required && !secret ? "control_secret_unavailable" : "unauthorized" });
+    }
+
+    if (req.method === "GET" && url === "/status") {
+      const cfg = supervisor.effectiveConfig;
+      let legacyKeyConfigured = false;
+      try {
+        legacyKeyConfigured = !!opts.readLegacyKey?.();
+      } catch {
+        legacyKeyConfigured = false;
+      }
+      return respond(200, {
+        state: supervisor.state,
+        desired: supervisor.desired,
+        mode: cfg.mode,
+        encoder: cfg.encoder,
+        preset: presetOf(cfg),
+        fps: cfg.fps,
+        videoBitrateKbps: cfg.videoBitrateKbps,
+        broadcastUrl: supervisor.currentBroadcastUrl,
+        target: supervisor.describeTarget(),
+        session: supervisor.session(),
+        restarts: supervisor.restarts,
+        lastError: supervisor.lastError,
+        counters: supervisor.counters,
+        pendingChildren: supervisor.pendingChildren,
+        // OLA2-MF · hijos de emisión vivos (sin emisión: todo a 0).
+        streamChildren: supervisor.streamChildren,
+        relay: {
+          state: supervisor.relayState,
+          bytesOut: supervisor.relayBytesOut,
+          // STREAMING-UX (§22, §24) · qué ingesta se usa y el último error de cada una (redactado).
+          ingest: supervisor.effectiveConfig.mode === "rtmps" ? supervisor.ingestRole : null,
+          backupAvailable: supervisor.backupAvailable,
+          failedOver: supervisor.failedOver,
+          ingestErrors: supervisor.ingestErrors,
+        },
+        recording: supervisor.recordingFile ? supervisor.recordingFile.split("/").pop() : null,
+        capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
+        legacyKeyConfigured,
+        stats: supervisor.metrics.snapshot(),
+        // #256 · puerta BROADCAST_RENDER_READY: estado y última lectura del display.
+        render: supervisor.render,
+      });
+    }
+
+    // DIAG · tap pasivo de ingesta. Mismo secreto que el resto del control. Sólo lee
+    // lo que el tap ya guardó: nada de esto toca el camino de emisión.
+    if (req.method === "GET" && (url === "/diag/tap" || url.startsWith("/diag/tap/"))) {
+      const tap = opts.tap ?? null;
+      if (url === "/diag/tap") {
+        return respond(200, {
+          enabled: !!tap,
+          config: tap
+            ? {
+                intervalMs: tap.config.intervalMs,
+                maxFiles: tap.config.maxFiles,
+                maxBytes: tap.config.maxBytes,
+              }
+            : null,
+          stats: tap ? tap.stats : null,
+          latest: tap ? (readLatestCapture(tap.config.dir)?.capture ?? null) : null,
+        });
+      }
+      if (!tap) return respond(404, { error: "tap_disabled" });
+      const found = readLatestCapture(tap.config.dir);
+      if (!found) return respond(404, { error: "no_capture" });
+      if (url === "/diag/tap/latest") return respond(200, found.capture);
+      if (url === "/diag/tap/latest.flv") {
+        void readFile(found.flvPath).then(
+          (b) => {
+            res.writeHead(200, {
+              "content-type": "video/x-flv",
+              "cache-control": "no-store",
+              "x-tap-pts-ms": String(found.capture.ptsMs),
+              "x-tap-captured-at": found.capture.capturedAt,
+            });
+            res.end(b);
+          },
+          () => respond(404, { error: "no_capture" }),
+        );
+        return;
+      }
+      if (url === "/diag/tap/latest.jpg") {
+        // Decodificación PUNTUAL y de una en una: nunca en continuo.
+        if (jpegBusy) return respond(429, { error: "decode_in_progress" });
+        jpegBusy = true;
+        const decode = opts.decodeJpeg ?? ((p: string) => decodeTapJpeg(opts.ffmpegBin ?? "ffmpeg", p));
+        // Promise.resolve().then: un `decode` que lance de forma síncrona acaba igualmente
+        // en el .finally que libera jpegBusy (nunca queda en 429 permanente).
+        void Promise.resolve()
+          .then(() => decode(found.flvPath))
+          .then(
+            (jpg) => {
+              res.writeHead(200, {
+                "content-type": "image/jpeg",
+                "cache-control": "no-store",
+                "x-tap-pts-ms": String(found.capture.ptsMs),
+                "x-tap-captured-at": found.capture.capturedAt,
+              });
+              res.end(jpg);
+            },
+            () => respond(502, { error: "decode_failed" }),
+          )
+          .finally(() => {
+            jpegBusy = false;
+          });
+        return;
+      }
+      return respond(404, { error: "not_found" });
+    }
+
+    if (req.method === "GET" && url === "/recordings") {
+      // #249 · el directorio de grabación se CREA bajo demanda, sin privilegios
+      // (el volumen `arena_replays` ya pertenece al usuario del servicio por el
+      // entrypoint). Antes sólo lo creaba el preflight cuando el contenedor arrancaba
+      // en modo record. Con STREAM_MODE=rtmps no existía, statfs fallaba y «Sólo
+      // grabar» desde la web daba disk_unknown. Si no se puede crear o escribir, se
+      // dice por qué y el disco queda sin medir: la API no empieza a grabar
+      // (fail-closed).
+      const dirCheck = checkWritableDataDir(config.recordDir);
+      const view = listRecordings(config.recordDir, supervisor.recordingFile);
+      return respond(200, {
+        dir: "arena_replays/video",
+        ...view,
+        disk: dirCheck.ok ? view.disk : null,
+        dirError: dirCheck.ok ? null : dirCheck.reason,
+      });
+    }
+
+    if (req.method !== "POST") return respond(404, { error: "not_found" });
+    if (!["/control/start", "/control/stop", "/control/test", "/recordings/retention"].includes(url)) {
+      return respond(404, { error: "not_found" });
+    }
+
+    void readBody(req)
+      .then(async (raw) => {
+        let body: Record<string, unknown> = {};
         if (raw.trim()) {
           try {
-            const body = JSON.parse(raw);
-            if (body.broadcastUrl !== undefined) {
-              if (typeof body.broadcastUrl !== "string" || !SAFE_URL.test(body.broadcastUrl)) {
-                return respond(400, { error: "broadcastUrl inválida (http(s) requerido)" });
-              }
-              broadcastUrl = body.broadcastUrl;
-            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("x");
+            body = parsed;
           } catch {
             return respond(400, { error: "body JSON inválido" });
           }
         }
-        supervisor.start(broadcastUrl);
-        logger("info", "control: start", { broadcastUrl: supervisor.currentBroadcastUrl });
-        return respond(200, { state: supervisor.state, broadcastUrl: supervisor.currentBroadcastUrl });
-      });
-      return;
-    }
 
-    respond(404, { error: "not_found" });
+        if (url === "/control/stop") {
+          // STREAMER (#241, R4-1) · stop CONDICIONADO: con `ifSession` sólo para si
+          // la emisión pedida es ESA sesión (null = emisión sin sesión: heredada o
+          // STREAM_AUTOSTART). Un stop del reconciliador que aterriza tarde no corta
+          // una sesión legítima arrancada entretanto. Sin `ifSession`, stop a secas
+          // (operador, idempotente).
+          if (Object.prototype.hasOwnProperty.call(body, "ifSession")) {
+            const want = body.ifSession;
+            if (want !== null && (typeof want !== "string" || !/^[0-9a-zA-Z_-]{1,64}$/.test(want))) {
+              return respond(400, { error: "ifSession inválido" });
+            }
+            const current = supervisor.desired ? supervisor.currentSessionId : undefined;
+            if (current === undefined || current !== want) {
+              return respond(409, {
+                error: "session_mismatch",
+                state: supervisor.state,
+                wasActive: supervisor.desired,
+                session: current ?? null,
+              });
+            }
+          }
+          const wasActive = supervisor.desired;
+          supervisor.stop();
+          return respond(200, { state: supervisor.state, wasActive });
+        }
+
+        if (url === "/recordings/retention") {
+          const policy = validateRetentionPolicy(body.policy);
+          if (typeof policy === "string") return respond(400, { error: policy });
+          const result = applyRetention(config.recordDir, policy, supervisor.recordingFile, {
+            dryRun: body.dryRun === true,
+          });
+          logger("info", "retención de grabaciones", {
+            dryRun: result.dryRun,
+            deleted: result.deleted.length,
+            errors: result.errors.length,
+          });
+          return respond(200, result);
+        }
+
+        if (url === "/control/test") {
+          let target: IngestTarget;
+          try {
+            target = parseIngestUrl(String(body.ingestUrl ?? config.rtmpsUrl), opts.allowPlainRtmp);
+          } catch (e) {
+            return respond(400, { error: (e as Error).message });
+          }
+          const platform =
+            typeof body.platform === "string" && /^[a-z0-9_-]{1,32}$/.test(body.platform) ? body.platform : null;
+          const k = resolveKey(body.credential ?? null, { ingest: target.tcUrl, platform });
+          if (k.error) return respond(k.status ?? 409, { error: k.error });
+          // La prueba no publica: la clave no hace falta para conectar, pero se
+          // comprueba que existe y abre para no dar un «OK» engañoso.
+          const pub = new RtmpPublisher({ target, streamKey: k.key ?? "", dial: opts.dial, connectTimeoutMs: 8000 });
+          const deadlineMs = opts.testDeadlineMs ?? TEST_DEADLINE_MS;
+          let deadline: NodeJS.Timeout | null = null;
+          try {
+            const r = await Promise.race([
+              pub.probe(),
+              new Promise<never>((_, reject) => {
+                deadline = setTimeout(() => {
+                  pub.close(); // cierra el socket: nada queda colgado
+                  reject(new Error("la ingesta no completó la prueba a tiempo"));
+                }, deadlineMs);
+              }),
+            ]);
+            return respond(200, {
+              ok: true,
+              target: target.display,
+              tlsVerified: r.tlsVerified,
+              connectMs: r.connectMs,
+              credentialPresent: !!k.key,
+              keyValidated: false,
+              note: "conexión y handshake RTMP correctos; la clave no se valida sin publicar",
+            });
+          } catch (e) {
+            pub.close();
+            return respond(200, {
+              ok: false,
+              target: target.display,
+              credentialPresent: !!k.key,
+              error: (e as Error).message,
+            });
+          } finally {
+            if (deadline) clearTimeout(deadline);
+          }
+        }
+
+        // /control/start
+        const parsed = parseStartRequest(body, config, caps, { allowPlainRtmp: opts.allowPlainRtmp });
+        if (parsed.ok === false) {
+          const error = (parsed as { error: string }).error;
+          // EQ5d (P3) · un sobre con formato inválido (p. ej. etiqueta GCM truncada)
+          // también queda registrado, como los que no se pueden abrir.
+          if (body.credential !== undefined && /credencial sellada/.test(error)) {
+            logger("warn", "control: credencial sellada rechazada; orden rechazada", { code: "invalid" });
+          }
+          return respond(400, { error });
+        }
+        const plan = parsed.plan;
+        // #249 · grabar exige un directorio de grabación utilizable AHORA (se crea si
+        // falta). Si no lo es, la orden se rechaza en vez de lanzar un ffmpeg que muere
+        // al abrir el fichero.
+        if (plan.config.mode === "record") {
+          const dirCheck = checkWritableDataDir(plan.config.recordDir);
+          if (!dirCheck.ok) {
+            logger("error", "control: directorio de grabación no utilizable; orden rechazada", {
+              reason: dirCheck.reason,
+            });
+            return respond(409, { error: "record_dir_unavailable", reason: dirCheck.reason });
+          }
+        }
+        // Idempotencia: la MISMA sesión ya activa ⇒ no se toca nada.
+        if (supervisor.active && plan.sessionId && supervisor.sessionFingerprint === sessionFingerprint(plan)) {
+          return respond(200, { state: supervisor.state, alreadyActive: true, session: supervisor.session() });
+        }
+        // Sin operaciones contradictorias: con una emisión activa hay que pedir
+        // explícitamente el reemplazo (la API lo hace sólo con «Reiniciar»).
+        if (supervisor.active && body.replace !== true) {
+          return respond(409, { error: "already_active", session: supervisor.session() });
+        }
+        let key: string | null = null;
+        let backupKey: string | null = null;
+        if (plan.config.mode === "rtmps") {
+          const k = resolveKey(
+            plan.credential,
+            plan.ingest ? { ingest: plan.ingest.tcUrl, platform: plan.platform } : null,
+          );
+          if (k.error) return respond(k.status ?? 409, { error: k.error });
+          if (!k.key) return respond(409, { error: "no hay credencial de emisión configurada" });
+          key = k.key;
+          // STREAMING-UX (§23) · el sobre de RESPALDO se abre SÓLO para la URL de respaldo
+          // de la orden: si no casa, la orden entera se rechaza (fail-closed), igual que
+          // con la principal.
+          if (plan.backupIngest) {
+            const kb = resolveKey(plan.backupCredential, { ingest: plan.backupIngest.tcUrl, platform: plan.platform });
+            if (kb.error || !kb.key)
+              return respond(kb.status ?? 409, { error: `respaldo: ${kb.error ?? "sin clave"}` });
+            backupKey = kb.key;
+          }
+        }
+        // Sin cuerpo (uso heredado): configuración de entorno sin plan.
+        const legacy = !raw.trim();
+        if (legacy) supervisor.start(undefined, undefined, key);
+        else supervisor.start(undefined, plan, key, backupKey);
+        logger("info", "control: start", {
+          broadcastUrl: supervisor.currentBroadcastUrl,
+          target: supervisor.describeTarget(),
+        });
+        return respond(200, {
+          state: supervisor.state,
+          broadcastUrl: supervisor.currentBroadcastUrl,
+          session: supervisor.session(),
+        });
+      })
+      .catch((e: Error) => {
+        if (e.message === "too_large") return respond(413, { error: "body demasiado grande" });
+        logger("error", "control: error interno", { detail: e.message });
+        return respond(500, { error: "internal" });
+      });
   });
 }

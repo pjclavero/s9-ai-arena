@@ -3,8 +3,22 @@
  * 5–6 del bucle. Las condiciones de victoria, límites y respawn se leen del RULESET,
  * nunca están cableadas aquí.
  */
-import { safeLookup, emptyDict, type Ruleset } from "../../../../packages/game-rules/index.js";
+import {
+  safeLookup,
+  emptyDict,
+  type Ruleset,
+  type TimeoutTiebreakCriterion,
+} from "../../../../packages/game-rules/index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS, respawnRearmPolicyProblems } from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
+
+/**
+ * Motor 0.4.0 (ADR-022) · valor INTERNO que `winner()` devuelve cuando salta la
+ * salvaguarda técnica de la prórroga. Nunca llega al resultado: `Battle.finish` lo
+ * traduce a `winner: null` + `endReason: "technical_limit"`. Contiene «:», que ninguna
+ * etiqueta de bando admite (API: [A-Za-z0-9_-]), así que no puede confundirse con un equipo.
+ */
+export const TECHNICAL_LIMIT = "technical_limit:";
 import type { Vehicle } from "./vehicle.js";
 
 export interface ModeContext {
@@ -14,6 +28,11 @@ export interface ModeContext {
   poses: Map<string, { position: Vec2; heading: number; velocity: Vec2; angularVelocity: number }>;
   map: ArenaMap;
   emit: (ev: any) => void;
+  /**
+   * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (sin fuego amigo
+   * ni muertes ambientales). Sólo lo lee el criterio de desempate `kills`.
+   */
+  kills?: Readonly<Record<string, number>>;
 }
 
 export interface ArenaMap {
@@ -50,6 +69,11 @@ export interface GameMode {
   tick(ctx: ModeContext): void;
   /** Objetivos visibles públicamente (van en la observación de todos). */
   objectives(): any[];
+  /**
+   * Motor 0.4.0 (ADR-022) · tick en que empezó la PRÓRROGA (null si no la hay). Sólo
+   * existe con `ruleset.overtime`; la batalla lo usa para el evento público.
+   */
+  overtimeSince?: number | null;
   /** ¿Ha terminado? Devuelve el ganador o "draw". */
   winner(ctx: ModeContext): string | "draw" | null;
   /** Un vehículo ha muerto: el modo decide qué implica. */
@@ -92,31 +116,351 @@ abstract class BaseMode implements GameMode {
     return [];
   }
 
+  /** Motor 0.4.0 (ADR-022) · prórroga: tick de inicio y marcador al final del tiempo reglamentario. */
+  overtimeSince: number | null = null;
+  private overtimeBaseline: Record<string, number> | null = null;
+
   winner(ctx: ModeContext): string | "draw" | null {
     for (const [team, pts] of Object.entries(this.score)) {
       if (pts >= ctx.ruleset.scoreToWin) return team;
     }
+    // Motor 0.4.0 (ADR-022) · PRÓRROGA en curso: gana el primero que supere su marcador
+    // del final del tiempo reglamentario; sin límite competitivo (sólo la salvaguarda
+    // técnica, que detiene la batalla SIN resultado deportivo). El
+    // estado (bots, banderas, posiciones) NO se reinicia: la simulación sigue igual.
+    const overtime = ctx.ruleset.overtime;
+    if (overtime && this.overtimeBaseline) {
+      const base = this.overtimeBaseline;
+      const ahead = Object.keys(this.score)
+        .sort()
+        .filter((t) => (this.score[t] ?? 0) > (base[t] ?? 0));
+      if (ahead.length === 1) return ahead[0];
+      if (ahead.length > 1) {
+        // Dos equipos puntúan en el MISMO tick (no ocurre en CTF con 2 banderas, pero
+        // se define): más puntos; si empatan, tablas.
+        const sorted = ahead.map((t) => [t, this.score[t] ?? 0] as const).sort((a, b) => b[1] - a[1]);
+        return sorted[0][1] === sorted[1][1] ? "draw" : sorted[0][0];
+      }
+      // Salvaguarda TÉCNICA (no deportiva): detención sin resultado.
+      if (ctx.tick >= ctx.ruleset.timeLimitTicks + OVERTIME_TECHNICAL_LIMIT_TICKS) return TECHNICAL_LIMIT;
+      return null;
+    }
+    // R-RULES (revisión PR #204) · con reglas R-RULES (`timeoutTiebreak` declarado) la
+    // ELIMINACIÓN se resuelve ANTES que el tiempo: una eliminación mutua en el tick del
+    // límite es tablas, como un tick antes, y no la decide el desempate. Los rulesets de
+    // 0.3.0 (sin el campo) conservan EXACTAMENTE su orden (tiempo, luego eliminación).
+    const tiebreak = ctx.ruleset.timeoutTiebreak;
+    if (tiebreak) {
+      const byElimination = this.eliminationWinner(ctx);
+      if (byElimination !== null) return byElimination;
+    }
     if (ctx.tick >= ctx.ruleset.timeLimitTicks) {
+      // Motor 0.4.0 (ADR-022) · empate a puntos entre los dos primeros ⇒ prórroga.
+      if (overtime && this.overtimeSince === null) {
+        const top = Object.values(this.score).sort((a, b) => b - a);
+        if (top.length > 1 && top[0] === top[1]) {
+          this.overtimeSince = ctx.tick;
+          this.overtimeBaseline = Object.assign(emptyDict<number>(), this.score);
+          return null;
+        }
+      }
+      // R-RULES (ADR-021) · desempate DECLARADO por el ruleset. Sin el campo, el
+      // código de 0.3.0 tal cual (los rulesets del catálogo no lo declaran).
+      if (tiebreak) return resolveTimeoutTiebreak(tiebreak, Object.keys(this.score), this.score, ctx);
       const sorted = Object.entries(this.score).sort((a, b) => b[1] - a[1]);
       if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) return "draw";
       return sorted[0]?.[0] ?? "draw";
     }
-    // Si el respawn está desactivado y solo queda un equipo con vivos, ese gana.
-    if (!ctx.ruleset.respawn.enabled) {
-      const alive = new Set(ctx.vehicles.filter((v) => v.alive && !v.disqualified).map((v) => v.team));
-      if (alive.size === 1) return [...alive][0];
-      if (alive.size === 0) return "draw";
-    }
+    if (!tiebreak) return this.eliminationWinner(ctx);
+    return null;
+  }
+
+  /**
+   * Eliminación: sin respawn (0.3.0) o con respawn LIMITADO (R-RULES). Gana el único
+   * equipo con algún vehículo aún en juego; ninguno ⇒ empate; null si sigue abierta.
+   */
+  protected eliminationWinner(ctx: ModeContext): string | "draw" | null {
+    if (!eliminationActive(ctx.ruleset)) return null;
+    const alive = new Set(ctx.vehicles.filter((v) => inGame(v, ctx.ruleset)).map((v) => v.team));
+    if (alive.size === 1) return [...alive][0];
+    if (alive.size === 0) return "draw";
     return null;
   }
 
   spawnFor(v: Vehicle, ctx: ModeContext): Vec2 {
-    const own = ctx.map.spawns.filter((s) => s.team === v.team);
-    const pool = own.length > 0 ? own : ctx.map.spawns;
-    // Determinista: el índice depende del id del vehículo, no de aleatoriedad.
-    const idx = hashId(v.id) % pool.length;
-    return { ...pool[idx].position };
+    // 4v4 (motor 0.3.0) · El grupo de spawns sale de resolveSpawnGroups: un bando cuya
+    // etiqueta no está en el mapa (torneos A/B) recibe un grupo propio y estable, en
+    // vez de compartir TODO el pool con el rival.
+    const teams = [...new Set(ctx.vehicles.map((o) => o.team))].sort();
+    const pool = spawnPoolFor(v.team, teams, ctx.map);
+    // Determinista: el índice de partida depende del id del vehículo, no de
+    // aleatoriedad. Es el mismo punto que antes del 0.3.0 cuando está libre.
+    const start = hashId(v.id) % pool.length;
+    // Ocupación: todo vehículo con cuerpo en la física salvo él mismo. Los restos de
+    // un vehículo destruido SIGUEN siendo un collider hasta que reaparece, así que se
+    // evitan igual que un vehículo vivo (reaparecer encima es el mismo solape).
+    const occupied: SpawnDisk[] = [];
+    for (const o of ctx.vehicles) {
+      if (o.id === v.id) continue;
+      const p = ctx.poses.get(o.id);
+      if (p) occupied.push({ position: p.position, radiusM: o.spec.radiusM });
+    }
+    const radiusMaxM = Math.max(v.spec.radiusM, ...ctx.vehicles.map((o) => o.spec.radiusM));
+    const chosen = chooseSpawn({
+      pool,
+      startIndex: start,
+      radiusM: v.spec.radiusM,
+      radiusMaxM,
+      occupied,
+      reserved: [],
+      map: ctx.map,
+    });
+    return { ...(chosen ?? pool[start]).position };
   }
+}
+
+// ------------------------------------------------- colocación de spawns (4v4)
+//
+// Los mapas publicados traen POCOS spawns por bando (mvp-arena-01: 2). Antes del
+// motor 0.3.0 el reparto era cíclico (`pool[idx % pool.length]`), así que con 4 por
+// lado nacían pares EXACTAMENTE superpuestos y Rapier tardaba ~30 ticks en separarlos
+// a empujones; y un bando cuya etiqueta no estaba en el mapa (A/B) usaba el pool
+// completo, con lo que A y B nacían uno encima del otro en spawns[0].
+//
+// Regla nueva, sin tocar los mapas:
+//   1. Los spawns del mapa se usan primero y en su orden: 1v1 y 2v2 red/blue nacen
+//      exactamente donde nacían.
+//   2. Si están todos ocupados, se generan POSICIONES AUXILIARES alrededor de cada
+//      spawn base: una rejilla orientada con el heading del spawn, sólo hacia los
+//      lados y hacia atrás (nunca hacia delante: un auxiliar no nace más cerca del
+//      rival que el spawn base), con paso 2·radioMáx + margen.
+//   3. Un auxiliar se acepta sólo si cae dentro del mapa, lejos de muros,
+//      destructibles y zonas de daño, y no solapa a ningún vehículo ya colocado ni a
+//      un spawn del mapa aún libre (que queda reservado para quien le toque).
+// Todo es aritmética sobre datos ordenados: determinista, sin RNG.
+
+/** Holgura (m) entre dos vehículos, o entre un vehículo y un obstáculo, al nacer. */
+export const SPAWN_MARGIN_M = 1;
+/** Anillos de la rejilla auxiliar alrededor de cada spawn base. */
+export const SPAWN_AUX_MAX_RING = 4;
+/** Tolerancia de coma flotante: un hueco de exactamente `margen` cuenta como libre. */
+const SPAWN_EPS_M = 1e-6;
+
+export interface SpawnPoint {
+  position: Vec2;
+  heading: number;
+}
+export interface SpawnDisk {
+  position: Vec2;
+  radiusM: number;
+}
+
+/** Etiquetas de grupo de spawns del mapa, en orden de primera aparición. */
+export function spawnGroupsOf(map: Pick<ArenaMap, "spawns">): string[] {
+  const out: string[] = [];
+  for (const s of map.spawns) if (!out.includes(s.team)) out.push(s.team);
+  return out;
+}
+
+/**
+ * Bando → grupo de spawns del mapa. Un bando con etiqueta del mapa usa la suya. Los
+ * bandos desconocidos (en el orden dado, que el motor pasa ORDENADO) se reparten
+ * cíclicamente entre los grupos que ningún bando conocido reclama; si todos están
+ * reclamados, entre todos. Así A/B sobre un mapa red/blue da A→red, B→blue.
+ */
+export function resolveSpawnGroups(teams: readonly string[], map: Pick<ArenaMap, "spawns">): Map<string, string> {
+  const groups = spawnGroupsOf(map);
+  const out = new Map<string, string>();
+  const unknown: string[] = [];
+  for (const t of teams) {
+    if (groups.includes(t)) out.set(t, t);
+    else unknown.push(t);
+  }
+  const claimed = new Set(out.values());
+  let free = groups.filter((g) => !claimed.has(g));
+  if (free.length === 0) free = groups;
+  unknown.forEach((t, i) => {
+    if (free.length > 0) out.set(t, free[i % free.length]);
+  });
+  return out;
+}
+
+/** Spawns del mapa que le tocan a un bando (su grupo, en orden de mapa). */
+export function spawnPoolFor(team: string, teams: readonly string[], map: Pick<ArenaMap, "spawns">): SpawnPoint[] {
+  if (map.spawns.length === 0) throw new Error("el mapa no declara spawns");
+  const group = resolveSpawnGroups(teams.includes(team) ? teams : [...teams, team].sort(), map).get(team);
+  const pool = map.spawns.filter((s) => s.team === group);
+  return (pool.length > 0 ? pool : map.spawns).map((s) => ({ position: s.position, heading: s.heading }));
+}
+
+/**
+ * Rejilla auxiliar en el marco del spawn: `b` filas hacia atrás, `j` columnas a los
+ * lados. Orden: anillo (Chebyshev) creciente, luego fila, luego |columna|, izquierda
+ * antes que derecha; y dentro de cada posición de la rejilla, los spawns base en su
+ * orden. Nunca hay filas hacia delante.
+ */
+export function auxSpawnCandidates(
+  pool: readonly SpawnPoint[],
+  stepM: number,
+  maxRing = SPAWN_AUX_MAX_RING,
+): SpawnPoint[] {
+  const out: SpawnPoint[] = [];
+  for (let k = 1; k <= maxRing; k++) {
+    const offsets: [number, number][] = [];
+    for (let b = 0; b <= k; b++) {
+      const cols = b === k ? range(-k, k) : [-k, k];
+      cols.sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+      for (const j of cols) offsets.push([b, j]);
+    }
+    for (const [b, j] of offsets) {
+      for (const s of pool) {
+        const fx = Math.cos(s.heading);
+        const fy = Math.sin(s.heading);
+        // lateral = forward girado +90°
+        const lx = -fy;
+        const ly = fx;
+        out.push({
+          position: {
+            x: s.position.x - b * stepM * fx + j * stepM * lx,
+            y: s.position.y - b * stepM * fy + j * stepM * ly,
+          },
+          heading: s.heading,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function range(a: number, b: number): number[] {
+  const r: number[] = [];
+  for (let i = a; i <= b; i++) r.push(i);
+  return r;
+}
+
+/** Distancia de un punto a un rectángulo orientado (0 si está dentro). */
+function distToBox(p: Vec2, c: Vec2, halfW: number, halfH: number, rotation: number): number {
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  const cr = Math.cos(-rotation);
+  const sr = Math.sin(-rotation);
+  const lx = dx * cr - dy * sr;
+  const ly = dx * sr + dy * cr;
+  return Math.hypot(Math.max(Math.abs(lx) - halfW, 0), Math.max(Math.abs(ly) - halfH, 0));
+}
+
+/** ¿Un disco de radio r en p cabe en el mapa sin tocar muros, cajas ni zonas de daño? */
+export function isClearOfMap(p: Vec2, radiusM: number, map: ArenaMap, marginM = SPAWN_MARGIN_M): boolean {
+  const need = radiusM + marginM - SPAWN_EPS_M;
+  if (p.x < need || p.y < need || p.x > map.widthM - need || p.y > map.heightM - need) return false;
+  for (const w of map.walls) if (distToBox(p, w.position, w.halfW, w.halfH, w.rotation ?? 0) < need) return false;
+  for (const d of map.destructibles) if (distToBox(p, d.position, d.halfW, d.halfH, 0) < need) return false;
+  for (const z of map.zones) {
+    if (z.kind !== "damage") continue;
+    if (distance(p, z.position) < z.radiusM + need) return false;
+  }
+  return true;
+}
+
+function overlapsAny(p: Vec2, radiusM: number, disks: readonly SpawnDisk[], marginM = SPAWN_MARGIN_M): boolean {
+  for (const d of disks) if (distance(p, d.position) < radiusM + d.radiusM + marginM - SPAWN_EPS_M) return true;
+  return false;
+}
+
+/** Anillos de la búsqueda AMPLIA (4v4-FIX), cuando la rejilla atrás/lados no basta. */
+export const SPAWN_AUX_WIDE_MAX_RING = 8;
+
+/**
+ * 4v4-FIX · Anillos COMPLETOS (Chebyshev) en el marco del spawn, también por
+ * delante: `b > 0` atrás, `b < 0` delante. Orden: anillo creciente; dentro, de más
+ * atrás a más adelante; luego |columna| e izquierda antes que derecha; y dentro de
+ * cada posición, los spawns base en su orden. Cada candidato lleva su base.
+ */
+export function wideSpawnCandidates(
+  pool: readonly SpawnPoint[],
+  stepM: number,
+  maxRing = SPAWN_AUX_WIDE_MAX_RING,
+): (SpawnPoint & { base: SpawnPoint })[] {
+  const out: (SpawnPoint & { base: SpawnPoint })[] = [];
+  for (let k = 1; k <= maxRing; k++) {
+    const offsets: [number, number][] = [];
+    for (let b = k; b >= -k; b--) {
+      const cols = Math.abs(b) === k ? range(-k, k) : [-k, k];
+      cols.sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+      for (const j of cols) offsets.push([b, j]);
+    }
+    for (const [b, j] of offsets) {
+      for (const s of pool) {
+        const fx = Math.cos(s.heading);
+        const fy = Math.sin(s.heading);
+        out.push({
+          position: {
+            x: s.position.x - b * stepM * fx + j * stepM * -fy,
+            y: s.position.y - b * stepM * fy + j * stepM * fx,
+          },
+          heading: s.heading,
+          base: s,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Distancia mínima de p a los spawns RIVALES (Infinity si el mapa no tiene). */
+function nearestRivalM(p: Vec2, rivals: readonly Vec2[]): number {
+  let d = Infinity;
+  for (const r of rivals) d = Math.min(d, distance(p, r));
+  return d;
+}
+
+/**
+ * Elige el punto de aparición: primero los spawns del mapa (desde `startIndex`,
+ * cíclico) que no solapen a nadie; luego los auxiliares válidos atrás/lados (0.3.0
+ * original: si encuentra hueco aquí, el resultado es idéntico al de antes). Si no
+ * hay (spawn en esquina con heading diagonal, junto a un borde…), 4v4-FIX:
+ *   a) anillos completos, aceptando sólo puntos NO más cercanos a un spawn rival
+ *      que su spawn base;
+ *   b) como último recurso, anillos completos también hacia delante.
+ * null sólo si nada cabe (el llamante conserva entonces el reparto cíclico).
+ */
+export function chooseSpawn(opts: {
+  pool: readonly SpawnPoint[];
+  startIndex: number;
+  radiusM: number;
+  radiusMaxM: number;
+  occupied: readonly SpawnDisk[];
+  /** Spawns del mapa aún libres: los auxiliares no los pisan. */
+  reserved: readonly SpawnDisk[];
+  map: ArenaMap;
+}): SpawnPoint | null {
+  const { pool, startIndex, radiusM, radiusMaxM, occupied, reserved, map } = opts;
+  for (let i = 0; i < pool.length; i++) {
+    const s = pool[(startIndex + i) % pool.length];
+    if (!overlapsAny(s.position, radiusM, occupied)) return { position: { ...s.position }, heading: s.heading };
+  }
+  const step = 2 * radiusMaxM + SPAWN_MARGIN_M;
+  for (const c of auxSpawnCandidates(pool, step)) {
+    if (!isClearOfMap(c.position, radiusM, map)) continue;
+    if (overlapsAny(c.position, radiusM, occupied)) continue;
+    if (overlapsAny(c.position, radiusM, reserved)) continue;
+    return c;
+  }
+  // Spawns rivales: los del mapa que no son de este pool.
+  const rivals = map.spawns
+    .filter((m) => !pool.some((p) => distance(p.position, m.position) < 1e-6))
+    .map((m) => m.position);
+  const wide = wideSpawnCandidates(pool, step);
+  const free = (c: SpawnPoint) =>
+    isClearOfMap(c.position, radiusM, map) &&
+    !overlapsAny(c.position, radiusM, occupied) &&
+    !overlapsAny(c.position, radiusM, reserved);
+  for (const c of wide) {
+    if (nearestRivalM(c.position, rivals) < nearestRivalM(c.base.position, rivals) - SPAWN_EPS_M) continue;
+    if (free(c)) return { position: c.position, heading: c.heading };
+  }
+  for (const c of wide) if (free(c)) return { position: c.position, heading: c.heading };
+  return null;
 }
 
 // ---------------------------------------------------------------- deathmatch
@@ -651,6 +995,8 @@ export function modeMapIncompatibilities(ruleset: Ruleset, teams: string[], map:
   if (meta.respawn === "forbidden" && ruleset.respawn.enabled) {
     errs.push(`el modo ${meta.id} exige respawn DESACTIVADO en el ruleset`);
   }
+  // OLA2-G3 · RESPAWN_REARM_POLICY: valor conocido y sólo con respawn (falla cerrado).
+  errs.push(...respawnRearmPolicyProblems(ruleset));
 
   if (meta.requires.flagsAndBases) {
     for (const t of teams) {
@@ -697,6 +1043,100 @@ export function createMode(
     default:
       throw new Error(`Modo desconocido: ${(ruleset as any).mode}`);
   }
+}
+
+// ------------------------------------------------ vidas y desempate (ADR-021)
+
+/** ¿El ruleset limita las reapariciones? (campo opcional; ausente = 0.3.0). */
+export function respawnLimited(ruleset: Ruleset): boolean {
+  return ruleset.respawn.enabled && typeof ruleset.respawn.maxRespawns === "number";
+}
+
+/** ¿Se puede ganar por eliminación? Sin respawn (0.3.0) o con respawn limitado. */
+export function eliminationActive(ruleset: Ruleset): boolean {
+  return !ruleset.respawn.enabled || respawnLimited(ruleset);
+}
+
+/** Reapariciones que le quedan a un vehículo (0 sin respawn; Infinity si es ilimitado). */
+export function respawnsLeft(v: Vehicle, ruleset: Ruleset): number {
+  if (!ruleset.respawn.enabled) return 0;
+  if (!respawnLimited(ruleset)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (ruleset.respawn.maxRespawns as number) - v.respawnsUsed);
+}
+
+/**
+ * ¿Sigue en juego? No descalificado y vivo, o muerto con reapariciones pendientes.
+ * Sin respawn se reduce EXACTAMENTE a `alive && !disqualified` (la regla de 0.3.0).
+ */
+export function inGame(v: Vehicle, ruleset: Ruleset): boolean {
+  if (v.disqualified) return false;
+  return v.alive || respawnsLeft(v, ruleset) > 0;
+}
+
+/** ¿Esta muerte lo elimina definitivamente? (sólo tiene sentido tras morir). */
+export function eliminatedByDeath(v: Vehicle, ruleset: Ruleset): boolean {
+  return respawnsLeft(v, ruleset) === 0;
+}
+
+/** Valor de un criterio de desempate para un equipo. Tabla: añadir uno = una entrada. */
+const TIEBREAK_VALUE: Record<
+  TimeoutTiebreakCriterion,
+  (team: string, score: Record<string, number>, ctx: ModeContext) => number
+> = {
+  score: (team, score) => score[team] ?? 0,
+  alive: (team, _s, ctx) => ctx.vehicles.filter((v) => v.team === team && v.alive && !v.disqualified).length,
+  respawns_left: (team, _s, ctx) => {
+    let left = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified) continue;
+      const n = respawnsLeft(v, ctx.ruleset);
+      // Ilimitado: no hay recuento que comparar; cada vehículo cuenta igual (1).
+      left += Number.isFinite(n) ? n : 1;
+    }
+    return left;
+  },
+  kills: (team, _s, ctx) => ctx.kills?.[team] ?? 0,
+  lives: (team, _s, ctx) => {
+    let lives = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified) continue;
+      const left = respawnsLeft(v, ctx.ruleset);
+      // Ilimitado: cada vehículo no descalificado cuenta 1 (todos igual de «en juego»).
+      lives += Number.isFinite(left) ? (v.alive ? 1 : 0) + left : 1;
+    }
+    return lives;
+  },
+  hull: (team, _s, ctx) => {
+    let hull = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified || !v.alive) continue;
+      hull += v.hullHp / (v.spec.hullHp || 1);
+    }
+    return Math.round(hull * 1e4) / 1e4;
+  },
+};
+
+/**
+ * Desempate al acabar el tiempo: vector de criterios por equipo, orden lexicográfico
+ * descendente. Si los dos primeros empatan en TODO ⇒ `draw`. Determinista: sólo
+ * aritmética sobre el estado y equipos en orden estable.
+ */
+export function resolveTimeoutTiebreak(
+  criteria: readonly TimeoutTiebreakCriterion[],
+  teams: readonly string[],
+  score: Record<string, number>,
+  ctx: ModeContext,
+): string | "draw" {
+  const known = criteria.filter((c) => Object.prototype.hasOwnProperty.call(TIEBREAK_VALUE, c));
+  const rows = [...teams].sort().map((team) => ({ team, key: known.map((c) => TIEBREAK_VALUE[c](team, score, ctx)) }));
+  const cmp = (a: number[], b: number[]) => {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i];
+    return 0;
+  };
+  rows.sort((a, b) => cmp(a.key, b.key));
+  if (rows.length === 0) return "draw";
+  if (rows.length > 1 && cmp(rows[0].key, rows[1].key) === 0) return "draw";
+  return rows[0].team;
 }
 
 function distance(a: Vec2, b: Vec2): number {

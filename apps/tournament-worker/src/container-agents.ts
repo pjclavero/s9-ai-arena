@@ -32,14 +32,22 @@
  *    infraestructura; unos sí y otro no → `bot_crash` del ausente (como antes);
  *  - timeout global o pérdida de la reserva (signal) → se aborta y se limpia.
  */
+import { ContainerCpuSampler } from "./cpu-sampler.js";
 import { randomUUID } from "node:crypto";
 import type { WebSocketServer } from "ws";
-import { CONTAINER_BATTLE_GRACE_MS, DEFAULT_TICK_INTERVAL_MS } from "../../../packages/game-rules/index.js";
+import {
+  BATTLE_GUARD_FACTOR,
+  CONTAINER_BATTLE_GRACE_MS,
+  DEFAULT_TICK_INTERVAL_MS,
+  maxBattleTicks,
+  proportionalBattleGuardMs,
+} from "../../../packages/game-rules/index.js";
 import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
 import { DEFAULT_SECCOMP_PROFILE } from "../../bot-manager/src/container-battle.js";
 import {
   DEFAULT_LIMITS,
+  battleLabels,
   complianceViolations,
   type ContainerHandle,
   type ContainerLimits,
@@ -57,6 +65,32 @@ import {
 } from "../../bot-manager/src/startup-clock.js";
 import type { AgentDriver, AgentDriverInput, AgentDriverOutput } from "./engine-executor.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
+import { containerDiagnostics, type BotContainerDiagnostics, type BotRunDiagnostics } from "./bot-diagnostics.js";
+import {
+  BattleResourceRegistry,
+  defaultBattleResources,
+  terminateContainer,
+  withinDeadline,
+} from "./battle-resources.js";
+
+/**
+ * G2 · MF_LAUNCH_TIMEOUT_CLEANUP · cuánto espera el teardown a un lanzamiento EN VUELO
+ * (el runner aún no devolvió el handle). Antes eran 30 s fijos y, si vencían, el recurso
+ * quedaba `failed` para siempre (el reaper volvía a esperar 30 s en cada pasada).
+ */
+export const DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS = 5_000;
+/** Plazo de la limpieza de un contenedor que llega TARDE (parar + borrar). */
+const LATE_DISPOSE_DEADLINE_MS = 30_000;
+/** Plazo del borrado forzado de un contenedor en el teardown. */
+export const REMOVE_DEADLINE_MS = 15_000;
+/**
+ * Plazo de las lecturas de diagnóstico al ACABAR la batalla (última muestra de CPU, estado
+ * del contenedor al desconectarse). Van antes del teardown: sin plazo, un proxy colgado
+ * impedía llegar al `finally` que lo ejecuta. G2 · ronda 2 (P2-1).
+ */
+export const FINAL_DIAGNOSTICS_DEADLINE_MS = 2_000;
+/** Plazo de la inspección de postura de un contenedor (sin respuesta = fallo de infraestructura). */
+export const POSTURE_DEADLINE_MS = 10_000;
 
 /** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
 export interface BotLaunchPlan {
@@ -121,10 +155,21 @@ export interface ContainerAgentsOptions {
    * señales (producción) no se usa: mandan `timeouts`.
    */
   connectTimeoutMs?: number;
-  /** Margen del guard global sobre la duración teórica. Def. 15 s. */
+  /** Margen FIJO de arranque/cierre del guard global. Def. 15 s. */
   graceMs?: number;
-  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
+  /**
+   * Factor PROPORCIONAL del guard sobre la duración teórica (`ticks × ms`), calculada
+   * con las reglas reales del modo (`maxBattleTicks`). Def. BATTLE_GUARD_FACTOR (1,25).
+   */
+  guardFactor?: number;
+  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 2000 ms, acotado a [1000, 10000] (cpu-sampler.ts). */
   cpuSampleMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
+  /** OLA2-MF · gracia TERM→KILL de cada contenedor en el teardown (s). Def. 5. */
+  termGraceS?: number;
+  /** G2 · espera máxima del teardown a un lanzamiento en vuelo (ms). Def. DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS. */
+  launchInFlightWaitMs?: number;
 }
 
 export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
@@ -135,6 +180,14 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       if (signal?.aborted) throw new Error(`batalla abortada antes de lanzar: ${String(signal.reason)}`);
       const tickIntervalMs = opts.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
       const timeouts = opts.timeouts ?? DEFAULT_STARTUP_TIMEOUTS;
+      // OLA2-MF · todo lo que se crea aquí se REGISTRA bajo el battleId en cuanto
+      // existe; el `finally` lo libera con el teardown único (scope "agents") y la
+      // orquestación lo repite sin scope (idempotente).
+      const res = opts.resources ?? defaultBattleResources;
+      const battleId = input.battleId;
+      const SCOPE = "agents";
+      const termGraceS = opts.termGraceS ?? 5;
+      const inFlightWaitMs = opts.launchInFlightWaitMs ?? DEFAULT_LAUNCH_IN_FLIGHT_WAIT_MS;
 
       let host: BattleLaunchHost;
       try {
@@ -145,6 +198,12 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           `no se pudo abrir el host de la batalla: ${String(err)}`,
         );
       }
+      res.register(battleId, {
+        kind: "sandbox_host",
+        phase: "terminate",
+        scope: SCOPE,
+        release: () => Promise.resolve(host.close()),
+      });
 
       const wire = vehicles.map((_v, i) => protocolBotHandle(i));
       const expected: ExpectedBot[] = vehicles.map((v, i) => ({
@@ -162,10 +221,17 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // Conexión → HELLO: tramo del bot (TD-034).
         handshakeTimeoutMs: timeouts.botExecutionMs,
       });
+      // Parar el ProtocolServer = dejar de generar ticks/observaciones y cerrar
+      // las conexiones de los bots (fase 1 del teardown).
+      res.register(battleId, {
+        kind: "protocol_server",
+        phase: "stop_generation",
+        scope: SCOPE,
+        release: () => server.stop(),
+      });
       const port = host.wss ? host.port : server.port;
       if (!port) {
-        server.stop();
-        await host.close();
+        await res.cleanupBattleResources(battleId, "FAILED", { scope: SCOPE });
         throw new InfrastructureFailure("container_unavailable", "el host de la batalla no declaró puerto");
       }
       const wsUrl = `ws://${opts.engineHost}:${port}`;
@@ -179,6 +245,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 
       try {
         for (let i = 0; i < vehicles.length; i++) {
+          // OLA2-MF · un aborto durante el arranque no espera al handshake.
+          if (signal?.aborted) throw signal.reason ?? new Error("batalla abortada");
           const v = vehicles[i];
           let plan: BotLaunchPlan;
           try {
@@ -209,12 +277,117 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             seccompProfilePath: opts.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE,
             ...(plan.cmd ? { cmd: plan.cmd } : {}),
             ...(plan.autoRemove ? { autoRemove: true } : {}),
+            // OLA2-MF · identidad de batalla en el contenedor: el reaper la usa.
+            labels: battleLabels(input.battleId, input.owner),
           };
           // Reloj de PLATAFORMA de este bot: arranca al PEDIR su contenedor.
           launchRequestedAt[i] = performance.now();
+          // OLA2-MF · el lanzamiento EN VUELO ya es un recurso: si el reloj de
+          // plataforma vence (o la batalla se aborta) antes de que el runner
+          // devuelva el handle, el teardown espera ese handle y lo para y borra.
+          let inFlight: Promise<ContainerHandle | null> | null = null;
+          const instrumented: typeof opts.runner = {
+            launch: (sp) => {
+              const p = opts.runner.launch(sp);
+              inFlight = p.then(
+                (h) => h,
+                () => null,
+              );
+              return p;
+            },
+          };
+          // G2 · MF_LAUNCH_TIMEOUT_CLEANUP. Comportamiento del lanzamiento en vuelo en el teardown:
+          //  - el runner devuelve el handle dentro de `inFlightWaitMs` ⇒ se para y se borra (released);
+          //  - el lanzamiento falló ⇒ no existe nada (released);
+          //  - no contesta ⇒ el recurso se DESPRENDE (`detached`): el registro no se queda con un
+          //    `failed` eterno y el informe no es «limpio»; si el contenedor llega a existir
+          //    después, `adoptLate` lo para y lo borra, y si eso falla lo REGISTRA (`container_late`, vivo y
+          //    reintentable por el reaper). Fuera del proceso, el reaper lo ve por labels.
+          const vid = v.vehicleId;
+          const disposeLate = async (late: ContainerHandle) => {
+            await terminateContainer(late, { termGraceS: 0, stopDeadlineMs: 5_000 }).catch(() => undefined);
+            if (late.remove) await late.remove();
+          };
+          const adoptLate = (p: Promise<ContainerHandle | null>) => {
+            void p.then(async (late) => {
+              if (!late || handles.includes(late)) return;
+              try {
+                await withinDeadline(disposeLate(late), LATE_DISPOSE_DEADLINE_MS, "limpieza del contenedor tardío");
+              } catch {
+                res.register(battleId, {
+                  kind: `container_late:${vid}`,
+                  phase: "containers",
+                  scope: SCOPE,
+                  release: () => disposeLate(late),
+                });
+              }
+            });
+          };
+          const forgetInFlight = res.register(battleId, {
+            kind: "container_launch_in_flight",
+            phase: "cancel_jobs",
+            scope: SCOPE,
+            deadlineMs: inFlightWaitMs + LATE_DISPOSE_DEADLINE_MS,
+            release: async () => {
+              const pending = inFlight as Promise<ContainerHandle | null> | null;
+              if (!pending) return;
+              const NO_ANSWER = Symbol("sin respuesta");
+              let t: ReturnType<typeof setTimeout> | undefined;
+              const late = await Promise.race([
+                pending,
+                new Promise<typeof NO_ANSWER>((r) => {
+                  t = setTimeout(() => r(NO_ANSWER), inFlightWaitMs);
+                  t.unref?.();
+                }),
+              ]).finally(() => t && clearTimeout(t));
+              if (late === NO_ANSWER) {
+                adoptLate(pending);
+                return "detached" as const;
+              }
+              if (late && !handles.includes(late)) await disposeLate(late);
+            },
+          });
           try {
-            handles[i] = await launchWithinStartup(opts.runner, spec, timeouts, launchRequestedAt[i]);
+            // G2 · cancelación: un aborto durante el lanzamiento no espera al reloj de arranque;
+            // el lanzamiento en vuelo lo resuelve el teardown (arriba).
+            handles[i] = await untilAborted(
+              launchWithinStartup(instrumented, spec, timeouts, launchRequestedAt[i]),
+              signal,
+            );
+            forgetInFlight();
+            const h = handles[i]!;
+            const forgetTerminate = res.register(battleId, {
+              kind: `container:${v.vehicleId}`,
+              phase: "terminate",
+              scope: SCOPE,
+              release: async () => {
+                try {
+                  await terminateContainer(h, { termGraceS });
+                } catch (err) {
+                  // Si ya no corre (o ya no existe: lo borró la fase `containers`
+                  // de un teardown anterior), la parada está hecha. G2: consulta acotada.
+                  const st = h.state ? await withinDeadline(h.state(), 2_000, "state()").catch(() => null) : null;
+                  if (st && (st.gone || !st.running)) return;
+                  throw err;
+                }
+              },
+            });
+            if (h.remove) {
+              res.register(battleId, {
+                kind: `container_remove:${v.vehicleId}`,
+                phase: "containers",
+                scope: SCOPE,
+                deadlineMs: REMOVE_DEADLINE_MS,
+                // G2 · el borrado es FORZADO (la Engine mata lo que siga vivo): si se
+                // borró, una parada que no contestó ya no es un recurso pendiente.
+                release: async () => {
+                  await h.remove!();
+                  forgetTerminate();
+                },
+              });
+            }
           } catch (err) {
+            if (signal?.aborted && err === signal.reason) throw err;
             const reason = err instanceof SandboxLaunchError ? err.reason : "sandbox_start_failed";
             throw new InfrastructureFailure(
               "container_unavailable",
@@ -226,7 +399,11 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 
         // Postura de seguridad REAL de cada contenedor (tabla 18.2): fail closed.
         for (let i = 0; i < handles.length; i++) {
-          const posture = await handles[i]!.posture().catch((err: unknown) => {
+          const posture = await withinDeadline(
+            handles[i]!.posture(),
+            POSTURE_DEADLINE_MS,
+            "inspección de postura",
+          ).catch((err: unknown) => {
             throw new InfrastructureFailure(
               "container_unavailable",
               `no se pudo inspeccionar el contenedor: ${String(err)}`,
@@ -253,7 +430,13 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
                 signals: plans[i]!.startup!,
                 helloAt: () => server.helloAt(v.vehicleId),
                 onHello: (cb) => server.onHello((vid) => vid === v.vehicleId && cb()),
-                ...(h.state ? { containerState: () => h.state!() } : {}),
+                // G2 · ronda 2: cada consulta de estado del reloj de arranque, acotada.
+                ...(h.state
+                  ? {
+                      containerState: () =>
+                        withinDeadline(h.state!(), FINAL_DIAGNOSTICS_DEADLINE_MS, "state()").catch(() => null),
+                    }
+                  : {}),
               });
             }),
           );
@@ -275,6 +458,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
               vehicles[culprit].botId,
               `[${r.reason}] ${r.detail}`,
               "container",
+              // UX-F (DEF-R4) · el motivo `hook` no se pierde en un `bot_crash` genérico.
+              r.report?.kind === "hook" ? "hook_missing" : undefined,
             );
           }
         } else {
@@ -304,52 +489,138 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // lectura final llegaba siempre tarde, null). Se muestrea durante la
         // batalla y se guarda la última lectura positiva: es la CPU consumida
         // hasta esa muestra (cota inferior, nunca una estimación inventada).
-        const lastCpu: (number | null)[] = handles.map(() => null);
-        const sampleCpu = async () => {
-          await Promise.all(
-            handles.map(async (h, i) => {
-              try {
-                const v = (await h?.cpuMs?.()) ?? null;
-                if (typeof v === "number" && v > 0 && (lastCpu[i] === null || v > lastCpu[i]!)) lastCpu[i] = v;
-              } catch {
-                /* muestra perdida: se queda la anterior */
-              }
-            }),
+        // Intervalo 2 s (acotado 1-10 s), una petición en vuelo por contenedor y
+        // sólo contenedores vivos: ver cpu-sampler.ts.
+        const cpuSamplerImpl = new ContainerCpuSampler(handles, opts.cpuSampleMs);
+        const lastCpu = cpuSamplerImpl.last;
+        const sampleCpu = () => cpuSamplerImpl.final();
+        cpuSampler = cpuSamplerImpl.start();
+        res.registerTimer(battleId, "cpu_sampler", cpuSampler, SCOPE);
+
+        // UX-06 · si un bot se desconecta con la batalla en curso, se mira en ese
+        // momento cómo está su contenedor (salida, OOM): al acabar ya no se sabría
+        // (AutoRemove) o todos habrían salido por el SHUTDOWN.
+        const containerAtDisconnect = new Map<number, Promise<BotContainerDiagnostics>>();
+        const offDisconnect = server.onDisconnect((vid) => {
+          const i = vehicles.findIndex((v) => v.vehicleId === vid);
+          const h = i >= 0 ? handles[i] : null;
+          if (!h?.state || containerAtDisconnect.has(i)) return;
+          containerAtDisconnect.set(
+            i,
+            h.state().then(
+              (st) => containerDiagnostics(st, true),
+              () => containerDiagnostics(null, true),
+            ),
           );
-        };
-        cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
-        cpuSampler.unref?.();
+        });
 
         server.start();
-        const overallMs =
-          engine.config.ruleset.timeLimitTicks * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
+        const overallMs = proportionalBattleGuardMs(
+          maxBattleTicks(engine.config.ruleset),
+          tickIntervalMs,
+          opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS,
+          opts.guardFactor ?? BATTLE_GUARD_FACTOR,
+        );
         const result = await Promise.race([
           server.waitForResult(),
           new Promise<never>((_r, reject) => {
-            guard = setTimeout(() => reject(new Error(`timeout global de la batalla tras ${overallMs} ms`)), overallMs);
+            guard = setTimeout(
+              () => reject(battleGuardFailure(overallMs, engine.tick, maxBattleTicks(engine.config.ruleset))),
+              overallMs,
+            );
+            res.registerTimer(battleId, "battle_guard", guard, SCOPE);
           }),
           new Promise<never>((_r, reject) => {
-            onAbort = () => reject(new Error(`batalla abortada: ${String(signal?.reason)}`));
-            signal?.addEventListener("abort", onAbort, { once: true });
+            onAbort = () => reject(signal?.reason ?? new Error(`batalla abortada`));
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort, { once: true });
           }),
         ]);
         const replay = server.getReplay();
+        offDisconnect();
 
         // Última muestra (por si el contenedor aún vive) y se fija la medida.
-        clearInterval(cpuSampler);
+        cpuSamplerImpl.stop();
         cpuSampler = undefined;
-        await sampleCpu();
+        await withinDeadline(sampleCpu(), FINAL_DIAGNOSTICS_DEADLINE_MS, "última muestra de CPU").catch(
+          () => undefined, // muestra perdida: se queda la anterior (cota inferior)
+        );
         const cpuMsByBot = new Map<string, number | null>();
         for (let i = 0; i < handles.length; i++) cpuMsByBot.set(vehicles[i].botId, lastCpu[i]);
-        return { result, replay, cpuMsByBot: Object.fromEntries(cpuMsByBot) };
+
+        const proto = server.protocolDiagnostics();
+        const diagnosticsByBot = new Map<string, BotRunDiagnostics>();
+        for (let i = 0; i < vehicles.length; i++) {
+          const atDisconnect = containerAtDisconnect.get(i);
+          // UX-F (DEF-R4) · versión publicada sin hook: jugó (quieta), con aviso.
+          const hookMissing = (plans[i]?.startup?.warnings?.() ?? []).some((w) => w.kind === "hook_missing");
+          diagnosticsByBot.set(vehicles[i].botId, {
+            schema: "bot-diagnostics/v1",
+            startup: hookMissing ? { ok: true, warning: "hook_missing" } : { ok: true },
+            ...(proto[vehicles[i].vehicleId] ? { protocol: proto[vehicles[i].vehicleId] } : {}),
+            ...(atDisconnect
+              ? {
+                  container: await withinDeadline(
+                    atDisconnect,
+                    FINAL_DIAGNOSTICS_DEADLINE_MS,
+                    "estado del contenedor al desconectarse",
+                  ).catch(() => containerDiagnostics(null, true)),
+                }
+              : {}),
+          });
+        }
+        return {
+          result,
+          replay,
+          cpuMsByBot: Object.fromEntries(cpuMsByBot),
+          diagnosticsByBot: Object.fromEntries(diagnosticsByBot),
+        };
       } finally {
         if (guard) clearTimeout(guard);
         if (cpuSampler) clearInterval(cpuSampler);
         if (onAbort) signal?.removeEventListener("abort", onAbort);
-        await Promise.allSettled(handles.filter((h): h is ContainerHandle => h !== null).map((h) => h.stop()));
-        server.stop();
-        await Promise.resolve(host.close()).catch(() => undefined);
+        // OLA2-MF · teardown único, sólo lo de esta capa (timers, servidor,
+        // lanzamientos en vuelo, contenedores TERM→KILL y borrado, host).
+        await res.cleanupBattleResources(battleId, "FAILED", { scope: SCOPE });
       }
     },
   };
+}
+
+/**
+ * Fallo del guard global. Si el motor llegó a avanzar (`tick > 0`) la batalla ARRANCÓ y
+ * jugó: es `battle_timeout`, no un fallo de arranque. Sin ningún tick jugado es lo que
+ * el nombre dice, `engine_start_failure`. La clasificación del final decide SÓLO por el
+ * código, nunca por el texto (el mensaje es para diagnóstico).
+ */
+export function battleGuardFailure(overallMs: number, tick: number, maxTicks: number): InfrastructureFailure {
+  return tick > 0
+    ? new InfrastructureFailure(
+        "battle_timeout",
+        `timeout global de la batalla tras ${overallMs} ms (jugó ${tick}/${maxTicks} ticks)`,
+      )
+    : new InfrastructureFailure(
+        "engine_start_failure",
+        `timeout global de la batalla tras ${overallMs} ms sin ningún tick jugado`,
+      );
+}
+
+/** `p`, o rechazo con `signal.reason` en cuanto la batalla se aborta (sin esperar a `p`). */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
 }

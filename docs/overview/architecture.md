@@ -2,8 +2,9 @@
 
 ## Resumen
 
-Esta es la arquitectura **tal como está en el código de `27f70bb` y en el perfil compose `production`**,
-que es el que corre. No describe la arquitectura deseada: lo que no existe o no se usa se marca
+Esta es la arquitectura del perfil compose `production`, que es el que corre. La estructura se verificó
+en octubre contra `27f70bb`; el estado de funcionamiento se revisó en `e3bf2fa` (2026-11-02), y las
+tablas «Verificación» conservan su SHA de evidencia. No describe la arquitectura deseada: lo que no existe o no se usa se marca
 como tal. El detalle técnico está en [docs/technical/architecture.md](../technical/architecture.md)
 y en [docs/technical/services.md](../technical/services.md).
 
@@ -32,16 +33,15 @@ y en [docs/technical/services.md](../technical/services.md).
 │  /replays/*   → 404 (TD-004: replays por /api/v1)  /grafana/* → grafana:3000        │
 └───────┬───────────────┬──────────────────────┬───────────────────────┬────────────┘
         │               │                      │                       │
-      web            api ──────HTTP /run────► arena-engine ──HTTP──► s9-docker-proxy (HOST)
-   (estático)     │  │   (apagado: flag vacía)  (DOCKER_PROXY_URL vacío)     │ allowlist
-                  │  │                                                     docker.sock
+      web            api            arena-engine (HTTP /run: camino legado, sin consumidor, TD-039)
+   (estático)     │  │
                   │  └─ HTTP POST ingesta ─► replay-service ── disco (arena_replays)
                   │                                ▲
      INSERT jobs  │                                │ ingestReplay (disco)
                   ▼                                │
-             postgres ◄──── claim jobs ──── tournament-worker  (motor EN PROCESO + stub HunterBot)
+             postgres ◄──── claim jobs ──── tournament-worker  (motor EN PROCESO + bots en contenedor, vía s9-docker-proxy (HOST))
               ▲   ▲                              │  BLPOP s9:wake:jobs (sin productor)
-              │   └──── claim bot_build ──── bot-build-worker (pipeline; falla cerrado)
+              │   └──── claim bot_build ──── bot-build-worker (pipeline; sandbox en contenedor)
               │                                  ▼
               │                                queue (redis)
               ├──── pg_dump ──── backup ──── SFTP ──► <backup-host> (restic)
@@ -56,10 +56,10 @@ y en [docs/technical/services.md](../technical/services.md).
 | `gateway` | nginx: único punto de entrada; enruta por prefijo; HSTS | — | FUNCIONA (con [TD-004](../roadmap/technical-debt.md#td-004) y [TD-014](../roadmap/technical-debt.md#td-014)) |
 | `web` | SPA React 19 + Phaser 4 servida por nginx | — | PARCIAL |
 | `api` | API REST (Express 5): usuarios, bots, loadouts, mapas, batallas, torneos, administración. RBAC desde OpenAPI. Encola trabajos. **Persiste los mapas** | PostgreSQL (casi todas las tablas) | FUNCIONA |
-| `arena-engine` | Servicio HTTP con `POST /run` para batallas con contenedores reales | — | **sin uso efectivo**: `/run` está apagado y no tiene proxy Docker |
-| `tournament-worker` | Ejecuta **todos** los trabajos `run_battle`, calendarios, resultados y clasificación. Simula las batallas **en proceso**. Aloja el WebSocket de espectador | PostgreSQL + replays en disco | FUNCIONA con el stub ([TD-002](../roadmap/technical-debt.md#td-002)) |
+| `arena-engine` | Servicio HTTP con `POST /run` para batallas con contenedores reales | — | **camino legado sin consumidor**: la API ya no lo llama ([TD-039](../roadmap/technical-debt.md#td-039)); las batallas las ejecuta el tournament-worker |
+| `tournament-worker` | Ejecuta **todos** los trabajos `run_battle`, calendarios, resultados y clasificación. Corre el motor **en proceso** y conduce cada vehículo con el código de su bot en un contenedor (por el proxy Docker del host). Aloja el WebSocket de espectador | PostgreSQL + replays en disco | FUNCIONA (autoridad única, [TD-002](../roadmap/technical-debt.md#td-002) cerrada) |
 | `bot-manager` | Proceso de control: `/healthz` y readiness de la autoridad de lanzamiento | volúmenes de fuentes y caché | sin función de negocio activa |
-| `bot-build-worker` | Ejecuta el pipeline de build (análisis, firma) de los trabajos `bot_build` | PostgreSQL | falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| `bot-build-worker` | Ejecuta el pipeline de build (análisis, firma) de los trabajos `bot_build` | PostgreSQL | FUNCIONA: ejecuta el bot en el sandbox de contenedor; sin `DOCKER_PROXY_URL`/`BUILD_SANDBOX_HOST` rechaza ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | `map-service` | Almacén de mapas **en memoria**, sólo lectura | volúmenes montados sin uso | **sin uso** ([TD-017](../roadmap/technical-debt.md#td-017)) |
 | `replay-service` | Guarda y sirve replays (índice y segmentos), re-verificación y retención | **sólo disco** (no tiene tabla) | FUNCIONA (lectura sin autenticación) |
 | `queue` | Redis 7.4.9 (AOF, `noeviction`) | volumen | sólo canal de aviso, sin productor ([TD-026](../roadmap/technical-debt.md#td-026)) |
@@ -90,9 +90,9 @@ Detalle: [docs/technical/database.md](../technical/database.md).
 ## Comunicaciones
 
 - **Navegador ↔ gateway:** HTTP(S) y WebSocket (`/ws/spectate/<battleId>`, con el ticket como subprotocolo).
-- **api → postgres:** SQL (Knex). **api → arena-engine:** HTTP `POST /run`, con un secreto interno compartido. **api → replay-service:** HTTP de ingesta, con secreto.
+- **api → postgres:** SQL (Knex). **api → arena-engine:** ya no hay llamada (el `POST /run` es un camino legado sin consumidor, [TD-039](../roadmap/technical-debt.md#td-039)). **api → replay-service:** HTTP de ingesta, con secreto.
 - **Trabajos:** la API inserta en la tabla `jobs` y los workers la reclaman con `FOR UPDATE SKIP LOCKED`. Redis sólo es un aviso opcional.
-- **arena-engine → proxy Docker del host → contenedores de bots** (red `arena`). Todo este camino está apagado.
+- **tournament-worker y bot-build-worker → proxy Docker del host → contenedores de bots** (red `arena`).
 - **backup → `<backup-host>`:** SFTP (restic).
 
 Detalle: [docs/technical/data-flow.md](../technical/data-flow.md).
@@ -112,7 +112,7 @@ Detalle: [docs/technical/data-flow.md](../technical/data-flow.md).
 | Dato | Autoridad única | Observación |
 |---|---|---|
 | Estado de los trabajos | tabla `jobs` (PostgreSQL) | Redis no es autoridad |
-| Estado de una batalla | `battles.status`, escrito por el worker | la API y el worker pueden competir si se activa `/run` ([TD-002](../roadmap/technical-debt.md#td-002)) |
+| Estado de una batalla | `battles.status`, escrito por el worker | sólo el worker lo escribe (reserva atómica con lease); `POST /battles/{id}/run` delega en la cola ([TD-002](../roadmap/technical-debt.md#td-002), cerrada) |
 | Contenido de los mapas | `map_versions.content`, escrito por la **API** | map-service no es autoridad aunque su nombre lo sugiera |
 | Fichero de replay | disco (`arena_replays`) | sin tabla; la BD sólo guarda la referencia |
 | Contrato HTTP y RBAC | `apps/api/openapi.yaml` (`x-min-role`) | las rutas fuera del contrato se declaran con `defineExtension` |

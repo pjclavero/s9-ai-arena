@@ -52,6 +52,9 @@ describe("R11 · LivePage (#/live, GET /public/battles/live)", () => {
     render(<LivePage />);
     const notice = await screen.findByTestId("live-disabled");
     expect(notice.textContent).toContain("desactivada");
+    // UX-D · explica que es configuración, no un fallo, y dónde ver lo tuyo.
+    expect(notice.textContent).toContain("No es un fallo");
+    expect(notice.querySelector('a[href="#/battles"]')).not.toBeNull();
     expect(screen.queryByTestId("live-empty")).toBeNull();
     expect(screen.queryByTestId("live-battles")).toBeNull();
   });
@@ -83,7 +86,8 @@ describe("R11 · LivePage (#/live, GET /public/battles/live)", () => {
     const link = list.querySelector("a")!;
     expect(link.getAttribute("href")).toBe("#/viewer/battle-1");
     expect(link.textContent).toContain("mvp-arena-01");
-    expect(link.textContent).toContain("deathmatch");
+    // UX-D · el modo en palabras, no el código del motor.
+    expect(link.textContent).toContain("todos contra todos");
   });
 
   it("un fallo de carga se anuncia con role=alert y reintento (R3.7), no lista vacía", async () => {

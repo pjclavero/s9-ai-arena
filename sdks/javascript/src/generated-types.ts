@@ -57,7 +57,7 @@ export interface HELLOBotMotor {
 export interface WELCOMEMotorBot {
   battleId: string;
   /**
-   * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+   * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
    */
   selfId: string;
   team: string;
@@ -84,6 +84,14 @@ export interface WELCOMEMotorBot {
     respawn?: {
       enabled?: boolean;
       delayTicks?: number;
+      /**
+       * R-RULES (ADR-021) · Reapariciones permitidas por vehículo (vidas = 1 + maxRespawns). Ausente = ilimitadas (si enabled). Agotadas, el vehículo queda eliminado.
+       */
+      maxRespawns?: number;
+      /**
+       * OLA2-G3 · RESPAWN_REARM_POLICY. self: al reaparecer sólo el que reaparece recupera su munición. all_alive_participants: cuando reaparece cualquier vehículo, todos los vivos (incluido el que reaparece) vuelven a su munición máxima, una vez por tick. Ausente = self.
+       */
+      rearmPolicy?: "self" | "all_alive_participants";
     };
     sharedTeamVision?: boolean;
     radio?: {
@@ -271,7 +279,7 @@ export interface OBSERVATIONMotorBot {
        */
       contacts: {
         /**
-         * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+         * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
          */
         entityId?: string;
         kind?: "vehicle" | "projectile" | "mine" | "wall" | "destructible" | "flag" | "base" | "zone" | "unknown";
@@ -313,7 +321,7 @@ export interface OBSERVATIONMotorBot {
    */
   radio?: {
     /**
-     * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+     * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
      */
     from: string;
     /**
@@ -1799,7 +1807,7 @@ export interface EVENTMotorBot {
    */
   sourceId?: string;
   /**
-   * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+   * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
    */
   targetId?: string;
   team?: string;

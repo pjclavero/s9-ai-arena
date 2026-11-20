@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { seedContent } from "./seeds/dev.js";
 import { seedDemoTeams } from "./seeds/demo-teams.js";
+import { createLoadoutRevision, validateLoadoutServerSide } from "../services/bots.js";
 
 let h: TestDbHandle;
 const OWNER = "duenyo@arena.local";
@@ -132,6 +133,45 @@ describe("seedDemoTeams · B5 (versión inservible: rejected/suspended/retired)"
     expect(await count("bot_loadouts")).toBe(loadoutsAntes);
     const bots = r.bots.filter((b) => b.name === "Equipo Rojo · Explorador");
     expect(bots).toEqual([{ name: "Equipo Rojo · Explorador", team: "Equipo Rojo", created: true }]);
+  });
+
+  it("si la última revisión de loadout ya no valida (munición incompatible), NO la reutiliza: crea una nueva", async () => {
+    // Bot del equipo adicional (ningún otro test lo toca).
+    const bot = await h.db("bots").where({ name: "Elimelech · Defensor" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "rejected" });
+    // Revisión histórica de antes del fix: cañón + munición estándar como módulo aparte.
+    const vieja = await createLoadoutRevision(
+      h.db,
+      bot.id,
+      {
+        catalogVersion: "mvp@1",
+        chassis: "chassis.heavy@1",
+        modules: [
+          { slot: "drive", moduleId: "movement.tracks@1" },
+          { slot: "power", moduleId: "power.generator@1" },
+          { slot: "turret_main", moduleId: "weapon.cannon@1" },
+          { slot: "ammo_main", moduleId: "ammo.standard@1" },
+        ],
+      },
+      { massKg: 0, costCredits: 0, energyBalanceEUs: 0 },
+    );
+    const viejaAntes = await h.db("bot_loadouts").where({ id: vieja.id }).first();
+
+    await seedDemoTeams(h.db, OWNER, ["Elimelech"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
+    expect(versions).toHaveLength(2);
+    expect(versions[1].loadout_revision).toBe((vieja.revision as number) + 1);
+    const nueva = await h.db("bot_loadouts").where({ bot_id: bot.id, revision: versions[1].loadout_revision }).first();
+    const modules = typeof nueva.modules === "string" ? JSON.parse(nueva.modules) : nueva.modules;
+    const check = await validateLoadoutServerSide(h.db, {
+      catalogVersion: nueva.catalog_version,
+      chassis: nueva.chassis,
+      modules,
+    });
+    expect(check.violations).toEqual([]);
+    expect(await h.db("bot_loadouts").where({ id: vieja.id }).first()).toEqual(viejaAntes); // el histórico no se toca
   });
 
   it("bot con última versión 'draft' → NO se toca (estado utilizable)", async () => {

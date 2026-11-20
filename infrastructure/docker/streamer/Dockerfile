@@ -4,7 +4,8 @@
 # Captura la vista /broadcast (T11.1) con Chromium en kiosco sobre un Xvfb y la
 # codifica con FFmpeg hacia YouTube RTMPS (x264 por software como base; NVENC
 # opcional si el host tiene GPU con passthrough — ver docs/streaming-runbook.md).
-# La clave de emisión entra SOLO por /run/secrets/stream_key (init-secrets.sh).
+# La clave de emisión llega SELLADA desde la web (EQ5b) o, heredado, por
+# /run/secrets/stream_key; nunca va al argv de ffmpeg (relé RTMP en el propio Node).
 FROM alpine:3.20
 
 # tsx ejecuta el supervisor TypeScript sin paso de build (mismo criterio que
@@ -32,6 +33,9 @@ COPY packages/game-rules/safe-lookup.ts /app/packages/game-rules/safe-lookup.ts
 # imagen arranca y muere con ERR_MODULE_NOT_FOUND aunque funcione en el repo
 # (lo caza infrastructure/tests/image-package-imports.test.ts, que ya lo cazó).
 COPY packages/build-info /app/packages/build-info
+# EQ5b §19 · apertura de credenciales SELLADAS (la clave de emisión llega
+# cifrada con la pública; el streamer la abre en memoria con la privada).
+COPY packages/stream-secrets /app/packages/stream-secrets
 COPY infrastructure/docker/streamer/entrypoint.sh /entrypoint.sh
 # B13 · MISMO entrypoint de datos que la imagen genérica (no un mecanismo
 # paralelo): ajusta la propiedad de ARENA_DATA_DIRS como root y baja a
@@ -89,6 +93,17 @@ RUN ARENA_DATA_DIRS=/data/replays /data-dir-entrypoint.sh sh -euc '\
       esac; \
       rmdir /tmp/probe-ro' \
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
+
+# #256 · AUTOPRUEBA DE RENDER en cada build (la emisión de YouTube salió en BLANCO con el
+# vídeo «válido»: nadie miraba el contenido). Con el Chromium, el Xvfb, el ffmpeg y el
+# supervisor REALES de la imagen, sin red: (+) una página con contenido abre la puerta
+# BROADCAST_RENDER_READY y TODOS los frames del MP4 son visibles, el primero incluido;
+# (−) una página blanca NO la abre, no se graba nada y acaba en `render_not_ready`. Si
+# cualquiera de los dos falla, el build falla aquí.
+# Y no deja rastro: ni perfil de Chromium (su SingletonLock bloquearía al Chromium real:
+# «profile in use», código 21) ni nada más en el HOME del servicio.
+RUN /data-dir-entrypoint.sh tsx /app/apps/streamer/src/render-selftest.ts \
+ && if [ -n "$(ls -A /home/streamer)" ]; then echo "la autoprueba dejó ficheros en /home/streamer:"; ls -la /home/streamer; exit 1; fi
 
 ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]
 

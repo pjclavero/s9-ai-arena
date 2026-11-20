@@ -7,6 +7,9 @@
 
 export type FlagState = "at_base" | "carried" | "dropped";
 
+/** D-B5 · granularidad pública del casco (packages/projection/policy.ts: HULL_LEVEL_N). */
+const HULL_LEVEL_N = 20;
+
 export interface VehicleOverlay {
   id: string;
   team: string;
@@ -16,12 +19,19 @@ export interface VehicleOverlay {
   carryingFlag: string | null;
   /** slot → estado del módulo (operational/damaged/critical/destroyed/offline). */
   modules: Record<string, string>;
+  /**
+   * D-B4 · sectores con el blindaje ROTO según el frame público (`armorBroken`, sólo los
+   * `true`). Es la ÚNICA fuente pública de la rotura: `modules` no llega en público.
+   */
+  armorBrokenSectors?: string[];
 }
 
 export interface FeedItem {
   tick: number;
   kind: string;
   text: string;
+  /** UX-VIEW · id del vehículo/objeto destruido, para pintar su NOMBRE (no `veh_3`). */
+  targetId?: string;
 }
 
 /**
@@ -41,6 +51,15 @@ export interface MatchResult {
 }
 
 const FEED_LIMIT = 50;
+
+const ARMOR_SECTORS = ["front", "left", "right", "rear"] as const;
+
+/** Sectores marcados como rotos (`true`) en el `armorBroken` público; entrada hostil ⇒ []. */
+export function armorBrokenSectorsOf(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const o = raw as Record<string, unknown>;
+  return ARMOR_SECTORS.filter((s) => Object.prototype.hasOwnProperty.call(o, s) && o[s] === true).sort();
+}
 
 export class OverlayState {
   score: Record<string, number> = {};
@@ -65,10 +84,14 @@ export class OverlayState {
         id: v.id,
         team: v.team,
         alive: v.alive,
-        hullHp: v.hullHp,
-        hullHpMax: v.hullHpMax,
+        // OLA 2 · el frame público lleva el casco CUANTIZADO (`hullLevel` 0..20, D-B5) y
+        // no lleva hullHp/hullHpMax (revelan el chasis, EQUIPMENT_PRIVATE). El visor sólo
+        // usa la fracción, así que se expresa como hullLevel/20.
+        hullHp: typeof v.hullLevel === "number" ? v.hullLevel : v.hullHp,
+        hullHpMax: typeof v.hullLevel === "number" ? HULL_LEVEL_N : v.hullHpMax,
         carryingFlag: v.carryingFlag ?? null,
         modules: Object.fromEntries((v.modules ?? []).map((m: any) => [m.slot, m.state])),
+        armorBrokenSectors: armorBrokenSectorsOf(v.armorBroken),
       });
       // El snapshot es la verdad más fresca también para la bandera: si alguien
       // la lleva, está "carried" aunque el evento aún no haya llegado.
@@ -118,7 +141,7 @@ export class OverlayState {
         );
         break;
       case "vehicle_destroyed":
-        this.push(e, `${e.targetId} destruido`);
+        this.push(e, `${e.targetId} destruido`, typeof e.targetId === "string" ? e.targetId : undefined);
         break;
       case "mine_triggered":
         this.push(e, `Mina detonada`);
@@ -150,19 +173,28 @@ export class OverlayState {
     const normalized: MatchResult = {
       winner,
       score,
-      reason: typeof result.reason === "string" ? result.reason : null,
+      reason:
+        typeof result.reason === "string"
+          ? result.reason
+          : typeof result.endReason === "string"
+            ? result.endReason
+            : null,
       endedTick: Number.isFinite(result.tick) ? result.tick : this.lastTick,
     };
     this.result = normalized;
     this.score = score;
     this.push(
       { kind: "match_ended", tick: normalized.endedTick },
-      winner ? `Fin de la partida · gana ${winner}` : "Fin de la partida · empate",
+      normalized.reason === "technical_limit"
+        ? "Fin de la partida · detenida por límite técnico (sin resultado deportivo)"
+        : winner
+          ? `Fin de la partida · gana ${winner}`
+          : "Fin de la partida · empate",
     );
   }
 
-  private push(e: any, text: string): void {
-    this.feed.push({ tick: e.tick ?? this.lastTick, kind: e.kind, text });
+  private push(e: any, text: string, targetId?: string): void {
+    this.feed.push({ tick: e.tick ?? this.lastTick, kind: e.kind, text, ...(targetId ? { targetId } : {}) });
     if (this.feed.length > FEED_LIMIT) this.feed.splice(0, this.feed.length - FEED_LIMIT);
   }
 }

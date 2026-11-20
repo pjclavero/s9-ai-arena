@@ -56,7 +56,8 @@ import type { Knex } from "knex";
 import { ARCHETYPES } from "../../../../../packages/module-catalog/resolve/archetypes.js";
 import { safeLookup } from "../../../../../packages/game-rules/safe-lookup.js";
 import { CATALOG_VERSION } from "../../../../../packages/module-catalog/loadCatalog.js";
-import { createLoadoutRevision, validateLoadoutServerSide } from "../../services/bots.js";
+import { assertLoadoutRevisionUsable, createLoadoutRevision, validateLoadoutServerSide } from "../../services/bots.js";
+import { ApiError } from "../../errors.js";
 import type { Db } from "../connection.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -297,9 +298,19 @@ async function ensureLoadoutAndVersion(
         JSON.stringify(validation.violations),
     );
   }
-  // Reutiliza la revisión existente si el bot ya tenía loadout (caso reparación).
-  const previa = await db("bot_loadouts").where({ bot_id: botId }).orderBy("revision", "desc").first();
-  const loadout = previa ?? (await createLoadoutRevision(db, botId, loadoutInput, validation.summary!));
+  // Reutiliza la revisión existente si el bot ya tenía loadout (caso reparación), pero
+  // sólo si todavía valida: una revisión histórica inválida (p. ej. munición
+  // incompatible) se conserva y la versión nueva usa una revisión nueva del arquetipo.
+  let loadout = await db("bot_loadouts").where({ bot_id: botId }).orderBy("revision", "desc").first();
+  if (loadout) {
+    try {
+      await assertLoadoutRevisionUsable(db, botId, loadout.revision as number);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 422) throw e;
+      loadout = undefined;
+    }
+  }
+  loadout ??= await createLoadoutRevision(db, botId, loadoutInput, validation.summary!);
 
   await db("bot_versions").insert({
     bot_id: botId,

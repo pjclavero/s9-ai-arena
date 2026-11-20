@@ -8,8 +8,14 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "@arena/sdk": ["../../sdks/javascript/src/index.ts"]
-    }
+      "@arena/sdk": [
+        "../../sdks/javascript/src/index.ts"
+      ]
+    },
+    "allowJs": true
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.js",
+    "*.ts"
+  ]
 }

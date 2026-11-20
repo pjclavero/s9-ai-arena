@@ -214,12 +214,15 @@ describe("radio sin fugas de memoria (ERR-ENG-06)", () => {
         { id: "veh_1", botId: "b1", team: "red", spec: radioSpec() },
         { id: "veh_2", botId: "b2", team: "red", spec: radioSpec() },
         { id: "veh_3", botId: "b3", team: "blue", spec: radioSpec() },
+        // La radio es de equipo (RADIO_SCOPE=TEAM): sin compañero, veh_3 no oiría a nadie.
+        { id: "veh_4", botId: "b4", team: "blue", spec: radioSpec() },
       ],
     });
-    const bots = [new RadioSpamBot("b1"), new RadioSpamBot("b2"), new RadioSpamBot("b3")];
+    const bots = [new RadioSpamBot("b1"), new RadioSpamBot("b2"), new RadioSpamBot("b3"), new RadioSpamBot("b4")];
     b.attachBot("veh_1", bots[0]);
     b.attachBot("veh_2", bots[1]);
     b.attachBot("veh_3", bots[2]);
+    b.attachBot("veh_4", bots[3]);
 
     // El Map `id:segundo` que crecía sin purga (ERR-ENG-06) YA NO EXISTE: con él, esta
     // batalla habría retenido ~900 entradas (3 vehículos × 300 segundos).
@@ -234,7 +237,7 @@ describe("radio sin fugas de memoria (ERR-ENG-06)", () => {
     }
 
     // La cola de radio se mantiene acotada por el retardo de entrega, no crece.
-    // 3 vehículos × 2 msg/s con entrega en <1 s: unas pocas unidades, jamás cientos.
+    // 4 vehículos × 2 msg/s con entrega en <1 s: unas pocas unidades, jamás cientos.
     expect(maxQueue).toBeLessThanOrEqual(12);
 
     // El contador por vehículo es un ESCALAR que se reinicia cada segundo: tras 5

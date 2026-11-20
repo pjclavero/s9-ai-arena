@@ -1,166 +1,166 @@
 /**
- * R3.6 · MEJ-gráficos — MINIMAPA real como SEGUNDA cámara de Phaser.
+ * UX-VIEW · MINIMAPA FUERA del escenario — geometría PURA.
  *
- * Regla dura de la tarea: el minimapa es una cámara ADICIONAL (setViewport +
- * ignore()), NUNCA un segundo juego de entidades. Las mismas sprites del mundo
- * (mapa horneado, vehículos, objetivos) las dibujan las DOS cámaras; el minimapa
- * sólo cambia su encuadre (todo el mapa) y su viewport (esquina), e IGNORA las
- * capas de detalle que no aportan a vista de pájaro (partículas, decals, labels,
- * depuración). Así no se duplica ninguna entidad ni se toca la simulación.
+ * Antes (R3.6) el minimapa era una segunda cámara de Phaser DENTRO del canvas,
+ * en la esquina inferior izquierda: tapaba el mapa (un bot podía quedar debajo,
+ * invisible), coincidía con el kill feed, no se podía ocultar ni pulsar, no
+ * mostraba la vista y no se recolocaba al redimensionar.
  *
- * La GEOMETRÍA (viewport + zoom que encuadra el mapa entero) es pura y se prueba
- * en Node. El CABLEADO con Phaser se hace contra una superficie mínima de cámara
- * (MinimapCameraLike / MinimapSceneLike) para poder verificar en test —sin
- * navegador— que se añade UNA sola cámara y que se ignoran las capas correctas.
+ * Ahora es un panel propio (MinimapPanel.tsx, un <canvas> 2D fuera del área del
+ * escenario) que dibuja a partir de este modelo:
+ *  - el mapa encajado en su caja con margen (límites + muros + destructibles);
+ *  - cada vehículo como un punto de radio mínimo garantizado y DENTRO del mapa
+ *    dibujado (nunca fuera de la caja ni bajo nada);
+ *  - el rectángulo de la cámara principal (lo que se ve en el escenario);
+ *  - el seleccionado resaltado.
+ * Pulsar o arrastrar en el minimapa centra la cámara en ese punto (minimapToWorld).
  */
 
-/** Tamaño del mundo en metros (para encuadrar el mapa entero). */
 export interface WorldSize {
   widthM: number;
   heightM: number;
 }
 
-/** Colocación del minimapa dentro del canvas, en píxeles de dispositivo. */
-export interface MinimapPlacement {
+/** Encaje del mapa en la caja del minimapa, en píxeles CSS. */
+export interface MinimapLayout {
+  /** px CSS por metro. */
+  scale: number;
+  /** Esquina superior izquierda del mapa dibujado dentro de la caja. */
+  offsetX: number;
+  offsetY: number;
+  /** Tamaño del mapa dibujado. */
+  mapW: number;
+  mapH: number;
+  /** Caja completa. */
+  boxW: number;
+  boxH: number;
+}
+
+export const MINIMAP_PADDING_PX = 6;
+/** Radio mínimo de un vehículo en el minimapa: siempre visible, por pequeño que sea el mapa. */
+export const MIN_DOT_RADIUS_PX = 3;
+
+export function computeMinimapLayout(
+  world: WorldSize,
+  boxW: number,
+  boxH: number,
+  paddingPx = MINIMAP_PADDING_PX,
+): MinimapLayout {
+  const wM = Math.max(1, world.widthM);
+  const hM = Math.max(1, world.heightM);
+  const usableW = Math.max(1, boxW - paddingPx * 2);
+  const usableH = Math.max(1, boxH - paddingPx * 2);
+  const scale = Math.min(usableW / wM, usableH / hM);
+  const mapW = wM * scale;
+  const mapH = hM * scale;
+  return { scale, offsetX: (boxW - mapW) / 2, offsetY: (boxH - mapH) / 2, mapW, mapH, boxW, boxH };
+}
+
+/** Alto de la caja para un ancho dado, con la proporción del mapa (acotado). */
+export function minimapBoxHeight(world: WorldSize, boxW: number, paddingPx = MINIMAP_PADDING_PX): number {
+  const ratio = Math.max(1, world.heightM) / Math.max(1, world.widthM);
+  return Math.round(Math.max(60, Math.min(boxW * 1.5, (boxW - paddingPx * 2) * ratio + paddingPx * 2)));
+}
+
+export function worldToMinimap(l: MinimapLayout, x: number, y: number): { x: number; y: number } {
+  return { x: l.offsetX + x * l.scale, y: l.offsetY + y * l.scale };
+}
+
+/** Punto de la caja → metros del mundo, recortado a los límites del mapa. */
+export function minimapToWorld(l: MinimapLayout, world: WorldSize, px: number, py: number): { x: number; y: number } {
+  const x = (px - l.offsetX) / l.scale;
+  const y = (py - l.offsetY) / l.scale;
+  return { x: Math.min(world.widthM, Math.max(0, x)), y: Math.min(world.heightM, Math.max(0, y)) };
+}
+
+export interface MinimapVehicle {
+  id: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
+  alive: boolean;
+  team?: string;
 }
 
-export interface MinimapLayout {
-  /** Esquina del canvas donde ancla el minimapa. */
-  corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-  /** Fracción del lado menor del canvas que ocupa el minimapa (0..1). */
-  sizeFraction?: number;
-  /** Margen en píxeles al borde del canvas. */
-  marginPx?: number;
-  /** Píxeles por metro con que la ESCENA dibuja el mundo (mismo que el visor). */
-  pxPerM: number;
-}
-
-const DEFAULT_FRACTION = 0.22;
-const DEFAULT_MARGIN = 12;
-const MIN_SIDE_PX = 96;
-const MAX_SIDE_PX = 320;
-
-/**
- * Viewport del minimapa: un cuadrado (lado = fracción del lado menor del canvas,
- * acotado) anclado a una esquina con margen. Determinista y acotado para que en
- * canvas diminutos o gigantes siga siendo legible.
- */
-export function computeMinimapViewport(canvasW: number, canvasH: number, layout: MinimapLayout): MinimapPlacement {
-  const fraction = layout.sizeFraction ?? DEFAULT_FRACTION;
-  const margin = layout.marginPx ?? DEFAULT_MARGIN;
-  const corner = layout.corner ?? "bottom-left";
-  const side = Math.round(Math.max(MIN_SIDE_PX, Math.min(MAX_SIDE_PX, Math.min(canvasW, canvasH) * fraction)));
-  const w = Math.min(side, Math.max(0, canvasW - margin * 2));
-  const h = Math.min(side, Math.max(0, canvasH - margin * 2));
-  const left = corner.endsWith("left");
-  const top = corner.startsWith("top");
-  const x = left ? margin : Math.max(margin, canvasW - w - margin);
-  const y = top ? margin : Math.max(margin, canvasH - h - margin);
-  return { x, y, width: w, height: h };
+export interface MinimapDot {
+  id: string;
+  x: number;
+  y: number;
+  r: number;
+  alive: boolean;
+  team?: string;
+  selected: boolean;
 }
 
 /**
- * Zoom (px/m efectivo de la cámara del minimapa RELATIVO al del visor) que hace
- * caber el mapa entero en el viewport. La escena dibuja a `pxPerM` px/m; el mundo
- * mide `widthM*pxPerM` px de ancho, así que el factor de cámara es viewport/px.
- * Se toma el menor de ambos ejes para que quepa completo, con un pequeño margen.
+ * Puntos de los vehículos: radio ≥ MIN_DOT_RADIUS_PX y centro recortado al mapa
+ * dibujado (un vehículo pegado al borde no se sale de la caja). El seleccionado
+ * va el ÚLTIMO para pintarse encima de los demás.
  */
-export function computeMinimapZoom(
-  placement: MinimapPlacement,
-  world: WorldSize,
-  pxPerM: number,
-  paddingFraction = 0.06,
-): number {
-  const worldPxW = Math.max(1, world.widthM * pxPerM);
-  const worldPxH = Math.max(1, world.heightM * pxPerM);
-  const usableW = placement.width * (1 - paddingFraction);
-  const usableH = placement.height * (1 - paddingFraction);
-  return Math.min(usableW / worldPxW, usableH / worldPxH);
-}
-
-/** Centro del mundo en píxeles de escena (donde centrar la cámara del minimapa). */
-export function worldCenterPx(world: WorldSize, pxPerM: number): { x: number; y: number } {
-  return { x: (world.widthM * pxPerM) / 2, y: (world.heightM * pxPerM) / 2 };
-}
-
-/** Superficie mínima de una cámara de Phaser que el minimapa necesita. */
-export interface MinimapCameraLike {
-  setName(name: string): this;
-  setViewport(x: number, y: number, width: number, height: number): this;
-  setZoom(zoom: number): this;
-  centerOn(x: number, y: number): this;
-  setBackgroundColor(color: number | string): this;
-  setRoundPixels(round: boolean): this;
-  ignore(objects: unknown): this;
-}
-
-/** Superficie mínima de la escena/gestor de cámaras que el minimapa necesita. */
-export interface MinimapSceneLike {
-  cameras: {
-    add(x: number, y: number, width: number, height: number, makeMain?: boolean, name?: string): MinimapCameraLike;
-  };
-}
-
-export const MINIMAP_CAMERA_NAME = "minimap";
-
-export interface MinimapConfig {
-  world: WorldSize;
-  pxPerM: number;
-  layout?: Partial<Omit<MinimapLayout, "pxPerM">>;
-  /** Color de fondo del recuadro del minimapa. */
-  backgroundColor?: number;
-  /**
-   * Objetos de detalle que el minimapa NO debe dibujar (partículas, decals,
-   * labels, depuración, chrome del HUD): se comparten en la cámara principal, se
-   * ignoran aquí. Las entidades del mundo (mapa, vehículos, objetivos) NO van
-   * aquí: se ven en ambas cámaras SIN duplicarse.
-   */
-  ignore?: unknown[];
-}
-
-/**
- * Controla la SEGUNDA cámara del minimapa. En el constructor añade EXACTAMENTE una
- * cámara a la escena (`cameras.add`), la coloca en su viewport, la encuadra al mapa
- * entero e ignora las capas de detalle. `layout()` la recoloca al redimensionar el
- * canvas. `update()` la mantiene encuadrada si cambia el mundo.
- */
-export class MinimapController {
-  readonly camera: MinimapCameraLike;
-  private world: WorldSize;
-  private readonly pxPerM: number;
-  private readonly layoutOpts: MinimapLayout;
-
-  constructor(scene: MinimapSceneLike, config: MinimapConfig) {
-    this.world = config.world;
-    this.pxPerM = config.pxPerM;
-    this.layoutOpts = { ...config.layout, pxPerM: config.pxPerM };
-    // UNA sola cámara adicional, jamás la principal (makeMain = false).
-    this.camera = scene.cameras.add(0, 0, 1, 1, false, MINIMAP_CAMERA_NAME);
-    this.camera.setName(MINIMAP_CAMERA_NAME).setRoundPixels(true);
-    if (config.backgroundColor !== undefined) this.camera.setBackgroundColor(config.backgroundColor);
-    // Ignorar SOLO las capas de detalle: las entidades del mundo se comparten.
-    for (const obj of config.ignore ?? []) this.camera.ignore(obj);
+export function minimapDots(
+  vehicles: Iterable<MinimapVehicle>,
+  l: MinimapLayout,
+  selectedId: string | null,
+  vehicleRadiusM = 1.6,
+): MinimapDot[] {
+  const r = Math.max(MIN_DOT_RADIUS_PX, vehicleRadiusM * l.scale);
+  const out: MinimapDot[] = [];
+  for (const v of vehicles) {
+    if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) continue;
+    const p = worldToMinimap(l, v.x, v.y);
+    out.push({
+      id: v.id,
+      x: Math.min(l.offsetX + l.mapW - r, Math.max(l.offsetX + r, p.x)),
+      y: Math.min(l.offsetY + l.mapH - r, Math.max(l.offsetY + r, p.y)),
+      r: v.id === selectedId ? r + 1.5 : r,
+      alive: v.alive,
+      team: v.team,
+      selected: v.id === selectedId,
+    });
   }
+  out.sort((a, b) => Number(a.selected) - Number(b.selected));
+  return out;
+}
 
-  /** Recoloca y reencuadra el minimapa para el tamaño de canvas dado. */
-  layout(canvasW: number, canvasH: number): MinimapPlacement {
-    const placement = computeMinimapViewport(canvasW, canvasH, this.layoutOpts);
-    const zoom = computeMinimapZoom(placement, this.world, this.pxPerM);
-    const center = worldCenterPx(this.world, this.pxPerM);
-    this.camera
-      .setViewport(placement.x, placement.y, placement.width, placement.height)
-      .setZoom(zoom)
-      .centerOn(center.x, center.y);
-    return placement;
-  }
+export interface CameraView {
+  centerX: number;
+  centerY: number;
+  /** px de búfer por metro. */
+  zoom: number;
+  /** Viewport de la cámara en px de búfer. */
+  viewportW: number;
+  viewportH: number;
+}
 
-  /** El mundo cambió (setWorld): reencuadrar al nuevo tamaño manteniendo viewport. */
-  setWorld(world: WorldSize, canvasW: number, canvasH: number): void {
-    this.world = world;
-    this.layout(canvasW, canvasH);
-  }
+/** Rectángulo de la vista de la cámara principal en la caja, recortado al mapa dibujado. */
+export function minimapViewRect(
+  l: MinimapLayout,
+  cam: CameraView,
+): { x: number; y: number; w: number; h: number } | null {
+  if (!(cam.zoom > 0)) return null;
+  const halfW = cam.viewportW / (2 * cam.zoom);
+  const halfH = cam.viewportH / (2 * cam.zoom);
+  const a = worldToMinimap(l, cam.centerX - halfW, cam.centerY - halfH);
+  const b = worldToMinimap(l, cam.centerX + halfW, cam.centerY + halfH);
+  const x0 = Math.max(l.offsetX, a.x);
+  const y0 = Math.max(l.offsetY, a.y);
+  const x1 = Math.min(l.offsetX + l.mapW, b.x);
+  const y1 = Math.min(l.offsetY + l.mapH, b.y);
+  if (x1 <= x0 || y1 <= y0) return null;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+export type MinimapSize = "s" | "m" | "l";
+
+/** Ancho de la caja del minimapa (px CSS) para la preferencia y el hueco disponible. */
+export function minimapWidthFor(size: MinimapSize, availableW: number): number {
+  const want = size === "s" ? 160 : size === "l" ? 320 : 240;
+  return Math.max(120, Math.min(want, Math.floor(availableW)));
+}
+
+/** Dos rectángulos (p. ej. minimapa y escenario, en coordenadas de página) se solapan. */
+export function rectsOverlap(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 }

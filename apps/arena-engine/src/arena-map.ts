@@ -32,6 +32,13 @@ export const MAX_ARENA_MAP_ENTITIES = 4000;
 /** Dimensión máxima admitida (m). Un mapa de 10 km de lado no es un mapa: es un
  *  intento de agotar memoria en el motor. */
 export const MAX_ARENA_MAP_DIMENSION_M = 10_000;
+/**
+ * Prefijo RESERVADO de los ids de los muros del perímetro implícito que el motor
+ * añade a toda batalla (sim/battle.ts · addArenaBoundary, UX-07). Ningún mapa de
+ * fuera puede usarlo: dos cuerpos con el mismo id se pisarían en el índice del
+ * mundo físico y el perímetro podría desaparecer al destruir un "destructible".
+ */
+export const ARENA_BOUNDARY_ID_PREFIX = "__arena_boundary_";
 /** Longitud máxima de identificadores de texto (mapId, ids de entidad, equipos). */
 const MAX_ID_LENGTH = 128;
 
@@ -80,6 +87,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function checkBox(e: Record<string, unknown>, what: string, i: number): string | null {
   if (!isNonEmptyString(e.id)) return `${what}[${i}].id debe ser una cadena no vacía`;
   if (!isSafeExternalKey(e.id as string)) return `${what}[${i}].id no puede ser una propiedad de Object.prototype`;
+  if ((e.id as string).startsWith(ARENA_BOUNDARY_ID_PREFIX)) {
+    return `${what}[${i}].id usa el prefijo reservado ${ARENA_BOUNDARY_ID_PREFIX}`;
+  }
   if (!isVec2(e.position)) return `${what}[${i}].position debe ser {x,y} finitos`;
   if (!isFiniteNumber(e.halfW) || e.halfW < 0) return `${what}[${i}].halfW debe ser un número finito >= 0`;
   if (!isFiniteNumber(e.halfH) || e.halfH < 0) return `${what}[${i}].halfH debe ser un número finito >= 0`;
@@ -157,6 +167,12 @@ export function validateArenaMap(value: unknown): ArenaMapValidation {
     }
     if (!isVec2(s.position)) return { ok: false, reason: `spawns[${i}].position debe ser {x,y} finitos` };
     if (!isFiniteNumber(s.heading)) return { ok: false, reason: `spawns[${i}].heading debe ser finito` };
+    // Un spawn fuera del rectángulo del mapa nacería DENTRO del perímetro implícito
+    // (o más allá): no es el mapa pedido, es un vehículo emparedado.
+    const sp = s.position as { x: number; y: number };
+    if (sp.x < 0 || sp.x > (m.widthM as number) || sp.y < 0 || sp.y > (m.heightM as number)) {
+      return { ok: false, reason: `spawns[${i}] está fuera del mapa (${m.widthM}×${m.heightM})` };
+    }
     teams.add(s.team);
   }
   if (teams.size < 2) {

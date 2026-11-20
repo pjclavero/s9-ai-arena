@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Modelo de seguridad **real** de S9 AI Arena en `27f70bb`:
+Modelo de seguridad **real** de S9 AI Arena en `27f70bb` (octubre de 2026):
 - autenticación y sesiones;
 - roles RBAC;
 - aislamiento del código no confiable;
@@ -105,7 +105,7 @@ Todas las claves usan `req.ip`. Con un salto de proxy sin contar, colapsan en un
 | Capa | Implementación | Estado |
 |---|---|---|
 | Análisis | estructura, análisis estático y AST (`acorn` para JS, `python3` para Python), dependencias permitidas (`runtimes/*/ALLOWED-PACKAGES.md`), detección de secretos (`secret-scan.ts`) | FUNCIONA |
-| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | **PENDIENTE**: falta el `agentResolver`, y el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | FUNCIONA en `main` (`ContainerBuildSandbox`); sin sandbox configurado el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | Firma | artefactos firmados con `artifact_signing_key`; sin clave, el worker no arranca | FUNCIONA (sin artefactos todavía) |
 | Verificación antes de lanzar | `artifactGuard` en el worker | **no cableado** ([TD-015](../roadmap/technical-debt.md#td-015)) |
 | Contenedores de bot | sólo la red `arena` (sin ruta a BD, Redis ni API), `read_only`, `cap_drop: ALL`, `no-new-privileges`, límites de CPU, memoria y `pids`; imágenes de runtime fijadas por digest | definido; no se ejecuta hoy |
@@ -156,7 +156,7 @@ Procedimientos: [docs/operations/configuration.md](../operations/configuration.m
 |---|---|---|---|
 | `S9_ENABLE_REAL_BATTLE_RUNS` | apagada ⇒ `/run` responde 503 `real_battle_runs_disabled` | Carril I: reserva atómica `scheduled→running`, techo de concurrencia (`S9_MAX_CONCURRENT_REAL_BATTLE_RUNS`, por defecto 1), auditoría y liberación en caso de error. **Pendientes:** I-8 (cierre del ciclo de vida) e I-9 (autorización por propiedad) | **no activar** antes de resolver [TD-002](../roadmap/technical-debt.md#td-002) |
 | `S9_PUBLIC_SPECTATE_ENABLED` | apagada | Carril J: la API no emite tickets anónimos y el gateway de espectador rechaza los marcados `anon` | en `main`; **no desplegado** ([TD-006](../roadmap/technical-debt.md#td-006)) |
-| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, hace públicos (anónimos incluidos) **sólo** los replays de batallas `finished` cuyos bots son todos `public`, en todas las rutas de replay de la API; el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
+| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, deja **leer** (anónimos incluidos) **sólo** la proyección pública de competición de las batallas `finished` mostrables en público (todos sus bots `public` o torneo con `broadcast`); nunca el replay crudo ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
 | `S9_METRICS_ENABLED` | apagada ⇒ `/metrics` no existe | — | — |
 
 La activación es una decisión de operación con sus precondiciones. Ver
@@ -164,9 +164,10 @@ La activación es una decisión de operación con sus precondiciones. Ver
 
 ## Autorización de replays
 
-[TD-004](../roadmap/technical-debt.md#td-004), integración `integration/production-readiness`, **sin desplegar**.
+[TD-004](../roadmap/technical-debt.md#td-004), PR #158 (incluida en el commit de producción RC5.5).
 
 - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `organizer`), el dueño de un bot participante, los miembros del equipo de un bot participante no `private`, y cualquiera sólo si `S9_PUBLIC_REPLAYS_ENABLED` está encendida y todos los bots de la batalla son públicos.
+- **Crudo restringido (PRE-1)**: leer no es recibir el fichero. El replay crudo (semilla, comandos de los bots con radio y minas, loadouts) sólo lo reciben `moderator`/`admin` y el dueño de **todos** los bots de la batalla, con la bandera pública activada o no. Todos los demás lectores, y toda ruta pública, reciben la proyección saneada de competición (`apps/api/src/replay-projection.ts`): lo que ya ve un espectador, sin nada que permita re-simular la batalla. La decisión es del backend; el visor no la toma.
 - **Sin enumeración**: «no autorizado», «no existe» e «id inválido» responden el mismo 404 (código, `error` y mensaje).
 - **Borde cerrado**: el gateway responde 404 en `/replays` y `/replays/*` (cualquier método). El replay-service sólo es alcanzable por la red interna `platform`; su ingesta sigue autenticada con `replay_ingest_secret`.
 - **Sin caché compartida**: las respuestas autorizadas llevan `Cache-Control: private, no-store`.
@@ -174,17 +175,65 @@ La activación es una decisión de operación con sus precondiciones. Ver
 
 Detalle en [replays.md](replays.md#autorización-de-acceso-td-004).
 
+## Frontera de proyección pública y equipamiento privado
+
+OLA 2 (MA). Contrato completo en [engine-v2-contracts.md](engine-v2-contracts.md) (§2-§5).
+
+```text
+ENGINE INTERNAL STATE  (Battle.snapshots = frames internos, publicEvents con ids internos)
+        ↓ projectFrame()           packages/projection  — la ÚNICA frontera
+VIEWER / PUBLIC STATE  (espectador, broadcast, replay público, API pública, WELCOME)
+```
+
+- **Una sola frontera.** El motor ya no fabrica un snapshot «público»: `captureInternalFrame()` produce el estado interno exacto (con las minas y su dueño) y todo consumidor externo recibe `projectFrame()` de `packages/projection`. El gateway proyecta cada frame y cada evento **por audiencia** (`public_live`, `broadcast`, `staff`), con mapper de ids, historial del retardo y nómina propios; la audiencia viaja **firmada** en el ticket (claim `view`) y un ticket sin ella se rechaza. El replay público, la descarga pública y el inspector pasan por la misma frontera. Eventos y objetivos son lista blanca por tipo **y por campo**.
+- **Ids públicos por audiencia (#261).** `v_`, `p_`, `d_`… densos, en orden de primera visibilidad para esa audiencia, sin derivar de la semilla (que es pública). Lo que una audiencia no ve no consume número: la secuencia pública no tiene huecos que delaten entidades ocultas. Los ids internos del motor no salen nunca; una referencia que no se puede traducir se omite.
+- **visibilityEpoch.** Vive en la proyección y en las claves de caché (`buildProjectionKey`: audiencia, entidad, relación, perfil, políticas, digest de epochs, versión, destino), nunca en `stateHash`. Proyectar no cambia la simulación.
+- **HTTP público.** Las respuestas públicas proyectadas no son `immutable`; su ETag incluye la versión de proyección y las políticas.
+
+### Equipamiento privado (D-B1 = R2)
+
+El equipamiento y el loadout completo son privados por defecto para terceros (ver la enmienda de [ADR-000 D9](../adr/ADR-000-decisiones-fundacionales.md)). La política es un dato (`DEFAULT_DISCLOSURE_POLICY` en `packages/projection/policy.ts`, régimen `R2`):
+
+| Superficie | Qué deja de salir para terceros |
+|---|---|
+| Espectador, broadcast, replay público | `hullHp` exacto (sale `hullLevel` 0..20), `hullHpMax`, estado por ranura (`modules`), minas |
+| Nómina pública (init, índice, descarga) | chasis |
+| `getBattleStats` | `perModule` (moduleId por ranura), `minesDeployed`, `minesTriggered`, `radio`, `decisionTimeouts`, id interno del vehículo; `shotsHit` (pasos de 5) y `accuracy` (derivada de los aciertos cuantizados, pasos de 1/20) salen cuantizados, y el daño ABSOLUTO (`damageDealt`, `damageTaken`: en un 1v1 reconstruye el casco del destruido) no sale a terceros ni a equipo, ni por bot ni en `perTeam` (sólo dueño y staff, exacto): el valor exacto es sólo del dueño y del staff |
+| `GET /bots/{id}/loadouts` | todo para quien no sea dueño ni staff, **también con un bot público** (404 uniforme) |
+| HUD del visor | no hay «N/M módulos» ni «módulos caídos»: el recuento es privado; el visor sólo pinta lo que la proyección emite (casco cuantizado) |
+| Canal del bot (WELCOME, OBSERVATION, EVENT, COMMAND) | ids públicos de la audiencia del bot (`v_N`, estables en la batalla); nunca `veh_N`/`proj_N`/`mine_N`, tampoco en `objectives[].id` (el marcado del juggernaut) ni en ningún otro campo (red de seguridad `BotIdBook.scrub`); un `radio.to` con id interno o desconocido no se entrega; una radio de un rival aún no percibido se DESCARTA (no se le revela) |
+| 409 `bot_version_not_eligible` (POST /battles, rules-check, inscripción en torneo) | para quien no es dueño ni staff del bot (también si es público): veredicto («la versión no es elegible»), `violations: []`, y SÍ `reason` (`loadout_no_longer_valid` / `loadout_unverifiable`) y `category` (una de `INVALID_AMMO`, `MISSING_AMMO`, `ORPHAN_AMMO`, `OTHER_INVALID`, `UNKNOWN`: la CLASE del fallo, p. ej. «problema de munición», no qué módulo, ranura, munición ni límite; ni mensajes del loadout). Es decisión consciente: la UI y el cliente distinguen «hay que actualizar la versión» de «no verificable» |
+| 409 `loadout_unavailable` (POST /battles y rules-check con topes de composición; P2-C, revisión 3) | para quien no es dueño ni staff del bot: «no se puede calcular su composición» sin moduleId, ranura ni catálogo; dueño y staff, el detalle del error del catálogo |
+| WELCOME | el bot recibe sólo SUS módulos y, de cada uno, sólo propiedades de catálogo con efecto real o de validación (nunca el `ModuleSpec` entero); de sus aliados, sólo el id |
+
+**Residual aceptado (ACCEPTED_RESIDUAL).** Es lo que se puede inferir de lo que sí es público a lo largo del tiempo. No se emite como dato y no justifica dejar salir un campo que se pueda quitar:
+
+| Inferencia | De dónde sale |
+|---|---|
+| Trayectoria, velocidad máxima, aceleración y giro del casco | posiciones y rumbo públicos |
+| Giro de la torreta | ángulo público de la torreta; la tasa es de la montura, pública (D-B2) |
+| Cadencia de disparo | cada proyectil aparece en el frame público |
+| Velocidad y alcance efectivo del proyectil | dos frames y la distancia a la que desaparece |
+| Radio de una explosión visible | su efecto sobre el casco cuantizado de los vehículos cercanos |
+| Impactos hasta destruir | `hullLevel` (cuantizado a 20 niveles) |
+| Tamaño del vehículo | distancias de contacto en las colisiones |
+| Posición de una mina | sólo en el instante en que explota (`mine_triggered`) |
+| Que un sector TENÍA blindaje (D-B4) | `armorBroken` (`{ sector: true }`) aparece en el frame en que ese blindaje se rompe. Antes de romperse, un sector íntegro y uno sin blindaje son indistinguibles: nunca sale `false`, ni `{}`, ni hp/hpMax; las claves van en orden canónico fijo (front, left, right, rear), no derivado del blindaje |
+| Aguante del blindaje de un sector (hp × reducción), acotado | el instante de la rotura: el atacante cuenta sus impactos en ese sector hasta que aparece `armorBroken` y acota cuánto absorbió. Es la misma clase de inferencia que «impactos hasta destruir» con `hullLevel`; el hp y la reducción exactos no salen |
+
+**Masa y coste de composición (cerrado, D-B1=R2).** `POST /battles/rules-check` y el 422 `composition_invalid` (crear batalla) dan masa (kg) y coste (cr) exactos sólo de los bots PROPIOS del solicitante (staff, rol ≥ moderador: de todos). De un bot ajeno, también público, sólo «cumple»/«excede» y el límite (`figuresHidden:true`, sin `actual`/`excess` ni cifras en el mensaje). El total de un bando que contiene algún bot ajeno va sin cifras (restando las propias se obtendría lo ajeno); si todos los bots del bando son propios, o es staff, cifras exactas. Revisadas sin cifras ajenas: ficha del bot, versiones, torneos (sin topes de composición; su 409 de elegibilidad lleva veredicto, `reason` y `category` gruesa, ver la fila del 409) y elegibilidad. Residual: el «cumple/excede» repetido con composiciones distintas permite acotar por búsqueda binaria el coste de un bot ajeno frente a los topes; es inherente a poder componer. Aplica por separado a la masa y al coste (códigos de violación distintos) y, en un bando mixto, al umbral propio+ajeno. `rules-check` no crea batalla ni escribe, y no tiene cota de tasa propia (sólo la general de la API); un límite de tasa por usuario sólo ralentizaría la búsqueda (cuentas baratas), así que NO se añade: el límite real es que el resultado es un cumple/excede por bot, nunca la cifra. Fuga por error interno: revisados todos los `err.message` de `apps/api/src/{routes,services}`; los únicos que mezclan datos de un bot ajeno en una respuesta HTTP eran el 409 `loadout_unavailable` (cerrado) y el 409 de elegibilidad (cerrado en P2-B); el resto (rutas del propio dueño, mapa/ruleset, lanzador interno) no lleva datos de bots de terceros.
+
 ## Superficies abiertas conocidas
 
 | Clase de problema | Estado | Deuda |
 |---|---|---|
-| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | CERRADO en la integración `integration/production-readiness`; abierto en producción hasta desplegar | [TD-004](../roadmap/technical-debt.md#td-004) |
-| Autorización de participantes en batallas y lectura de datos de bots privados ajenos | ABIERTO | [TD-005](../roadmap/technical-debt.md#td-005) |
-| Runtime con versiones anteriores a parches de seguridad y a los gates I/J | ABIERTO | [TD-006](../roadmap/technical-debt.md#td-006) |
+| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | CERRADO (PR #158, incluida en el commit de producción RC5.5) | [TD-004](../roadmap/technical-debt.md#td-004) |
+| Autorización de participantes en batallas y lectura de datos de bots privados ajenos | CERRADO (PR #152 y PR #178) | [TD-005](../roadmap/technical-debt.md#td-005) |
+| Runtime con versiones anteriores a parches de seguridad y a los gates I/J | MEJORADO (producción en RC5.5; falta confirmarlo con `runtime-drift-scan`) | [TD-006](../roadmap/technical-debt.md#td-006) |
 | Registro abierto con rol de desarrollador; límites por IP debilitados; sin cambio de contraseña | ABIERTO | [TD-012](../roadmap/technical-debt.md#td-012) |
-| Listado anónimo de equipos con identificadores de usuarios | ABIERTO | [TD-011](../roadmap/technical-debt.md#td-011) |
+| Listado anónimo de equipos con identificadores de usuarios | CERRADO | [TD-011](../roadmap/technical-debt.md#td-011) |
 | Información de infraestructura en el repositorio público | ABIERTO | [TD-008](../roadmap/technical-debt.md#td-008) |
-| Garantías documentadas no cableadas (verificación de firma y suspensiones) | ABIERTO | [TD-015](../roadmap/technical-debt.md#td-015) |
+| Garantías documentadas no cableadas (verificación de firma y suspensiones) | PARCIAL: `artifactGuard` cableado en el worker (`apps/tournament-worker/src/main.ts:90`) | [TD-015](../roadmap/technical-debt.md#td-015) |
 | Pruebas que no detectan regresiones de seguridad | ABIERTO | [TD-018](../roadmap/technical-debt.md#td-018) |
 
 Las vulnerabilidades se reportan al responsable del repositorio, no en issues públicos.
@@ -198,6 +247,7 @@ Las vulnerabilidades se reportan al responsable del repositorio, no en issues p�
 | Fallo cerrado del ticket | `j-fail-closed-ticket.test.ts` |
 | Rutas públicas | `h6-public-routes.test.ts` |
 | Autorización de replays (matriz actor × batalla × recurso, enumeración, bandera pública) | `apps/api/src/td004-replay-access.test.ts` |
+| Replay crudo restringido y proyección pública (matriz con bandera on/off, ausencia de semilla/comandos/radio/minas/loadout, no re-simulación, visor con la proyección) | `apps/api/src/pre1-replay-projection.test.ts` |
 | Bypass del gateway con nginx real (conf del repo, API y replay-service reales) | `infrastructure/gateway/tests/replay-gateway.test.ts` (opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`, Docker; obligatorio en el job `functional-e2e / docker-e2e` de CI) |
 | Sandbox | `apps/bot-manager/tests/sandbox-escape-suite.test.ts` y `tests/sandbox-escape/` |
 | Análisis estático y secretos | `static-analysis`, `secret-scan` |

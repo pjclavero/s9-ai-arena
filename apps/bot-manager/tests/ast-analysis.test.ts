@@ -60,6 +60,19 @@ describe("B3 · python3 disponible + AST real de Python", () => {
   });
 });
 
+describe("UX-F (DEF-R12) · el mensaje del análisis dice «línea», con tilde", () => {
+  it("error de sintaxis y hallazgo dinámico de Python", () => {
+    const res = extractAst("python", [
+      { path: "src/bot.py", content: "def f(:\n  pass\n" },
+      { path: "src/otro.py", content: "x = 1\ng = eval\n" },
+    ]);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/\(línea 1\)/);
+    expect(all).toMatch(/línea 2: referencia a eval/);
+    expect(all).not.toMatch(/\blinea\b/);
+  });
+});
+
 describe("B3 · Dockerfile de bot-manager instala python3 (comprobación INDIRECTA, no construida)", () => {
   it("infrastructure/docker/bot-manager/Dockerfile instala python3 vía apk", () => {
     // Comprobación indirecta: se parsea el texto del Dockerfile, NO se
@@ -93,7 +106,18 @@ describe("B3 · Dockerfile de bot-manager instala python3 (comprobación INDIREC
 
 describe("B3 · mensaje de error real (causa 3: el fallback mentía)", () => {
   it("un fichero TypeScript produce un mensaje que menciona la causa REAL, no la del reintento CJS", () => {
-    const gunnerTs = readFileSync("example-bots/javascript/gunner.ts", "utf8");
+    // El antiguo example-bots/javascript/gunner.ts (UX-05 lo sustituyó por gunner.js):
+    // TypeScript real tal cual lo pegaba un usuario.
+    const gunnerTs = `import { ArenaBot, type CommandIntent, type ObservationPayload } from "@arena/sdk";
+
+export class GunnerBot extends ArenaBot {
+  private weaponSlot = "turret_main";
+
+  override onObservation(observation: ObservationPayload): CommandIntent {
+    return { fire: [this.weaponSlot] };
+  }
+}
+`;
     const res = extractAst("node", [{ path: "src/bot.js", content: gunnerTs }]);
     expect(res.parseErrors).toHaveLength(1);
     const detail = res.parseErrors[0].detail;

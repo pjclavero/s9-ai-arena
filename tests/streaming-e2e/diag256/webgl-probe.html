@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- #256 · Página de control SIN Phaser ni React: un canvas WebGL que pinta un patrón con
+     contraste en cada requestAnimationFrame. Si esto queda en blanco en el Xvfb, el fallo
+     es de WebGL/SwiftShader/compositor (H1); si se ve, el fallo es del visor. -->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>webgl-probe</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #10141f;
+        color: #f5f5f5;
+        font: 32px system-ui;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="t">webgl-probe</div>
+    <canvas id="c" width="1920" height="1000"></canvas>
+    <script>
+      const c = document.getElementById("c");
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      const ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+      document.getElementById("t").textContent = gl
+        ? "webgl-probe " + (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))
+        : "webgl-probe SIN WEBGL";
+      let f = 0;
+      function frame() {
+        f++;
+        if (gl) {
+          gl.enable(gl.SCISSOR_TEST);
+          for (let i = 0; i < 8; i++) {
+            gl.scissor(i * 240, 0, 240, 1000);
+            const on = (i + (f >> 4)) % 2;
+            gl.clearColor(on ? 0.9 : 0.1, 0.3, on ? 0.1 : 0.8, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>

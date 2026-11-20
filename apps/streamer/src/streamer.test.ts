@@ -7,6 +7,7 @@
  * (test de caos con corte largo) y la API interna start/stop.
  */
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONFIG,
@@ -35,6 +36,9 @@ const cfg = (over: Partial<StreamerConfig> = {}): StreamerConfig => ({
 class FakeProcess extends EventEmitter implements SpawnedProcess {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
+  /** EQ5b · fd 3: salida FLV hacia el relé RTMP. */
+  media = new PassThrough();
+  stdio = [null, this.stdout, this.stderr, this.media];
   killed: string | null = null;
   constructor(
     public cmd: string,
@@ -111,18 +115,18 @@ describe("T11.2 secreto por archivo y redacción", () => {
 
 describe("T11.2 líneas de comando", () => {
   it("x264 por software es la base; nvenc solo como opción (GPU passthrough)", () => {
-    const base = buildFfmpegArgs(cfg(), KEY);
+    const base = buildFfmpegArgs(cfg());
     expect(base.args).toContain("libx264");
     expect(base.args.join(" ")).toContain("-tune zerolatency");
-    const nv = buildFfmpegArgs(cfg({ encoder: "nvenc" }), KEY);
+    const nv = buildFfmpegArgs(cfg({ encoder: "nvenc" }));
     expect(nv.args).toContain("h264_nvenc");
   });
 
-  it("emite a RTMPS con la clave SOLO en el argv, y el destino descrito va redactado", () => {
-    const plan = buildFfmpegArgs(cfg(), KEY);
-    expect(plan.args[plan.args.length - 1]).toBe(`rtmps://a.rtmps.youtube.com/live2/${KEY}`);
-    expect(plan.describeTarget).toBe("rtmps://a.rtmps.youtube.com/live2/***");
-    expect(redactArgs(plan.args, KEY).join(" ")).not.toContain(KEY);
+  it("EQ5b §3 · en rtmps ffmpeg escribe FLV por el fd 3: sin destino de red ni clave en el argv", () => {
+    const plan = buildFfmpegArgs(cfg());
+    expect(plan.args.slice(-3)).toEqual(["-f", "flv", "pipe:3"]);
+    expect(plan.args.join(" ")).not.toMatch(/rtmps?:\/\//);
+    expect(plan.args.join(" ")).not.toContain(KEY);
     // Captura del Xvfb + audio de silencio (YouTube exige pista de audio) + progreso
     const s = plan.args.join(" ");
     expect(s).toContain("x11grab");
@@ -131,12 +135,18 @@ describe("T11.2 líneas de comando", () => {
     expect(s).toContain("-progress pipe:1");
   });
 
+  it("EQ5b §6 · preset 720p: captura 1920×1080 y escala al codificar", () => {
+    const a = buildFfmpegArgs(cfg({ outputWidth: 1280, outputHeight: 720 })).args;
+    expect(a.join(" ")).toContain("-video_size 1920x1080");
+    expect(a[a.indexOf("-vf") + 1]).toBe("scale=1280:720:flags=bicubic");
+    expect(buildFfmpegArgs(cfg()).args).not.toContain("-vf");
+  });
+
   it("modo 'solo grabación' (E11.M): archivo mp4 en arena_replays/video, sin clave", () => {
-    const plan = buildFfmpegArgs(cfg({ mode: "record" }), null, () => new Date("2026-07-16T12:00:00Z"));
+    const plan = buildFfmpegArgs(cfg({ mode: "record" }), { now: () => new Date("2026-07-16T12:00:00Z") });
     expect(plan.args[plan.args.length - 1]).toBe("/data/replays/video/broadcast-2026-07-16T12-00-00-000Z.mp4");
+    expect(plan.recordFile).toBe("/data/replays/video/broadcast-2026-07-16T12-00-00-000Z.mp4");
     expect(plan.args.join(" ")).not.toContain("rtmps://");
-    // rtmps sin clave: prohibido
-    expect(() => buildFfmpegArgs(cfg(), null)).toThrow(/clave/);
   });
 
   it("chromium en kiosco sobre la vista /broadcast, tamaño exacto de emisión", () => {
@@ -146,13 +156,41 @@ describe("T11.2 líneas de comando", () => {
     expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast?tournament=t1");
   });
 
-  it("R3.2: WebGL forzado por SwiftShader (sin caída silenciosa a Canvas 2D)", () => {
+  it("EQ5 · x11grab NO dibuja el puntero del Xvfb (visto en un MP4 real: «X» en el centro)", () => {
+    for (const mode of ["rtmps", "record"] as const) {
+      const a = buildFfmpegArgs(cfg({ mode })).args;
+      const grab = a.indexOf("x11grab");
+      const input = a.indexOf("-i");
+      const dm = a.indexOf("-draw_mouse");
+      // Opción de ENTRADA de x11grab: tiene que ir entre `-f x11grab` y su `-i`.
+      expect(dm, a.join(" ")).toBeGreaterThan(grab);
+      expect(dm).toBeLessThan(input);
+      expect(a[dm + 1]).toBe("0");
+    }
+  });
+
+  it("EQ5 · Chromium sin barra de traducción ni burbujas: nada del navegador entra en la emisión", () => {
     const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
-    expect(args).toContain("--use-gl=angle");
-    expect(args).toContain("--use-angle=swiftshader");
-    expect(args).toContain("--enable-unsafe-swiftshader");
-    // `--disable-gpu` desactivaría también SwiftShader-WebGL en Chromium modernos.
-    expect(args).not.toContain("--disable-gpu");
+    // La página es lang="es" y el Chromium de la imagen va en inglés: sin esto,
+    // la barra de Google Translate quedaba FIJA en la esquina del vídeo (MP4 real).
+    const features = args.find((a) => a.startsWith("--disable-features="));
+    expect(features?.split("=")[1].split(",")).toContain("Translate");
+    expect(args).toContain("--lang=es");
+    // Tras un reintento (SIGTERM + relanzar) no debe salir «¿Restaurar páginas?».
+    expect(args).toContain("--hide-crash-restore-bubble");
+    expect(args).toContain("--noerrdialogs");
+    expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast");
+  });
+
+  it("#256: sin proceso GPU (el arranque fallido de SwANGLE dejaba la emisión en blanco)", () => {
+    // Sustituye a R3.2: en la imagen real SwANGLE no inicializa (no había WebGL) y ese
+    // fallo del proceso GPU deja intermitentemente al renderer girando sin pintar
+    // (9/20 arranques en blanco frente a 0/20 con --disable-gpu; ffmpeg.ts).
+    const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
+    expect(args).toContain("--disable-gpu");
+    expect(args).not.toContain("--use-gl=angle");
+    expect(args).not.toContain("--use-angle=swiftshader");
+    expect(args).not.toContain("--enable-unsafe-swiftshader");
   });
 });
 
@@ -198,6 +236,7 @@ describe("T11.2 supervisor: reintentos ante corte de RTMPS (caos)", () => {
       spawner,
       logger: silentLogger(lines),
       sleep: async () => {}, // sin relojes reales en tests
+      dial: () => new PassThrough(), // ingesta muda: nunca sale a la red
       chromiumBin: "chromium-browser",
       ffmpegBin: "ffmpeg",
     });
@@ -296,8 +335,15 @@ describe("T11.2 API de control (start/stop/status/metrics)", () => {
       spawner,
       logger: silentLogger(lines),
       sleep: async () => {},
+      dial: () => new PassThrough(),
     });
-    const server = createControlServer({ supervisor, config, logger: silentLogger(lines) });
+    const server = createControlServer({
+      supervisor,
+      config,
+      logger: silentLogger(lines),
+      readLegacyKey: () => KEY,
+      dial: () => new PassThrough(),
+    });
     await new Promise<void>((r) => server.listen(0, r));
     const addr = server.address() as { port: number };
     try {
@@ -314,7 +360,10 @@ describe("T11.2 API de control (start/stop/status/metrics)", () => {
         body: JSON.stringify({ broadcastUrl: "http://web:3000/broadcast?battle=b1" }),
       });
       expect(start.status).toBe(200);
-      expect(await start.json()).toEqual({ state: "streaming", broadcastUrl: "http://web:3000/broadcast?battle=b1" });
+      expect(await start.json()).toMatchObject({
+        state: "streaming",
+        broadcastUrl: "http://web:3000/broadcast?battle=b1",
+      });
 
       const status = await (await fetch(`${base}/status`)).json();
       expect(status.state).toBe("streaming");
@@ -344,7 +393,7 @@ describe("T11.2 API de control (start/stop/status/metrics)", () => {
         expect(text, `${path} no debe contener la clave`).not.toContain(KEY);
       }
       const status = await (await fetch(`${base}/status`)).json();
-      expect(status.target).toBe("rtmps://a.rtmps.youtube.com/live2/***");
+      expect(status.target).toBe("rtmps://a.rtmps.youtube.com:443/live2/***");
     });
   });
 

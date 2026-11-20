@@ -148,7 +148,15 @@ describe("R3.7 detalle de torneo y sus batallas (público)", () => {
     expect(detail.body.name).toBe("r37-copa");
     expect(detail.body.entryCount).toBe(0);
 
-    const battles = await request(app).get(`/tournaments/${t.body.id}/battles`);
+    // UX-F (DEF-R3) · las batallas del torneo siguen la política de GET /battles
+    // (battle-access.ts): sin capabilities públicas, un anónimo no lee ninguna; el
+    // staff, todas. Antes este listado era público sin filtro y filtraba bots privados.
+    const anonBattles = await request(app).get(`/tournaments/${t.body.id}/battles`);
+    expect(anonBattles.status).toBe(200);
+    expect(anonBattles.body.items).toEqual([]);
+    const battles = await request(app)
+      .get(`/tournaments/${t.body.id}/battles`)
+      .set("Authorization", `Bearer ${organizerToken}`);
     expect(battles.status).toBe(200);
     const byId = new Map(battles.body.items.map((b: { id: string; round: number; status: string }) => [b.id, b]));
     expect(battles.body.items.length).toBe(3);

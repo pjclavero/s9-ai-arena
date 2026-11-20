@@ -18,6 +18,7 @@ Autenticación:
 - [Convenciones](#convenciones)
 - [Errores](#errores)
 - [Recursos por área](#recursos-por-área)
+- [Rutas del contrato no recogidas en las tablas anteriores](#rutas-del-contrato-no-recogidas-en-las-tablas-anteriores)
 - [Extensiones fuera del contrato](#extensiones-fuera-del-contrato)
 - [Límites de ritmo y cuotas](#límites-de-ritmo-y-cuotas)
 - [Endpoints sin pantalla en la web](#endpoints-sin-pantalla-en-la-web)
@@ -90,7 +91,7 @@ Forma única (`errors.ts`): `{error: <código>, message, correlationId, …extra
 | 401 | `unauthorized` | Sin credencial o credencial inválida |
 | 403 | `forbidden` | «Requiere rol organizer», «Solo el dueño del bot puede hacer esto» |
 | 404 | `not_found` | Recurso inexistente **o no visible** (no revela existencia); «Ruta no encontrada» |
-| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state` |
+| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state`, `bot_version_not_eligible` (con `notEligible`), `entries_not_eligible` (con `notEligibleEntries`) |
 | 413 | `source_too_large` | Código > 10 MB |
 | 422 | `loadout_invalid` (`violations`), `map_invalid` (`checks`) | Validadores del catálogo y de mapas |
 | 429 | `too_many_requests`, `too_many_running_battles` | Límites |
@@ -165,9 +166,10 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | `POST /battles` | user |
 | `POST /battles/{battleId}/run` | user |
 | `POST /battles/{battleId}/spectate-ticket` | anón. (404 sin sesión con la bandera apagada) |
-| `GET /replays/{battleId}`, `POST /replays/{battleId}/verify` | anón. (cuota) |
-| `GET /public/battles/live`, `GET /public/battles/{battleId}` | anón. (bandera `S9_PUBLIC_SPECTATE_ENABLED`) |
-| `GET /public/replays`, `GET /public/replays/{battleId}`, `GET /public/replays/{battleId}/download` | anón. (bandera `S9_PUBLIC_REPLAYS_ENABLED`) |
+| `GET /replays/{battleId}` | anón. (cuota) para leer; el fichero crudo sólo a `moderator`/`admin` o al dueño de todos los bots ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el resto, 404 |
+| `GET /replays/{battleId}/index`, `GET /replays/{battleId}/segment`, `POST /replays/{battleId}/verify` | anón. (cuota); sin acceso al crudo, índice y segmentos proyectados |
+| `GET /public/battles/live`, `GET /public/battles/{battleId}` | anón. (ajuste de runtime «espectador público»; `S9_PUBLIC_SPECTATE_ENABLED` es sólo el valor inicial) |
+| `GET /public/replays`, `GET /public/replays/{battleId}`, `GET /public/replays/{battleId}/download` | anón. (ajuste de runtime «replays públicos»; `S9_PUBLIC_REPLAYS_ENABLED` es sólo el valor inicial) |
 
 **Administración** ([../user/administration.md](../user/administration.md)):
 
@@ -175,6 +177,39 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 |---|---|
 | `GET /admin/security-findings`, `GET /admin/audit-log` | admin |
 | `GET /system/status`, `GET /system/rbac` | admin |
+| `GET /admin/settings/public-access`, `PATCH /admin/settings/public-access` | admin (MG, contrato 0.18.0: espectador y replays públicos en caliente, auditados) |
+
+## Rutas del contrato no recogidas en las tablas anteriores
+
+Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 2026). Estas 23 operaciones de `apps/api/openapi.yaml` (contrato
+0.12.0, `main` `e3bf2fa`) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
+
+| operationId | Método y ruta | Rol mínimo |
+|---|---|---|
+| `addTeamBot` | `POST /teams/{teamId}/bots` | user |
+| `removeTeamBot` | `DELETE /teams/{teamId}/bots/{botId}` | user |
+| `publishTeamBots` | `POST /teams/{teamId}/actions/publish-bots` | user (miembro; cada bot sólo si eres su dueño; retirados → `retired`; `expectBotIds` → 409 `team_bots_changed` si cambió el conjunto · #255, contrato 0.17.0) |
+| `getBotVersionFiles` | `GET /bots/{botId}/versions/{version}/files` | user |
+| `getBotVersionArtifact` | `GET /bots/{botId}/versions/{version}/artifact` | visitor |
+| `diffBotVersions` | `GET /bots/{botId}/versions/{version}/diff` | user |
+| `cloneBotVersion` | `POST /bots/{botId}/versions/{version}/actions/clone` | developer |
+| `submitBotVersion` | `POST /bots/{botId}/versions/{version}/actions/submit` | developer |
+| `publishBotVersion` | `POST /bots/{botId}/versions/{version}/actions/publish` | developer |
+| `suspendBotVersion` | `POST /bots/{botId}/versions/{version}/actions/suspend` | moderator |
+| `retireBotVersion` | `POST /bots/{botId}/versions/{version}/actions/retire` | developer |
+| `getMapVersionContent` | `GET /maps/{mapId}/versions/{version}/content` | visitor |
+| `publishMapVersion` | `POST /maps/{mapId}/versions/{version}/actions/publish` | user |
+| `listRulesets` | `GET /rulesets` | visitor |
+| `enterTournament` | `POST /tournaments/{tournamentId}/entries` | user |
+| `closeEntries` | `POST /tournaments/{tournamentId}/actions/close-entries` | organizer |
+| `excludeTournamentEntry` | `POST /tournaments/{tournamentId}/entries/{entryId}/actions/exclude` | user |
+| `dryRunTournament` | `POST /tournaments/{tournamentId}/actions/dry-run` | organizer |
+| `listTournamentMatches` | `GET /tournaments/{tournamentId}/matches` | visitor |
+| `checkBattleRules` | `POST /battles/rules-check` | user |
+| `getReplayIndex` | `GET /replays/{battleId}/index` | visitor |
+| `getReplaySegment` | `GET /replays/{battleId}/segment` | visitor |
+| `getTeamStandings` | `GET /tournaments/{tournamentId}/team-standings` | visitor |
+| `getBotVersionEligibilityInventory` | `GET /admin/bot-version-eligibility` | admin |
 
 ## Extensiones fuera del contrato
 
@@ -214,7 +249,7 @@ Los contadores se guardan en la tabla `api_usage`, compartidos entre réplicas.
 
 - **FUNCIONA ACTUALMENTE**: contrato con RBAC, autenticación con rotación de refresh, paginación y validaciones.
 - **PARCIAL**: falta cambio de contraseña y transporte de correo. Hay carreras que devuelven 500 ([TD-013](../roadmap/technical-debt.md#td-013)). Hay huecos de autorización por recurso ([TD-005](../roadmap/technical-debt.md#td-005)) y listados anónimos con identificadores ([TD-011](../roadmap/technical-debt.md#td-011)).
-- **PENDIENTE**: incorporar las extensiones al contrato; cerrar la costura `rulesetId` ([TD-003](../roadmap/technical-debt.md#td-003)).
+- **PENDIENTE**: incorporar las extensiones al contrato. La costura `rulesetId` está cerrada ([TD-003](../roadmap/technical-debt.md#td-003)).
 
 ## Documentación relacionada
 
@@ -231,6 +266,7 @@ Verificado contra `27f70bb`.
 |---|---|---|
 | Rutas y roles del contrato (tablas anteriores) | CODE_VERIFIED | `apps/api/openapi.yaml` (operaciones con `x-min-role` volcadas con un script) |
 | El rol mínimo sale del contrato | CODE_VERIFIED | `apps/api/src/registry.ts:20-60` |
+| Rutas del contrato 0.12.0 que faltaban en las tablas (sección añadida el 2026-11-02) | CODE_VERIFIED (`e3bf2fa`) | generadas leyendo `apps/api/openapi.yaml` |
 | 8 extensiones con `defineExtension` | CODE_VERIFIED | `routes/auth.ts:297,384,399`; `routes/keys.ts:19`; `routes/bots.ts:217,236`; `routes/tournaments.ts:129,143` |
 | Prefijo `/api/v1` quitado por nginx | CODE_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-76` |
 | Registro abierto con `user`+`developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts:148-174` |

@@ -111,6 +111,13 @@ Constantes globales (`packages/game-rules/constants.ts`):
 
 El fuego amigo se filtra en proyectiles, explosiones y minas si el ruleset lo desactiva.
 
+### Explosión de un HE contra un muro (G1.5, OLA 2)
+
+- **Centro de la onda.** Cuando un proyectil explosivo impacta en un muro o destructible, la onda sale del punto de la CARA golpeada (`PhysicsWorld.impactSurface`), y la línea de visión de cada víctima se decide por el semiplano de esa cara (`hasLineOfSightFromSurface`). Quien está detrás del muro no recibe nada; quien está en el lado del impacto recibe la onda con su caída por distancia.
+- **Boca del arma dentro del muro.** Un vehículo pegado al muro puede disparar (`canFire` no lo impide) y su boca (radio del chasis + 0,3 m) nace dentro del sólido. En ese caso el impacto se recalcula como el punto por el que la recta del proyectil ENTRA en el muro, en la cara del lado del tirador, y la onda sale de ahí.
+- **Fuego amigo y autodaño (P3-6, pendiente de decisión).** La regla de `explode()` no cambia: daña a todo vehículo vivo en el radio con línea de visión y, con `friendlyFire` activado, también al propio equipo y al propio tirador. Con la geometría corregida, el tirador pegado al muro está a ~(radio del chasis + 0,05) m del centro de la onda, dentro del radio del HE, así que **con fuego amigo ON recibe su propia onda en cada disparo** (antes de G1.5 la recibía 0 veces, porque el propio muro tapaba la onda para todos). Con fuego amigo OFF (el valor por defecto de los rulesets) no se daña. Lo fija el bloque «fuego amigo: autodaño del tirador pegado al muro» de `apps/arena-engine/tests/g1-he-wall-los.test.ts`. Si la integración decide excluir al tirador de su propia onda, ese es el test que debe cambiar.
+- **Residual (P3-5).** En un muro más fino que ~0,65 m la boca puede quedar al otro lado del muro y el proyectil nace en espacio libre. Ningún mapa del repositorio tiene muros de menos de 2 m, pero el esquema de mapas no impone un grosor mínimo.
+
 ## Sensores y niebla de guerra
 
 Regla D8: la observación de un bot contiene **sólo** lo que perciben sus sensores operativos, además de su propio estado. Sin sensores, no aparece la clave `sensors`. Detalle por tipo en [equipment.md](equipment.md#sensores-sensor_a-sensor_b).
@@ -183,9 +190,13 @@ El catálogo de candados está en el histórico `ENGINE_REGRESSION_LOCKS`; ver [
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos, replays verificables y estadísticas por re-simulación.
-- **PARCIAL**: radio (sin alcance ni equipo) y campos del catálogo sin efecto ([equipment.md](equipment.md#campos-sin-efecto-en-el-motor)). En la plataforma los vehículos los conduce el código de cada bot en su contenedor; la activación en producción está pendiente ([TD-002](../roadmap/technical-debt.md#td-002)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.
-- **PENDIENTE**: ejecución de bots reales por `protocol-server` dentro de la plataforma (camino `/run`, apagado).
+Revisado el 2026-11-02 contra `main` `e3bf2fa` (motor **0.4.0**, `apps/arena-engine/src/engine-deps.json`; reproduce también replays de 0.3.0).
+
+> **OLA 2 (`hardening/contracts`, sin desplegar):** el motor pasa a **0.5.0** en una sola subida ([ADR-024](../adr/ADR-024-motor-0-5-0-ola2.md)). Ya no reproduce replays de 0.3.0 (enmienda de ADR-022).
+
+- **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos en el motor (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`, `last_man_standing`, `domination`, `juggernaut`; la plataforma ofrece los cuatro primeros), replays verificables y estadísticas por re-simulación. Desde la 0.4.0: prórroga, desempates por familia de modo y CTF con salvaguarda técnica ([ADR-022](../adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md)). En la plataforma, el `tournament-worker` ejecuta el motor en proceso con el código de cada bot en su contenedor (`apps/tournament-worker/src/container-agents.ts`); el camino HTTP `POST /run` del motor es un camino legado sin consumidor ([TD-039](../roadmap/technical-debt.md#td-039)).
+- **PARCIAL**: la radio se entrega sólo al propio equipo y dentro de `radio.rangeM` (`radioDeliverableTo`, `apps/arena-engine/src/sim/sensors.ts`; ver [equipment.md](equipment.md)); los campos del catálogo sin efecto se eliminaron o se implementaron en la OLA 2 ([equipment.md](equipment.md#campos-eliminados-en-la-ola-2-y-campos-sólo-de-validación), [TD-016](../roadmap/technical-debt.md#td-016)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.
+- **PENDIENTE**: nada del motor está pendiente de activación; lo que falta está en [pending-features.md](../roadmap/pending-features.md).
 
 ## Documentación relacionada
 

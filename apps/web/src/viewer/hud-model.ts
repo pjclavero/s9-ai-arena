@@ -62,9 +62,6 @@ export interface HudBot {
   hpPercent: number;
   /** ¿Lleva bandera? (team de la bandera que porta, o null). */
   carryingFlag: string | null;
-  /** Nº de módulos y cuántos están fuera de combate (destruido/offline). */
-  modulesTotal: number;
-  modulesDown: number;
   /** Arma inutilizada / blindaje roto / movilidad tocada (para iconos del HUD). */
   turretLocked: boolean;
   armorBroken: boolean;
@@ -78,7 +75,8 @@ export interface HudBot {
  *  - botsAlive/botsTotal: recuento de vivos vs. plantilla del equipo.
  *  - hpPercent: media del `hpRatio` de los bots VIVOS, redondeada a entero
  *    (0 si no queda ninguno vivo).
- *  - modulesOffline: suma de `modulesDown` de todos los bots del equipo.
+ *  - OLA 2 · el recuento de módulos es PRIVADO (EQUIPMENT_PRIVATE): el HUD público no
+ *    lo calcula ni lo pinta (ni «N/M módulos» ni «módulos caídos»).
  * Fuera de alcance (R16.3, no este bloque): daño infligido / precisión no
  * están en OverlayState hoy; un slice futuro que los quiera debe extender el
  * snapshot público (decisión de contrato, no de este bloque).
@@ -88,8 +86,6 @@ export interface HudTeamTactical {
   botsTotal: number;
   /** Media del hpRatio de los bots vivos, en % entero 0..100 (0 si no queda ninguno). */
   hpPercent: number;
-  /** Suma de módulos caídos (destruidos/offline) de todo el equipo. */
-  modulesOffline: number;
 }
 
 /** Panel de un equipo: puntuación y sus bots. */
@@ -108,8 +104,7 @@ function buildTactical(bots: HudBot[]): HudTeamTactical {
   const alive = bots.filter((b) => b.alive);
   const hpPercent =
     alive.length > 0 ? Math.round((alive.reduce((sum, b) => sum + b.hpRatio, 0) / alive.length) * 100) : 0;
-  const modulesOffline = bots.reduce((sum, b) => sum + b.modulesDown, 0);
-  return { botsAlive: alive.length, botsTotal: bots.length, hpPercent, modulesOffline };
+  return { botsAlive: alive.length, botsTotal: bots.length, hpPercent };
 }
 
 /** Estado de una bandera para el HUD. */
@@ -190,8 +185,6 @@ function buildObjective(objectives: any): HudObjective {
 
 function buildBot(v: VehicleOverlay, roster: ViewerRoster | null | undefined): HudBot {
   const dmg = damageVisualFor(v);
-  const modules = Object.values(v.modules ?? {});
-  const modulesDown = modules.filter((s) => s === "destroyed" || s === "offline").length;
   return {
     id: v.id,
     name: vehicleLabel(roster ?? undefined, v.id),
@@ -202,8 +195,6 @@ function buildBot(v: VehicleOverlay, roster: ViewerRoster | null | undefined): H
     hpRatio: dmg.hullRatio,
     hpPercent: Math.round(dmg.hullRatio * 100),
     carryingFlag: v.carryingFlag ?? null,
-    modulesTotal: modules.length,
-    modulesDown,
     turretLocked: dmg.turretLocked,
     armorBroken: dmg.armorBroken,
     mobilityCrippled: dmg.mobilityCrippled,
@@ -234,11 +225,28 @@ function buildTeams(overlay: OverlayState, roster: ViewerRoster | null | undefin
   });
 }
 
-function buildKillFeed(feed: FeedItem[], limit: number): HudKill[] {
+/**
+ * UX-VIEW · Nombre legible del objetivo de un evento: el bot de la nómina; un
+ * destructible del mapa (`crate_04`) como «caja»; y si no, el id abreviado.
+ */
+export function targetLabel(roster: ViewerRoster | null | undefined, id: string): string {
+  if (roster?.get(id)?.name) return vehicleLabel(roster, id);
+  const m = /^(crate|box|barrel)[_-]?0*(\d+)?$/i.exec(id);
+  if (m) return m[2] ? `caja ${m[2]}` : "caja";
+  return vehicleLabel(roster ?? null, id);
+}
+
+/** Texto de una entrada del feed con NOMBRES en vez de ids internos. */
+export function feedItemText(f: FeedItem, roster?: ViewerRoster | null): string {
+  if (f.kind === "vehicle_destroyed" && f.targetId) return `${targetLabel(roster, f.targetId)} destruido`;
+  return f.text;
+}
+
+function buildKillFeed(feed: FeedItem[], limit: number, roster: ViewerRoster | null): HudKill[] {
   return feed
     .filter((f) => f.kind === "vehicle_destroyed")
     .slice(-limit)
-    .map((f) => ({ tick: f.tick, text: f.text }));
+    .map((f) => ({ tick: f.tick, text: feedItemText(f, roster) }));
 }
 
 function buildPhase(overlay: OverlayState): MatchPhase {
@@ -290,7 +298,7 @@ export function buildHudModel(overlay: OverlayState, opts: HudModelOptions = {})
     teams: buildTeams(overlay, roster),
     flags,
     zones,
-    killFeed: buildKillFeed(overlay.feed, killLimit),
+    killFeed: buildKillFeed(overlay.feed, killLimit, roster),
     matchEnd,
   };
 }

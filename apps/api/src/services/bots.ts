@@ -3,7 +3,7 @@
  * revisiones de loadout validadas SIEMPRE en servidor con el validador de E3.
  */
 import type { Db } from "../db/connection.js";
-import { conflict, forbidden, notFound } from "../errors.js";
+import { ApiError, conflict, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { audit } from "../audit.js";
 // Validador y resolutor REALES de E3 (T3.2/T3.3): importados, no reescritos.
@@ -47,9 +47,20 @@ export async function getVisibleBot(db: Db, auth: Auth, botId: string): Promise<
   return bot;
 }
 
+/**
+ * #255 · ÚNICA regla de autoridad sobre los metadatos de un bot (visibilidad de la
+ * ficha) y sobre la visibilidad del código de sus versiones: SÓLO su dueño. La usan
+ * `assertOwner` (PATCH /bots/{id}, PUT …/code-visibility) y la publicación masiva de
+ * un equipo (POST /teams/{id}/actions/publish-bots): ser capitán NO da autoridad
+ * sobre bots ajenos, y la regla no se repite en ningún otro sitio.
+ */
+export function isBotOwner(auth: Auth | { userId: string } | undefined, bot: Record<string, unknown>): boolean {
+  return !!auth && auth.userId === bot.owner_id;
+}
+
 export function assertOwner(auth: Auth, bot: Record<string, unknown>, allowStaff = false): void {
   if (!auth) throw forbidden();
-  if (auth.userId === bot.owner_id) return;
+  if (isBotOwner(auth, bot)) return;
   if (allowStaff && isStaff(auth)) return;
   throw forbidden("Solo el dueño del bot puede hacer esto");
 }
@@ -104,10 +115,27 @@ export async function applyTransition(
   correlationId?: string,
 ): Promise<Record<string, unknown>> {
   const to = assertTransition(action, version.state as BotState);
+  // #287 (ronda 4, R3-1) · Transición CONDICIONAL: sólo si la versión sigue en el estado
+  // que se validó (`version.state`, leído por el llamador). Si otra transacción la cambió
+  // entretanto (p. ej. un cierre de torneo la congeló mientras este `retire` esperaba su
+  // bloqueo), el UPDATE no toca nada y se responde 409 `illegal_transition` con el estado
+  // REAL: nunca se aplica una transición validada contra una copia obsoleta (frozen→retired).
   const [updated] = await db("bot_versions")
-    .where({ id: version.id })
+    .where({ id: version.id, state: version.state })
     .update({ state: to, ...patch })
     .returning("*");
+  if (!updated) {
+    const cur = await db("bot_versions").where({ id: version.id }).first();
+    const now = (cur?.state ?? "inexistente") as BotState;
+    throw conflict(
+      "illegal_transition",
+      `La versión cambió de estado (${now}) mientras se procesaba: ${action} no aplica`,
+      {
+        currentState: now,
+        allowedTransitions: cur ? allowedTransitionsFrom(now) : [],
+      },
+    );
+  }
   // Toda transición legal queda auditada (DoD T7.3).
   await audit(db, {
     actorId: auth?.userId ?? null,
@@ -174,6 +202,31 @@ export async function validateLoadoutServerSide(
     summary: { massKg: spec.massKg, costCredits, energyBalanceEUs: generation - passive },
     catalog,
   };
+}
+
+/**
+ * Una revisión de loadout guardada es INMUTABLE y se conserva tal cual, aunque hoy el
+ * validador la rechazase (p. ej. un cañón con munición estándar de antes del fix de
+ * munición). Lo que no se permite es construir con ella una versión NUEVA, ni enviarla a
+ * build ni publicarla: se revalida con el mismo validador del servidor y, si ya no pasa,
+ * 422 con las violaciones. Las versiones ya publicadas no se tocan.
+ */
+export async function assertLoadoutRevisionUsable(db: Db, botId: string, revision: number): Promise<void> {
+  const row = await db("bot_loadouts").where({ bot_id: botId, revision }).first();
+  if (!row) return; // el llamador ya responde 400 por revisión inexistente
+  const modules = typeof row.modules === "string" ? JSON.parse(row.modules) : row.modules;
+  const { violations } = await validateLoadoutServerSide(db, {
+    catalogVersion: row.catalog_version,
+    chassis: row.chassis,
+    modules,
+  });
+  if (violations.length === 0) return;
+  throw new ApiError(
+    422,
+    "loadout_invalid",
+    `La revisión ${revision} del loadout ya no es válida: ${violations.map((v) => v.message).join(" ")} Guarda una revisión corregida y úsala.`,
+    { violations },
+  );
 }
 
 /** Crea una revisión nueva (nunca modifica las anteriores, cap. 17.2). */

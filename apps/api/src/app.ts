@@ -19,10 +19,11 @@ import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
+import { battleRulesRoutes } from "./routes/battle-rules.js";
 import { replayRoutes } from "./routes/replays.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
-import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "./public-replays.js";
+import { RuntimeSettingsStore } from "./runtime-settings.js";
+import { runtimeSettingsRoutes } from "./routes/runtime-settings.js";
 import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
@@ -33,6 +34,8 @@ import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
 import { QueueBotManager } from "./services/bot-manager.js";
 import { keyRoutes } from "./routes/keys.js";
+import { streamingRoutes } from "./routes/streaming.js";
+import { streamerClientFromEnv, type StreamerClient } from "./services/streamer-client.js";
 import type { BotBuildLimiters } from "./routes/bots.js";
 
 export interface AppConfig {
@@ -84,16 +87,47 @@ export interface AppConfig {
    */
   publicReplaysEnabled?: boolean;
   /**
+   * MG · Ajustes de runtime persistidos (fuente ÚNICA de los dos flags públicos). En
+   * producción lo crea server.ts (con bootstrap desde el entorno, cargado y con
+   * refresco periódico). Sin él, se crea uno cuyos valores iniciales son
+   * `publicSpectateEnabled`/`publicReplaysEnabled` (o el entorno) y que SÓLO cambia
+   * por PATCH /admin/settings/public-access o llamando a `refresh()`.
+   */
+  runtimeSettings?: RuntimeSettingsStore;
+  /**
    * N1 · Capability de métricas Prometheus (S9_METRICS_ENABLED, apagada por
    * defecto). Con la flag apagada, GET /metrics ni se monta ni se instala el
    * middleware de conteo (sin coste, sin superficie nueva). Inyectable en
    * tests; en producción se resuelve del entorno.
    */
   metricsEnabled?: boolean;
+  /**
+   * EQ5b · Administración → Streaming: cliente de la API interna de control del
+   * streamer (por defecto, de STREAMER_CONTROL_URL) y clave PÚBLICA de sellado
+   * (por defecto, de STREAM_SECRETS_PUBLIC_KEY_FILE). Inyectables en tests.
+   */
+  streamer?: StreamerClient;
+  streamingPublicKey?: () => { pem: string; kid: string } | null;
+  broadcastBaseUrl?: string;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
   const app = express();
+  // MG · fuente única de los flags públicos; se leen POR PETICIÓN (cambio en caliente).
+  const runtimeSettings =
+    cfg.runtimeSettings ??
+    new RuntimeSettingsStore(cfg.db, {
+      defaults: {
+        publicSpectate: cfg.publicSpectateEnabled ?? false,
+        publicReplays: cfg.publicReplaysEnabled ?? false,
+      },
+      // Sin store inyectado (sólo tests): los flags explícitos valen como lectura válida;
+      // sin ellos, cerrado. Producción (server.ts) inyecta el store persistido y FAIL-CLOSED.
+      fixed: true,
+    });
+  const visibility = runtimeSettings.getter;
+  const spectateOn = () => visibility().publicSpectate;
+  const replaysOn = () => visibility().publicReplays;
   app.disable("x-powered-by");
   // R1.8 · ERR-SEC-05: confianza de proxy ACOTADA al número de saltos reales
   // (gateway del stack = 1; VM104 + gateway = 2). Con esto `req.ip` es la IP
@@ -156,24 +190,27 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(keyRoutes());
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
-  const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
-  const publicSpectateEnabled = cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
-  const publicReplaysEnabled = cfg.publicReplaysEnabled ?? publicReplaysEnabledFromEnv();
+  const streamer = cfg.streamer ?? streamerClientFromEnv();
+  app.use(runtimeSettingsRoutes(cfg.db, runtimeSettings, { streamerConfigured: streamer.configured }));
   app.use(
-    battleRoutes(
-      cfg.db,
-      cfg.anonQuota ?? DEFAULT_ANON_QUOTA,
-      realBattleRuns,
-      publicSpectateEnabled,
-      publicReplaysEnabled,
-    ),
+    streamingRoutes(cfg.db, {
+      streamer,
+      visibility,
+      publicKey: cfg.streamingPublicKey,
+      broadcastBaseUrl: cfg.broadcastBaseUrl,
+      setGauge: (n, v) => metricsRegistry.setGauge(n, v),
+    }),
   );
+  const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
+  // R-RULES · antes que battleRoutes: POST /battles/rules-check es una ruta fija.
+  app.use(battleRulesRoutes(cfg.db));
+  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns, spectateOn, replaysOn));
   // PRC (TD-004) · replays para el navegador, con la política única de acceso.
-  app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, publicReplaysEnabled));
+  app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, replaysOn));
   app.use(standingsRoutes(cfg.db));
-  app.use(tournamentRoutes(cfg.db));
+  app.use(tournamentRoutes(cfg.db, visibility));
   app.use(mapRoutes(cfg.db));
-  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), publicSpectateEnabled, publicReplaysEnabled));
+  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), spectateOn, replaysOn));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });

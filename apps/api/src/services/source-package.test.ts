@@ -3,6 +3,7 @@
  * DoD: un paquete con `path` `../x` o absoluto se rechaza en decodificación.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   MAX_PACKAGE_FILES,
   PackageValidationError,
@@ -76,5 +77,29 @@ describe("R2.6 decodePackage estricto (ERR-SEC-10)", () => {
     expect(decodePackage(Buffer.from("print('hola')"), "python")).toEqual(wrapSingleFile("python", "print('hola')"));
     const jsonNoPackage = '{"nombre": "no soy un paquete"}';
     expect(decodePackage(Buffer.from(jsonNoPackage), "node")).toEqual(wrapSingleFile("node", jsonNoPackage));
+  });
+});
+
+describe("UX-05 · esqueleto del código pegado", () => {
+  it("JavaScript: package.json ESM (`type: module`), entrada explícita y la versión REAL del SDK", () => {
+    const files = wrapSingleFile("node", "export default class {}");
+    const pkgJson = JSON.parse(files.find((f) => f.path === "package.json")!.content);
+    expect(pkgJson.type).toBe("module");
+    expect(pkgJson.main).toBe("src/bot.js");
+    expect(pkgJson.dependencies).toEqual({ "@arena/sdk": "0.1.0" });
+    expect(files.map((f) => f.path)).toContain("src/bot.js");
+  });
+
+  it("Python: requirements con la versión REAL del SDK (0.1.0, no 1.0.0)", () => {
+    const files = wrapSingleFile("python", "print('x')");
+    expect(files.find((f) => f.path === "requirements.txt")!.content).toBe("arena-sdk==0.1.0\n");
+    expect(files.find((f) => f.path === "requirements.lock")!.content).toBe("arena-sdk==0.1.0\n");
+  });
+
+  it("la versión declarada es la del SDK del repo (la que trae la imagen de runtime)", () => {
+    const js = JSON.parse(readFileSync("sdks/javascript/package.json", "utf8"));
+    const py = readFileSync("sdks/python/pyproject.toml", "utf8");
+    expect(js.version).toBe("0.1.0");
+    expect(py).toMatch(/^version = "0\.1\.0"$/m);
   });
 });

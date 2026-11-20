@@ -163,7 +163,9 @@ describe("B10 · allowlist del proxy: `stats` entra acotado, el resto sigue fuer
       ["GET", "/version"],
       ["GET", "/info"],
       ["POST", "/images/create?fromImage=alpine"],
-      ["DELETE", `/containers/${CID1}`],
+      // OLA2-MF · DELETE por Id completo pasa la decisión (la propiedad la exige el
+      // servidor); con parámetros no admitidos sigue denegado.
+      ["DELETE", `/containers/${CID1}?v=1`],
     ];
     for (const [method, path] of stillDenied) {
       expect(evaluateProxyRequest(method, path, undefined).ok, `${method} ${path}`).toBe(false);

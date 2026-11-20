@@ -14,17 +14,82 @@ import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
-import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
+import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../replay-service/src/team-stats.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
-import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "../public-replays.js";
-import { checkBattleContent } from "./catalog.js";
+import { flagSource } from "../runtime-settings.js";
+import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
+import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
+import { projectBotStats } from "../../../../packages/projection/index.js";
+import { viewerMetaOf } from "./replays.js";
+import { fromJsonl } from "../../../arena-engine/src/replay.js";
+import { decompress, sha256 } from "../../../replay-service/src/format.js";
+import {
+  canSeeBotDiagnostics,
+  getReadableBattleOr404,
+  whereBattleReadable,
+  wherePubliclyShowable,
+  type BattleVisibility,
+} from "../battle-access.js";
+import { loadRuleset } from "../../../../packages/game-rules/index.js";
+import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
+import { buildBattleRules, compositionViewer, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
+import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
+
+/** Modos que se juegan por equipos: exactamente 2 bandos (4v4 como máximo). */
+export const TEAM_BATTLE_MODES: readonly string[] = ["team_deathmatch", "capture_the_flag", "zone_control"];
+/** Tamaño máximo de un bando en un modo de equipos (8 participantes = 4v4). */
+export const MAX_PARTICIPANTS_PER_TEAM = 4;
+
+/**
+ * 4v4 · Reglas de composición de POST /battles (fases 2 y 8). Se llama con la forma
+ * de cada participante ya validada (team es una cadena válida).
+ *  - modos de equipo: exactamente 2 bandos, cada uno con 1..4 vehículos ⇒ 400;
+ *  - deathmatch: cada vehículo su propio bando; compartir etiqueta ⇒ 409 con la
+ *    salida explícita («usa team_deathmatch»), la misma regla que aplica el motor
+ *    (DeathmatchMode, ERR-ENG-07) pero ANTES de encolar.
+ */
+export function assertTeamComposition(mode: string, participants: { team: string }[]): void {
+  const byTeam = new Map<string, number>();
+  for (const p of participants) byTeam.set(p.team, (byTeam.get(p.team) ?? 0) + 1);
+  if (TEAM_BATTLE_MODES.includes(mode)) {
+    if (byTeam.size !== 2) {
+      throw new ApiError(
+        400,
+        "team_composition_invalid",
+        `${mode} exige exactamente 2 bandos con al menos 1 participante cada uno; recibidos ${byTeam.size}`,
+      );
+    }
+    for (const [team, n] of byTeam) {
+      if (n > MAX_PARTICIPANTS_PER_TEAM) {
+        throw new ApiError(
+          400,
+          "team_too_large",
+          `el bando ${team} tiene ${n} participantes; máximo ${MAX_PARTICIPANTS_PER_TEAM} por bando`,
+        );
+      }
+    }
+    return;
+  }
+  if (mode === "deathmatch") {
+    const shared = [...byTeam].filter(([, n]) => n > 1).map(([t]) => t);
+    if (shared.length > 0) {
+      throw conflict(
+        "deathmatch_shared_team",
+        `deathmatch exige que cada participante tenga su propio bando; compartidos: ${shared.join(", ")}. ` +
+          `Para jugar por equipos usa team_deathmatch`,
+        { teams: shared },
+      );
+    }
+  }
+}
 
 /**
  * R2.6 (ERR-SEC-16): base del WebSocket de espectador. En producción es
@@ -75,28 +140,59 @@ export async function enqueueRunBattle(db: Db, battleId: string): Promise<boolea
   return rows.length > 0;
 }
 
-export function battleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
+/**
+ * Participantes de una batalla con el NOMBRE del bot (UX-D · D1: la web mostraba
+ * UUIDs) y su dueño (sólo para decidir quién ve diagnósticos; nunca se serializa).
+ */
+export async function loadParticipants(db: Db, battleId: string): Promise<Record<string, unknown>[]> {
+  return db("participants")
+    .leftJoin("bots", "bots.id", "participants.bot_id")
+    .where("participants.battle_id", battleId)
+    .select("participants.*", "bots.name as bot_name", "bots.owner_id as bot_owner_id")
+    .orderBy("participants.team", "asc");
+}
+
+/**
+ * Proyección de una batalla. `viewer` decide qué participantes llevan su CPU
+ * (diagnóstico: sólo el dueño del bot y el staff, TD-047); sin `viewer`, ninguno.
+ */
+export function battleToJson(
+  b: Record<string, unknown>,
+  participants: Record<string, unknown>[],
+  viewer?: Request["auth"] | null,
+) {
   return {
     id: b.id,
     tournamentId: b.tournament_id ?? undefined,
     status: b.status,
     official: b.official,
     mode: b.mode,
+    rulesetId: b.ruleset_id ?? undefined,
     mapId: b.map_id,
+    mapName: b.map_name ?? undefined,
     mapVersion: b.map_version,
-    participants: participants.map((p) => ({
-      botId: p.bot_id,
-      version: p.version,
-      team: p.team,
-      outcome: p.outcome ?? undefined,
-      cpuMs: p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
-    })),
+    participants: participants.map((p) => {
+      const mine = viewer !== undefined && canSeeBotDiagnostics(viewer ?? undefined, p.bot_owner_id as string | null);
+      return {
+        botId: p.bot_id,
+        botName: p.bot_name ?? undefined,
+        version: p.version,
+        team: p.team,
+        outcome: p.outcome ?? undefined,
+        // Sólo dice si EL SOLICITANTE puede ver el diagnóstico de este bot.
+        ...(viewer !== undefined ? { diagnosticsVisible: mine } : {}),
+        cpuMs: !mine || p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
+      };
+    }),
     result: b.result ?? undefined,
     failureKind: b.failure_kind,
+    createdAt: b.created_at ? new Date(b.created_at as string).toISOString() : undefined,
     startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
     replayAvailable: Boolean(b.replay_ref),
     replayHash: b.replay_hash ?? undefined,
+    // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
+    rules: rulesToJson(rulesOf(b)),
   };
 }
 
@@ -177,13 +273,103 @@ async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
   return battle;
 }
 
-async function getBattleOr404(db: Db, id: string) {
-  const battle = await db("battles")
-    .where({ id })
-    .first()
+/** Nombre del mapa de una batalla (la web lo muestra en vez del id). */
+async function withMapName(db: Db, battle: Record<string, any>): Promise<Record<string, any>> {
+  const map = await db("maps")
+    .where({ id: battle.map_id })
+    .first("name")
     .catch(() => null);
-  if (!battle) throw notFound();
-  return battle;
+  return { ...battle, map_name: map?.name ?? undefined };
+}
+
+const NO_STORE = "private, no-store";
+
+/** `maxConsecutiveTimeouts` del ruleset con el que corrió la batalla, o null si no se sabe. */
+async function maxConsecutiveTimeoutsOf(db: Db, battle: Record<string, any>): Promise<number | null> {
+  const versions = (battle.engine_versions ?? {}) as Record<string, unknown>;
+  // R-RULES · con copia de reglas, la copia manda (nunca el catálogo actual).
+  const snapshot = rulesOf(battle);
+  if (snapshot) return Number(snapshot.engineRuleset.maxConsecutiveTimeouts);
+  try {
+    // El ruleset del MOTOR que se usó (engine-executor lo deja en engine_versions);
+    // si no está (batalla sin ejecutar), la misma resolución que usa el worker.
+    if (typeof versions.rulesetEngine === "string" && versions.rulesetEngine) {
+      return Number(loadRuleset(versions.rulesetEngine).maxConsecutiveTimeouts);
+    }
+    const r = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
+    return r.ok ? Number(r.ruleset.maxConsecutiveTimeouts) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * UX-06 · Diagnóstico de UN bot para su dueño: combina lo que midió quien ejecutó
+ * la batalla (`participants.diagnostics`: arranque, transporte, contenedor) con lo
+ * que sale del replay (`battle_stats`: decisiones, timeouts, rechazos). Lo que no
+ * se midió va a `null` (la web dice «no medido»), nunca a un cero inventado.
+ * Sólo códigos y contadores: nada del sandbox.
+ */
+function buildDiagnostics(
+  p: Record<string, unknown>,
+  s: Record<string, any> | undefined,
+  result: { disqualified?: string[]; endReason?: string },
+  maxConsecutiveTimeouts: number | null,
+) {
+  const raw = p.diagnostics;
+  const d = (typeof raw === "string" ? JSON.parse(raw) : (raw ?? null)) as Record<string, any> | null;
+  const proto = d?.protocol ?? null;
+  const disqualified = p.outcome === "disqualified" || (result.disqualified ?? []).includes(String(p.bot_id));
+  let disqualifiedReason: string | null = null;
+  if (disqualified) {
+    if (d?.startup?.ok === false) disqualifiedReason = d.startup.reason ?? "startup_failed";
+    else if (s?.disqualified) disqualifiedReason = "consecutive_timeouts";
+    else if (result.endReason === "walkover" || !s) disqualifiedReason = "administrative";
+    else disqualifiedReason = "unknown";
+  }
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    botId: p.bot_id,
+    botName: p.bot_name ?? undefined,
+    version: p.version,
+    /** Hay medida del ejecutor (arranque/transporte); false en batallas antiguas. */
+    measured: d !== null,
+    startup: d?.startup ?? null,
+    hello: proto ? { ok: Boolean(proto.helloOk), tick: num(proto.helloTick), reconnects: num(proto.reconnects) } : null,
+    decisions: num(s?.decisions),
+    decisionTimeouts: num(s?.decisionTimeouts),
+    maxConsecutiveTimeouts,
+    disqualified,
+    disqualifiedReason,
+    commands: proto
+      ? {
+          received: num(proto.commandsReceived),
+          invalid: num(proto.invalidCommands),
+          firstInvalidReason: typeof proto.firstInvalidReason === "string" ? proto.firstInvalidReason : null,
+          invalidJson: num(proto.invalidJson),
+          late: num(proto.lateCommands),
+          wrongTick: num(proto.wrongTickCommands),
+          extra: num(proto.extraCommands),
+        }
+      : null,
+    rejectionsByReason: s?.rejectionsByReason ?? null,
+    // 4v4-STATS · mensajes de radio descartados por el motor, por motivo
+    // (rate_limited, too_large, no_radio, queue_full). null = stats sin medir
+    // (batalla anterior a 4v4-STATS o sin stats).
+    radioDroppedByReason: s?.radioDroppedByReason ?? null,
+    disconnectedAtTick: proto ? num(proto.disconnectedAtTick) : null,
+    container: d?.container
+      ? {
+          exitCode: num(d.container.exitCode),
+          oomKilled: Boolean(d.container.oomKilled),
+          exitedDuringBattle: Boolean(d.container.exitedDuringBattle),
+        }
+      : null,
+    cpuMs: p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
+    shotsFired: num(s?.shotsFired),
+    shotsHit: num(s?.shotsHit),
+    damageDealt: num(s?.damageDealt),
+  };
 }
 
 export function battleRoutes(
@@ -191,10 +377,17 @@ export function battleRoutes(
   quota: AnonQuotaConfig,
   // Se mantiene la firma (app.ts la pasa); `/run` ya no usa el launcher (TD-002).
   _runCfg?: BattleRunConfig,
-  publicSpectateEnabled: boolean = publicSpectateEnabledFromEnv(),
-  publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
+  // MG · booleano fijo (tests) o getter de los ajustes de runtime (RuntimeSettingsStore):
+  // los flags se leen EN CADA PETICIÓN, así un cambio en caliente se aplica sin reiniciar.
+  publicSpectateEnabled?: boolean | (() => boolean),
+  publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
+  const spectateOn = flagSource(publicSpectateEnabled, () => false);
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
+  // UX-D (G-08) · una sola política de lectura para listado, detalle, stats,
+  // auditoría, ticket de espectador y /run (battle-access.ts).
+  const vis = (): BattleVisibility => ({ publicReplays: replaysOn(), publicSpectate: spectateOn() });
 
   // R11 · Slice mínimo de espectador público: gateado por S9_PUBLIC_SPECTATE_ENABLED
   // (apagado por defecto). Responde 200 SIEMPRE, sin cuenta; si está apagado,
@@ -203,13 +396,16 @@ export function battleRoutes(
     router,
     "listPublicLiveBattles",
     async (_req, res) => {
-      if (!publicSpectateEnabled) {
+      if (!spectateOn()) {
         res.json({ enabled: false, battles: [] });
         return;
       }
-      const rows = await db("battles")
-        .join("maps", "maps.id", "battles.map_id")
-        .where({ "battles.status": "running" })
+      // UX-D (G-08) · sólo las que un anónimo puede VER de verdad: sin bots no
+      // públicos (las demás darían 404 al pedir el ticket).
+      const rows = await wherePubliclyShowable(
+        db,
+        db("battles").join("maps", "maps.id", "battles.map_id").where({ "battles.status": "running" }),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",
@@ -245,11 +441,14 @@ export function battleRoutes(
     router,
     "getPublicLiveBattle",
     async (req, res) => {
-      if (!publicSpectateEnabled) throw notFound();
+      if (!spectateOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
-      const battle = await db("battles")
-        .join("maps", "maps.id", "battles.map_id")
-        .where({ "battles.id": battleId, "battles.status": "running" })
+      const battle = await wherePubliclyShowable(
+        db,
+        db("battles")
+          .join("maps", "maps.id", "battles.map_id")
+          .where({ "battles.id": battleId, "battles.status": "running" }),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",
@@ -281,7 +480,7 @@ export function battleRoutes(
     router,
     "listPublicReplays",
     async (req, res) => {
-      if (!publicReplaysEnabled) {
+      if (!replaysOn()) {
         res.json({ enabled: false, items: [] });
         return;
       }
@@ -302,14 +501,15 @@ export function battleRoutes(
           "battles.finished_at as finished_at",
           "battles.result as result",
           "battles.replay_ref as replay_ref",
+          db.raw(cursorTsSql("battles.created_at")),
         )
         .orderBy([
           { column: "battles.created_at", order: "desc" },
           { column: "battles.id", order: "desc" },
         ])
         .limit(limit + 1);
-      if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
-      const rows = await q;
+      q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
+      const rows = await runCursorQuery(q, cursor);
       const page = rows.slice(0, limit);
       const items = await Promise.all(
         page.map(async (b: Record<string, unknown>) =>
@@ -321,9 +521,7 @@ export function battleRoutes(
         enabled: true,
         items,
         nextCursor:
-          rows.length > limit
-            ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
-            : undefined,
+          rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
       });
     },
     (req, res, next) => anonQuota(db, "public-replays-list", quota)(req, res, next),
@@ -333,12 +531,15 @@ export function battleRoutes(
     router,
     "getPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       const participants = await db("participants").where({ battle_id: battle.id });
-      res.setHeader("Cache-Control", "public, max-age=3600, immutable");
-      res.json(publicReplayBattleToJson(battle, participants));
+      // OLA 2 · MA · respuesta pública proyectada: sin `immutable`, ETag versionado.
+      const body = publicReplayBattleToJson(battle, participants);
+      res.setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL);
+      res.setHeader("ETag", projectedEtag("public-replay", JSON.stringify(body)));
+      res.json(body);
     },
     (req, res, next) => anonQuota(db, "public-replay", quota)(req, res, next),
   );
@@ -347,20 +548,29 @@ export function battleRoutes(
     router,
     "downloadPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
-      let bytes: Buffer;
+      // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
+      // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
+      // competición (replay-projection.ts), igual para todos los visitantes.
+      let doc: Record<string, unknown>;
+      let sha = "";
       try {
-        bytes = await readFile(battle.replay_ref as string);
+        const bytes = await readFile(battle.replay_ref as string);
+        sha = sha256(bytes);
+        const replay = fromJsonl(decompress(bytes).toString("utf8"));
+        const meta = await viewerMetaOf(db, battle, sha);
+        doc = projectReplayDocument(replay, meta, sha);
       } catch {
         throw notFound("Replay no disponible");
       }
+      // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
       res
         .status(200)
-        .setHeader("Content-Type", "application/octet-stream")
-        .setHeader("Cache-Control", "public, max-age=3600, immutable")
-        .send(bytes);
+        .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
+        .setHeader("ETag", projectedEtag("public-replay-download", sha))
+        .json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );
@@ -368,32 +578,37 @@ export function battleRoutes(
   defineOperation(router, "listBattles", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
+    // UX-D (G-08 · TD-047) · sólo las batallas que el solicitante puede leer.
     let q = db("battles")
+      .leftJoin("maps", "maps.id", "battles.map_id")
+      .select("battles.*", "maps.name as map_name", db.raw(cursorTsSql("battles.created_at")))
       .orderBy([
-        { column: "created_at", order: "desc" },
-        { column: "id", order: "desc" },
+        { column: "battles.created_at", order: "desc" },
+        { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    if (typeof req.query.status === "string") q = q.where({ status: req.query.status });
-    if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
-    const rows = await q;
+    q = whereBattleReadable(db, q, req.auth, vis());
+    if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
+    q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = await Promise.all(
       page.map(async (b: Record<string, unknown>) =>
-        battleToJson(b, await db("participants").where({ battle_id: b.id })),
+        battleToJson(b, await loadParticipants(db, b.id as string), req.auth ?? null),
       ),
     );
-    res.setHeader("Cache-Control", "public, max-age=5");
+    // Depende de quién pregunta: nunca en una caché compartida.
+    res.setHeader("Cache-Control", NO_STORE);
     res.json({
       items,
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
-    res.json(battleToJson(battle, await db("participants").where({ battle_id: battle.id })));
+    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis()));
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json(battleToJson(battle, await loadParticipants(db, battle.id), req.auth ?? null));
   });
 
   defineOperation(router, "createPracticeBattle", async (req, res) => {
@@ -412,48 +627,30 @@ export function battleRoutes(
     if (!content.ok) throw new ApiError(content.status, content.code, content.message);
     const map = { map_id: content.map.mapId, version: content.map.version };
 
-    // DEV-B · forma de cada participante y composición mínima. PK de participants
-    // = (battle_id, bot_id): un mismo bot NO puede ir en dos bandos (ni dos veces
-    // en el mismo); antes eso acababa en un 500 por violación de PK.
-    const seen = new Set<string>();
-    for (const p of participants) {
-      if (!p || typeof p !== "object") throw badRequest("participants: cada elemento debe ser un objeto");
-      if (typeof p.botId !== "string" || p.botId.length === 0) throw badRequest("participants[].botId obligatorio");
-      if (!Number.isInteger(p.version) || p.version < 1) throw badRequest("participants[].version: entero >= 1");
-      if (typeof p.team !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(p.team)) {
-        throw badRequest("participants[].team: 1-32 caracteres [A-Za-z0-9_-]");
-      }
-      if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
-      seen.add(p.botId);
-    }
+    // DEV-B · forma de cada participante (services/battle-participants.ts, la misma
+    // regla que POST /battles/rules-check).
+    assertParticipantsShape(participants);
 
-    // TD-005 · PROPIEDAD/VISIBILIDAD: sólo se puede meter en una batalla un bot
-    // propio, público o de un equipo del que el solicitante es miembro (los
-    // admin, cualquiera). Un bot privado ajeno responde EXACTAMENTE igual que uno
-    // inexistente (404): no se revela que existe. Antes no se comprobaba nada.
-    const userId = req.auth?.userId ?? null;
-    const isAdmin = (req.auth?.rank ?? 0) >= ROLE_RANK.admin;
-    for (const p of participants) {
-      const bot = await db("bots")
-        .where({ id: p.botId })
-        .first()
-        .catch(() => null);
-      let visible = Boolean(bot) && (isAdmin || bot.owner_id === userId || bot.visibility === "public");
-      if (bot && !visible && bot.visibility === "team" && bot.team_id && userId) {
-        visible = Boolean(await db("team_members").where({ team_id: bot.team_id, user_id: userId }).first());
-      }
-      if (!visible) throw new ApiError(404, "bot_not_found", `El bot ${p.botId} no existe o no es accesible`);
-    }
+    // 4v4 · COMPOSICIÓN por bando, antes de tocar bots o cola. Sin esto, una
+    // combinación que el motor rechaza (DM con bandos compartidos) se encolaba y
+    // acababa en `engine_start_failure`, que el worker reintenta como si fuera un
+    // fallo de infraestructura. No depende de ningún dato privado: se puede
+    // responder antes de la comprobación de visibilidad sin filtrar nada.
+    assertTeamComposition(mode, participants);
+    // ADR-022 · en CTF, cada bando necesita su base y su bandera en el mapa.
+    assertTeamsFitMap(content, mode, participants);
 
-    for (const p of participants) {
-      const v = await db("bot_versions")
-        .where({ bot_id: p.botId, version: p.version })
-        .first()
-        .catch(() => null);
-      if (!v || !["published", "frozen"].includes(v.state)) {
-        throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
-      }
-    }
+    // TD-005 · visibilidad, versión publicada y (ELIG) elegibilidad: una sola regla
+    // compartida con POST /battles/rules-check (services/battle-participants.ts).
+    await assertParticipantsUsable(db, req.auth, participants);
+
+    // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
+    // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
+    const rulesBuild = await buildBattleRules(
+      db,
+      { mode, rulesetId, rules: req.body?.rules, participants },
+      { viewer: compositionViewer(req.auth) },
+    );
 
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).
@@ -467,6 +664,7 @@ export function battleRoutes(
           map_id: map.map_id,
           map_version: map.version,
           seed: seed ?? null,
+          rules: rulesBuild.snapshot ? JSON.stringify(rulesBuild.snapshot) : null,
         })
         .returning("*");
       await trx("participants").insert(
@@ -497,16 +695,24 @@ export function battleRoutes(
       // ya no se emite: 404 (mismo trato que getPublicLiveBattle, para no revelar
       // si el id existe). Una sesión autenticada sigue pudiendo espectar: el
       // espectador interno del producto no es "espectador público".
-      if (!publicSpectateEnabled && !req.auth) throw notFound();
-      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+      if (!spectateOn() && !req.auth) throw notFound();
+      // UX-D (G-08) · el ticket sigue la MISMA política que el resto de vistas de
+      // la batalla: antes cualquier sesión (y, con el directo público, cualquier
+      // anónimo) obtenía ticket para la batalla de un bot privado ajeno.
+      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
-      const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      // OLA 2 · MA · audiencia FIRMADA (`view`): el gateway separa mapper de ids e
+      // historial por audiencia. `broadcast` lo pide la página de emisión y nunca lleva
+      // capas de depuración; el staff recibe `staff` (con debug) salvo que pida broadcast.
+      const wantsBroadcast = req.query.audience === "broadcast";
+      const debug = !wantsBroadcast && (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      const view = wantsBroadcast ? "broadcast" : debug ? "staff" : "public_live";
       // `anon` viaja FIRMADO por la API para que el gateway (otro proceso) pueda
       // aplicar la capability sin consultar la BD ni creerse al cliente.
       const ticket = signSpectateTicket(
-        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth },
+        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth, view },
         SPECTATE_TICKET_TTL_S,
       );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
@@ -525,7 +731,7 @@ export function battleRoutes(
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -539,7 +745,8 @@ export function battleRoutes(
         signature: art?.signature ?? undefined,
       });
     }
-    // Público: la auditabilidad no exige revelar código (contrato E1).
+    // La auditabilidad no exige revelar código (contrato E1); la ve quien ve la batalla.
+    res.setHeader("Cache-Control", NO_STORE);
     res.json({
       battleId: battle.id,
       seed: battle.seed ?? undefined,
@@ -553,13 +760,89 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const rows = await db("battle_stats").where({ battle_id: battle.id });
-    // B8 · `emptyDict()`, NO `{}`: `r.bot_id` es un valor de BD usado como clave.
-    const stats: Record<string, unknown> = emptyDict<unknown>();
-    for (const r of rows) stats[r.bot_id] = r.stats;
-    res.setHeader("Cache-Control", "public, max-age=60");
-    res.json({ battleId: battle.id, perBot: stats });
+    const participants = await loadParticipants(db, battle.id);
+    const statsByBot = new Map<string, Record<string, any>>();
+    for (const r of rows) statsByBot.set(String(r.bot_id), typeof r.stats === "string" ? JSON.parse(r.stats) : r.stats);
+
+    // B8 · `emptyDict()`, NO `{}`: `bot_id` es un valor de BD usado como clave.
+    const perBot: Record<string, unknown> = emptyDict<unknown>();
+    const diagnostics: Record<string, unknown> = emptyDict<unknown>();
+    const result = (battle.result ?? {}) as {
+      disqualified?: string[];
+      endReason?: string;
+      score?: Record<string, unknown>;
+    };
+    const maxTimeouts = await maxConsecutiveTimeoutsOf(db, battle);
+    // `team` es dato de BD/replay usado como clave: Map, y emptyDict al serializar.
+    const teams = new Map<string, TeamBattleStats>();
+    for (const p of participants) {
+      const botId = String(p.bot_id);
+      const s = statsByBot.get(botId);
+      const owner = canSeeBotDiagnostics(req.auth, p.bot_owner_id as string | null);
+      if (s) {
+        // Lo deportivo lo ve quien ve la batalla; la CPU y el desglose de
+        // decisiones y rechazos son diagnóstico (TD-047): sólo dueño y staff.
+        // 4v4-STATS · los descartes de radio miden el fallo del código del bot
+        // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
+        // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...rest } = s;
+        // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2) · lista BLANCA de la política de
+        // divulgación (`stats.*`): quien no es dueño ni staff no recibe el desglose por
+        // ranura (`perModule`: moduleId de cada ranura = loadout), ni minas, ni radio, ni
+        // los turnos sin responder (diagnóstico, UX-F); tampoco el id interno del vehículo.
+        // Lo deportivo observable (daño, disparos, aciertos, bajas…) se queda.
+        const sporting = projectBotStats(rest, owner ? "owner" : "public_replay") as Record<string, any>;
+        perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
+        // 4v4-STATS · `perTeam` se agrega SÓLO de lo que acaba de entrar en
+        // `perBot` (lo deportivo, igual para cualquier lector): por construcción
+        // no puede revelar más que `perBot` (TD-047).
+        const team = typeof sporting.team === "string" ? sporting.team : String(p.team ?? "");
+        let t = teams.get(team);
+        if (!t) {
+          const score = Number(safeLookup(result.score ?? {}, team) ?? sporting.battle?.team?.score ?? 0);
+          t = emptyTeamStats(team, Number.isFinite(score) ? score : 0);
+          teams.set(team, t);
+        }
+        // TD-047 · `perTeam` es IGUAL para cualquier lector: se suma siempre lo que ve un
+        // tercero (estadísticas cuantizadas), nunca los exactos del dueño.
+        const forTeam = owner ? (projectBotStats(rest, "public_replay") as Record<string, any>) : sporting;
+        addBotToTeam(t, forTeam);
+      }
+      if (owner) {
+        diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
+      }
+    }
+
+    // TD-065 · justo tras `finished` el job de stats aún no ha escrito: eso es
+    // «pendiente», no «sin estadísticas». Sin replay (walkover, fallo deportivo,
+    // fallida) no habrá estadísticas nunca: «unavailable». Nada se cachea.
+    let status: "ready" | "pending" | "unavailable" = "unavailable";
+    if (rows.length > 0) status = "ready";
+    else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
+    else if (battle.status === "finished" && battle.replay_ref) status = "pending";
+    res.setHeader("Cache-Control", NO_STORE);
+    const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
+    for (const [team, t] of teams) {
+      const copy: Record<string, unknown> = { ...t };
+      // M0 · sin daño ABSOLUTO en lo público (ni por bot ni por bando, igual para todo lector):
+      // el dueño lo suma de su perBot exacto.
+      delete copy.damageDealt;
+      delete copy.damageTaken;
+      perTeam[team] = copy as unknown as TeamBattleStats;
+    }
+    // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
+    const rules = rulesToJson(rulesOf(battle));
+    res.json({
+      battleId: battle.id,
+      status,
+      perBot,
+      perTeam,
+      diagnostics,
+      profile: rules?.profile ?? "classic",
+      rules,
+    });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y
@@ -574,7 +857,9 @@ export function battleRoutes(
   // `dedupe_key`) y responde 202. Llamarlo dos veces no ejecuta dos veces nada.
   defineOperation(router, "runBattle", async (req, res) => {
     const battleId = pathParam(req, "battleId");
-    const battle = await getBattleOr404(db, battleId);
+    // UX-D (G-08) · misma política de lectura: antes cualquier usuario «tocaba» por
+    // id la batalla de otro.
+    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis());
     if (battle.status !== "scheduled") {
       res.status(409).json({ error: "invalid_state", message: `La batalla está en estado ${battle.status}` });
       return;

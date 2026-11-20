@@ -27,7 +27,7 @@ después [current-status.md](../roadmap/current-status.md).
 
 ## Regla de esta carpeta
 
-Aquí sólo se describe lo que **existe** en `27f70bb`. Lo diseñado y no implementado está en
+Aquí sólo se describe lo que **existe**, verificado en `27f70bb` (octubre de 2026) y con el estado de funcionamiento revisado en `e3bf2fa` (2026-11-02). Lo diseñado y no implementado está en
 [docs/roadmap/pending-features.md](../roadmap/pending-features.md). Lo roto está en
 [docs/roadmap/technical-debt.md](../roadmap/technical-debt.md).
 

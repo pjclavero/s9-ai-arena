@@ -28,7 +28,8 @@ import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.j
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import { Battle, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import { emptyArena } from "../../arena-engine/src/fixtures.js";
-import type { CandidateAgentFactory } from "./types.js";
+import type { BotSubmission, CandidateAgentFactory } from "./types.js";
+import { smokeVehicle } from "./smoke-vehicle.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCHEMA_DIR = join(__dirname, "..", "..", "..", "packages", "protocol", "schemas");
@@ -108,6 +109,8 @@ export interface SmokeBattleOptions {
   candidate: CandidateAgentFactory;
   candidateBotId: string;
   candidateArchetype: keyof typeof ARCHETYPES;
+  /** UX-01 · G-A05 · loadout real de la versión (prioridad sobre el arquetipo). */
+  candidateLoadout?: BotSubmission["loadout"];
   /** Fábrica del bot de referencia (stub de E5). */
   referenceAgent: (botId: string) => BotAgent;
   referenceArchetype?: keyof typeof ARCHETYPES;
@@ -131,8 +134,8 @@ export async function runSmokeBattle(opts: SmokeBattleOptions): Promise<SmokeBat
   const catalog = loadCatalog();
   const refArche = opts.referenceArchetype ?? "gunner";
   // safeLookup, no indexación directa (barrido del supervisor de B2).
-  const candidateLoadout = safeLookup(ARCHETYPES, opts.candidateArchetype);
-  if (!candidateLoadout) throw new Error(`runSmokeBattle: arquetipo desconocido "${String(opts.candidateArchetype)}"`);
+  const cand = smokeVehicle({ archetype: opts.candidateArchetype, loadout: opts.candidateLoadout }, catalog);
+  logs.push(cand.note);
   const referenceLoadout = safeLookup(ARCHETYPES, refArche);
   if (!referenceLoadout) throw new Error(`runSmokeBattle: arquetipo de referencia desconocido "${String(refArche)}"`);
   const participants: Participant[] = [
@@ -140,7 +143,7 @@ export async function runSmokeBattle(opts: SmokeBattleOptions): Promise<SmokeBat
       id: "veh_1",
       botId: opts.candidateBotId,
       team: "red",
-      spec: resolveVehicle(candidateLoadout, catalog),
+      spec: cand.spec,
     },
     { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(referenceLoadout, catalog) },
   ];

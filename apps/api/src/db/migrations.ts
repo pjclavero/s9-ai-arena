@@ -810,6 +810,338 @@ const m013_battle_claim: Migration = {
   },
 };
 
+// UX-06 · Diagnóstico por bot de cada batalla (arranque, transporte, contenedor),
+// forma `bot-diagnostics/v1` (apps/tournament-worker/src/bot-diagnostics.ts). Va en
+// `participants`, como cpu_ms: la escribe quien ejecutó la batalla en la MISMA
+// transacción que el resultado, y runStatsJob (delete+insert de battle_stats) no
+// la puede borrar al reprocesar. NULL = batalla anterior o sin medida.
+const m014_battle_diagnostics: Migration = {
+  name: "014_battle_diagnostics",
+  async up(db) {
+    await db.raw(`ALTER TABLE participants ADD COLUMN diagnostics jsonb`);
+  },
+  // Destructivo para los diagnósticos (no para el resultado): DROP COLUMN.
+  async down(db) {
+    await db.raw(`ALTER TABLE participants DROP COLUMN diagnostics`);
+  },
+};
+
+// EQ4 (UX) · «Retirar» un bot es ORGANIZATIVO: lo saca de la lista principal de
+// «Mis bots» sin borrar versiones, batallas ni replays, y sin cambiar qué
+// versiones pueden jugar (eso lo sigue decidiendo el estado de cada versión).
+// Aditiva y reversible desde la API (PATCH /bots/{id} { retired }).
+// NOTA DE INTEGRACIÓN: el PR #201 (reglas), que entró después, renumeró la suya a
+// 016_battle_rules (lo exige migrations-order.test.ts).
+const m015_bot_retired: Migration = {
+  name: "015_bot_retired",
+  async up(db) {
+    await db.raw(`ALTER TABLE bots ADD COLUMN retired_at timestamptz`);
+  },
+  // Sólo pierde la marca de «retirado» (organizativa), nada más.
+  async down(db) {
+    await db.raw(`ALTER TABLE bots DROP COLUMN retired_at`);
+  },
+};
+
+// R-RULES (ADR-021/022) · COPIA INMUTABLE de las reglas con que se juega cada batalla y
+// cada torneo (`BattleRulesSnapshot` de packages/game-rules/battle-rules.ts):
+// preset/personalizado/clásico, parámetros, topes de composición, catálogo, ruleset
+// COMPLETO del motor y versión del motor. La escribe POST /battles (o POST /tournaments)
+// al crear; el scheduler copia la del torneo en cada batalla; el worker juega esa copia.
+// NULL = batalla o torneo anterior: sigue la resolución en ejecución de siempre.
+//
+// SÓLO añade dos columnas nullable: no toca ninguna fila existente (ni batallas, ni
+// replays, ni torneos) y NO las rellena: una batalla histórica no se reescribe como si
+// hubiera usado reglas nuevas. Probado en `migration-016.test.ts` (upgrade con datos,
+// rollback, backup/restore con pg_dump/psql de datos de prueba).
+const m016_battle_rules: Migration = {
+  name: "016_battle_rules",
+  async up(db) {
+    await db.raw(`ALTER TABLE battles ADD COLUMN rules jsonb`);
+    await db.raw(`ALTER TABLE tournaments ADD COLUMN rules jsonb`);
+  },
+  // Destructivo SÓLO para las copias de reglas (no para resultados, replays ni torneos).
+  // Antes de usarlo en un entorno con batallas pendientes: docs/operations/upgrades.md.
+  async down(db) {
+    await db.raw(`ALTER TABLE tournaments DROP COLUMN rules`);
+    await db.raw(`ALTER TABLE battles DROP COLUMN rules`);
+  },
+};
+
+// EQ5b · Administración → Streaming (encargo «Administración de Streaming desde la
+// web», §19). Lo NO sensible en la BD:
+//  - streaming_settings: UNA fila (id = 1) con la configuración vigente y `version`
+//    para concurrencia optimista;
+//  - streaming_credentials: METADATOS de la clave de emisión por plataforma y el
+//    SOBRE sellado con la clave PÚBLICA (RSA-OAEP-256, packages/stream-secrets).
+//    Nada en claro: ni la API ni un volcado de la BD pueden abrirlo (la privada
+//    sólo la tiene el streamer). `last4` es lo único legible (para «****ABCD»);
+//  - streaming_sessions: historial de emisiones; el índice único parcial impide
+//    DOS sesiones activas a la vez a nivel de BD.
+// La auditoría va a `audit_log` (sólo inserción), con acciones `streaming.*`.
+// Aditiva: no toca ninguna tabla existente. Probado en `migration-017.test.ts`
+// (upgrade con datos, rollback y backup/restore).
+const m017_streaming_admin: Migration = {
+  name: "017_streaming_admin",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE streaming_settings (
+        id                 smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        enabled            boolean NOT NULL DEFAULT false,
+        mode               text NOT NULL DEFAULT 'record' CHECK (mode IN ('rtmps','record')),
+        platform           text NOT NULL DEFAULT 'youtube' CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        ingest_url         text CHECK (ingest_url IS NULL OR (ingest_url LIKE 'rtmps://%' AND length(ingest_url) <= 512)),
+        encoder            text NOT NULL DEFAULT 'x264' CHECK (encoder IN ('x264','nvenc')),
+        preset             text NOT NULL DEFAULT '1080p' CHECK (preset IN ('1080p','720p')),
+        fps                smallint NOT NULL DEFAULT 30 CHECK (fps IN (30,60)),
+        video_bitrate_kbps integer NOT NULL DEFAULT 4500 CHECK (video_bitrate_kbps BETWEEN 1000 AND 12000),
+        branding           jsonb NOT NULL DEFAULT '{}',
+        retention          jsonb NOT NULL DEFAULT '{"enabled":false,"maxAgeDays":14,"maxTotalBytes":null}',
+        version            integer NOT NULL DEFAULT 1,
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      INSERT INTO streaming_settings (id) VALUES (1);
+
+      CREATE TABLE streaming_credentials (
+        platform   text PRIMARY KEY CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        sealed     jsonb NOT NULL,
+        key_id     text NOT NULL CHECK (key_id ~ '^[0-9a-f]{16}$'),
+        last4      text NOT NULL CHECK (length(last4) <= 4),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE streaming_sessions (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        state       text NOT NULL CHECK (state IN ('active','stopped','failed')),
+        mode        text NOT NULL CHECK (mode IN ('rtmps','record')),
+        target_kind text CHECK (target_kind IN ('battle','tournament')),
+        target_id   uuid,
+        config      jsonb NOT NULL,
+        started_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        started_at  timestamptz NOT NULL DEFAULT now(),
+        stopped_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        stopped_at  timestamptz,
+        stop_reason text,
+        CHECK ((target_kind IS NULL) = (target_id IS NULL))
+      );
+      CREATE UNIQUE INDEX streaming_sessions_one_active ON streaming_sessions ((true)) WHERE state = 'active';
+      CREATE INDEX streaming_sessions_started ON streaming_sessions (started_at DESC);
+    `);
+  },
+  // Destructivo SÓLO para la configuración de streaming, los sobres sellados y el
+  // historial de sesiones; la auditoría (audit_log) se conserva.
+  async down(db) {
+    await db.raw(`DROP TABLE streaming_sessions; DROP TABLE streaming_credentials; DROP TABLE streaming_settings;`);
+  },
+};
+
+// EQ2c · STANDINGS_POLICY (#229) · Marca de REVERSIÓN propia de la batalla, independiente del
+// Elo: `revertOfficialBattle` (tournament-worker standings.ts) la pone y la respetan la
+// clasificación de temporada (`seasonTable`) y el rating (`applyBattleRating`: una batalla
+// revertida no puntúa aunque su job llegue después). NULL = no revertida.
+// NUMERACIÓN: la 017 es `017_streaming_admin` (PR #227), integrada DESPUÉS que esta; en una BD
+// que ya tenga la 018, `migrate` aplica la 017 pendiente (ver docs/operations/upgrades.md).
+// SÓLO añade una columna nullable: no toca ninguna fila existente. Probado en
+// `migration-018.test.ts` (upgrade con datos, rollback, backup/restore lógico).
+const m018_battle_reverted: Migration = {
+  name: "018_battle_reverted",
+  async up(db) {
+    await db.raw(`ALTER TABLE battles ADD COLUMN reverted_at timestamptz`);
+  },
+  // Destructivo SÓLO para la marca: tras el rollback, una batalla revertida volvería a
+  // contar en la clasificación del código anterior (su Elo sigue devuelto en rating_events).
+  // Ver docs/operations/upgrades.md § «Migración 018».
+  async down(db) {
+    await db.raw(`ALTER TABLE battles DROP COLUMN reverted_at`);
+  },
+};
+
+// VISIBILIDAD (2026-11) · «participar ≠ hacer público el bot; salir en streaming ≠ hacer público
+// el bot; bot público ≠ código público». Dos cambios mínimos:
+//  1. `tournaments.broadcast`: el torneo AUTORIZA su retransmisión pública. Pertenece al torneo
+//     (nunca al bot), lo fija el organizador AL CREARLO y no cambia después (no hay operación
+//     de edición de torneos): quien inscribe un bot sabe ANTES de inscribirse si el torneo se
+//     retransmite. Con él, las batallas del torneo se pueden mostrar en público con la
+//     PROYECCIÓN DE COMPETICIÓN de sus participantes aunque sus bots sean privados o de equipo
+//     (battle-access.ts / replay-access.ts); la ficha y el código siguen protegidos.
+//  2. `code_public` deja de ser irreversible (enmienda a D9, decisión de producto del encargo
+//     «VISIBILIDAD», §6/§30): el dueño puede volver a ocultar el código de una versión. Sólo se
+//     quita esa cláusula del guardián `s9_bot_version_guard`; el resto (identidad, código,
+//     runtime, loadout, artefacto, borrado) sigue igual.
+// Aditiva para los datos: ninguna fila cambia (todos los torneos existentes quedan sin
+// retransmisión: comportamiento idéntico al anterior). Probado en `migration-019.test.ts`.
+const BOT_VERSION_GUARD_HEAD = `
+      CREATE OR REPLACE FUNCTION s9_bot_version_guard() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          IF OLD.state <> 'draft' THEN
+            RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y no se puede borrar',
+              OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+          RETURN OLD;
+        END IF;
+
+        IF TG_OP = 'INSERT' THEN
+          NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+          RETURN NEW;
+        END IF;
+
+        -- UPDATE
+        IF NEW.id IS DISTINCT FROM OLD.id OR NEW.bot_id IS DISTINCT FROM OLD.bot_id
+           OR NEW.version IS DISTINCT FROM OLD.version OR NEW.parent_version IS DISTINCT FROM OLD.parent_version
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+          RAISE EXCEPTION 'bot_version_immutable: la identidad de la versión % del bot % no se puede cambiar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'draft' AND (
+             NEW.source IS DISTINCT FROM OLD.source OR NEW.source_filename IS DISTINCT FROM OLD.source_filename
+             OR NEW.runtime IS DISTINCT FROM OLD.runtime OR NEW.loadout_revision IS DISTINCT FROM OLD.loadout_revision) THEN
+          RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y su código/runtime/loadout no se puede cambiar (crea una versión nueva)',
+            OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'validating' AND (
+             NEW.artifact_hash IS DISTINCT FROM OLD.artifact_hash
+             OR NEW.validated_build_id IS DISTINCT FROM OLD.validated_build_id) THEN
+          RAISE EXCEPTION 'bot_version_immutable: el artefacto de la versión % del bot % sólo se fija al validar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;`;
+const BOT_VERSION_GUARD_D9_IRREVERSIBLE = `
+        IF OLD.code_public AND NOT NEW.code_public THEN
+          RAISE EXCEPTION 'bot_version_immutable: code_public es irreversible (D9)'
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;`;
+const BOT_VERSION_GUARD_TAIL = `
+        NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+        RETURN NEW;
+      END
+      $fn$;`;
+
+const m019_visibility_broadcast: Migration = {
+  name: "019_visibility_broadcast",
+  async up(db) {
+    await db.raw(`ALTER TABLE tournaments ADD COLUMN broadcast boolean NOT NULL DEFAULT false`);
+    await db.raw(BOT_VERSION_GUARD_HEAD + BOT_VERSION_GUARD_TAIL);
+  },
+  // Vuelta atrás: el guardián recupera la irreversibilidad de D9 (las versiones cuyo código se
+  // ocultó siguen ocultas: no se toca ninguna fila) y se pierde SÓLO la marca de retransmisión de
+  // los torneos (sus batallas con bots no públicos vuelven a ser privadas). Ver
+  // docs/operations/upgrades.md § «Migración 019».
+  async down(db) {
+    await db.raw(BOT_VERSION_GUARD_HEAD + BOT_VERSION_GUARD_D9_IRREVERSIBLE + BOT_VERSION_GUARD_TAIL);
+    await db.raw(`ALTER TABLE tournaments DROP COLUMN broadcast`);
+  },
+};
+
+// STREAMING-UX (§16-§28) · Ingestas principal y de RESPALDO por plataforma, editables
+// desde la web, y el segundo sobre sellado de la clave, atado a la ingesta de respaldo.
+//  - `streaming_ingests`: una fila por plataforma, con la clave primaria en
+//    `platform` y no en una fila única fija. Así un PR posterior puede añadir
+//    perfiles de canal por usuario sin rehacer la tabla (§31). Sin fila, la API
+//    usa las ingestas por defecto del catálogo (YouTube: a.rtmps / b.rtmps
+//    ?backup=1). La URL se guarda TAL CUAL se configuró (§21), nunca con la clave.
+//  - `streaming_credentials.sealed_backup`: la MISMA clave sellada otra vez, atada a
+//    (plataforma, ingesta de respaldo). Cada sobre sigue atado a UN destino, así que
+//    la garantía de EQ5c no cambia: la clave sólo puede ir a la principal o a la de
+//    respaldo configuradas al sellar, nunca a otra.
+// Aditiva e independiente (no toca filas existentes): entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-020.test.ts` (upgrade con datos, rollback por nombre, backup/restore).
+const m020_streaming_ingests: Migration = {
+  name: "020_streaming_ingests",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE streaming_ingests (
+        platform           text PRIMARY KEY CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        primary_ingest_url text NOT NULL CHECK (primary_ingest_url LIKE 'rtmps://%' AND length(primary_ingest_url) <= 512),
+        backup_ingest_url  text CHECK (backup_ingest_url IS NULL OR (backup_ingest_url LIKE 'rtmps://%' AND length(backup_ingest_url) <= 512)),
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      ALTER TABLE streaming_credentials ADD COLUMN sealed_backup jsonb;
+    `);
+  },
+  // Vuelta atrás: se pierden SÓLO las ingestas editadas (se vuelve a la ingesta fija del
+  // catálogo) y el sobre de respaldo; la clave principal sellada sigue valiendo.
+  async down(db) {
+    await db.raw(`ALTER TABLE streaming_credentials DROP COLUMN sealed_backup; DROP TABLE streaming_ingests;`);
+  },
+};
+
+// MG · 021_runtime_settings: ajustes de RUNTIME de la aplicación (acceso público /
+// broadcast), sin secretos. UNA fila (id = 1). La migración NO la crea: la crea la
+// primera API que arranca (RuntimeSettingsStore.refresh con bootstrap) con los valores
+// de SU entorno (S9_PUBLIC_SPECTATE_ENABLED / S9_PUBLIC_REPLAYS_ENABLED), para que un
+// despliegue no cambie el comportamiento aunque la migración se ejecute en un proceso
+// sin esas variables. Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-021.test.ts`.
+const m021_runtime_settings: Migration = {
+  name: "021_runtime_settings",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE app_runtime_settings (
+        id                      smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        public_spectate_enabled boolean NOT NULL,
+        public_replays_enabled  boolean NOT NULL,
+        updated_at              timestamptz NOT NULL DEFAULT now(),
+        updated_by              uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+  },
+  // Vuelta atrás: se pierde lo guardado y se vuelve a leer el entorno.
+  async down(db) {
+    await db.raw(`DROP TABLE app_runtime_settings;`);
+  },
+};
+
+// #287 · Inscripción de EQUIPOS completos en torneos `teams`. Hasta ahora el equipo de una
+// inscripción se deducía EN VIVO de `bots.team_id`, así que al cerrar no se podía comprobar
+// que cada bot siguiera en el equipo con el que se inscribió (un intercambio de bots entre
+// dos equipos inscritos conservaba los tamaños y pasaba), y un cambio de equipo tras el
+// cierre movía el bot de bando en el calendario y la clasificación.
+//
+// SÓLO añade una columna nullable: NO rellena las filas existentes (NULL = inscripción
+// anterior, que sigue usando `bots.team_id` como siempre vía COALESCE). FK por defecto
+// (NO ACTION): un equipo con inscripciones no se borra (23503, que `deleteTeam` ya traduce
+// a `team_in_use`; con RESTRICT PostgreSQL daría 23001 y saldría como 500).
+//
+// Ronda 2 (#287 H5) · `team_entry_consents`: AUTORIZACIÓN explícita del DUEÑO de un bot para
+// que su equipo lo inscriba en un torneo concreto con una versión concreta. Un equipo de
+// varios dueños sólo entra (atómicamente) cuando cada bot ajeno al solicitante tiene la suya;
+// los bots del propio solicitante la reciben implícita al inscribir. Una fila por (torneo,
+// bot); la versión forma parte de la autorización (otra versión = otra autorización). Al
+// cerrar, una inscripción de equipo sin su autorización vigente no compite. Tabla NUEVA: no
+// toca filas existentes. Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-022.test.ts`.
+const m022_entries_team: Migration = {
+  name: "022_entries_team",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE entries ADD COLUMN team_id uuid REFERENCES teams(id);
+      CREATE INDEX entries_tournament_team_idx ON entries (tournament_id, team_id) WHERE team_id IS NOT NULL;
+      CREATE TABLE team_entry_consents (
+        tournament_id uuid NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        bot_id        uuid NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        team_id       uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        version       integer NOT NULL,
+        owner_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (tournament_id, bot_id),
+        FOREIGN KEY (bot_id, version) REFERENCES bot_versions(bot_id, version) ON DELETE CASCADE
+      );
+    `);
+  },
+  // Vuelta atrás: se pierde a qué equipo se inscribió cada entrada (vuelve a deducirse de
+  // bots.team_id) y las autorizaciones de los dueños.
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS team_entry_consents;
+      DROP INDEX IF EXISTS entries_tournament_team_idx;
+      ALTER TABLE entries DROP COLUMN team_id;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -824,6 +1156,15 @@ export const MIGRATIONS: Migration[] = [
   m011_battle_cpu_ms,
   m012_bot_versioning,
   m013_battle_claim,
+  m014_battle_diagnostics,
+  m015_bot_retired,
+  m016_battle_rules,
+  m017_streaming_admin,
+  m018_battle_reverted,
+  m019_visibility_broadcast,
+  m020_streaming_ingests,
+  m021_runtime_settings,
+  m022_entries_team,
 ];
 
 class ProgrammaticMigrationSource {
@@ -852,4 +1193,56 @@ export async function rollbackAll(db: Knex): Promise<void> {
 /** Revierte SOLO la última migración aplicada (exactamente una migración, no un lote). */
 export async function rollbackLast(db: Knex): Promise<void> {
   await db.migrate.down(config);
+}
+
+/**
+ * EQ5e (revisión ronda 3, R3-F) · Revierte UNA migración concreta por NOMBRE,
+ * esté donde esté en la historia: no depende de que sea la última (con la 018
+ * de #229 detrás, `rollbackLast` revertiría la 018, no la 017). Falla si esa
+ * migración no está aplicada o no existe. Sólo es seguro para migraciones
+ * independientes de las posteriores (la 017 sólo crea sus propias tablas).
+ */
+export async function rollbackNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  // STREAMER (#241, R4-2) · LISTA CERRADA: sólo las migraciones independientes de
+  // las posteriores se pueden revertir por nombre. Sin esto, `rollback:name
+  // 001_identity` ejecutaba `DROP … CASCADE` con 17 migraciones encima.
+  if (!NAMED_ROLLBACK_ALLOWED.includes(name)) {
+    throw new Error(
+      `La migración ${name} no se puede revertir por nombre (sólo ${NAMED_ROLLBACK_ALLOWED.join(", ")}); ` +
+        "usa rollback:1 en orden o restaura el backup",
+    );
+  }
+  await db.migrate.down({ ...config, name });
+}
+
+/**
+ * STREAMER (#241, R4-2) · Migraciones que `rollbackNamed` admite: cada una sólo
+ * crea o quita sus PROPIAS columnas/tablas, sin dependencias de las posteriores
+ * (comprobado en migration-016/017/018.test.ts). Una nueva entra aquí sólo con
+ * su test de vuelta atrás por nombre.
+ *
+ * VISIBILIDAD (#244, P2-1) · la 019 entra porque su runbook
+ * (docs/operations/upgrades.md) usa `rollback:name 019_visibility_broadcast`
+ * (RV-M2 en review-244-migration.test.ts y migration-019.test.ts). Su down quita
+ * `tournaments.broadcast` y REESCRIBE la función compartida `s9_bot_version_guard`
+ * con la definición de la 012 (D9 irreversible). Por eso **la 019 sale de esta
+ * lista si otra migración posterior vuelve a reescribir `s9_bot_version_guard`**:
+ * revertirla por nombre pisaría esa versión más nueva del guardián.
+ */
+export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
+  "016_battle_rules",
+  "017_streaming_admin",
+  "018_battle_reverted",
+  "019_visibility_broadcast",
+  "020_streaming_ingests",
+  "021_runtime_settings",
+  // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
+  "022_entries_team",
+]);
+
+/** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
+export async function migrateNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  await db.migrate.up({ ...config, name });
 }

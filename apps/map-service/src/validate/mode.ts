@@ -12,51 +12,14 @@
  */
 import type { InternalMap } from "../types.js";
 import { CheckCollector, type Check } from "./result.js";
+import { mapModeProblems } from "../../../../packages/game-rules/map-compat.js";
 
 export function checkMode(map: InternalMap): Check[] {
   const col = new CheckCollector("mode");
-  const spawns = map.layers.spawns;
-  const bases = map.layers.bases ?? [];
-  const flags = map.layers.flags ?? [];
-  const zones = map.layers.zones ?? [];
-
-  const spawnTeams = new Set(spawns.map((s) => s.team));
-
+  // ADR-022 · las reglas viven en packages/game-rules/map-compat.ts (las comparte la API
+  // para explicar en «Nueva batalla» por qué un mapa no es compatible con un modo).
   for (const mode of map.meta.supportedModes) {
-    switch (mode) {
-      case "capture_the_flag": {
-        // Equipos que tienen a la vez base Y bandera.
-        const baseTeams = new Set(bases.map((b) => b.team));
-        const flagTeams = new Set(flags.map((f) => f.team));
-        const ready = [...flagTeams].filter((t) => baseTeams.has(t));
-        if (flags.length === 0) {
-          col.error(`el modo capture_the_flag no tiene banderas`);
-        } else if (ready.length < 2) {
-          col.error(`el modo capture_the_flag exige base Y bandera de >= 2 equipos (solo ${ready.length} lo cumplen)`);
-        }
-        break;
-      }
-      case "zone_control": {
-        const captureZones = zones.filter((z) => z.zoneType === "capture");
-        if (captureZones.length === 0) {
-          col.error(`el modo zone_control no tiene ninguna zona de captura`);
-        }
-        break;
-      }
-      case "team_deathmatch": {
-        if (spawnTeams.size < 2) {
-          col.error(`el modo team_deathmatch exige spawns de >= 2 equipos (hay ${spawnTeams.size})`);
-        }
-        break;
-      }
-      case "deathmatch": {
-        if (spawns.length < 2) {
-          col.error(`el modo deathmatch exige >= 2 spawns (hay ${spawns.length})`);
-        }
-        break;
-      }
-    }
+    for (const problem of mapModeProblems(map, mode)) col.error(`el modo ${mode} ${problem}`);
   }
-
   return col.checks;
 }

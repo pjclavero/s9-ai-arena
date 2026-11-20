@@ -94,3 +94,22 @@ describe("TeamsPage FC-C", () => {
     expect((await screen.findByTestId("teams-error")).textContent).toMatch(/capitán/);
   });
 });
+
+describe("UX-C · C1 conceptos de equipo", () => {
+  it("explica que un equipo agrupa bots y que la batalla usa versiones en bandos, no equipos", async () => {
+    mock();
+    render(<TeamsPage me={ME} />);
+    await screen.findByText("Rojos");
+    const c = screen.getByTestId("teams-concepts").textContent ?? "";
+    expect(c).toMatch(/agrupa personas y bots/);
+    expect(c).toMatch(/versiones publicadas de bots/);
+    expect(c).toMatch(/bando/);
+    expect(c).toMatch(/mismo equipo pueden enfrentarse/);
+  });
+
+  it("sin equipos propios dice qué hacer, no deja la página vacía", async () => {
+    mock((m, p) => (m === "GET" && p.startsWith("/teams") ? { items: [] } : undefined));
+    render(<TeamsPage me={ME} />);
+    expect((await screen.findByTestId("teams-empty")).textContent).toMatch(/Crea uno/);
+  });
+});

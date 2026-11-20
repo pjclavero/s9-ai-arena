@@ -9,7 +9,7 @@ declara. Las versiones salen de:
 - `infrastructure/docker-compose.yml`;
 - `.github/workflows/*.yml`.
 
-Todo está leído en `27f70bb`. Una versión de esta tabla no garantiza que sea la que corre en
+Verificado en `27f70bb` (octubre de 2026); no se han vuelto a leer todas las versiones en `e3bf2fa`. Una versión de esta tabla no garantiza que sea la que corre en
 producción, porque las imágenes desplegadas son anteriores a `main`. Ver
 [TD-006](../roadmap/technical-debt.md#td-006).
 
@@ -57,7 +57,7 @@ producción, porque las imágenes desplegadas son anteriores a `main`. Ver
 |---|---|---|---|
 | React / react-dom | 19.2.7 | `apps/web/src` | SPA del panel (rutas hash `#/…`) |
 | Vite | 8.1.4 (+ `@vitejs/plugin-react` 6.0.3) | `apps/web/vite.config.ts`; `infrastructure/docker/web/Dockerfile` | build del SPA |
-| Phaser | 4.2.1 | `apps/web/src/viewer`, `ReplayPage`, `ViewerPage`, `BroadcastPage` | render del visor y del replay. Ver [TD-009](../roadmap/technical-debt.md#td-009) |
+| Phaser | 4.2.1 | `apps/web/src/viewer`, `ReplayPage`, `ViewerPage`, `BroadcastPage` | render del visor y del replay (golden path de navegador en CI; [TD-009](../roadmap/technical-debt.md#td-009), cerrada) |
 | nginx | `nginx:1.27-alpine` | `infrastructure/docker/web/Dockerfile` | sirve el SPA estático en el contenedor `web` |
 
 ## Motor

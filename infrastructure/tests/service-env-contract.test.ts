@@ -123,6 +123,8 @@ const INTERNAS: Record<string, string> = {
   PGPORT: "defecto 5432 del cliente; el DSN interno no lo cambia",
   // sólo desarrollo/tests: NO deben aparecer en el compose
   ARENA_DEV_INSECURE_SECRETS: "sólo dev/tests (par efímero); prohibido en el stack",
+  STREAMING_ALLOW_INTERNAL_INGEST:
+    "sólo el E2E local de streaming (ingesta en loopback); prohibido en el stack: abriría SSRF",
   NODE_ENV: "no se fija en las imágenes; deuda registrada (guard de wss inactivo, ver informe REVIEW)",
   // con defecto correcto en la imagen o en el código, documentadas en configuration.md
   HEARTBEAT_PATH: "defecto /tmp/heartbeat = contrato del healthcheck del compose",

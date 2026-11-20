@@ -13,7 +13,7 @@ import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-libra
 
 afterEach(cleanup);
 
-import { api, setToken, onSessionExpired } from "../src/api.js";
+import { api, setToken, onSessionExpired, SESSION_HINT_KEY } from "../src/api.js";
 import { App } from "../src/App.js";
 
 const ME = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false };
@@ -43,6 +43,10 @@ beforeEach(() => {
   setToken(null);
   onSessionExpired(null);
   window.location.hash = "";
+  // UX-E (C-G13) · estos casos simulan un navegador CON cookie de sesión: el
+  // arranque sólo pregunta a /auth/refresh si hay marca de sesión previa (el
+  // caso anónimo, sin marca, está en ux-e-transversal.test.tsx).
+  window.localStorage.setItem(SESSION_HINT_KEY, "1");
 });
 
 describe("R3.7 interceptor único de 401 (api.ts)", () => {

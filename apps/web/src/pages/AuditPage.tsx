@@ -21,15 +21,16 @@ interface AuditEntry {
 
 export function AuditPage(_props: { me: Me }) {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
-  const [errorMsg, setErrorMsg] = useState("");
+  // UX-E · el fallo ORIGINAL (no sólo su texto) para que ErrorState lo clasifique.
+  const [error, setError] = useState<unknown>(null);
 
   async function refresh() {
-    setErrorMsg("");
+    setError(null);
     try {
       setEntries(await api<AuditEntry[]>("GET", "/admin/audit-log?limit=100"));
     } catch (e) {
       setEntries(null);
-      setErrorMsg((e as Error).message);
+      setError(e ?? new Error("error desconocido"));
     }
   }
   useEffect(() => {
@@ -40,8 +41,8 @@ export function AuditPage(_props: { me: Me }) {
     <Panel>
       <h2>Auditoría</h2>
       <p>Registro de solo inserción de acciones administrativas y del ciclo de vida de recursos.</p>
-      {errorMsg ? (
-        <ErrorState label="la auditoría" message={errorMsg} onRetry={() => void refresh()} />
+      {error ? (
+        <ErrorState label="la auditoría" error={error} onRetry={() => void refresh()} />
       ) : entries === null ? (
         <LoadingState label="auditoría" />
       ) : entries.length === 0 ? (

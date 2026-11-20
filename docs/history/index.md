@@ -1,5 +1,9 @@
 # Historial del proyecto
 
+> **DOCUMENTACIÓN HISTÓRICA**
+> Estos documentos describen diseños, estados o procedimientos anteriores.
+> No deben utilizarse como guía de funcionamiento actual.
+
 ## Resumen
 
 Documentos **históricos** de S9 AI Arena: entregas, rondas, programas, planes, estados, runbooks y
@@ -114,12 +118,16 @@ Dosier de tareas original y la hoja de ruta v2 anterior.
 
 ## Estados anteriores
 
-Las dos «fuentes de verdad» de estado que convivían (julio-septiembre de 2026). Describen perfil `nucleo`, imágenes `:local`, nightly «reparada» y otras cosas que ya no son ciertas.
+Estados del proyecto superados: las dos «fuentes de verdad» que convivían (julio-septiembre de 2026), el estado de octubre archivado en la auditoría de noviembre y el registro de funciones completadas. Describen perfil `nucleo`, imágenes `:local`, nightly «reparada» y otras cosas que ya no son ciertas.
 
 | Documento | Antes en | Qué es | Contenido vigente en |
 |---|---|---|---|
 | [status/ESTADO_ACTUAL.md](status/ESTADO_ACTUAL.md) | `docs/ESTADO_ACTUAL.md` | Estado de 2026-07/09, obsoleto (perfil nucleo, :local, WAN). Topología enmascarada. | [roadmap/current-status.md](../roadmap/current-status.md) (A) |
 | [status/estado-proyecto.md](status/estado-proyecto.md) | `docs/estado-proyecto.md` | Segunda 'fuente de verdad' de 2026-07-16 (pre-despliegue). | [roadmap/current-status.md](../roadmap/current-status.md) (A) |
+| [status/current-status-2026-10-21.md](status/current-status-2026-10-21.md) | `docs/roadmap/current-status.md` | Estado de 2026-10-21 (RC2, `main` = `6612868`): archivado en la auditoría de 2026-11-02 al reescribirse el estado actual. | [roadmap/current-status.md](../roadmap/current-status.md) |
+| [status/known-issues-2026-10.md](status/known-issues-2026-10.md) | `docs/roadmap/known-issues.md` | Problemas conocidos de octubre (muchos ya resueltos), archivado al reescribirse la lista vigente. | [roadmap/known-issues.md](../roadmap/known-issues.md) |
+| [status/sintomas-resueltos-2026-10.md](status/sintomas-resueltos-2026-10.md) | `docs/operations/troubleshooting.md` (sección) | Síntomas de «funcionalidad no disponible» de octubre; todos resueltos (TD-001/002/003/009/010/028 cerradas). | [roadmap/technical-debt.md](../roadmap/technical-debt.md) |
+| [status/completadas-2026-11.md](status/completadas-2026-11.md) | (nuevo) | Registro de funciones que figuraban como pendientes y están completadas, con PR y evidencia. | [roadmap/pending-features.md](../roadmap/pending-features.md) |
 
 <a id="operaciones"></a>
 

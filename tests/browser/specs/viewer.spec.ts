@@ -29,6 +29,10 @@ test.describe("@fase1 Visor", () => {
     await expect(status).toHaveAttribute("data-state", "rejected", { timeout: 20_000 });
     await expect(status).toContainText("no existe");
     await expect(page.getByTestId("viewer-replay-link")).toBeVisible();
+    // UX-VIEW · sin directo no se enseñan los controles de cámara ni el escenario
+    // (`.s9v-bar{display:flex}` anulaba el atributo hidden).
+    await expect(page.getByTestId("viewer-controls")).toBeHidden();
+    await expect(page.getByTestId("viewer-canvas-host")).toBeHidden();
     await page.waitForTimeout(3000);
     expect(tickets).toBe(1); // sin bucle de reconexión ante un rechazo definitivo
     await shot(page, info, "viewer-rechazo-404");
@@ -39,6 +43,7 @@ test.describe("@fase1 Visor", () => {
     await page.goto(`/#/viewer/${encodeURIComponent(NO_BATTLE)}`);
     const status = page.getByTestId("viewer-status");
     await expect(status).toHaveAttribute("data-state", "rejected", { timeout: 20_000 });
+    await expect(page.getByTestId("viewer-controls")).toBeHidden();
     await shot(page, info, "viewer-anonimo");
   });
 });

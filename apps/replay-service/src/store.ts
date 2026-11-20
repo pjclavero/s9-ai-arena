@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { fromJsonl, toJsonl, verify, type Replay, type VerifyResult } from "../../arena-engine/src/replay.js";
 import engineDeps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
+import { engineCanVerify } from "../../arena-engine/src/engine-compat.js";
 import { buildKeyframes, compress, decompress, sha256, type StoredReplayIndex } from "./format.js";
 
 /** Retención por defecto de los replays TEMPORALES (prácticas/pruebas): 7 días (23.1). */
@@ -55,7 +56,8 @@ export function validateReplay(replay: Replay): string[] {
   const problems: string[] = [];
   const h = replay.header;
   if (!h) return ["sin cabecera"];
-  if (h.formatVersion !== 1) problems.push(`formatVersion no soportada: ${String(h.formatVersion)}`);
+  // OLA2-MD · replay v2: sólo formatVersion 2, con checkpoints por componente.
+  if (h.formatVersion !== 2) problems.push(`formatVersion no soportada: ${String(h.formatVersion)}`);
   if (!h.battleId) problems.push("cabecera sin battleId");
   if (!h.seed) problems.push("cabecera sin seed");
   if (!h.ruleset || !h.rulesetId) problems.push("cabecera sin ruleset");
@@ -71,6 +73,9 @@ export function validateReplay(replay: Replay): string[] {
     problems.push("sin hashes intermedios: verify() no podría localizar divergencias");
   }
   if (!replay.result?.finalStateHash) problems.push("sin resultado oficial (finalStateHash)");
+  if (!Array.isArray(replay.checkpoints) || replay.checkpoints.length === 0) {
+    problems.push("sin checkpoints: verify() v2 no podría decir qué componente divergió");
+  }
   if (!Array.isArray(replay.snapshots) || replay.snapshots.length === 0) {
     problems.push("sin snapshots: el reproductor no tendría nada que enseñar");
   }
@@ -107,6 +112,8 @@ export function ingestReplay(dir: string, replay: Replay, opts: IngestOptions): 
     keyframes: buildKeyframes(replay.snapshots, opts.keyframeEveryNSnapshots),
     result: {
       winner: replay.result.winner,
+      // ADR-022 · sólo si NO terminó por las reglas (índices de siempre, idénticos).
+      ...(replay.result.endReason ? { endReason: replay.result.endReason } : {}),
       ticks: replay.result.ticks,
       score: replay.result.score,
       finalStateHash: replay.result.finalStateHash,
@@ -126,6 +133,8 @@ export interface ReplaySummary {
   battleId: string;
   ticks: number;
   winner: string;
+  /** ADR-022 · `technical_limit`: detenida sin resultado deportivo (winner = "none"). */
+  endReason?: string;
   official: boolean;
   createdAt: string;
   sizeBytes: number;
@@ -144,7 +153,8 @@ export function listReplays(dir: string, opts: { limit?: number; order?: "asc" |
       items.push({
         battleId: ix.battleId,
         ticks: ix.ticks,
-        winner: ix.result?.winner ?? "unknown",
+        winner: ix.result?.endReason === "technical_limit" ? "none" : (ix.result?.winner ?? "unknown"),
+        ...(ix.result?.endReason ? { endReason: ix.result.endReason } : {}),
         official: ix.official,
         createdAt: ix.createdAt,
         sizeBytes: ix.sizeBytes,
@@ -189,7 +199,10 @@ export function loadStored(dir: string, battleId: string): LoadedReplay {
   try {
     replay = fromJsonl(decompress(bytes).toString("utf8"));
   } catch (e) {
-    return { valid: false, reason: `corrupt_file: ${(e as Error).message}`, index, replay: null };
+    const msg = (e as Error).message;
+    // OLA2-MD · un replay v1 NO está corrupto: es de un formato que este motor ya no lee.
+    if (msg.startsWith("format_version_mismatch")) return { valid: false, reason: msg, index, replay: null };
+    return { valid: false, reason: `corrupt_file: ${msg}`, index, replay: null };
   }
   const problems = validateReplay(replay);
   if (problems.length > 0) return { valid: false, reason: problems.join("; "), index, replay };
@@ -206,38 +219,73 @@ export interface StoredVerifyResult {
   /** false si el archivo está manipulado/corrupto o el motor no puede re-simular. */
   valid: boolean;
   reason?: string;
+  /**
+   * UX-F (DEF-R1) · Explicación para personas. Un replay de otra versión del motor
+   * NO está manipulado: simplemente este despliegue no puede re-simularlo.
+   */
+  message?: string;
   /** Resultado de la re-simulación (solo si valid). */
   verification: VerifyResult | null;
+  /**
+   * ADR-022 · sólo si el replay es de una versión ANTERIOR que este motor reproduce:
+   * versión del motor que lo ha re-simulado (la grabada sigue en la cabecera).
+   */
+  verifiedWith?: string;
+  compat?: boolean;
 }
 
 /**
  * `replay-service verify <id>` (criterio cap. 28): re-simula el replay con la versión
  * de motor REGISTRADA en la cabecera y comprueba que resultado y hashes intermedios
  * coinciden con el oficial. Este despliegue es de versión única de motor: si la
- * cabecera registra OTRA versión, verificar con esta sería mentir — se rechaza con
- * `engine_version_mismatch` (multi-versión: pendiente de reconciliación con E10).
+ * cabecera registra OTRA versión que este motor no reproduce, verificar con esta sería
+ * mentir — se rechaza con `engine_version_mismatch`. Las versiones de
+ * `engine.reproduces` (ADR-022) sí se re-simulan (ver `verifyLoaded`).
  */
 export async function verifyStored(dir: string, battleId: string): Promise<StoredVerifyResult> {
   const loaded = loadStored(dir, battleId);
   if (!loaded.valid || !loaded.replay) {
-    return { battleId, valid: false, reason: loaded.reason, verification: null };
+    // OLA2-MD · formato antiguo: «otra versión», nunca «manipulado».
+    const message = loaded.reason?.startsWith("format_version_mismatch")
+      ? "Este replay usa un formato anterior al actual (v1) y este motor ya no lo re-simula. NO significa que esté manipulado."
+      : undefined;
+    return { battleId, valid: false, reason: loaded.reason, ...(message ? { message } : {}), verification: null };
   }
   return verifyLoaded(battleId, loaded.replay);
 }
 
-/** Verifica un Replay ya decodificado (lo usa también el endpoint verifyReplay de la API). */
+/** Texto humano del `engine_version_mismatch` (lo reutiliza la API). */
+export function engineVersionMismatchMessage(recorded: string): string {
+  return (
+    `Este replay se grabó con otra versión del motor (${recorded}; la actual es ${engineDeps.engine.version}). ` +
+    "No se puede re-simular con este motor, así que no se verifica; eso NO significa que esté manipulado."
+  );
+}
+
+/**
+ * Verifica un Replay ya decodificado (lo usa también el endpoint verifyReplay de la API).
+ * ADR-022 · un replay de una versión que este motor REPRODUCE (`engine.reproduces`, hoy
+ * 0.3.0) se re-simula con este motor y el resultado lo dice (`verifiedWith`, `compat`).
+ */
 export async function verifyLoaded(battleId: string, replay: Replay): Promise<StoredVerifyResult> {
   const recorded = replay.header.versions.engine;
-  if (recorded !== engineDeps.engine.version) {
+  const decision = engineCanVerify(replay.header);
+  if (!decision.ok) {
     return {
       battleId,
       valid: false,
-      reason: `engine_version_mismatch: replay=${recorded}, disponible=${engineDeps.engine.version}`,
+      reason: decision.reason!,
+      message: engineVersionMismatchMessage(recorded),
       verification: null,
     };
   }
   const verification = await verify(replay);
-  return { battleId, valid: true, verification };
+  return {
+    battleId,
+    valid: true,
+    verification,
+    ...(decision.compat ? { verifiedWith: decision.verifiedWith, compat: true } : {}),
+  };
 }
 
 // ---------------------------------------------------------------- retención

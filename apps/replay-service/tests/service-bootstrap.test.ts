@@ -15,7 +15,7 @@
  * vez de quedarse "healthy" tragándose cada ingesta con EACCES.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
@@ -28,6 +28,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, toJsonl, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
+import { killTree, spawnService } from "../../../packages/test-process/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -73,8 +74,9 @@ beforeAll(async () => {
   jsonl = toJsonl(replay);
 });
 
-afterEach(() => {
-  for (const p of vivos.splice(0)) p.kill("SIGKILL");
+// EQ1 · se mata el ÁRBOL (envoltorio tsx + servicio + sus hijos), no sólo el envoltorio.
+afterEach(async () => {
+  await Promise.all(vivos.splice(0).map((p) => killTree(p)));
 });
 
 async function puertoLibre(): Promise<number> {
@@ -102,7 +104,7 @@ interface Arranque {
  */
 async function arrancar(replaysDir: string, ingestSecret: string | undefined = INGEST_SECRET): Promise<Arranque> {
   const port = await puertoLibre();
-  const proc = spawn(process.execPath, [TSX as string, MAIN], {
+  const proc = spawnService(process.execPath, [TSX as string, MAIN], {
     cwd: REPO,
     env: {
       ...process.env,

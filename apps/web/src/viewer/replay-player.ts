@@ -26,6 +26,17 @@ export interface ReplayIndexData {
    * cae con elegancia al id corto. Forward-compatible: replays antiguos no la traen.
    */
   roster?: { id: string; name?: string; team?: string; chassis?: string; botId?: string }[];
+  /**
+   * UX-D (D4 · C-G9) · Mundo del replay (tamaño, muros, destructibles, bases), de la
+   * cabecera del propio replay vía la API. Sin él, el replay se pintaba sin obstáculos.
+   */
+  world?: {
+    widthM: number;
+    heightM: number;
+    walls?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
+    destructibles?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
+    bases?: { team: string; position: { x: number; y: number }; radiusM?: number }[];
+  };
 }
 
 export interface ReplaySegment {

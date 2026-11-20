@@ -41,11 +41,23 @@ import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
+import { eligibilityOf, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
-import { InfrastructureFailure, SportingFailure } from "./errors.js";
+import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
+import { isTournamentCancelled } from "./scheduler.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
+import type { BotRunDiagnostics } from "./bot-diagnostics.js";
+import {
+  BattleAbort,
+  classifyEnd,
+  defaultBattleResources,
+  type BattleEndReason,
+  type BattleResourceRegistry,
+  type CleanupReport,
+} from "./battle-resources.js";
+import { BattleMemoryMeter, type BattleMemoryReport } from "./battle-memory.js";
 
 export interface BattleRow {
   id: string;
@@ -83,7 +95,10 @@ export type AgentsKind = "container" | "in_process_stub" | "scripted";
 
 /** Resultado que el ejecutor devuelve al runner (subconjunto de BattleResult de E2). */
 export interface BattleExecution {
-  winner: string | "draw"; // equipo ganador
+  /** Equipo ganador, "draw", o null si la batalla se detuvo sin resultado deportivo. */
+  winner: string | "draw" | null;
+  /** ADR-022 · `technical_limit` si la salvaguarda técnica del motor la detuvo. */
+  endReason?: "technical_limit";
   ticks: number;
   score: Record<string, number>;
   finalStateHash: string;
@@ -97,6 +112,12 @@ export interface BattleExecution {
    * transacción que el resultado; de ahí la lee runStatsJob.
    */
   cpuMsByBot?: Record<string, number | null>;
+  /**
+   * UX-06 · diagnóstico por botId (arranque, transporte, contenedor). Se persiste
+   * en `participants.diagnostics` en la MISMA transacción que el resultado. Lo
+   * lee la API y lo entrega sólo al dueño del bot (TD-047).
+   */
+  diagnosticsByBot?: Record<string, BotRunDiagnostics>;
   /** Quién condujo los vehículos (ver AgentsKind). Ausente ⇒ `scripted`. */
   agents?: AgentsKind;
   // H3 (issue #7): aquí existió `statsPerBot`. Se ELIMINÓ: battle_stats tiene UNA
@@ -133,6 +154,20 @@ export interface BattleRunnerDeps {
   replaysDir?: string;
   /** Duración del lease de la reserva (ms). Se renueva cada leaseMs/3. Def. 45 s. */
   leaseMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
+  /** OLA2-MF · se llama al CERRAR operacionalmente cada batalla (tras el teardown). */
+  onBattleClosed?: (closed: BattleClosed) => void;
+  /** OLA2-MF · periodo del muestreo de memoria durante la batalla (ms). Def. 1000. */
+  memorySampleMs?: number;
+}
+
+/** OLA2-MF · cierre operacional de una batalla: motivo, teardown y memoria. */
+export interface BattleClosed {
+  battleId: string;
+  reason: BattleEndReason;
+  cleanup: CleanupReport;
+  memory: BattleMemoryReport;
 }
 
 /** Lease por defecto: por DEBAJO del lockTimeout de la cola (60 s) para que, cuando
@@ -142,15 +177,39 @@ export const DEFAULT_LEASE_MS = 45_000;
 /** Estados de bot_versions con los que una versión puede jugar (BOT_PUBLISHED). */
 const PLAYABLE_STATES = new Set(["published", "frozen"]);
 
+/**
+ * 4v4 (fase 5) · Participaciones de una batalla en ORDEN ESTABLE: (team, bot_id).
+ *
+ * El orden importa: engine-executor numera los vehículos `veh_<i+1>` en este orden,
+ * y el motor coloca cada vehículo según su id (spawn base, luego auxiliares). Sin
+ * ORDER BY, PostgreSQL devuelve las filas en el orden físico del heap, que suele
+ * ser el de inserción pero NO está garantizado (un UPDATE de `outcome`/diagnostics
+ * o un VACUUM lo cambian): un reintento de la misma batalla podía numerar distinto
+ * y, por tanto, colocar y simular distinto. `participants` no tiene columna de
+ * ordinal (PK = battle_id, bot_id), así que la clave estable es (team, bot_id).
+ * Consecuencia: los ids se agrupan por bando (con red/blue: blue = veh_1..4).
+ */
+export async function loadBattleParticipants(db: Knex, battleId: string): Promise<ParticipantRow[]> {
+  return (
+    (await db("participants")
+      .where({ battle_id: battleId })
+      // COLLATE "C": orden por bytes, idéntico en cualquier instancia de PostgreSQL
+      // (la intercalación por defecto depende del locale del servidor).
+      .orderByRaw('team COLLATE "C" ASC, bot_id ASC')) as ParticipantRow[]
+  );
+}
+
 async function loadBattle(db: Knex, battleId: string): Promise<{ battle: BattleRow; participants: ParticipantRow[] }> {
   const battle = (await db("battles").where({ id: battleId }).first()) as BattleRow | undefined;
   if (!battle) throw new Error(`run_battle: batalla ${battleId} inexistente`);
-  const participants = (await db("participants").where({ battle_id: battleId })) as ParticipantRow[];
+  const participants = await loadBattleParticipants(db, battleId);
   return { battle, participants };
 }
 
-function outcomeFor(p: ParticipantRow, winner: string | "draw", disqualified: Set<string>): string {
+function outcomeFor(p: ParticipantRow, winner: string | "draw" | null, disqualified: Set<string>): string | null {
   if (disqualified.has(p.bot_id)) return "disqualified";
+  // ADR-022 · detenida por límite técnico: SIN resultado deportivo (ni win, ni loss, ni draw).
+  if (winner === null) return null;
   if (winner === "draw") return "draw";
   return p.team === winner ? "win" : "loss";
 }
@@ -180,6 +239,10 @@ export async function claimBattle(
       AND (
         status = 'scheduled'
         OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
+      )
+      -- #288 · una batalla de un torneo cancelado no se ejecuta (en el MISMO UPDATE: sin ventana).
+      AND NOT EXISTS (
+        SELECT 1 FROM tournaments tc WHERE tc.id = battles.tournament_id AND tc.state = 'cancelled'
       )
     RETURNING *
     `,
@@ -226,7 +289,8 @@ export class LostBattleClaim extends Error {
 
 /**
  * Descalificaciones administrativas ANTES de lanzar: versión no jugable (estado
- * fuera de published|frozen, p. ej. `suspended` o `retired` tras agendar),
+ * fuera de published|frozen, p. ej. `suspended` o `retired` tras agendar, o
+ * publicada pero no elegible con el validador actual: ELIG),
  * suspensiones del registro de E6 y firma del artefacto.
  */
 async function adminDisqualifications(
@@ -239,6 +303,17 @@ async function adminDisqualifications(
   for (const p of participants) {
     const v = await db("bot_versions").where({ bot_id: p.bot_id, version: p.version }).first();
     if (!v || !PLAYABLE_STATES.has(String(v.state))) adminDq.push(p.bot_id);
+  }
+  // ELIG · H7/H8 (ejecución): una versión publicada cuyo loadout histórico ya no cumple
+  // la validación actual no juega batallas nuevas, aunque se agendaran antes del fix.
+  const elig = await evaluateVersionsEligibility(
+    db,
+    participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => ({ botId: p.bot_id, version: p.version })),
+  );
+  for (const p of participants) {
+    if (!adminDq.includes(p.bot_id) && !eligibilityOf(elig, { botId: p.bot_id, version: p.version }).eligible) {
+      adminDq.push(p.bot_id);
+    }
   }
   if (deps.suspensions) {
     for (const d of administrativeDisqualifications(
@@ -276,6 +351,8 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         return;
       }
       if (battle.status === "failed") return; // cerrada para revisión: nada que hacer
+      // #288 · torneo cancelado: la batalla no se ejecuta ni se toca; el trabajo termina.
+      if (await isTournamentCancelled(db, battle.tournament_id)) return;
       // `running` con lease vivo de OTRO titular: este trabajo es un duplicado.
       throw new InfrastructureFailure(
         "battle_busy",
@@ -283,10 +360,16 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       );
     }
     const battle = claimed;
-    const participants = (await db("participants").where({ battle_id: battleId })) as ParticipantRow[];
+    // OLA2-MF · desde la reserva, TODO final pasa por el teardown único (finally).
+    const res = deps.resources ?? defaultBattleResources;
+    const meter = new BattleMemoryMeter(battleId, undefined, deps.memorySampleMs ?? 1000);
+    if (meter.handle) res.registerTimer(battleId, "memory_sampler", meter.handle, "runner");
+    let endOk = false;
+    let endErr: unknown;
 
     // Lease vivo mientras dura la batalla; si se pierde, se aborta la ejecución.
     const aborter = new AbortController();
+    const forgetAborter = res.registerAborter(battleId, aborter);
     const renewEvery = Math.max(250, Math.floor(leaseMs / 3));
     let renewing = false;
     const timer = setInterval(() => {
@@ -302,8 +385,10 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         });
     }, renewEvery);
     timer.unref?.();
+    res.registerTimer(battleId, "lease_renewer", timer, "runner");
 
     try {
+      const participants = await loadBattleParticipants(db, battleId);
       const adminDq = await adminDisqualifications(db, battleId, participants, deps);
       const activeTeams = new Set(participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => p.team));
 
@@ -327,6 +412,7 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
           owner,
           "walkover",
         );
+        endOk = true;
         return;
       }
 
@@ -334,7 +420,14 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       try {
         execution = await deps.executor({ battle, participants, adminDisqualified: adminDq, signal: aborter.signal });
       } catch (err) {
+        endErr = err; // OLA2-MF · el error ORIGINAL decide el motivo del teardown
         if (aborter.signal.aborted) {
+          if (aborter.signal.reason instanceof BattleAbort) {
+            // OLA2-MF · aborto pedido (manual o parada del worker): la reserva SIGUE
+            // siendo nuestra; se devuelve a `scheduled` y la cola decide.
+            await releaseBattleClaim(db, battleId, owner);
+            throw new InfrastructureFailure("battle_aborted", aborter.signal.reason.message);
+          }
           // Perdimos la reserva: otro titular la tiene. No se toca nada.
           throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason ?? err));
         }
@@ -354,6 +447,16 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
               disqualified: [...adminDq, err.botId],
               versions: {},
               ...(err.agents ? { agents: err.agents } : {}),
+              // UX-06 · el culpable no arrancó: queda escrito por qué (código, sin detalle interno).
+              diagnosticsByBot: {
+                [err.botId]: {
+                  schema: "bot-diagnostics/v1",
+                  startup: {
+                    ok: false,
+                    reason: err.startupReason ?? (err.code === "bot_timeout" ? "bot_execution_timeout" : "bot_crash"),
+                  },
+                },
+              },
             },
             adminDq,
             err.code,
@@ -364,15 +467,18 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         }
         // Fallo técnico: la batalla vuelve a scheduled (si sigue siendo nuestra) y la cola decide el reintento.
         await releaseBattleClaim(db, battleId, owner);
-        if (err instanceof InfrastructureFailure) throw err;
-        throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
+        throw toInfrastructureFailure(err, "engine_start_failure");
       }
 
       if (aborter.signal.aborted) {
         throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason));
       }
-      await finishBattle(db, battle, participants, execution, adminDq, "none", owner, "completed", deps.replaysDir);
+      // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
+      const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
+      await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps.replaysDir);
+      endOk = true;
     } catch (err) {
+      if (endErr === undefined) endErr = err;
       if (err instanceof LostBattleClaim) throw new InfrastructureFailure("battle_busy", err.message);
       // Cualquier otro fallo NO deportivo tras reservar (p. ej. no se pudo escribir
       // el replay dentro de la transacción de cierre, que hizo rollback): se libera
@@ -382,6 +488,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       throw err;
     } finally {
       clearInterval(timer);
+      forgetAborter();
+      // OLA2-MF · TEARDOWN ÚNICO, en TODOS los finales. Nunca lanza.
+      meter.markFinished();
+      const reason = classifyEnd({
+        ok: endOk,
+        error: endErr,
+        abortReason: aborter.signal.aborted ? aborter.signal.reason : undefined,
+      });
+      const cleanup = await res.cleanupBattleResources(battleId, reason);
+      const memory = meter.markCleaned();
+      try {
+        deps.onBattleClosed?.({ battleId, reason, cleanup, memory });
+      } catch {
+        /* la observabilidad nunca tumba la batalla */
+      }
     }
     // H2 (issue #6) · Stats RICAS de E8 (T8.4) al archivar el replay: el mismo
     // runStatsJob que usan el replay-service y los agregados de E9. Va DESPUÉS
@@ -416,7 +537,7 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
 }
 
 /** Motivo de cierre que queda en `battles.result.endReason`. */
-export type EndReason = "completed" | "walkover" | "sporting_failure";
+export type EndReason = "completed" | "walkover" | "sporting_failure" | "technical_limit";
 
 /**
  * BATTLE_RESULT · forma de `battles.result` (jsonb), versión 1. Documentada en
@@ -426,8 +547,11 @@ export type EndReason = "completed" | "walkover" | "sporting_failure";
  */
 export interface BattleResultV1 {
   schema: "battle-result/v1";
-  /** Equipo ganador o "draw". El ganador POR BOT es `participants.outcome`. */
-  winner: string | "draw";
+  /**
+   * Equipo ganador o "draw". El ganador POR BOT es `participants.outcome`. null SÓLO con
+   * `endReason: "technical_limit"` (ADR-022): detenida sin resultado deportivo.
+   */
+  winner: string | "draw" | null;
   ticks: number;
   score: Record<string, number>;
   /** botIds descalificados (motor + administrativos + culpable deportivo). */
@@ -496,6 +620,11 @@ async function finishBattle(
 
     for (const p of participants) {
       const cpu = execution.cpuMsByBot ? execution.cpuMsByBot[p.bot_id] : undefined;
+      // `bot_id` es un dato de BD usado como clave: Object.hasOwn, no `in` ni `[]` a pelo.
+      const diag =
+        execution.diagnosticsByBot && Object.hasOwn(execution.diagnosticsByBot, p.bot_id)
+          ? execution.diagnosticsByBot[p.bot_id]
+          : undefined;
       await trx("participants")
         .where({ battle_id: battle.id, bot_id: p.bot_id })
         .update({
@@ -503,6 +632,7 @@ async function finishBattle(
           // CPU medida por el runner de contenedores; null/ausente no escribe nada
           // (la columna queda NULL = no medida, nunca una estimación).
           ...(typeof cpu === "number" && Number.isFinite(cpu) && cpu >= 0 ? { cpu_ms: cpu } : {}),
+          ...(diag ? { diagnostics: JSON.stringify(diag) } : {}),
         });
     }
     // H3 (issue #7): battle_stats NO se escribe aquí. La única forma canónica

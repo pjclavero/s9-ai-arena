@@ -29,6 +29,12 @@ export interface BroadcastConfig {
   branding: BroadcastBranding;
   /** Cadencia de sondeo del estado del torneo (ms). */
   pollIntervalMs: number;
+  /**
+   * FIX-BROADCAST (R2) · `wait=scheduled`: la API validó al iniciar que la batalla está
+   * PROGRAMADA y será pública al empezar. Un anónimo recibe 404 de una programada: con esta
+   * marca el director muestra la espera (no SOURCE_ERROR) hasta que empiece, con tope.
+   */
+  waitScheduled: boolean;
 }
 
 export const DEFAULT_BRANDING: BroadcastBranding = {
@@ -77,7 +83,9 @@ export function parseBroadcastConfig(search: string): BroadcastConfig {
   const poll = Number(q.get("poll") ?? "");
   const pollIntervalMs = Number.isFinite(poll) && poll >= 1000 && poll <= 60000 ? poll : 4000;
 
-  return { target, branding, pollIntervalMs };
+  const waitScheduled = target?.kind === "battle" && q.get("wait") === "scheduled";
+
+  return { target, branding, pollIntervalMs, waitScheduled };
 }
 
 /**

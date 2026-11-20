@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Inventario de **todas** las comunicaciones entre componentes de S9 AI Arena en `27f70bb`:
+Inventario de **todas** las comunicaciones entre componentes de S9 AI Arena en `27f70bb` (octubre de 2026):
 HTTP, WebSocket, Redis, la API de Docker a través del proxy del host, PostgreSQL, ficheros
 compartidos y SFTP. Para cada una se indica productor, consumidor, contrato, autoridad, errores,
 seguridad y estado.
@@ -27,13 +27,13 @@ El sistema no usa MQTT ni ningún otro bus de mensajes.
 ```
 navegador ─HTTP(S)/WS─► gateway ─► web | api | tournament-worker(WS) | replay-service
 api ─SQL─► postgres ◄─SQL─ tournament-worker, bot-build-worker, backup(pg_dump)
-api ─HTTP─► arena-engine ─HTTP─► s9-docker-proxy(host) ─► docker.sock ─► bots(red arena) ─WS─► arena-engine
+tournament-worker, bot-build-worker ─HTTP─► s9-docker-proxy(host) ─► docker.sock ─► bots(red arena) ─WS─► ProtocolServer del worker
 api ─HTTP─► replay-service            tournament-worker ─fichero─► arena_replays ◄─fichero─ replay-service
 tournament-worker ─BLPOP─► redis      backup ─SFTP─► <backup-host>
 ```
 
-Los caminos que hoy no se ejercen son los del proxy Docker, los bots y la ingesta HTTP de replays
-(ver [battles.md](battles.md)).
+El camino `api → arena-engine /run` y la ingesta HTTP de replays son legado sin consumidor
+([TD-039](../roadmap/technical-debt.md#td-039)); el camino vigente es el del worker (ver [battles.md](battles.md)).
 
 ## HTTP
 
@@ -42,8 +42,8 @@ Los caminos que hoy no se ejercen son los del proxy Docker, los bots y la ingest
 | navegador → gateway → `api` (`/api/v1/*`) | `apps/api/openapi.yaml` | la API | JSON `{error, message, correlationId}` | JWT Bearer + RBAC `x-min-role`; refresh en cookie `httpOnly` | FUNCIONA |
 | navegador → gateway → `replay-service` (`/replays/*`) | rutas de `apps/replay-service/src/server.ts` | el replay-service (disco) | 404 si no existe | lectura **sin** autenticación ([TD-004](../roadmap/technical-debt.md#td-004)) | FUNCIONA; 301 a http ([TD-014](../roadmap/technical-debt.md#td-014)) |
 | navegador → gateway → `web` (`/`) | estáticos | — | rutas desconocidas ⇒ SPA | — | FUNCIONA |
-| `api` → `arena-engine` `POST /run` | `apps/arena-engine/src/service.ts` | arena-engine (ejecución) | 401 sin secreto; 503 sin runner; la API devuelve `{status:"failed"}` | cabecera `x-arena-engine-auth` (secreto `arena_engine_internal_secret`), sólo red `platform` | **apagado**: flag vacía y `DOCKER_PROXY_URL` vacío |
-| `api` → `replay-service` `POST /replays/:battleId` | ingesta (`battle-run-http-launcher.ts`) | el replay-service | sin secreto ⇒ 401 ⇒ `replay.ingested: false` (falla cerrado). `REPLAY_INGEST_REQUIRED` vacío ⇒ un fallo no tumba la batalla | secreto `replay_ingest_secret` | sólo en el camino real (apagado) |
+| `api` → `arena-engine` `POST /run` | `apps/arena-engine/src/service.ts` | arena-engine (ejecución) | 401 sin secreto; 503 sin runner; la API devuelve `{status:"failed"}` | cabecera `x-arena-engine-auth` (secreto `arena_engine_internal_secret`), sólo red `platform` | **legado sin consumidor** ([TD-039](../roadmap/technical-debt.md#td-039)): la API ya no lo llama |
+| `api` → `replay-service` `POST /replays/:battleId` | ingesta (`battle-run-http-launcher.ts`) | el replay-service | sin secreto ⇒ 401 ⇒ `replay.ingested: false` (falla cerrado). `REPLAY_INGEST_REQUIRED` vacío ⇒ un fallo no tumba la batalla | secreto `replay_ingest_secret` | sólo en el camino legado (sin consumidor) |
 | `bot-build-worker` / `tournament-worker` / `arena-engine` → `s9-docker-proxy` | subconjunto de la API de Docker (create/start/stop/json/stats) | el proxy (allowlist de endpoints, de imágenes y propiedad por labels) | 403 fuera de la allowlist, con imagen ajena, sobre un contenedor ajeno o desde un cliente no admitido; 404 si el contenedor no existe | sin TLS; red dedicada `bot-control` (`docker-proxy.internal` → `10.89.250.1`, IP fija, nunca `host-gateway`), firewall de host y control de cliente por IP de origen ([docker-proxy.md](../operations/docker-proxy.md), [networking.md](../operations/networking.md)). `bot-manager` no lo consume | integrado en `main` (RC2) y cubierto por `functional-e2e / container-proxy-e2e`; sin desplegar |
 | `gateway` → `grafana` (`/grafana/`) | — | — | 502 sin el perfil | autenticación de Grafana | perfil no desplegado |
 
@@ -99,11 +99,11 @@ Operación: [docs/operations/docker-proxy.md](../operations/docker-proxy.md).
 
 | Flujo | Recorrido real | Estado |
 |---|---|---|
-| Enviar un bot a validación | web → api (`bot_versions`, `builds`, `jobs.bot_build`) → bot-build-worker → `rejected` | falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)) |
-| Crear una batalla | web → api (400 de ruleset) | roto ([TD-003](../roadmap/technical-debt.md#td-003)) |
-| Ejecutar una batalla | api (`jobs.run_battle`) → tournament-worker (motor en proceso, stub) → disco + `battles` → `process_result` | funciona con el stub ([TD-002](../roadmap/technical-debt.md#td-002)) |
-| Ver un replay | web → gateway `/replays/<id>/index` y `segment` → render Phaser | la cadena HTTP funciona; el render no ([TD-009](../roadmap/technical-debt.md#td-009)) |
-| Ver en directo | web → api (ticket) → gateway `/ws/` → worker | roto ([TD-009](../roadmap/technical-debt.md#td-009), [TD-028](../roadmap/technical-debt.md#td-028)) |
+| Enviar un bot a validación | web → api (`bot_versions`, `builds`, `jobs.bot_build`) → bot-build-worker (sandbox) → `published` | FUNCIONA en `main` ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
+| Crear una batalla | web → api (valida modo, reglas y mapa; encola `run_battle`) | FUNCIONA en `main` ([TD-003](../roadmap/technical-debt.md#td-003), cerrada) |
+| Ejecutar una batalla | api (`jobs.run_battle`) → tournament-worker (motor en proceso, bots en contenedor) → disco + `battles` → `process_result` | FUNCIONA en `main` ([TD-002](../roadmap/technical-debt.md#td-002), cerrada) |
+| Ver un replay | web → api `/api/v1/replays/<id>/index` y `segment` → render Phaser (el gateway responde 404 a `/replays/*`) | FUNCIONA en `main` ([TD-009](../roadmap/technical-debt.md#td-009), cerrada) |
+| Ver en directo | web → api (ticket) → gateway `/ws/` → worker | FUNCIONA en `main` ([TD-009](../roadmap/technical-debt.md#td-009) y [TD-028](../roadmap/technical-debt.md#td-028), cerradas) |
 | Copia nocturna | backup → postgres + volúmenes → SFTP | funciona |
 
 El ciclo de batalla paso a paso está en [battles.md](battles.md).

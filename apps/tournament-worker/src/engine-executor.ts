@@ -33,8 +33,11 @@ import { replayFromBattle, toJsonl, type Replay } from "../../arena-engine/src/r
 import { Battle, type BattleResult, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
-import { InfrastructureFailure } from "./errors.js";
+import { rulesOf } from "../../api/src/services/battle-rules.js";
+import { InfrastructureFailure, toInfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
+import type { BotRunDiagnostics } from "./bot-diagnostics.js";
+import { BattleResourceRegistry, defaultBattleResources } from "./battle-resources.js";
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -54,6 +57,8 @@ export interface AgentDriverInput {
   ruleset: Ruleset;
   catalogVersion: string;
   signal?: AbortSignal;
+  /** OLA2-MF · titular de la reserva (`battles.claimed_by`): va en la label del contenedor. */
+  owner?: string | null;
 }
 
 export interface AgentDriverOutput {
@@ -61,6 +66,8 @@ export interface AgentDriverOutput {
   replay: Replay;
   /** CPU real por botId (contenedores); ausente si el driver no mide. */
   cpuMsByBot?: Record<string, number | null>;
+  /** UX-06 · diagnóstico de arranque/transporte/contenedor por botId; ausente si el driver no lo sabe. */
+  diagnosticsByBot?: Record<string, BotRunDiagnostics>;
 }
 
 /** Engancha agentes a los vehículos y hace avanzar la batalla hasta su final. */
@@ -74,6 +81,23 @@ export interface AgentDriver {
  * (T8.2). Es un Pick del SpectateGateway REAL.
  */
 export type SpectateSink = Pick<SpectateGateway, "attachBattle" | "detachBattle">;
+
+/** Margen por defecto entre el final de la batalla y el detach del espectador. */
+export const SPECTATE_DETACH_BASE_MS = 3000;
+
+/**
+ * Integración EQ2/EQ6 (P2) · ms hasta retirar la batalla del gateway de espectador.
+ * El gateway DIFIERE el directo `spectator.delaySeconds` (anti-coaching de torneo) y el
+ * detach cancela los envíos pendientes: con el detach a 3 s fijos, un directo con 30 s
+ * de retardo perdía sus ~27 s finales y el resultado. Ahora el detach espera el retardo
+ * EFECTIVO de la batalla (el de su copia de reglas; 0 en las `visible`) más el margen.
+ * Sin retardo, el valor de siempre.
+ */
+export function spectateDetachDelayMs(baseMs: number, spectator: { delaySeconds?: number } | undefined): number {
+  const d = spectator?.delaySeconds;
+  const delayMs = typeof d === "number" && Number.isFinite(d) && d > 0 ? d * 1000 : 0;
+  return baseMs + delayMs;
+}
 
 /** Techo de ticks del bucle en proceso (mismo valor por defecto que Battle.run()). */
 const MAX_TICKS = 100000;
@@ -121,6 +145,8 @@ export interface EngineExecutorOptions {
   spectate?: SpectateSink;
   /** ms entre el final de la batalla y el detach (deja al pump del gateway entregar el resultado). */
   spectateDetachDelayMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
 }
 
 export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor {
@@ -135,6 +161,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     );
   }
 
+  const res = opts.resources ?? defaultBattleResources;
   return async (ctx: BattleContext): Promise<BattleExecution> => {
     const db = opts.db;
     const { battle, participants } = ctx;
@@ -151,23 +178,33 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       throw new InfrastructureFailure("map_unavailable", `mapa ${battle.map_id} no convertible: ${String(err)}`);
     }
 
-    // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
-    const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
-    if (!resolved.ok) {
-      throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
-    }
-    const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+    // --- R-RULES (ADR-021) · COPIA INMUTABLE de reglas: si la batalla la tiene, se
+    //     juega ESA copia (ruleset completo del motor y catálogo fijados al crearla) y
+    //     no se resuelve nada del catálogo actual. Sin copia (batallas anteriores y de
+    //     torneo): el camino de 0.3.0, sin cambios.
+    const snapshot = rulesOf(battle as unknown as Record<string, unknown>);
     const tournament = battle.tournament_id
       ? await db("tournaments").where({ id: battle.tournament_id }).first()
       : null;
-    const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
-    const ruleset = loadRuleset(resolved.ruleset.rulesetId, {
-      ...(budgetCredits ? { budgetCredits } : {}),
-      ...(opts.rulesetOverrides ?? {}),
-    });
+    let ruleset: Ruleset;
+    if (snapshot) {
+      ruleset = { ...snapshot.engineRuleset, ...(opts.rulesetOverrides ?? {}) };
+    } else {
+      // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
+      const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
+      if (!resolved.ok) {
+        throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
+      }
+      const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+      const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
+      ruleset = loadRuleset(resolved.ruleset.rulesetId, {
+        ...(budgetCredits ? { budgetCredits } : {}),
+        ...(opts.rulesetOverrides ?? {}),
+      });
+    }
 
-    // --- catálogo CONGELADO del torneo (T9.4) --------------------------------
-    const catalogVersion = (tournament?.catalog_version ?? null) as string | null;
+    // --- catálogo CONGELADO del torneo (T9.4) o de la copia de reglas ----------
+    const catalogVersion = (tournament?.catalog_version ?? snapshot?.catalogVersion ?? null) as string | null;
     let catalog: ModuleDefinition[];
     let effectiveCatalogVersion: string;
     if (catalogVersion) {
@@ -258,6 +295,11 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
     }
 
+    // E8.M anti-coaching: retardo del ruleset (de la copia de reglas, si la hay), salvo
+    // batalla 'visible'. Lo usan el attach y el detach (que debe esperar ese retardo).
+    const spectator =
+      battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
+    let ok = false;
     try {
       if (opts.spectate) {
         let round: number | null = null;
@@ -265,11 +307,32 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           const match = await db("matches").where({ id: battle.match_id }).first();
           round = (match?.round as number) ?? null;
         }
-        // E8.M anti-coaching: retardo del ruleset, salvo batalla 'visible'.
-        const spectator =
-          battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
+        // OLA2-MF · un intento ANTERIOR de esta misma batalla en este proceso puede
+        // tener su feed aún drenando (retardo anti-coaching): se libera YA. Antes,
+        // su detach diferido (un setTimeout sin seguir) mataba el feed de ESTE
+        // intento, y attachBattle sobre la misma clave dejaba vivo el setInterval
+        // del feed viejo, reteniendo su motor.
+        await res.flushDraining(battle.id);
+        const sink = opts.spectate;
+        res.register(battle.id, {
+          kind: "spectate_feed",
+          phase: "streaming",
+          scope: "executor",
+          // En FINISHED se retira tras el retardo (entrega del resultado); en
+          // cualquier otro final, ya.
+          drainMs: spectateDetachDelayMs(opts.spectateDetachDelayMs ?? SPECTATE_DETACH_BASE_MS, spectator),
+          release: () => sink.detachBattle(battle.id),
+        });
         opts.spectate.attachBattle(battle.id, engine, {
           spectator,
+          // OLA 2 · MA · nómina INTERNA (ids del motor, chasis): el gateway la proyecta por
+          // audiencia (ids públicos, sin chasis bajo EQUIPMENT_PRIVATE). Nunca va tal cual.
+          roster,
+          mapEntityIds: [
+            ...arenaMap.walls.map((w) => w.id),
+            ...arenaMap.destructibles.map((d) => d.id),
+            ...arenaMap.zones.map((z) => z.id),
+          ],
           meta: {
             mode: battle.mode,
             mapId: battle.map_id,
@@ -278,7 +341,20 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
             matchId: battle.match_id,
             round,
             official: battle.official,
-            roster,
+            // UX-D (D5 · C-G9) · geometría PÚBLICA del mapa para el visor (ViewerPage
+            // ya la lee de `init.meta.world`, pero nadie la mandaba: el directo se
+            // pintaba sin muros). Sólo lo que también ve cualquiera en el editor.
+            world: {
+              widthM: arenaMap.widthM,
+              heightM: arenaMap.heightM,
+              walls: arenaMap.walls.map((w) => ({ position: w.position, halfW: w.halfW, halfH: w.halfH })),
+              destructibles: arenaMap.destructibles.map((d) => ({
+                position: d.position,
+                halfW: d.halfW,
+                halfH: d.halfH,
+              })),
+              bases: arenaMap.bases.map((b) => ({ team: b.team, position: b.position, radiusM: b.radiusM })),
+            },
           },
         });
       }
@@ -292,13 +368,14 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           ruleset,
           catalogVersion: effectiveCatalogVersion,
           signal: ctx.signal,
+          owner: battle.claimed_by ?? null,
         });
+        ok = true;
       } finally {
-        if (opts.spectate) {
-          const sink = opts.spectate;
-          const t = setTimeout(() => sink.detachBattle(battle.id), opts.spectateDetachDelayMs ?? 3000);
-          t.unref?.();
-        }
+        // OLA2-MF · el feed del espectador se cierra con el teardown único: drena
+        // (FINISHED) o se retira ya (cualquier otro final).
+        if (opts.spectate)
+          await res.cleanupBattleResources(battle.id, ok ? "FINISHED" : "FAILED", { scope: "executor" });
       }
       const { result, replay } = out;
 
@@ -311,6 +388,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
       return {
         winner: result.winner,
+        ...(result.endReason ? { endReason: result.endReason } : {}),
         ticks: result.ticks,
         score: result.score,
         finalStateHash: result.finalStateHash,
@@ -324,13 +402,14 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         },
         replayJsonl: toJsonl(replay),
         ...(out.cpuMsByBot ? { cpuMsByBot: out.cpuMsByBot } : {}),
+        ...(out.diagnosticsByBot ? { diagnosticsByBot: out.diagnosticsByBot } : {}),
         agents: driver.kind,
       };
     } catch (err) {
       if (err instanceof InfrastructureFailure) throw err;
       if (err && typeof err === "object" && (err as Error).name === "SportingFailure") throw err;
       // El motor o los agentes murieron: fallo técnico (19.2), reintentable.
-      throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
+      throw toInfrastructureFailure(err, "engine_start_failure");
     } finally {
       try {
         engine.free();
@@ -347,7 +426,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
  */
 export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?: string }) {
   // Import diferido para evitar ciclos en la carga de módulos.
-  return import("./battle-runner.js").then(async ({ makeRunBattleHandler, markBattleForReview }) => {
+  return import("./battle-runner.js").then(async ({ makeRunBattleHandler }) => {
+    const { onBattleJobExhausted } = await import("./battle-failure.js");
     const { handleGenerateSchedule, handleTournamentDryRun } = await import("./scheduler.js");
     const { handleProcessResult } = await import("./results.js");
     const { handleUpdateStandings } = await import("./standings.js");
@@ -359,7 +439,8 @@ export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?:
         update_standings: handleUpdateStandings,
         tournament_dry_run: handleTournamentDryRun,
       },
-      onExhausted: markBattleForReview,
+      onExhausted: (db: import("knex").Knex, job: import("./queue.js").JobRow) =>
+        onBattleJobExhausted(job, { db, workerId: "exhausted" }),
     };
   });
 }

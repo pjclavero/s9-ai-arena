@@ -9,6 +9,7 @@
  * SKIPPED (no es un verde: lo dice el runner).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync } from "node:fs";
 import { BuildPipeline } from "../src/pipeline.js";
 import { InMemoryBuildStore } from "../src/store.js";
 import { withConfig } from "../src/config.js";
@@ -30,10 +31,16 @@ import {
   PY_CRASH,
   PY_SYNTAX_ERROR,
   JS_GOOD,
+  PY_HOOK_TYPO,
+  PY_QUIET,
+  JS_HOOK_TYPO,
+  JS_QUIET,
+  PY_NAME_ERROR,
   pyFiles,
   jsFiles,
 } from "./sandbox-bots.js";
 import type { SourceFile } from "../src/types.js";
+import { JAVASCRIPT_TEMPLATE, PYTHON_TEMPLATE } from "../../web/src/bot-templates.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 
 let env: DockerSandboxEnv;
@@ -120,6 +127,60 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     expect(b.botVersionState).toBe("rejected");
     expect(b.rejectionReason).toMatch(/protocol_test: ningún COMMAND válido/);
     expect(b.rejectionReason).toMatch(/fallo deliberado del bot/);
+  });
+
+  it("UX-04 · hook mal escrito en Python (on_observaton): rejected con el motivo y la sugerencia", async () => {
+    const b = await pipeline().run(submission(pyFiles(PY_HOOK_TYPO)));
+    expect(b.botVersionState).toBe("rejected");
+    expect(stage(b, "protocol_test").status).toBe("failed");
+    expect(b.rejectionReason).toMatch(/protocol_test: tu clase Bot no implementa on_observation/);
+    expect(b.rejectionReason).toMatch(/¿Quisiste decir «on_observaton»\?/);
+  });
+
+  it("UX-04 · hook mal escrito en JS (onObservaton): rejected con el motivo y la sugerencia", async () => {
+    const b = await pipeline().run(submission(jsFiles(JS_HOOK_TYPO), { runtime: "node", archetype: "scout" }));
+    expect(b.botVersionState).toBe("rejected");
+    expect(b.rejectionReason).toMatch(/protocol_test: tu clase Bot no implementa onObservation/);
+    expect(b.rejectionReason).toMatch(/¿Quisiste decir «onObservaton»\?/);
+  });
+
+  it("UX-04 · bot quieto a propósito (implementa el hook y devuelve {}): validated en Python y en JS", async () => {
+    const py = await pipeline().run(submission(pyFiles(PY_QUIET)));
+    expect(py.rejectionReason).toBeUndefined();
+    expect(py.botVersionState).toBe("validated");
+    const js = await pipeline().run(submission(jsFiles(JS_QUIET), { runtime: "node", archetype: "scout" }));
+    expect(js.rejectionReason).toBeUndefined();
+    expect(js.botVersionState).toBe("validated");
+  });
+
+  it("UX-02 · excepción del bot: el motivo señala fichero y línea del código del usuario, sin rutas del sandbox", async () => {
+    const b = await pipeline().run(submission(pyFiles(PY_NAME_ERROR)));
+    expect(b.botVersionState).toBe("rejected");
+    expect(b.rejectionReason).toMatch(/src\/bot\.py, línea 6: NameError: name 'velocidad' is not defined/);
+    expect(b.rejectionReason).not.toMatch(/\/tmp\/bot/);
+  });
+
+  it("B3 · las plantillas del editor web (Python y JavaScript), tal cual: validated", async () => {
+    const py = await pipeline().run(submission(pyFiles(PYTHON_TEMPLATE)));
+    expect(py.rejectionReason).toBeUndefined();
+    expect(py.botVersionState).toBe("validated");
+    const js = await pipeline().run(submission(jsFiles(JAVASCRIPT_TEMPLATE), { runtime: "node", archetype: "scout" }));
+    expect(js.rejectionReason).toBeUndefined();
+    expect(js.botVersionState).toBe("validated");
+  });
+
+  it("UX-05 · el tutorial JS del README y los ejemplos oficiales .js, pegados tal cual: validated", async () => {
+    for (const path of [
+      "sdks/javascript/tests/tutorial-bot.js",
+      "example-bots/javascript/gunner.js",
+      "example-bots/javascript/miner.js",
+    ]) {
+      const b = await pipeline().run(
+        submission(jsFiles(readFileSync(path, "utf8")), { runtime: "node", archetype: "gunner" }),
+      );
+      expect(b.rejectionReason, path).toBeUndefined();
+      expect(b.botVersionState, path).toBe("validated");
+    }
   });
 
   it("NEGATIVO · artefacto inválido (bytes que no son los firmados): el bootstrap se niega a ejecutarlo", async () => {

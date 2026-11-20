@@ -7,8 +7,10 @@
  * - FFmpeg captura ese DISPLAY por x11grab y codifica: x264 por software como
  *   BASE (no bloquea el hito); h264_nvenc como OPCIÓN si el host tiene GPU con
  *   passthrough en Proxmox (requisito documentado en docs/streaming-runbook.md).
- * - La clave RTMPS solo aparece en el argv de ffmpeg (dentro del contenedor);
- *   jamás en logs: todo lo loggable pasa por `redactArgs`/`redactSecret`.
+ * - EQ5b §3 · La clave RTMPS YA NO está en el argv de ffmpeg (lo veía `ps` de
+ *   cualquier usuario del host). En modo rtmps ffmpeg escribe FLV por el fd 3
+ *   (`-f flv pipe:3`) y el relé RTMP del propio streamer (rtmp/publisher.ts)
+ *   lo publica con la clave, que no sale del proceso Node.
  * - El retardo anti-coaching (E11.M, finales) NO se hace aquí: ya existe en el
  *   canal de espectador (`ruleset.spectator.delaySeconds`, E8) y /broadcast lo
  *   hereda; duplicarlo en ffmpeg desincronizaría marcador y vídeo.
@@ -23,14 +25,28 @@ export function buildChromiumArgs(cfg: StreamerConfig, broadcastUrl: string): st
     "--kiosk",
     "--no-first-run",
     "--disable-infobars",
-    // R3.2 (ERR-VIS-08): WebGL FORZADO por SwiftShader (rasterizador software de
-    // ANGLE). Con `--disable-gpu` a secas, Phaser caía a Canvas 2D y el render de
-    // la emisión no era el mismo camino que el del visor en un navegador normal.
-    "--use-gl=angle",
-    "--use-angle=swiftshader",
-    "--enable-unsafe-swiftshader",
+    // #256 · SIN proceso GPU. R3.2 forzaba WebGL por ANGLE/SwiftShader
+    // (`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`), pero
+    // en la imagen real (Chromium 131 de Alpine) SwANGLE NO inicializa
+    // (`VK_KHR_surface` no soportado ⇒ «Exiting GPU process due to errors during
+    // initialization»): nunca hubo WebGL y Phaser ya pintaba por Canvas 2D. Y ese
+    // arranque fallido del proceso GPU deja, de forma intermitente, al renderer con
+    // el hilo principal girando al 100 % sin componer ningún frame: el Xvfb se queda
+    // con el fondo BLANCO de la ventana y eso es lo que llegó a YouTube. Medido con
+    // la imagen real y el mismo argv (20 arranques seguidos, ffmpeg capturando):
+    // con los flags de R3.2 9/20 en blanco; con `--disable-gpu` 0/20 y la MISMA
+    // imagen (luma 25.3 / 12.5). Ver docs/operations/streaming.md, #256.
+    "--disable-gpu",
     "--hide-scrollbars",
     "--autoplay-policy=no-user-gesture-required",
+    // EQ5 (2026-11-02, visto en un MP4 real): la página es lang="es" y el
+    // Chromium de la imagen va en inglés ⇒ la barra de Google Translate quedaba
+    // FIJA en la esquina de la emisión. Y tras un reintento (SIGTERM + relanzar)
+    // Chromium ofrece «restaurar páginas». Nada del navegador debe entrar en vídeo.
+    "--lang=es",
+    "--disable-features=Translate",
+    "--hide-crash-restore-bubble",
+    "--noerrdialogs",
     // El contenedor ya aísla (usuario sin privilegios, no-new-privileges).
     "--no-sandbox",
     `--app=${broadcastUrl}`,
@@ -41,13 +57,15 @@ export interface FfmpegPlan {
   args: string[];
   /** Destino SIN clave, apto para logs y /status. */
   describeTarget: string;
+  /** Modo record: fichero que se está escribiendo (la retención nunca lo toca). */
+  recordFile?: string;
 }
 
-export function buildFfmpegArgs(
-  cfg: StreamerConfig,
-  streamKey: string | null,
-  now: () => Date = () => new Date(),
-): FfmpegPlan {
+/** Descriptor heredado por el que ffmpeg entrega el FLV al relé RTMP. */
+export const MEDIA_FD = 3;
+
+export function buildFfmpegArgs(cfg: StreamerConfig, opts?: { now?: () => Date } | null): FfmpegPlan {
+  const now = (opts && typeof opts === "object" && opts.now) || (() => new Date());
   const gop = cfg.fps * 2; // keyframe cada 2 s (recomendación de ingesta de YouTube)
   const video =
     cfg.encoder === "nvenc"
@@ -64,6 +82,11 @@ export function buildFfmpegArgs(
     // Captura del Xvfb donde pinta Chromium.
     "-f",
     "x11grab",
+    // EQ5 · x11grab dibuja el puntero por defecto: en el MP4 real salía la «X»
+    // del Xvfb en el centro mientras Chromium arrancaba. El CSS `cursor: none`
+    // de /broadcast no cubre ese tramo (ni un Chromium caído).
+    "-draw_mouse",
+    "0",
     "-framerate",
     String(cfg.fps),
     "-video_size",
@@ -76,6 +99,11 @@ export function buildFfmpegArgs(
     "-i",
     "anullsrc=channel_layout=stereo:sample_rate=44100",
     ...video,
+    // EQ5b · preset 720p: se compone SIEMPRE a 1920×1080 (la vista /broadcast es
+    // de tamaño fijo) y se escala al codificar.
+    ...(cfg.outputWidth !== cfg.width || cfg.outputHeight !== cfg.height
+      ? ["-vf", `scale=${cfg.outputWidth}:${cfg.outputHeight}:flags=bicubic`]
+      : []),
     "-b:v",
     `${cfg.videoBitrateKbps}k`,
     "-maxrate",
@@ -96,17 +124,17 @@ export function buildFfmpegArgs(
     // E11.M · modo "solo grabación": clips sin emitir, antes de tener canal.
     const stamp = now().toISOString().replace(/[:.]/g, "-");
     const file = `${cfg.recordDir}/broadcast-${stamp}.mp4`;
-    return { args: [...common, "-f", "mp4", file], describeTarget: file };
+    return { args: [...common, "-f", "mp4", file], describeTarget: file, recordFile: file };
   }
 
-  if (!streamKey) throw new Error("Modo rtmps sin clave de emisión");
+  // EQ5b §3 · ni destino de red ni clave: FLV al relé por el fd 3.
   return {
-    args: [...common, "-f", "flv", `${cfg.rtmpsUrl}/${streamKey}`],
-    describeTarget: `${cfg.rtmpsUrl}/***`,
+    args: [...common, "-flvflags", "no_duration_filesize", "-f", "flv", `pipe:${MEDIA_FD}`],
+    describeTarget: `relé RTMP interno (fd ${MEDIA_FD})`,
   };
 }
 
-/** argv apto para logs: la clave sustituida por ***. */
+/** argv apto para logs: la clave sustituida por *** (defensa en profundidad). */
 export function redactArgs(args: string[], streamKey: string | null): string[] {
   if (!streamKey) return [...args];
   return args.map((a) => a.split(streamKey).join("***"));

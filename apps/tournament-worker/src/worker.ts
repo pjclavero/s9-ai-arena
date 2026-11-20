@@ -23,7 +23,7 @@ import {
   type JobKind,
   type JobRow,
 } from "./queue.js";
-import { InfrastructureFailure, SportingFailure } from "./errors.js";
+import { InfrastructureFailure, SportingFailure, classifyDbError } from "./errors.js";
 import type { RedisSignal } from "./redis-signal.js";
 
 export interface HandlerContext {
@@ -76,6 +76,31 @@ export function computeConcurrency(env: { cpuCount?: number; memMb?: number } = 
   const cpuCount = env.cpuCount ?? cpus().length;
   const memMb = env.memMb ?? Math.floor(totalmem() / (1024 * 1024));
   return Math.max(1, Math.min(cpuCount - 1, Math.floor(memMb / 2048)));
+}
+
+/** Variable de entorno del número de batallas simultáneas por worker. */
+export const CONCURRENCY_ENV = "TOURNAMENT_WORKER_CONCURRENCY";
+/** Tope de la concurrencia configurada: más allá es un error de configuración, no una petición razonable. */
+export const MAX_CONFIGURED_CONCURRENCY = 16;
+
+/**
+ * Lee `TOURNAMENT_WORKER_CONCURRENCY`: ausente o vacía ⇒ `undefined` (el worker usa
+ * `computeConcurrency`). Presente ⇒ entero decimal en [1, MAX_CONFIGURED_CONCURRENCY];
+ * cualquier otra cosa es un ERROR (no se sustituye en silencio: el worker no arranca).
+ */
+export function concurrencyFromEnv(env: Record<string, string | undefined>): number | undefined {
+  const raw = env[CONCURRENCY_ENV]?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(
+      `${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`,
+    );
+  }
+  const n = Number(raw);
+  if (n < 1 || n > MAX_CONFIGURED_CONCURRENCY) {
+    throw new Error(`${CONCURRENCY_ENV} fuera de rango (${n}): entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`);
+  }
+  return n;
 }
 
 /** Promesa con vencimiento: ni un `await` del bucle puede durar para siempre. */
@@ -158,6 +183,17 @@ export class TournamentWorker {
         await completeJob(db, job.id, { sportingFailure: err.code });
       } else if (err instanceof InfrastructureFailure) {
         const { parked } = await failJobInfrastructure(db, job, err.code, err.message, { now });
+        if (parked) await this.config.onExhausted?.(job, ctx);
+      } else if (classifyDbError(err)) {
+        // F3 · la BD/DNS no respondió (`db_unavailable`) o una consulta fue cancelada
+        // (`db_query_timeout`, 57014): infraestructura transitoria, no un bug del worker.
+        const { parked } = await failJobInfrastructure(
+          db,
+          job,
+          classifyDbError(err) as "db_unavailable" | "db_query_timeout",
+          err instanceof Error ? err.message : String(err),
+          { now },
+        );
         if (parked) await this.config.onExhausted?.(job, ctx);
       } else {
         await failJobUnclassified(db, job, err instanceof Error ? err.message : String(err));

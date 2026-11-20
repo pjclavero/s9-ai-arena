@@ -33,6 +33,10 @@ test.describe("@fase2 replay-service caído", () => {
 
 test.describe("@fase3 API caída", () => {
   test("F5 con la API caída NO manda al login: «No se puede contactar» con Reintentar", async ({ page }, info) => {
+    // UX-E (C-G13) · el arranque sólo pregunta por la sesión si el navegador ya
+    // la tuvo (marca `s9_session_hint`, la deja el login): éste es el F5 de un
+    // usuario CON sesión. Un visitante anónimo ve el login (sin POST /auth/refresh).
+    await page.addInitScript(() => window.localStorage.setItem("s9_session_hint", "1"));
     await page.goto("/");
     const box = page.getByTestId("boot-error");
     await expect(box).toBeVisible();

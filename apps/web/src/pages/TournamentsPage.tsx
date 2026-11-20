@@ -6,6 +6,7 @@
 import { useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
+import { MODE_NAME, TOURNAMENT_FORMAT_NAME, TOURNAMENT_STATE_NAME, labelOf, modeName } from "../battle-result.js";
 
 export interface Tournament {
   id: string;
@@ -14,10 +15,17 @@ export interface Tournament {
   mode: string;
   state: string;
   entryCount?: number;
+  /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
+  broadcast?: boolean;
+  /** ADR-022 · copia de reglas; #287 usa `params.teamSize` (torneos por equipos NvN). */
+  rules?: { params?: { teamSize?: number } | null } | null;
+  /** #291 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
+  viewerCanManage?: boolean;
 }
 
-const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
-const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
+// UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
+const FORMATS = Object.keys(TOURNAMENT_FORMAT_NAME);
+const MODES = Object.keys(MODE_NAME);
 
 export function TournamentsPage(_props: { me: Me }) {
   const [list, reload] = useResource(() => api<{ items: Tournament[] }>("GET", "/tournaments"), []);
@@ -25,15 +33,40 @@ export function TournamentsPage(_props: { me: Me }) {
   const [format, setFormat] = useState("single_elimination");
   const [mode, setMode] = useState("deathmatch");
   const [rulesetId, setRulesetId] = useState("mvp-default");
+  const [broadcast, setBroadcast] = useState(false);
+  // #287 · tamaño de equipo de un torneo por equipos de Team Deathmatch (preset `team_deathmatch`).
+  const [teamSize, setTeamSize] = useState("4");
+  const teamRules = format === "teams" && mode === "team_deathmatch";
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+
+  /**
+   * #288 · Cancelar la creación: no envía NADA (ni POST ni estado a medias), limpia el
+   * formulario y vuelve al listado.
+   */
+  function onCancelCreate() {
+    setName("");
+    setFormat("single_elimination");
+    setMode("deathmatch");
+    setRulesetId("mvp-default");
+    setBroadcast(false);
+    setError("");
+    window.location.hash = "#/tournaments";
+  }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault(); // envío también con Enter (ERR-VIS-10 a11y)
     setError("");
     setCreating(true);
     try {
-      const t = await api<Tournament>("POST", "/tournaments", { name, format, mode, rulesetId });
+      const t = await api<Tournament>("POST", "/tournaments", {
+        name,
+        format,
+        mode,
+        rulesetId,
+        broadcast,
+        ...(teamRules ? { rules: { preset: "team_deathmatch", teamSize: Number(teamSize) } } : {}),
+      });
       setName("");
       reload();
       window.location.hash = `#/tournaments/${t.id}`;
@@ -68,9 +101,12 @@ export function TournamentsPage(_props: { me: Me }) {
                       <td>
                         <a href={`#/tournaments/${t.id}`}>{t.name}</a>
                       </td>
-                      <td>{t.format}</td>
-                      <td>{t.mode}</td>
-                      <td>{t.state}</td>
+                      <td>{labelOf(TOURNAMENT_FORMAT_NAME, t.format)}</td>
+                      <td>{modeName(t.mode)}</td>
+                      <td>
+                        {labelOf(TOURNAMENT_STATE_NAME, t.state)}
+                        {t.broadcast ? " · retransmisión pública" : ""}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -96,7 +132,7 @@ export function TournamentsPage(_props: { me: Me }) {
               <select aria-label="formato" value={format} onChange={(e) => setFormat(e.target.value)}>
                 {FORMATS.map((f) => (
                   <option key={f} value={f}>
-                    {f}
+                    {labelOf(TOURNAMENT_FORMAT_NAME, f)}
                   </option>
                 ))}
               </select>
@@ -106,7 +142,7 @@ export function TournamentsPage(_props: { me: Me }) {
               <select aria-label="modo" value={mode} onChange={(e) => setMode(e.target.value)}>
                 {MODES.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {modeName(m)}
                   </option>
                 ))}
               </select>
@@ -114,6 +150,37 @@ export function TournamentsPage(_props: { me: Me }) {
             <label>
               Ruleset <input aria-label="ruleset" value={rulesetId} onChange={(e) => setRulesetId(e.target.value)} />
             </label>
+            {teamRules && (
+              <>
+                {" "}
+                <label>
+                  Tamaño{" "}
+                  <select aria-label="tamaño de equipo" value={teamSize} onChange={(e) => setTeamSize(e.target.value)}>
+                    {["2", "3", "4"].map((n) => (
+                      <option key={n} value={n}>
+                        {n} vs {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+          </p>
+          <p>
+            <label>
+              <input
+                type="checkbox"
+                data-testid="tournament-broadcast"
+                checked={broadcast}
+                onChange={(e) => setBroadcast(e.target.checked)}
+              />{" "}
+              Retransmisión pública
+            </label>{" "}
+            <small>
+              Sus batallas se podrán emitir y ver en público con el nombre, la versión, el equipo y el resultado de cada
+              bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. No se
+              puede cambiar después de crear el torneo.
+            </small>
           </p>
           {error && (
             <p className="error" role="alert">
@@ -122,6 +189,9 @@ export function TournamentsPage(_props: { me: Me }) {
           )}
           <button type="submit" disabled={creating} data-testid="create-tournament">
             {creating ? "Creando…" : "Crear torneo"}
+          </button>{" "}
+          <button type="button" onClick={onCancelCreate} disabled={creating} data-testid="cancel-create-tournament">
+            Cancelar
           </button>
         </form>
       </div>

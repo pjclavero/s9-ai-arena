@@ -43,6 +43,18 @@ describe("prometheus", () => {
     }
   });
 
+  it("EQ5 · scrapea el /metrics del streamer en el puerto de control que declara el Compose", () => {
+    // Antes `streamer_up`, `streamer_fps`, `streamer_restarts_total`… existían en
+    // /metrics pero nadie los recogía (auditoría EQ5, 2026-11-02). Sin perfil
+    // `streaming` el destino sólo aparece como caído: no hay alerta genérica de `up`.
+    const job = prometheus.scrape_configs.find((j: any) => j.job_name === "streamer");
+    expect(job, "falta el job del streamer").toBeDefined();
+    const compose = parse(readFileSync(join(here, "..", "docker-compose.yml"), "utf8"));
+    const port = compose.services.streamer.environment.STREAMER_CONTROL_PORT;
+    expect(job.static_configs[0].targets).toEqual([`streamer:${port}`]);
+    expect(job.metrics_path ?? "/metrics").toBe("/metrics");
+  });
+
   it("carga las reglas de alerta y apunta a alertmanager", () => {
     expect(prometheus.rule_files).toContain("/etc/prometheus/alerts.yml");
     expect(JSON.stringify(prometheus.alerting)).toContain("alertmanager:9093");
@@ -154,5 +166,26 @@ describe("grafana aprovisionado desde el repo (sin clicks manuales)", () => {
     ]) {
       expect(exprs).toContain(m);
     }
+  });
+});
+
+// EQ5b · alertas del streamer: el disparo real lo prueba promtool (job contracts,
+// alerts-streamer.test.yml). Aquí, que existan y que TODAS lleven su guarda de
+// «streaming activado / emisión pedida» (encargo §15).
+describe("EQ5b · alertas del streamer condicionadas al streaming activo", () => {
+  const rules = alerts.groups.flatMap((g: any) => g.rules);
+  const guard: Record<string, RegExp> = {
+    StreamerDown: /s9_streaming_enabled\) == 1[\s\S]*unless on\(\) \(max\(streamer_up\) == 1\)/,
+    StreamerRestartLoop: /and on\(\) max\(streamer_desired\) == 1/,
+    StreamerDroppedFramesHigh: /and on\(\) max\(streamer_desired\) == 1/,
+    StreamerNoProgress: /and on\(\) max\(streamer_desired\) == 1/,
+    StreamerRenderNotReady: /and on\(\) max\(streamer_desired\) == 1/,
+  };
+  it.each(Object.keys(guard))("%s existe, está guardada y tiene caso promtool", (name) => {
+    const rule = rules.find((r: any) => r.alert === name);
+    expect(rule, name).toBeDefined();
+    expect(rule.expr).toMatch(guard[name]);
+    const tests = readFileSync(obs("prometheus", "alerts-streamer.test.yml"), "utf8");
+    expect(tests).toContain(`alertname: ${name}`);
   });
 });

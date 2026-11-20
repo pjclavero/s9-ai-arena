@@ -2,6 +2,14 @@
 
 SDK de referencia en Python para bots de [S9 AI Arena](../../README.md), protocolo `arena/1`.
 
+**Contrato mínimo del bot que subes:** un fichero Python 3.11 con UNA subclase de
+`ArenaBot` (o una llamada `Bot`) que **implementa `on_observation(self, observation)`**
+y devuelve la orden del ciclo (`{}` = sin cambios). Si la clase no lo implementa —o lo
+escribe mal, p. ej. `on_observaton`— el build lo rechaza con «tu clase … no implementa
+on_observation; ¿quisiste decir …?». Un bot quieto a propósito implementa el hook y
+devuelve `{}`. Al pegar un único fichero en la web, la plataforma lo envuelve con
+`requirements.txt` (`arena-sdk==0.1.0`) y lo coloca en `src/bot.py`.
+
 ## Instalar
 
 ```bash

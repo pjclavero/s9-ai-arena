@@ -82,6 +82,13 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           unshare -rm /bin/true
           echo "userns sin privilegios: disponible"
+      - name: ffmpeg real para las pruebas del streamer
+        # STREAMER §31 · apps/streamer/src/streamer-real.test.ts ejecuta el ffmpeg
+        # REAL (FFMPEG_START_FAILURE): en la CI es OBLIGATORIO (falla si falta,
+        # no se salta). Se comprueba aquí para que la causa quede a la vista.
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
+          ffmpeg -hide_banner -version | head -1
       - name: Unitarias (apps, packages e infrastructure) con cobertura
         # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
         # y el resumen se publican como artefacto de CI.
@@ -247,6 +254,14 @@ jobs:
         run: |
           python -m pip install -e sdks/python[dev] 2>/dev/null || python -m pip install -e sdks/python pytest
           cd sdks/python && python -m pytest tests/ -q
+      # EQ5b · las alertas del streamer, evaluadas por Prometheus REAL (promtool):
+      # cada una dispara cuando debe y NINGUNA con el streaming desactivado.
+      - name: Alertas del streamer (promtool test rules)
+        run: |
+          docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" \
+            --entrypoint promtool prom/prometheus:v2.53.0 check rules /p/alerts.yml
+          docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" \
+            --entrypoint promtool prom/prometheus:v2.53.0 test rules /p/alerts-streamer.test.yml
 
   # ── Etapa 4: batallas deterministas de regresión (suites de E2) ────────────
   regression-battles:

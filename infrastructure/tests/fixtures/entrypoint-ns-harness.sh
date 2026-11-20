@@ -37,6 +37,17 @@ if ! unshare -rm /bin/true 2>/dev/null; then
   exit 99
 fi
 
+# `chroot` se resuelve por PATH FUERA del unshare, nunca con una ruta fija: en
+# ubuntu-24.04 está en /usr/sbin y en ubuntu-26.04 no (el arnés daba rc=127 con
+# «/usr/sbin/chroot: not found»). Los sbin se añaden al FINAL porque el PATH de un
+# usuario normal de Debian no los incluye (y ahí sí está /usr/sbin/chroot).
+# Sin chroot es un fallo con su causa a la vista, no el 99 de «sin espacios de
+# nombres» (que el test sí tolera): nunca se salta.
+CHROOT=$(PATH="$PATH:/usr/sbin:/sbin"; command -v chroot) || {
+  echo "FALLO-ARNES: no hay chroot en el PATH ($PATH:/usr/sbin:/sbin)" >&2
+  exit 3
+}
+
 R=$(mktemp -d)
 trap 'chmod -R u+rwX "$R" 2>/dev/null || true; rm -rf "$R"' EXIT
 mkdir -p "$R/data" "$R/fuera" "$R/tmp" "$R/shim" "$R/bin" "$R/sbin" "$R/usr" "$R/lib" "$R/lib64" "$R/dev"
@@ -92,7 +103,7 @@ exec "$@"
 SHIM
 chmod 0755 "$R/shim/chown" "$R/shim/su-exec"
 
-export R DIRS USUARIO
+export R DIRS USUARIO CHROOT
 unshare -rm /bin/sh -c '
   set -eu
   mount --bind /bin "$R/bin"
@@ -100,7 +111,7 @@ unshare -rm /bin/sh -c '
   mount --bind /usr "$R/usr"
   mount --bind /lib "$R/lib"
   if [ -d /lib64 ]; then mount --bind /lib64 "$R/lib64"; fi
-  /usr/sbin/chroot "$R" /bin/sh -c "
+  "$CHROOT" "$R" /bin/sh -c "
      PATH=/shim:/bin:/usr/bin:/sbin:/usr/sbin
      export PATH
      ARENA_DATA_DIRS=\"$DIRS\" ARENA_SERVICE_USER=\"$USUARIO\" /entrypoint.sh /bin/sh -c \"echo SERVICIO-EJECUTADO\"

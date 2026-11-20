@@ -75,7 +75,7 @@ async function publishedBot(page: Page, name: string, code: string) {
   await go(page, "#/bots");
   await page.getByLabel("nuevo-bot").fill(name);
   await page.getByRole("button", { name: "Crear bot" }).click();
-  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByRole("link", { name, exact: true }).click();
   await page.getByLabel("chasis").selectOption("chassis.medium@1");
   await page.getByLabel("slot-drive").selectOption("movement.wheels@1");
   await page.getByLabel("slot-power").selectOption("power.battery@1");
@@ -83,14 +83,19 @@ async function publishedBot(page: Page, name: string, code: string) {
   await page.getByLabel("slot-turret_main").selectOption("weapon.cannon@1");
   await page.getByLabel("slot-armor_front").selectOption("armor.steel_front@1");
   // C4 · la UI dice la verdad sobre el efecto real del equipamiento.
-  await expect(page.getByTestId("effect-note")).toContainText("familia del chasis");
+  // UX-01 · el loadout elegido ES el vehículo de la batalla (no el arquetipo del chasis).
+  await expect(page.getByTestId("effect-note")).toContainText("es el vehículo que juega");
+  await expect(page.getByTestId("effect-note")).not.toContainText("arquetipo");
   await expect(page.getByTestId("effect-chassis")).toHaveAttribute("data-effect", "ACTIVE");
-  await expect(page.getByTestId("effect-slot-turret_main")).toHaveAttribute("data-effect", "PARTIAL");
+  await expect(page.getByTestId("effect-slot-turret_main")).toHaveAttribute("data-effect", "ACTIVE");
   await page.getByTestId("effect-detail-turret_main").locator("summary").click();
   await expect(page.getByTestId("effect-detail-turret_main")).toContainText("rangeM");
-  await expect(page.getByTestId("effect-detail-turret_main")).toContainText("FUTURE");
+  // P-2 (OLA 2): rangeM es el alcance real del cañón; ninguna de sus propiedades es FUTURE.
+  await expect(page.getByTestId("effect-detail-turret_main")).toContainText("ACTIVE");
+  await expect(page.getByTestId("effect-detail-turret_main")).not.toContainText("FUTURE");
   await page.getByTestId("save-loadout").click();
   await expect(page.getByTestId("saved")).toBeVisible();
+  await page.getByTestId("bot-section-link-codigo").click();
   await page.getByLabel("codigo").fill(code);
   await page.getByRole("button", { name: "Subir como versión nueva" }).click();
   await page.getByRole("button", { name: "Enviar a validación v1" }).click();
@@ -100,8 +105,30 @@ async function publishedBot(page: Page, name: string, code: string) {
   await expect(page.getByTestId("version-row-1")).toContainText("published");
 }
 
+/**
+ * UX-D (G-08 · TD-047) · Las vistas de una batalla (detalle, stats, auditoría) ya
+ * no son anónimas: sólo las lee quien puede leer su replay. Antes estas lecturas
+ * iban SIN sesión y funcionaban por la fuga. Ahora llevan el Bearer del usuario
+ * del golden (login por la API pública con sus credenciales).
+ */
+let bearer = "";
+let creds: { email: string; password: string } | null = null;
+async function apiLogin(page: Page, email: string, password: string): Promise<void> {
+  creds = { email, password };
+  const r = await page.request.post("/api/v1/auth/login", { data: { email, password } });
+  expect(r.status(), `login API: ${await r.text()}`).toBe(200);
+  bearer = ((await r.json()) as { accessToken: string }).accessToken;
+}
+
 async function api<T>(page: Page, path: string): Promise<T> {
-  const r = await page.request.get(`/api/v1${path}`);
+  const get = () =>
+    page.request.get(`/api/v1${path}`, bearer ? { headers: { Authorization: `Bearer ${bearer}` } } : {});
+  let r = await get();
+  // El access token dura 15 min y el golden puede acercarse: se renueva una vez.
+  if (r.status() === 401 && creds) {
+    await apiLogin(page, creds.email, creds.password);
+    r = await get();
+  }
   expect(r.status(), `${path}: ${await r.text()}`).toBe(200);
   return (await r.json()) as T;
 }
@@ -113,6 +140,7 @@ test.describe("@golden Golden path", () => {
     test.setTimeout(900_000);
     const problems = watchProblems(page);
     const { email, password } = await registerNewUser(page);
+    await apiLogin(page, email, password);
 
     // --- bots A y B: código del usuario, build real, publicados ----------
     await publishedBot(page, BOT_A, ARTILLERO);
@@ -133,8 +161,10 @@ test.describe("@golden Golden path", () => {
     const base = await api<Record<string, unknown>>(page, "/maps/mvp-arena-01/versions/1/content");
     const content = (base as { content?: unknown }).content ?? base;
     await go(page, "#/maps/editor");
+    // UX-EDITOR: el JSON vive plegado en «Opciones avanzadas» del editor visual.
+    await page.getByText("Opciones avanzadas: archivo JSON del mapa").click();
     await page.getByLabel("JSON a importar").fill(JSON.stringify(content));
-    await page.getByRole("button", { name: "Importar" }).click();
+    await page.getByRole("button", { name: "Importar", exact: true }).click();
     await page.getByLabel("id del mapa").fill(MAP_ID);
     await page.getByLabel("nombre del mapa").fill("Golden uno");
     const dm = page.getByLabel("modo deathmatch");
@@ -198,7 +228,8 @@ test.describe("@golden Golden path", () => {
     await go(page, "#/battles");
     const row = page.locator(`[data-testid="battle-row"][data-battle-id="${battleId}"]`);
     await expect(row).toHaveAttribute("data-status", "finished");
-    await expect(row.getByTestId("battle-outcome")).toContainText("gana red");
+    // UX-F (DEF-R6) · el bando en palabras (rojo/azul), como en el selector.
+    await expect(row.getByTestId("battle-outcome")).toContainText("gana rojo");
     await shot(page, info, "golden-batalla-terminada");
 
     const battle = await api<{
@@ -216,9 +247,27 @@ test.describe("@golden Golden path", () => {
     expect(blue.outcome).toBe("loss");
 
     // --- stats: SU código corrió (Pacifista 0 intentos; Artillero dispara) --
-    const stats = await api<{
+    // `status=finished` NO garantiza que `battle_stats` exista ya (TD-065): el
+    // worker la escribe tras la transacción de cierre (H3, issue #7). Medido en
+    // producción: ~1,4 s después de `finished_at`. Se espera a que estén las DOS
+    // entradas; si no aparecen en el plazo, el test FALLA (nunca pasa sin datos).
+    type Stats = {
       perBot: Record<string, { shotsFired: number; perModule: Record<string, { uses: number; rejections: number }> }>;
-    }>(page, `/battles/${battleId}/stats`);
+    };
+    let stats: Stats = { perBot: {} };
+    await expect
+      .poll(
+        async () => {
+          stats = await api<Stats>(page, `/battles/${battleId}/stats`);
+          return [red.botId, blue.botId].filter((id) => !stats.perBot?.[id]);
+        },
+        {
+          message: `battle_stats de ${battleId} sin materializar para algún participante (bots sin entrada en perBot)`,
+          timeout: 12_000,
+          intervals: [250, 500],
+        },
+      )
+      .toEqual([]);
     const sA = stats.perBot[red.botId];
     const sB = stats.perBot[blue.botId];
     expect(sA.shotsFired).toBeGreaterThan(0);

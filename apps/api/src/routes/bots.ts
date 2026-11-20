@@ -8,14 +8,15 @@ import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
-import { ROLE_RANK } from "../openapi.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import {
   applyTransition,
+  assertLoadoutRevisionUsable,
   assertOwner,
   canSeeBot,
   createLoadoutRevision,
   getVisibleBot,
+  isBotOwner,
   isStaff,
   validateLoadoutServerSide,
 } from "../services/bots.js";
@@ -26,6 +27,15 @@ import { decodePackage, PackageValidationError } from "../services/source-packag
 import { diffFiles } from "../services/bot-version-diff.js";
 import { findVersionArtifact } from "../../../bot-manager/src/launch-verify.js";
 import type { Auth } from "../services/bots.js";
+import { battleEligibilityOf } from "../services/version-eligibility.js";
+import { audit } from "../audit.js";
+
+/**
+ * VISIBILIDAD-3 (#244, P3-2) · el código (source, files, diff) depende de quién
+ * pregunta y puede dejar de ser legible (`code_public` es reversible desde la
+ * 019): nunca en una caché compartida ni en la del navegador.
+ */
+const CODE_NO_STORE = "private, no-store";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -40,8 +50,17 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
     latestPublishedVersion: latestPublished,
     rating,
     createdAt: (bot.created_at as Date).toISOString(),
+    // EQ4 · retirado (organizativo): fecha o null.
+    retiredAt: bot.retired_at ? (bot.retired_at as Date).toISOString() : null,
   };
 }
+
+/**
+ * ELIG · OLA 2 (EQUIPMENT_PRIVATE): el loadout de un bot sólo lo lee su dueño y el staff
+ * (también si el bot es público), así que sólo ellos reciben la elegibilidad DETALLADA
+ * (módulos implicados); el resto, sólo el veredicto.
+ */
+const canReadLoadout = (auth: Auth, bot: Record<string, unknown>) => !!auth && (isBotOwner(auth, bot) || isStaff(auth));
 
 export function versionToJson(v: Record<string, unknown>) {
   return {
@@ -198,15 +217,16 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     let q = db("bots")
+      .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
       .orderBy([
         { column: "created_at", order: "desc" },
         { column: "id", order: "desc" },
       ])
       .limit(200);
     if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
-    if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
 
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const visible: Record<string, unknown>[] = [];
     for (const bot of rows) {
       if (await canSeeBot(db, req.auth, bot)) visible.push(bot);
@@ -216,18 +236,43 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const items = await Promise.all(
       page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
     );
+    // EQ4 (rev. EQ6 P2-2) · `includeCounts=true` con `ownerId` = el propio usuario:
+    // recuento REAL de sus bots (total / activos / retirados), no el de la página.
+    // Sólo de los propios: con otro ownerId se ignora (no revela nada ajeno).
+    let counts: { total: number; active: number; retired: number } | undefined;
+    if (
+      req.query.includeCounts === "true" &&
+      req.auth &&
+      typeof req.query.ownerId === "string" &&
+      req.query.ownerId === req.auth.userId
+    ) {
+      const [row] = (await db("bots")
+        .where({ owner_id: req.auth.userId })
+        .select(
+          db.raw("count(*)::int AS total"),
+          db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
+        )) as { total?: number; retired?: number }[];
+      const total = Number(row?.total ?? 0);
+      const retired = Number(row?.retired ?? 0);
+      counts = { total, active: total - retired, retired };
+    }
     res.json({
       items,
       nextCursor:
-        visible.length > limit
-          ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
-          : undefined,
+        visible.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
+      ...(counts ? { counts } : {}),
     });
   });
 
   defineOperation(router, "createBot", async (req, res) => {
-    const { name, visibility, teamId } = req.body ?? {};
-    if (typeof name !== "string" || !name || name.length > 48) throw badRequest("name obligatorio (máx. 48)");
+    const { visibility, teamId } = req.body ?? {};
+    // UX-B · B1: el nombre se recorta (un nombre de sólo espacios no es un nombre) y
+    // el error dice qué falla en vez de un genérico.
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : req.body?.name;
+    if (typeof name !== "string" || !name) throw badRequest("El nombre del bot es obligatorio.");
+    if (name.length > 48) {
+      throw badRequest(`El nombre del bot admite como máximo 48 caracteres (tiene ${name.length}).`);
+    }
     if (visibility !== undefined && !["private", "team", "public"].includes(visibility)) {
       throw badRequest("visibility inválida");
     }
@@ -238,12 +283,20 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         .catch(() => null);
       if (!member) throw forbidden("No perteneces a ese equipo");
     }
-    if (await db("bots").where({ owner_id: req.auth!.userId, name }).first()) {
-      throw conflict("bot_name_taken", "Ya tienes un bot con ese nombre");
-    }
-    const [bot] = await db("bots")
-      .insert({ name, owner_id: req.auth!.userId, team_id: teamId ?? null, visibility: visibility ?? "private" })
-      .returning("*");
+    // UX-B · B1: comprobar-e-insertar bajo un cerrojo transaccional por (dueño,
+    // nombre). Sin él, dos POST simultáneos (doble clic) pasaban los dos la
+    // comprobación de duplicado y el perdedor chocaba con la restricción única
+    // (bots_owner_id_name_key): 500 «error interno» en vez del 409 legible.
+    const bot = await db.transaction(async (trx) => {
+      await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`bot-name:${req.auth!.userId}:${name}`]);
+      if (await trx("bots").where({ owner_id: req.auth!.userId, name }).first()) {
+        throw conflict("bot_name_taken", `Ya tienes un bot llamado «${name}»: elige otro nombre.`);
+      }
+      const [row] = await trx("bots")
+        .insert({ name, owner_id: req.auth!.userId, team_id: teamId ?? null, visibility: visibility ?? "private" })
+        .returning("*");
+      return row;
+    });
     res.status(201).json(botToJson(bot));
   });
 
@@ -256,7 +309,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot); // metadatos: SOLO el dueño (contrato)
     const patch: Record<string, unknown> = {};
-    const { name, visibility } = req.body ?? {};
+    const { name, visibility, retired } = req.body ?? {};
     if (name !== undefined) {
       if (typeof name !== "string" || !name || name.length > 48) throw badRequest("name inválido");
       patch.name = name;
@@ -265,9 +318,24 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       if (!["private", "team", "public"].includes(visibility)) throw badRequest("visibility inválida");
       patch.visibility = visibility;
     }
+    // EQ4 · retirar/reactivar: sólo organiza la lista; no toca versiones ni historial.
+    if (retired !== undefined) {
+      if (typeof retired !== "boolean") throw badRequest("retired debe ser true o false");
+      patch.retired_at = retired ? (bot.retired_at ?? db.fn.now()) : null;
+    }
     const [updated] = Object.keys(patch).length
       ? await db("bots").where({ id: bot.id }).update(patch).returning("*")
       : [bot];
+    // VISIBILIDAD · el cambio de visibilidad de la ficha queda auditado (quién, de qué a qué).
+    if (patch.visibility !== undefined && patch.visibility !== bot.visibility) {
+      await audit(db, {
+        actorId: req.auth!.userId,
+        action: "bot.visibility_changed",
+        target: `bot:${bot.id}`,
+        detail: { from: bot.visibility, to: patch.visibility },
+        correlationId: req.correlationId,
+      });
+    }
     res.json(botToJson(updated, await latestPublishedVersion(db, bot.id as string)));
   });
 
@@ -282,7 +350,11 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     // El validador de E3 corre SIEMPRE en servidor (DoD T7.3/T7.4).
     const result = await validateLoadoutServerSide(db, req.body);
     if (result.violations.length > 0) {
-      res.status(422).json({ error: "loadout_invalid", violations: result.violations });
+      res.status(422).json({
+        error: "loadout_invalid",
+        message: result.violations.map((v) => v.message).join(" "),
+        violations: result.violations,
+      });
       return;
     }
     const loadout = await createLoadoutRevision(db, bot.id as string, req.body, result.summary!);
@@ -292,14 +364,19 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   /**
    * R3.7 (ERR-VIS-04) · Extensión: listar las revisiones de loadout de un bot.
    * El contrato de E1 solo tenía el POST, así que el editor del panel no podía
-   * cargar la revisión vigente (arrancaba siempre vacío). Misma visibilidad que
-   * el propio bot (getVisibleBot); la última revisión es la "vigente".
+   * cargar la revisión vigente (arrancaba siempre vacío). OLA 2: sólo dueño y staff
+   * (EQUIPMENT_PRIVATE); la última revisión es la "vigente".
    */
   defineExtension(
     router,
     { operationId: "listBotLoadouts", method: "get", path: "/bots/{botId}/loadouts", minRole: "user" },
     async (req, res) => {
       const bot = await getVisibleBot(db, req.auth, String(req.params.botId));
+      // OLA 2 · EQUIPMENT_PRIVATE (D-B1=R2): el loadout es PRIVADO también para un bot de
+      // visibilidad pública: sólo su dueño y el staff. Cualquier otro (incluido un
+      // miembro del equipo o un usuario con sesión) recibe el MISMO 404 que un id
+      // inexistente (no se revela ni que el bot existe).
+      if (!isBotOwner(req.auth, bot) && !isStaff(req.auth)) throw notFound();
       const rows = await db("bot_loadouts").where({ bot_id: bot.id }).orderBy("revision", "asc");
       res.json(rows.map(loadoutToJson));
     },
@@ -339,7 +416,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBotVersions", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
-    res.json(versions.map(versionToJson));
+    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth, bot) }); // ELIG
+    res.json(versions.map((v) => ({ ...versionToJson(v), ...elig(v) })));
   });
 
   defineOperation(
@@ -355,6 +433,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const rev = Number(loadoutRevision);
       const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
       if (!loadout) throw badRequest(`loadoutRevision ${loadoutRevision} no existe para este bot`);
+      await assertLoadoutRevisionUsable(db, bot.id as string, rev);
 
       // A9.13 · «nueva versión desde X»: la versión de partida queda registrada.
       let parentVersion: number | null = null;
@@ -403,6 +482,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const filename = sanitizeSourceFilename(v.source_filename) ?? fallback;
     res
       .status(200)
+      .setHeader("Cache-Control", CODE_NO_STORE)
       .setHeader("Content-Type", "application/octet-stream")
       .setHeader("Content-Disposition", contentDispositionAttachment(filename))
       .send(v.source);
@@ -428,6 +508,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       .pluck("version");
     res.json({
       ...versionToJson(v),
+      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth, bot) }))(v), // ELIG
       ...(readable ? { sourceSha256: v.source_sha256 ?? undefined } : {}),
       canReadSource: readable,
       latestBuild: latest ? buildToJson(latest, { includeLogs }) : undefined,
@@ -443,6 +524,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
     }
     const { packaged, files } = decodeVersionFiles(v);
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({ botId: bot.id, version: v.version, sourceSha256: v.source_sha256 ?? undefined, packaged, files });
   });
 
@@ -467,6 +549,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
       }
     }
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({
       botId: bot.id,
       from: from.version,
@@ -488,6 +571,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
         if (!loadout) throw badRequest(`loadoutRevision ${req.body.loadoutRevision} no existe para este bot`);
       }
+      await assertLoadoutRevisionUsable(db, bot.id as string, rev);
       const version = await insertNextVersion(db, bot.id as string, {
         runtime: src.runtime,
         loadout_revision: rev,
@@ -508,6 +592,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
       assertOwner(req.auth, bot);
       const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+      // Un loadout que hoy no valida no llega al pipeline (build, protocol_test, smoke…).
+      await assertLoadoutRevisionUsable(db, bot.id as string, v.loadout_revision as number);
       // B11 · `submit` viene de draft O de rejected (cap. 17.1). Al reenviar una
       // versión rechazada el motivo del rechazo ANTERIOR se quedaba en la fila
       // (solo se limpiaba al pasar a `validated`): quedaba una versión
@@ -542,6 +628,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
     const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    await assertLoadoutRevisionUsable(db, bot.id as string, v.loadout_revision as number);
     const codePublic = req.body?.codePublic === true;
     const updated = await applyTransition(
       db,
@@ -551,6 +638,36 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       { published_at: db.fn.now(), ...(codePublic ? { code_public: true } : {}) },
       req.correlationId,
     );
+    res.json(versionToJson(updated));
+  });
+
+  /**
+   * VISIBILIDAD (CODE_VISIBILITY) · el dueño pone el CÓDIGO de una versión en privado o en
+   * público. Independiente de la visibilidad del bot, de la publicación, de la elegibilidad y
+   * de los torneos: nada más cambia `code_public` (la publicación sólo lo pone a true si se
+   * pide explícitamente). SÓLO el dueño: ni el staff (no tenía esta capacidad) ni el equipo.
+   * Quien no ve el bot recibe 404 (no se revela su existencia); quien lo ve sin ser dueño, 403.
+   * Volver a privado (enmienda a D9, migración 019) corta TODAS las vías de lectura pública
+   * del código (`canReadSource`: source, files, diff, sourceSha256), que leen el valor vigente;
+   * quien ya lo descargó conserva su copia. No toca artefacto, replays ni inscripciones.
+   */
+  defineOperation(router, "setBotVersionCodeVisibility", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    assertOwner(req.auth, bot);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    const codePublic = (req.body ?? {}).codePublic;
+    if (typeof codePublic !== "boolean") throw badRequest("codePublic debe ser true o false");
+    let updated = v;
+    if (v.code_public !== codePublic) {
+      [updated] = await db("bot_versions").where({ id: v.id }).update({ code_public: codePublic }).returning("*");
+      await audit(db, {
+        actorId: req.auth!.userId,
+        action: "bot.code_visibility_changed",
+        target: `bot:${bot.id}:v${v.version}`,
+        detail: { from: v.code_public === true, to: codePublic },
+        correlationId: req.correlationId,
+      });
+    }
     res.json(versionToJson(updated));
   });
 

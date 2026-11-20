@@ -13,7 +13,10 @@
       }
       nav {
         display: flex;
-        gap: 1rem;
+        /* UX-E · la barra completa (9 enlaces + usuario + Salir; 13 con admin) no
+           cabe en una línea a 768 px: desbordaba 45 px. Siempre puede partirse. */
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
         padding: 0.8rem 1.2rem;
         background: #1a212b;
         align-items: center;
@@ -22,10 +25,60 @@
         color: #7fb4ff;
         text-decoration: none;
       }
+      /* UX-E · los enlaces del contenido usaban el azul por defecto del navegador
+         (#0000ee) sobre fondo oscuro: contraste ~2:1 (axe color-contrast en 12 de
+         16 pantallas). Mismo azul que la barra; visitados igual de legibles. */
+      a,
+      a:visited {
+        color: #7fb4ff;
+      }
+      a:hover {
+        color: #a9cdff;
+      }
+      /* UX-E · «Saltar al contenido» (index.html): oculto hasta recibir foco. */
+      .skip-link {
+        position: absolute;
+        left: 0.5rem;
+        top: -3rem;
+        z-index: 1000;
+        background: #2f6fdb;
+        color: white;
+        padding: 0.4rem 0.8rem;
+        border-radius: 4px;
+      }
+      .skip-link:focus {
+        top: 0.5rem;
+      }
+      /* Texto sólo para lectores de pantalla. */
+      .visually-hidden {
+        position: absolute !important;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      /* #255 · B11-B13 · área útil progresiva (antes 960 px fijos en cualquier
+         escritorio): ~1480 px a ≥1650, ~1150-1300 entre 1280 y 1440, 960 px
+         hasta 1066. El texto conserva una medida legible (regla de abajo); las
+         tablas, el editor y los mapas sí aprovechan el ancho. */
       main {
-        max-width: 960px;
+        max-width: clamp(960px, 90vw, 1480px);
         margin: 1.5rem auto;
         padding: 0 1rem;
+      }
+      main :where(p, li, dd, legend, summary) {
+        max-width: 80ch;
+      }
+      .muted {
+        color: #9aa4b2;
+      }
+      /* UX-MOBILE · páginas anchas (visor/replay): anulan el máximo de 960 px
+         cuando <main> lleva la clase .page-wide o contiene un elemento con ella.
+         Acordado con UX-VIEW (SPEC 2026-10-29). */
+      main.page-wide,
+      main:has(.page-wide) {
+        max-width: none;
       }
       button {
         background: #2f6fdb;
@@ -47,6 +100,18 @@
         border: 1px solid #333c4a;
         border-radius: 4px;
         padding: 0.4rem;
+        /* UX-E · un textarea con cols=60 desbordaba la pantalla a 390 px. */
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      pre {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      img,
+      video {
+        max-width: 100%;
+        height: auto;
       }
       table {
         border-collapse: collapse;
@@ -110,6 +175,299 @@
         border-bottom: 1px solid #2a3340;
         padding: 0.35rem 0;
       }
+      /* UX-MOBILE · barra plegable (App.tsx ShellNav). En escritorio los dos
+         contenedores no generan caja (display:contents): la barra es la de siempre
+         y el botón «Menú» no existe. */
+      .shell-nav .nav-bar,
+      .shell-nav .nav-menu {
+        display: contents;
+      }
+      .shell-nav .nav-toggle {
+        display: none;
+      }
+      /* EQ4 · grupo «Bots y equipos» en la barra y subnavegación de Administración. */
+      .shell-nav .nav-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0 0.5rem;
+        border: 1px solid #2a3340;
+        border-radius: 4px;
+      }
+      .shell-nav .nav-group-label {
+        font-size: 0.8rem;
+        color: #9aa4b2;
+      }
+      .subnav {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem 1rem;
+        margin: 0 0 0.8rem;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid #2a3340;
+      }
+      .subnav-title {
+        font-weight: 600;
+        color: #9aa4b2;
+      }
+      .subnav a[aria-current="page"] {
+        font-weight: 600;
+        text-decoration: underline;
+      }
+      /* EQ4 · maestro-detalle (Mis bots, Equipos): dos columnas sólo con sitio.
+         #255 · la lista se reduce PROGRESIVAMENTE con el ancho (clamp), pegada al
+         inicio del área útil, y el panel central se lleva el resto. */
+      .master-detail {
+        display: grid;
+        grid-template-columns: clamp(11rem, 16vw, 17rem) minmax(0, 1fr);
+        gap: clamp(0.75rem, 1.2vw, 1.25rem);
+        align-items: start;
+      }
+      .master-detail > * {
+        min-width: 0;
+      }
+      .master-list ul {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+      }
+      .master-list li {
+        border-bottom: 1px solid #2a3340;
+      }
+      .master-list .master-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 0.45rem 0.4rem;
+        background: transparent;
+        border: 0;
+        color: inherit;
+        overflow-wrap: anywhere;
+      }
+      .master-list .master-item[aria-current="true"] {
+        background: #253041;
+        font-weight: 600;
+      }
+      a.master-item {
+        text-decoration: none;
+        box-sizing: border-box;
+      }
+      .master-item-meta {
+        color: #9aa4b2;
+        font-weight: 400;
+      }
+      /* #255 · panel del bot: [menú de secciones | UNA sección]. */
+      .bot-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.25rem 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .bot-head h2 {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .bot-sections {
+        display: grid;
+        grid-template-columns: minmax(8.5rem, 11rem) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      .bot-sections > * {
+        min-width: 0;
+      }
+      .section-nav {
+        /* la regla global de nav es la barra superior: aquí se anula */
+        display: block;
+        padding: 0;
+        background: transparent;
+        position: sticky;
+        top: 0.75rem;
+      }
+      .section-nav ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .section-nav a {
+        display: block;
+        padding: 0.5rem 0.6rem;
+        border-left: 3px solid transparent;
+        border-radius: 0 4px 4px 0;
+        text-decoration: none;
+        color: #c7d2e0;
+      }
+      .section-nav a:hover {
+        background: #1d2633;
+      }
+      .section-nav a[aria-current="page"] {
+        border-left-color: #7fb4ff;
+        background: #253041;
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .bot-section > h3:first-child {
+        margin-top: 0;
+      }
+      .bot-section h3:focus {
+        outline: 2px solid #7fb4ff;
+        outline-offset: 2px;
+      }
+      .table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .master-list .master-item-meta {
+        display: block;
+        padding: 0 0.4rem 0.4rem;
+        font-size: 0.85rem;
+      }
+      textarea.code-editor {
+        width: 100%;
+        font-family: ui-monospace, monospace;
+      }
+      .button-link {
+        display: inline-block;
+        background: #2f6fdb;
+        color: white !important;
+        padding: 0.45rem 0.9rem;
+        border-radius: 4px;
+        text-decoration: none;
+      }
+      .confirm-panel {
+        border: 1px solid #7fb4ff;
+        border-radius: 6px;
+        padding: 0.75rem;
+        background: #10141a;
+      }
+      .live-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      /* Tablet y escritorio estrecho: el menú de secciones pasa a pestañas encima. */
+      @media (max-width: 1199px) {
+        .bot-sections {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .section-nav {
+          position: static;
+          overflow-x: auto;
+          border-bottom: 1px solid #2a3340;
+        }
+        .section-nav ul {
+          display: flex;
+          gap: 0.25rem;
+        }
+        .section-nav a {
+          white-space: nowrap;
+          border-left: 0;
+          border-bottom: 3px solid transparent;
+          border-radius: 4px 4px 0 0;
+        }
+        .section-nav a[aria-current="page"] {
+          border-bottom-color: #7fb4ff;
+        }
+      }
+      /* Móvil: una sola columna; la lista de bots no empuja el panel fuera de la vista. */
+      @media (max-width: 720px) {
+        .master-detail {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .master-list nav ul {
+          max-height: 40vh;
+          overflow-y: auto;
+        }
+        .section-nav a {
+          min-height: 44px;
+          display: flex;
+          align-items: center;
+        }
+      }
+      @media (max-width: 1024px) {
+        /* Móvil y tablet: marca + «Menú»; los enlaces, el usuario y «Salir» se
+           despliegan debajo. Objetivos táctiles de 44 px. */
+        .shell-nav {
+          padding: 0.3rem 0.8rem;
+          gap: 0;
+        }
+        .shell-nav .nav-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.5rem;
+          width: 100%;
+          min-height: 44px;
+        }
+        .shell-nav .nav-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+          min-height: 44px;
+          min-width: 44px;
+          padding: 0 0.9rem;
+          background: #253041;
+          border: 1px solid #333c4a;
+        }
+        .shell-nav .nav-menu {
+          display: none;
+        }
+        .shell-nav[data-open="true"] .nav-menu {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+          gap: 0.15rem 0.75rem;
+          width: 100%;
+          padding: 0.3rem 0 0.6rem;
+        }
+        .shell-nav .nav-menu a {
+          display: flex;
+          align-items: center;
+          min-height: 44px;
+          padding: 0 0.5rem;
+          border-radius: 4px;
+        }
+        .shell-nav .nav-group {
+          display: contents;
+        }
+        .shell-nav .nav-group-label {
+          grid-column: 1 / -1;
+          padding: 0.4rem 0.5rem 0;
+          border-top: 1px solid #2a3340;
+        }
+        .shell-nav .nav-menu a[aria-current="page"] {
+          background: #253041;
+          font-weight: 600;
+        }
+        .shell-nav .nav-user {
+          /* anula el marginLeft:auto en línea de la barra de escritorio */
+          margin-left: 0 !important;
+          grid-column: 1 / -1;
+          padding: 0.5rem 0.5rem 0.2rem;
+          border-top: 1px solid #2a3340;
+          overflow-wrap: anywhere;
+        }
+        .shell-nav .nav-menu [data-testid="logout"] {
+          justify-self: start;
+          margin-left: 0.5rem;
+        }
+        /* Táctil: botones y campos de al menos 44 px de alto. */
+        button,
+        select,
+        input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+          min-height: 44px;
+        }
+        button.link {
+          min-height: 44px;
+        }
+        input[type="checkbox"],
+        input[type="radio"] {
+          width: 1.25rem;
+          height: 1.25rem;
+        }
+      }
       @media (max-width: 720px) {
         nav {
           flex-wrap: wrap;
@@ -126,10 +484,294 @@
         textarea {
           width: 100%;
         }
+        main {
+          overflow-wrap: break-word;
+        }
+        .card {
+          padding: 0.75rem;
+        }
+      }
+      /* UX-MOBILE · tablas apilables (className="stack-table"): en ≤720 px cada
+         fila es una tarjeta y cada celda una línea «Etiqueta: valor» (data-label,
+         ver src/ui/stack-table.ts). Los data-testid de fila siguen en su <tr>.
+         Las muy anchas (stack-table--wide, 10-11 columnas) se apilan ya en ≤960 px. */
+      @media (max-width: 720px) {
+        table.stack-table,
+        table.stack-table tbody,
+        table.stack-table tr,
+        table.stack-table td,
+        table.stack-table tbody th {
+          display: block;
+          width: auto;
+        }
+        table.stack-table {
+          overflow: visible;
+        }
+        /* Sin caja: las etiquetas de columna van en cada celda (::before, que sí
+           leen los lectores de pantalla). Recortado seguía ocupando ancho. */
+        table.stack-table thead {
+          display: none;
+        }
+        table.stack-table caption {
+          display: block;
+          text-align: left;
+          margin-bottom: 0.5rem;
+        }
+        table.stack-table tr {
+          background: #10141a;
+          border: 1px solid #2a3340;
+          border-radius: 6px;
+          padding: 0.35rem 0.75rem;
+          margin-bottom: 0.6rem;
+        }
+        table.stack-table td,
+        table.stack-table tbody th {
+          border: 0;
+          padding: 0.3rem 0;
+          overflow-wrap: anywhere;
+        }
+        table.stack-table td:first-child {
+          font-weight: 600;
+        }
+        table.stack-table td:empty {
+          display: none;
+        }
+        table.stack-table td[data-label]::before {
+          content: attr(data-label) ": ";
+          font-weight: 600;
+          color: #9aa4b2;
+        }
+        table.stack-table td a,
+        table.stack-table td button {
+          display: inline-flex;
+          align-items: center;
+          min-height: 44px;
+        }
+      }
+      @media (max-width: 960px) {
+        table.stack-table--wide,
+        table.stack-table--wide tbody,
+        table.stack-table--wide tr,
+        table.stack-table--wide td,
+        table.stack-table--wide tbody th {
+          display: block;
+          width: auto;
+        }
+        table.stack-table--wide {
+          overflow: visible;
+        }
+        /* Sin caja: las etiquetas de columna van en cada celda (::before, que sí
+           leen los lectores de pantalla). Recortado seguía ocupando ancho. */
+        table.stack-table--wide thead {
+          display: none;
+        }
+        table.stack-table--wide caption {
+          display: block;
+          text-align: left;
+          margin-bottom: 0.5rem;
+        }
+        table.stack-table--wide tr {
+          background: #10141a;
+          border: 1px solid #2a3340;
+          border-radius: 6px;
+          padding: 0.35rem 0.75rem;
+          margin-bottom: 0.6rem;
+        }
+        table.stack-table--wide td,
+        table.stack-table--wide tbody th {
+          border: 0;
+          padding: 0.3rem 0;
+          overflow-wrap: anywhere;
+        }
+        table.stack-table--wide td:first-child {
+          font-weight: 600;
+        }
+        table.stack-table--wide td:empty {
+          display: none;
+        }
+        table.stack-table--wide td[data-label]::before {
+          content: attr(data-label) ": ";
+          font-weight: 600;
+          color: #9aa4b2;
+        }
+        table.stack-table--wide td a,
+        table.stack-table--wide td button {
+          display: inline-flex;
+          align-items: center;
+          min-height: 44px;
+        }
+      }
+      /* STREAMING-UX · menú del apartado a la IZQUIERDA (escritorio) y pestañas
+         horizontales con scroll (móvil); botones de emisión grandes. */
+      .streaming-layout {
+        display: grid;
+        grid-template-columns: 13rem minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      /* Ronda 1 (LEFT_ALIGNED_NAV) · es un <nav>, y la regla global de nav (barra superior)
+         le ponía align-items:center (botones encogidos y centrados en la columna),
+         flex-wrap:wrap (dos filas en móvil), relleno y fondo. Se anulan aquí. */
+      .streaming-nav {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        padding: 0;
+        background: transparent;
+        gap: 0.25rem;
+        position: sticky;
+        top: 0.5rem;
+      }
+      .streaming-nav button {
+        text-align: left;
+        justify-content: flex-start;
+        background: transparent;
+        border: 1px solid transparent;
+        color: #e6e8eb;
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        min-height: 44px;
+        cursor: pointer;
+      }
+      .streaming-nav button[aria-current="page"] {
+        background: #1f2a3a;
+        border-color: #7fb4ff;
+        color: #a9cdff;
+      }
+      .streaming-big {
+        font-size: 1.15rem;
+        padding: 0.8rem 1.4rem;
+        min-height: 52px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .streaming-big.start {
+        background: #1f7a3f;
+        color: white;
+        border: 1px solid #2fa05a;
+      }
+      .streaming-big.stop {
+        background: #a32a2a;
+        color: white;
+        border: 1px solid #d04545;
+      }
+      .streaming-big:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .streaming-live-bar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .streaming-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-bottom: 0.8rem;
+        max-width: 36rem;
+      }
+      .streaming-field select,
+      .streaming-field input {
+        min-height: 44px;
+        font-size: 1rem;
+      }
+      .streaming-facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+        gap: 0.5rem 1rem;
+        margin: 0.5rem 0;
+      }
+      .streaming-facts div span {
+        display: block;
+        color: #9aa4b2;
+        font-size: 0.85rem;
+      }
+      @media (max-width: 720px) {
+        .streaming-layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .streaming-nav {
+          flex-direction: row;
+          overflow-x: auto;
+          position: static;
+          white-space: nowrap;
+          -webkit-overflow-scrolling: touch;
+        }
+        .streaming-nav button {
+          flex: 0 0 auto;
+        }
+        .streaming-big {
+          width: 100%;
+        }
+        /* Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · INICIAR/DETENER fijos abajo SIN tapar nada.
+           En la ronda 1 INICIAR era sticky y, fijo, tapaba el campo Canal. Ahora, mientras se ve
+           un CTA (clase puesta por StreamingPage), <body> deja abajo una franja reservada con
+           relleno = altura del CTA + safe-area, y lo que se desplaza es #root, que acaba encima
+           de esa franja: ningún campo puede pasar por debajo del CTA en ningún punto del scroll,
+           y al fondo el último campo queda entero encima. */
+        html.streaming-cta-shell {
+          --streaming-cta-h: 4.25rem;
+          height: 100%;
+          overflow: hidden;
+        }
+        html.streaming-cta-shell body {
+          box-sizing: border-box;
+          height: 100%;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          padding-bottom: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
+        }
+        html.streaming-cta-shell #root {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+        }
+        .streaming-start-row.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          box-sizing: border-box;
+          height: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
+          margin: 0;
+          padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+          background: #171d26;
+          border-top: 1px solid #2a3442;
+        }
+        .streaming-start-row.streaming-cta .streaming-big {
+          height: 100%;
+        }
+        /* DETENER: el mismo sitio y tamaño que INICIAR (el pulgar no cambia de zona). La barra
+           de estado deja de ser sticky en móvil: si no, taparía al desplazarse. */
+        .streaming-live-bar {
+          position: static;
+        }
+        .streaming-big.stop.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0.75rem;
+          right: 0.75rem;
+          bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+          width: auto;
+          height: calc(var(--streaming-cta-h) - 1rem);
+          margin: 0;
+        }
       }
     </style>
   </head>
   <body>
+    <a class="skip-link" href="#/" data-skip-link>Saltar al contenido</a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

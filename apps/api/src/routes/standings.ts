@@ -6,6 +6,7 @@ import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { getStandings } from "../services/standings.js";
+import { PRIVATE_BOT_LABEL, hiddenBotIds } from "../battle-access.js";
 // H6 (issue #10) · Se expone el libro mayor REAL de E9, no una reimplementación.
 import { INITIAL_RATING, ratingAt, ratingHistory } from "../../../tournament-worker/src/ratings.js";
 // TD-029 · STAT_SEASON: ÚNICA fuente de la temporada activa (la comparte el worker).
@@ -22,9 +23,20 @@ export function standingsRoutes(db: Db): Router {
     const seasonId = resolveSeasonId(req.query.seasonId);
     const mode = typeof req.query.mode === "string" ? req.query.mode : undefined;
     const { standings } = await getStandings(db, seasonId, mode);
-    res.setHeader("Cache-Control", "public, max-age=60");
+    // UX-F (DEF-R3) · un bot privado ajeno conserva su puesto (el ranking no se
+    // reordena ni salta posiciones) pero no se identifica: sin botId y «Bot privado».
+    const hidden = await hiddenBotIds(
+      db,
+      req.auth,
+      standings.map((r) => r.botId),
+    );
+    const projected = standings.map((r) =>
+      !hidden.has(r.botId) ? r : { ...r, botId: null, botName: PRIVATE_BOT_LABEL, private: true },
+    );
+    // Depende de quién pregunta si hay bots no públicos: nunca en una caché compartida.
+    res.setHeader("Cache-Control", hidden.size > 0 || req.auth ? "private, no-store" : "public, max-age=60");
     res.setHeader("X-S9-Season", seasonId);
-    res.json(standings);
+    res.json(projected);
   });
 
   /**

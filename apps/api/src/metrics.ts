@@ -50,6 +50,13 @@ export class MetricsRegistry {
   private requestsTotal = new Map<string, number>();
   private durationSecondsSum = new Map<string, number>();
   private durationSecondsCount = new Map<string, number>();
+  /** EQ5b · gauges de estado (p. ej. s9_streaming_enabled) que fija la propia API. */
+  private gauges = new Map<string, number>();
+
+  setGauge(name: string, value: number): void {
+    if (!/^[a-z_][a-z0-9_]*$/.test(name) || !Number.isFinite(value)) return;
+    this.gauges.set(name, value);
+  }
 
   /** Registra una petición terminada: incrementa el contador y acumula duración. */
   recordRequest(route: string, status: number, durationSeconds: number): void {
@@ -88,12 +95,11 @@ export class MetricsRegistry {
       lines.push(`http_request_duration_seconds_count{service="${SERVICE}",route="${route}"} ${count}`);
     }
 
-    lines.push(
-      "# HELP api_up 1 si el proceso de la API esta sirviendo peticiones",
-      "# TYPE api_up gauge",
-      "api_up 1",
-      "",
-    );
+    lines.push("# HELP api_up 1 si el proceso de la API esta sirviendo peticiones", "# TYPE api_up gauge", "api_up 1");
+    for (const [name, value] of this.gauges) {
+      lines.push(`# TYPE ${name} gauge`, `${name} ${value}`);
+    }
+    lines.push("");
     return lines.join("\n");
   }
 }

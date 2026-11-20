@@ -63,13 +63,15 @@ Detalle del modelo de permisos: [docs/technical/security.md](../technical/securi
 | Caso de uso | Estado |
 |---|---|
 | Registrarse, crear un bot, pegar su código y configurar su loadout | **FUNCIONA ACTUALMENTE** |
-| Enviar el bot a validación y publicarlo | **PENDIENTE**: bloqueado por [TD-001](../roadmap/technical-debt.md#td-001) |
-| Lanzar una batalla de práctica desde la web | **PENDIENTE**: bloqueado por [TD-003](../roadmap/technical-debt.md#td-003) |
-| Que la batalla ejecute el código del bot | **PENDIENTE**: [TD-002](../roadmap/technical-debt.md#td-002) |
-| Organizar un torneo `round_robin` y ver el bracket y el Elo | **PARCIAL**: funciona con el stub, sólo para el rol organizer |
-| Ver una batalla en directo o reproducir un replay | **PARCIAL**: roto en navegador ([TD-009](../roadmap/technical-debt.md#td-009)) |
-| Crear un mapa en el editor y usarlo | **PARCIAL**: el editor no guarda ([TD-010](../roadmap/technical-debt.md#td-010)) |
-| Consultar el ranking | **FUNCIONA ACTUALMENTE** (vacío en producción: no hay batallas) |
+| Enviar el bot a validación y publicarlo | **FUNCIONA EN `main`**: el build ejecuta el bot en el sandbox y lo publica ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
+| Lanzar una batalla de práctica desde la web | **FUNCIONA EN `main`**: la web usa los rulesets que sirve `GET /rulesets` (uno por modo, sembrados por `bootstrap`; [TD-003](../roadmap/technical-debt.md#td-003), cerrada) |
+| Que la batalla ejecute el código del bot | **FUNCIONA EN `main`**: el worker lanza el artefacto firmado de cada bot en su contenedor ([TD-002](../roadmap/technical-debt.md#td-002), cerrada) |
+| Organizar un torneo y ver el bracket y el Elo | **FUNCIONA EN `main`**; lo que falta está en [TD-015](../roadmap/technical-debt.md#td-015) (PARCIAL) |
+| Ver una batalla en directo o reproducir un replay | **FUNCIONA EN `main`**: lo ejerce el golden path de navegador ([TD-009](../roadmap/technical-debt.md#td-009) y [TD-028](../roadmap/technical-debt.md#td-028), cerradas) |
+| Crear un mapa en el editor y usarlo | **FUNCIONA EN `main`**: importar, guardar, reabrir y publicar ([TD-010](../roadmap/technical-debt.md#td-010), cerrada) |
+| Consultar el ranking | **FUNCIONA EN `main`** ([TD-029](../roadmap/technical-debt.md#td-029), cerrada) |
+
+Estado contrastado con `e3bf2fa` (2026-11-02): [current-status.md](../roadmap/current-status.md) y `tests/browser/specs/golden-path.spec.ts`. «En `main`» no es «en producción»: la diferencia está en [current-status.md](../roadmap/current-status.md#diferencia-entre-main-y-producción).
 
 Guía de uso: [docs/user/](../user/index.md).
 
