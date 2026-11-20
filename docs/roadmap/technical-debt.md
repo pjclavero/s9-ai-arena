@@ -654,6 +654,7 @@ Estados posibles:
 ## TD-023 — Administración operativa sólo por SSH
 
 - **Estado:** ABIERTA
+- **Actualización V1 (carril B2):** el primer administrador ya se crea sin SQL con `cli.ts create-admin` (contraseña por stdin o fichero 0600; ver [first-run.md](../operations/first-run.md#3-primer-administrador)); el resto sigue abierto.
 - **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `GET /system/status` no expone backup, restore, readiness ni drift (`apps/api/src/routes/system.ts:49-85`).
 - **Prioridad:** P2
 - **Área:** Administración

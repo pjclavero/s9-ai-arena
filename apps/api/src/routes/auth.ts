@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { hashPassword, verifyPassword } from "../auth/passwords.js";
+import { hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -152,9 +152,8 @@ export function authRoutes(deps: AuthDeps): Router {
     async (req, res) => {
       const { email, password, displayName } = req.body ?? {};
       if (typeof email !== "string" || !EMAIL_RE.test(email)) throw badRequest("email inválido");
-      if (typeof password !== "string" || password.length < 12) {
-        throw badRequest("La contraseña debe tener al menos 12 caracteres");
-      }
+      const violation = passwordPolicyViolation(password);
+      if (violation) throw badRequest(violation);
       if (typeof displayName !== "string" || !displayName || displayName.length > 48) {
         throw badRequest("displayName obligatorio (máx. 48)");
       }
@@ -405,7 +404,7 @@ export function authRoutes(deps: AuthDeps): Router {
     { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" },
     async (req, res) => {
       const { token, newPassword } = req.body ?? {};
-      if (typeof token !== "string" || typeof newPassword !== "string" || newPassword.length < 12) {
+      if (typeof token !== "string" || passwordPolicyViolation(newPassword) !== null) {
         throw badRequest("token y newPassword (≥12) obligatorios");
       }
       const reset = await db("password_resets")
