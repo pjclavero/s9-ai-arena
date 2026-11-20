@@ -139,15 +139,18 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
 
   // N-2: la instalación sin privilegios documentada: quien ejecuta no es el uid del runtime
   // (RUNTIME_UID por defecto 1000). owner_ok sólo debe actuar con root; si no, sería rc=3.
-  it.skipIf(uid === 0)("sin privilegios con RUNTIME_UID distinto del uid de quien ejecuta: instala y es idempotente (N-2)", () => {
-    const otro = String(uid + 1);
-    const r1 = run({ RUNTIME_UID: otro });
-    expect(r1.status, r1.stderr).toBe(0);
-    const t1 = tree();
-    const r2 = run({ RUNTIME_UID: otro });
-    expect(r2.status, r2.stderr).toBe(0);
-    expect(tree()).toEqual(t1);
-  });
+  it.skipIf(uid === 0)(
+    "sin privilegios con RUNTIME_UID distinto del uid de quien ejecuta: instala y es idempotente (N-2)",
+    () => {
+      const otro = String(uid + 1);
+      const r1 = run({ RUNTIME_UID: otro });
+      expect(r1.status, r1.stderr).toBe(0);
+      const t1 = tree();
+      const r2 = run({ RUNTIME_UID: otro });
+      expect(r2.status, r2.stderr).toBe(0);
+      expect(tree()).toEqual(t1);
+    },
+  );
 
   it("S9_SECRETS_DIR: una copia del script fuera del árbol escribe en el directorio indicado", () => {
     const copy = join(base, "copia-de-confianza.sh");
