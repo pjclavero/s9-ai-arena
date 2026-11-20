@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Humo post-despliegue (etapa 8 de la CI y paso 3 de docs/operations/installation.md).
+# Humo post-despliegue (etapa 8 de la CI y paso 3 de docs/despliegue.md).
 # Uso: smoke.sh <base_url>   p. ej. smoke.sh https://arena.seccionnueve.duckdns.org
 set -euo pipefail
 

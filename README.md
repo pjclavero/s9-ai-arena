@@ -41,7 +41,7 @@ Más contexto: [docs/overview/project.md](docs/overview/project.md).
 
 «CI» es la CI obligatoria de `main` (navegador real y contenedores reales en `functional-e2e`).
 «Laboratorio» es una prueba de ciclo completo con API, base de datos y motor reales, pero con bots
-simulados en proceso. Sólo se lista lo que tiene una de esas dos pruebas.
+simulados en proceso. Cada fila dice cuál de las dos pruebas tiene y si la de laboratorio está ya integrada en `main`.
 
 | Área | Estado | Cómo se sabe |
 |---|---|---|
@@ -49,7 +49,7 @@ simulados en proceso. Sólo se lista lo que tiene una de esas dos pruebas.
 | Bots: versiones inmutables, clonado, diff; equipamiento con presupuesto, masa y energía; elegibilidad de versiones | **Funciona** | CI y tests de la API |
 | Batallas 1v1 y por equipos hasta 4 contra 4, con reglas oficiales y copia inmutable de las reglas | **Funciona** | CI (`team-battle-4v4.spec.ts`) |
 | Motor determinista (0.5.0) y replays verificables | **Funciona** | CI (`regression-battles`, replays de oro) |
-| Torneos: todos contra todos, eliminación simple, suizo y **Team Deathmatch por equipos 2v2, 3v3 y 4v4**, con clasificación, Elo y replays | **Funciona** | Laboratorio (PR #317, pendiente de merge); escenarios previos en CI |
+| Torneos todos contra todos, eliminación simple y suizo, y Team Deathmatch por equipos 2v2, 3v3 y 4v4 | **Existe en `main`**. CI: pruebas de ciclo de eliminación simple, de fallo y de inscripción de equipos y 4v4 con contenedores. **Validado en laboratorio (pendiente de integrar, PR #317)**: ciclo completo con clasificación, Elo y replays de los cuatro formatos | CI y laboratorio |
 | Mapas: importar, generar, editor visual, publicar | **Funciona** | CI |
 | Ranking Elo por modo y temporada | **Funciona** | tests de la API y laboratorio |
 | Copias de seguridad (restic), restauración y export/import portable de bots y equipos | **Funciona** | CI (`e2e-backup-sftp`, restauración) |

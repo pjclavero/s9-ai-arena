@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Genera los archivos de secretos del stack (paso 1 de docs/operations/installation.md).
+# Genera los archivos de secretos del stack (paso 1 de docs/despliegue.md).
 # Idempotente: nunca sobrescribe un secreto existente.
 #
 # TD-064 · Este script lo ejecuta root en producción. La versión anterior
@@ -304,7 +304,7 @@ if [ -z "$RES" ]; then
 fi
 harden restic_ssh_known_hosts
 
-# TLS solo en modo standalone: autofirmado si no hay certificados (docs/operations/installation.md).
+# TLS solo en modo standalone: autofirmado si no hay certificados (docs/despliegue.md).
 # En tls/ no se admite ningún enlace: cada nombre o no existe o es regular.
 for n in tls/fullchain.pem tls/privkey.pem; do
   case "$(lkind "$n")" in absent|file) ;; *) die "$n existe y no es un fichero regular" ;; esac

@@ -18,7 +18,7 @@ Hay dos planos y no se mezclan: lo que contiene `main` y lo que corre en producc
 ```
 MAIN_SHA:        80f4952d732a7bdc5ad2786590e3ce14dc998577  (origin/main, merge del PR #309)
 REVISADO:        2026-11-20
-CÓDIGO:          main protegida; CI de main = 31 check-runs, 30 success + 1 neutral, 0 pendientes
+CÓDIGO:          main protegida; foto fija: CI de 80f4952 el 2026-11-20 = 31 check-runs, 30 success + 1 neutral
 DESPLEGADO:      8f380eb (reinstalación del 19-nov-2026, según los informes de migración; el repositorio no puede comprobarlo)
 MAIN VS PROD:    main lleva 36 commits por delante de lo desplegado (#169, #303, #304, #309); sólo #169 y #309 tocan el producto
 MOTOR / API:     motor 0.5.0 · contrato OpenAPI 0.25.0 (106 operaciones) · migraciones 001–022
@@ -43,7 +43,7 @@ P3 CONOCIDOS:    19 P3 y 4 P4 abiertos en el registro (ver technical-debt.md)
 
 | Plano | Estado | Cómo se sabe |
 |---|---|---|
-| `main` | `80f4952`. Protegida: cuatro checks obligatorios (`semaforo`, `functional-e2e / golden`, `functional-e2e / docker-e2e`, `functional-e2e / container-proxy-e2e`), también para administradores. CI del commit: 31 check-runs, 30 `success` y 1 `neutral`, ninguno pendiente | `gh api repos/pjclavero/s9-ai-arena/commits/80f4952d732a7bdc5ad2786590e3ce14dc998577/check-runs --paginate` (2026-11-20) |
+| `main` | `80f4952`. Protegida: cuatro checks obligatorios (`semaforo`, `functional-e2e / golden`, `functional-e2e / docker-e2e`, `functional-e2e / container-proxy-e2e`), también para administradores. CI del commit (foto fija del 2026-11-20, sin recontar después): 31 check-runs, 30 `success` y 1 `neutral`, ninguno pendiente | `gh api repos/pjclavero/s9-ai-arena/commits/80f4952d732a7bdc5ad2786590e3ce14dc998577/check-runs --paginate` (2026-11-20) |
 | Producción | Instalación nueva del 19-nov-2026 sobre `8f380eb` (motor 0.5.0, migraciones hasta la 022), con el streaming desactivado. Ese día se verificó: 13 contenedores sanos, backup y restauración reales, import de 37 bots, una batalla con replay válido, un torneo individual, un torneo por equipos 2v2, la cancelación y las comprobaciones de propiedad y de mínimo de inscritos (ver [Verificación](#verificación)). **No se ha vuelto a medir desde entonces**: la versión que corre hoy es «no verificado» | informes de migración MIG6, MIG12 y MIG16 del 2026-11-19, no versionados en el repositorio |
 
 ## Diferencia entre main y producción
@@ -60,20 +60,20 @@ Qué hay en PR abiertos (y por tanto **no** está en `main`) se lista en [Trabaj
 
 ## Estado por área y fase
 
-Columnas: **I** = implementado, **M** = integrado en `main`, **P** = probado en CI, **L** = validado en laboratorio, **D** = desplegado, **V** = verificado en producción. «sí» siempre lleva evidencia; «—» = no aplica o no; «no verificado» = no hay evidencia.
+Columnas: **I** = implementado, **M** = integrado en `main`, **P** = probado en CI, **L** = validado en laboratorio (si lleva «#317», la prueba vive en un PR abierto y no está integrada), **D** = desplegado, **V** = verificado en producción. «sí» siempre lleva evidencia; «—» = no aplica o no; «no verificado» = no hay evidencia.
 
 | Área | I | M | P | L | D | V | Evidencia |
 |---|---|---|---|---|---|---|---|
 | Recorrido del jugador (cuenta, bot, build en sandbox, publicación, batalla con artefacto firmado, visor, replay) | sí | sí | sí | — | sí | batalla y replay: sí; resto no verificado | `tests/browser/specs/golden-path.spec.ts` (CI); informe MIG12 |
-| Batallas 1v1 y por equipos hasta 4v4 | sí | sí | sí | sí | sí | 1v1: sí (replay `valid=true`); 4v4: no verificado | `team-battle-4v4.spec.ts` (CI); MIG12 |
+| Batallas 1v1 y por equipos hasta 4v4 | sí | sí | sí | sí (pendiente de integrar, #317) | sí | 1v1: sí (replay `valid=true`); 4v4: no verificado | `team-battle-4v4.spec.ts` (CI); MIG12 |
 | Motor 0.5.0 y replays | sí | sí | sí | — | sí | sí (replay grabado con 0.5.0) | `regression-battles` (CI); MIG12 |
-| Torneo todos contra todos | sí | sí | parcial | sí | sí | sí (1 partido, Elo actualizado) | `tournament-e2e.test.ts`; ciclo completo en PR #317 (laboratorio); MIG12 |
-| Torneo eliminación simple y suizo | sí | sí | parcial | sí | sí | no verificado | PR #317 (laboratorio) |
-| Torneo Team Deathmatch por equipos 2v2 | sí | sí | parcial | sí | sí | sí (finished, Elo actualizado) | PR #317; MIG12. El selector web corregido (#309) no está desplegado |
-| Torneo Team Deathmatch 3v3 y 4v4 | sí | sí | parcial (4v4 en navegador) | sí | sí | no verificado | `team-battle-4v4.spec.ts`; PR #317 |
+| Torneo todos contra todos | sí | sí | parcial | sí (pendiente de integrar, #317) | sí | sí (1 partido, Elo actualizado) | `tournament-e2e.test.ts`; ciclo completo en PR #317 (laboratorio); MIG12 |
+| Torneo eliminación simple y suizo | sí | sí | parcial | sí (pendiente de integrar, #317) | sí | no verificado | PR #317 (laboratorio) |
+| Torneo Team Deathmatch por equipos 2v2 | sí | sí | parcial | sí (pendiente de integrar, #317) | sí | sí (finished, Elo actualizado) | PR #317; MIG12. El selector web corregido (#309) no está desplegado |
+| Torneo Team Deathmatch 3v3 y 4v4 | sí | sí | parcial (4v4 en navegador) | sí (pendiente de integrar, #317) | sí | no verificado | `team-battle-4v4.spec.ts`; PR #317 |
 | Doble eliminación y liga | sí | sí | sólo generador | — | sí | no verificado | `apps/tournament-worker/src/formats.test.ts` |
-| Torneos CTF y control de zona | sí (acepta el modo) | sí | — | **falla** | sí | no verificado | PR #317 (`v1-tournament-ctf-zone.e2e.test.ts`): la batalla no arranca. **Fuera de V1** |
-| Cancelar torneo; propiedad; mínimo 2 inscritos | sí | sí | sí | sí | sí | sí (200, 403 y 409) | `tournament-cancel.test.ts`; MIG12 |
+| Torneos CTF y control de zona | sí (acepta el modo) | sí | — | **falla** (pendiente de integrar, #317) | sí | no verificado | PR #317 (`v1-tournament-ctf-zone.e2e.test.ts`): la batalla no arranca. **Fuera de V1** |
+| Cancelar torneo; propiedad; mínimo 2 inscritos | sí | sí | sí | — | sí | sí (200, 403 y 409) | `tournament-cancel.test.ts`; MIG12 |
 | Copias, restauración y export portable | sí | sí | sí | — | sí | sí (restauración: 41 de 41 tablas idénticas; import: 37 bots, idempotente) | CI (`e2e-backup-sftp`); MIG3, MIG12, MIG16 |
 | Ajustes de runtime del acceso público | sí | sí | sí | — | sí | no verificado | `mg-runtime-settings.test.ts`, `mg-runtime-failclosed.test.ts` |
 | Espectador y replays públicos | sí | sí | sí | — | sí (apagados) | no verificado | `vis-broadcast.spec.ts` |

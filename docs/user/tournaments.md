@@ -6,7 +6,7 @@ Un torneo enfrenta a los bots inscritos según un **formato** (liga, eliminatori
 
 1. Un **organizador** crea el torneo con su formato y su modo. Nace con las **inscripciones abiertas**.
 2. El dueño de cada bot lo **inscribe** con una de sus versiones publicadas y elegibles (con su equipamiento).
-3. Para **cerrar las inscripciones** hacen falta **al menos 2 inscritos** (2 equipos, en un torneo por equipos); con menos, el cierre se rechaza con `not_enough_participants`. Al cerrarlas, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
+3. Para **cerrar las inscripciones** hacen falta **al menos 2 inscritos** (2 equipos, en un torneo por equipos); con menos, la web responde «Un torneo necesita al menos 2 inscritos para cerrar inscripciones» (o, en uno por equipos, que necesita al menos 2 equipos con bots) y no cierra. Al cerrarlas, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
 4. Cada batalla terminada actualiza el rating de sus bots. Al acabar el último enfrentamiento, el torneo termina.
 
 Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, en juego, terminado o cancelado. Cancelar un torneo **no borra lo ya jugado**: sus batallas oficiales terminadas siguen contando en el [ranking](rankings.md), salvo las que se hayan anulado. Un torneo en borrador no cuenta nada, e inscribirse no te hace aparecer en el ranking hasta que disputes un enfrentamiento.
