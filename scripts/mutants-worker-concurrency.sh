@@ -6,7 +6,9 @@
 set -u
 cd "$(dirname "$0")/.."
 D=apps/tournament-worker/src
-FILES="$D/concurrency.test.ts $D/load-config.test.ts $D/worker-load.test.ts"
+FILES="$D/concurrency.test.ts $D/worker-load.test.ts"
+# load-config.test.ts usa node:module.stripTypeScriptTypes (Node >= 22.15): sólo si el nodo lo tiene.
+if node -e 'process.exit(typeof require("node:module").stripTypeScriptTypes==="function"?0:1)'; then FILES="$FILES $D/load-config.test.ts"; else echo "AVISO: Node sin stripTypeScriptTypes; load-config.test.ts fuera (lo cubre la CI)"; fi
 export NO_COLOR=1 FORCE_COLOR=0
 RUN="npx vitest run $FILES --reporter=verbose --maxWorkers=1"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "árbol sucio"; exit 2; }
