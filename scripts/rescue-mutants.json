@@ -1,0 +1,126 @@
+{
+  "_doc": "Mutantes de los tests rescatados de los PR de revisión antiguos (B3, 2026-11). Cada entrada: un cambio de UNA ocurrencia exacta en código de producto (`from` -> `to`), el test candidato que debe morir y el test concreto (killedBy) que lo mata. `controls` son tests ya existentes en main que se ejecutan con el mismo mutante para medir si el candidato aporta algo propio. kind=fix-flip: el 'mutante' es la REPARACIÓN de un defecto vigente y el test (it.fails) debe ponerse rojo al repararlo.",
+  "mutants": [
+    {
+      "id": "M01-onkill-observer",
+      "pr": 192,
+      "test": "apps/arena-engine/tests/re-review-4v4-onkill-observer.test.ts",
+      "file": "apps/arena-engine/src/replay.ts",
+      "from": "      original(victim, killerTeam, ctx);\n",
+      "to": "",
+      "killedBy": "TDM 4v4 ácido+minas+fuego amigo",
+      "controls": ["apps/replay-service/tests/fix-4v4-kills-score.test.ts", "apps/arena-engine/tests/mode-score-poisoned-team.test.ts"]
+    },
+    {
+      "id": "M02-demo-seed-historic-revision",
+      "pr": 194,
+      "test": "apps/api/src/loadout-ammo.review.test.ts",
+      "file": "apps/api/src/db/seeds/demo-teams.ts",
+      "from": "      loadout = undefined;\n",
+      "to": "",
+      "killedBy": "no reutiliza una revisión histórica inválida",
+      "controls": ["apps/api/src/db/demo-teams.test.ts"]
+    },
+    {
+      "id": "M03-ammo-validator-skip-weapons",
+      "pr": 194,
+      "test": "packages/module-catalog/validator/ammo-differential.review.test.ts",
+      "file": "packages/module-catalog/validator/index.ts",
+      "from": "    if (accepts.length === 0) continue;\n",
+      "to": "    continue;\n",
+      "killedBy": "0 violaciones ⇒ toda arma montada dispara (sin no_ammo)",
+      "controls": ["packages/module-catalog/validator/ammo-compat.test.ts", "apps/api/src/loadout-ammo.test.ts"]
+    },
+    {
+      "id": "M04-participants-canonical-uuid",
+      "pr": 206,
+      "test": "apps/api/src/rules-review-break-2.test.ts",
+      "file": "apps/api/src/services/battle-participants.ts",
+      "from": "    p.botId = canonicalUuid(p.botId); // ELIG · PG acepta MAYÚSCULAS/{llaves}: una sola forma\n",
+      "to": "",
+      "killedBy": "bot propio en MAYÚSCULAS",
+      "controls": ["apps/api/src/elig-review-regressions2.test.ts"]
+    },
+    {
+      "id": "M05-initphysics-poisoned-promise",
+      "pr": 212,
+      "test": "apps/arena-engine/tests/eq6-initphysics-break.test.ts",
+      "file": "apps/arena-engine/src/sim/physics.ts",
+      "from": "    initializing = null; // un fallo (p. ej. checksum) no deja la promesa envenenada\n",
+      "to": "",
+      "killedBy": "",
+      "controls": ["apps/arena-engine/tests/physics-init-concurrent-failure.test.ts", "apps/arena-engine/tests/physics-init-concurrent.test.ts"]
+    },
+    {
+      "id": "M06-custom-rules-unknown-keys",
+      "pr": 219,
+      "test": "packages/game-rules/eq6-custom-break.test.ts",
+      "file": "packages/game-rules/battle-rules.ts",
+      "from": "  for (const k of Object.keys(o)) {\n    if (allowed.includes(k)) continue;\n",
+      "to": "  for (const k of [] as string[]) {\n    if (allowed.includes(k)) continue;\n",
+      "killedBy": "rechaza: física: damageMultiplier",
+      "controls": ["packages/game-rules/battle-rules.test.ts", "packages/game-rules/rules-040.test.ts"]
+    },
+    {
+      "id": "M07-detach-delay",
+      "pr": 219,
+      "test": "apps/api/src/spectate/eq6-detach-delay.test.ts",
+      "file": "apps/tournament-worker/src/engine-executor.ts",
+      "from": "  return baseMs + delayMs;\n",
+      "to": "  return baseMs;\n",
+      "killedBy": "con retardo, el detach del worker espera",
+      "controls": ["apps/tournament-worker/src/rules-snapshot-runner.test.ts"]
+    },
+    {
+      "id": "M08-overtime-technical-limit-winner",
+      "pr": 219,
+      "test": "apps/arena-engine/tests/eq6-overtime-break.test.ts",
+      "file": "apps/arena-engine/src/sim/battle.ts",
+      "from": "      winner: technical ? null : winner,\n",
+      "to": "      winner: technical ? \"draw\" : winner,\n",
+      "killedBy": "sin captura: la salvaguarda técnica detiene",
+      "controls": ["apps/arena-engine/tests/rules-040-engine.test.ts"]
+    },
+    {
+      "id": "M09-cursor-mask-fix-flip",
+      "kind": "fix-flip",
+      "pr": 224,
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "    if (typeof req.query.ownerId === \"string\") q = q.where({ owner_id: req.query.ownerId });\n",
+      "to": "    if (typeof req.query.ownerId === \"string\") {\n      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.query.ownerId)) {\n        throw badRequest(\"ownerId debe ser un uuid\");\n      }\n      q = q.where({ owner_id: req.query.ownerId });\n    }\n",
+      "killedBy": "ownerId no-UUID",
+      "controls": []
+    },
+    {
+      "id": "M10-rating-revert-mark",
+      "pr": 239,
+      "test": "apps/tournament-worker/src/review-229-r2.test.ts",
+      "file": "apps/tournament-worker/src/ratings.ts",
+      "from": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: true });\n",
+      "to": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: false });\n",
+      "killedBy": "V2",
+      "controls": ["apps/tournament-worker/src/ratings.test.ts", "apps/tournament-worker/src/review-eq6-229.test.ts", "apps/tournament-worker/src/standings-season.test.ts"]
+    },
+    {
+      "id": "M11-relay-log-redaction",
+      "pr": 240,
+      "test": "apps/streamer/src/r4-relay-break.test.ts",
+      "file": "apps/streamer/src/config.ts",
+      "from": "    if (typeof v === \"string\") return registry.redact(v);\n",
+      "to": "    if (typeof v === \"string\") return v;\n",
+      "killedBy": "REGRESIÓN · una clave ADMITIDA",
+      "controls": ["apps/streamer/src/eq6b-relay-break.test.ts", "apps/streamer/src/eq6c-relay-break.test.ts", "apps/streamer/src/r3-relay-break.test.ts", "apps/streamer/src/streamer.test.ts"]
+    },
+    {
+      "id": "M12-rollback-named-closed-list",
+      "pr": 248,
+      "test": "apps/api/src/review-244-final.test.ts",
+      "file": "apps/api/src/db/migrations.ts",
+      "from": "  if (!NAMED_ROLLBACK_ALLOWED.includes(name)) {\n",
+      "to": "  if (false) {\n",
+      "killedBy": "(existe pero fuera de la lista) se rechaza sin tocar la BD",
+      "controls": ["apps/api/src/db/review-244-migration.test.ts"]
+    }
+  ]
+}
