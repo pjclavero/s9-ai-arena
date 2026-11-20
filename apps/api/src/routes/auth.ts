@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { hashPassword, verifyPassword } from "../auth/passwords.js";
+import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -19,7 +19,7 @@ import { generateRecoveryCodes, generateTotpSecret, totpUri, verifyTotp } from "
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
 import { rateLimit } from "../middleware/rate-limit.js";
-import type { LoginGuardLike, RateLimiterLike } from "../middleware/shared-rate-limit.js";
+import { SharedFailedLoginGuard, type LoginGuardLike, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { sessionToJson, userToJson } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 
@@ -78,6 +78,12 @@ export interface AuthDeps {
   loginLimiter: RateLimiterLike;
   /** R2.4 (ERR-SEC-08): el refresh también se limita — es un endpoint de credenciales. */
   refreshLimiter: RateLimiterLike;
+  /**
+   * V1-B · guard de fuerza bruta del CAMBIO de contraseña (clave por usuario, no por IP: quien tiene un
+   * access token robado intenta adivinar la contraseña actual). Más estricto que el del login: 5 fallos
+   * ⇒ 15 min de bloqueo. Por defecto, persistente sobre api_usage.
+   */
+  passwordChangeGuard?: LoginGuardLike;
 }
 
 /**
@@ -142,6 +148,7 @@ async function revokeOtherSessions(db: Db, userId: string, keepSessionId: string
 
 export function authRoutes(deps: AuthDeps): Router {
   const { db, loginGuard } = deps;
+  const passwordChangeGuard = deps.passwordChangeGuard ?? new SharedFailedLoginGuard(db, 5);
   const router = Router();
 
   // ------------------------------------------------------------- register
@@ -379,6 +386,68 @@ export function authRoutes(deps: AuthDeps): Router {
     });
     res.status(204).end();
   });
+
+  // ------------------------------------------------- cambio de contraseña
+  // V1-B · Usuario AUTENTICADO que conoce su contraseña actual. Exige la actual (y TOTP/código de
+  // recuperación si hay 2FA: un access token robado no basta), aplica la política (≥12, distinta de la
+  // actual), limita los intentos fallidos por usuario (429) y revoca TODAS las demás sesiones
+  // (la actual sigue viva; sus refresh tokens mueren con la sesión). No toca el 2FA.
+  defineExtension(
+    router,
+    { operationId: "changePassword", method: "post", path: "/auth/password", minRole: "user" },
+    async (req, res) => {
+      const { currentPassword, newPassword, totp } = req.body ?? {};
+      if (typeof currentPassword !== "string" || !currentPassword) {
+        throw badRequest("currentPassword obligatorio");
+      }
+      if (typeof newPassword !== "string" || newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw badRequest(`La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
+      }
+      const userId = req.auth!.userId;
+      const key = `pwchange|${userId}`;
+      if (await passwordChangeGuard.isBlocked(key)) {
+        throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
+      }
+      const user = await db("users").where({ id: userId }).first();
+      if (!user) throw unauthorized();
+      try {
+        await requireStrongReauth(db, user, { password: currentPassword, totp });
+      } catch (e) {
+        const blocked = await passwordChangeGuard.recordFailure(key);
+        if (blocked) {
+          await audit(db, {
+            actorId: userId,
+            action: "auth.password.change_blocked",
+            target: `user:${userId}`,
+            detail: { ip: req.ip, reason: "brute_force" },
+            correlationId: req.correlationId,
+          });
+        }
+        throw e;
+      }
+      if (newPassword === currentPassword) {
+        throw badRequest("La nueva contraseña debe ser distinta de la actual");
+      }
+      await passwordChangeGuard.recordSuccess(key);
+
+      const newHash = await hashPassword(newPassword);
+      const revoked = await db.transaction(async (trx) => {
+        await trx("users").where({ id: userId }).update({ password_hash: newHash, updated_at: trx.fn.now() });
+        // Un token de recuperación anterior no debe poder deshacer este cambio.
+        await trx("password_resets").where({ user_id: userId }).whereNull("used_at").update({ used_at: trx.fn.now() });
+        return revokeOtherSessions(trx, userId, req.auth!.sessionId);
+      });
+      await audit(db, {
+        actorId: userId,
+        action: "auth.password.changed",
+        target: `user:${userId}`,
+        detail: { otherSessionsRevoked: revoked },
+        correlationId: req.correlationId,
+      });
+      res.status(204).end();
+    },
+    rateLimit(deps.loginLimiter, "password-change"),
+  );
 
   // ------------------------------------- recuperación de cuenta (extensión)
   defineExtension(

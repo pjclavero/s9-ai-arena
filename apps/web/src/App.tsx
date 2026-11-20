@@ -32,6 +32,7 @@ import { LivePage } from "./pages/LivePage.js";
 import { RankingPage } from "./pages/RankingPage.js"; // N6 · #/ranking, solo lectura (GET /standings, público)
 import { ReplayPage } from "./pages/ReplayPage.js";
 import { TournamentsPage } from "./pages/TournamentsPage.js";
+import { AccountPage } from "./pages/AccountPage.js"; // V1-B · #/account (cambio de contraseña)
 import { TournamentDetailPage } from "./pages/TournamentDetailPage.js";
 import { BracketPage } from "./pages/BracketPage.js"; // R12 (slice 1, solo lectura): #/tournaments/:id/bracket
 import { BattlesPage } from "./pages/BattlesPage.js";
@@ -139,6 +140,7 @@ export type StaticPanelRoute =
   | "audit"
   | "roles"
   | "streaming"
+  | "account"
   | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
@@ -155,6 +157,8 @@ export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; patter
   { name: "roles", pattern: /^#\/roles(?:[/?].*)?$/ },
   // EQ5b · Administración → Streaming (`?battle=<id>` / `?tournament=<id>` preselecciona).
   { name: "streaming", pattern: /^#\/streaming(?:[/?].*)?$/ },
+  // V1-B · Mi cuenta (cambio de contraseña).
+  { name: "account", pattern: /^#\/account\/?(?:\?.*)?$/ },
   { name: "admin", pattern: /^#\/admin(?:[/?].*)?$/ },
 ];
 
@@ -375,6 +379,8 @@ export function App() {
         return admin(<RolesPage me={me!} />);
       case "streaming":
         return admin(<StreamingPage me={me!} route={route} />);
+      case "account":
+        return <AccountPage />;
       case "admin":
         return admin(<AdminPage me={me!} />);
       case "bots":
@@ -509,6 +515,7 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
             <span className="nav-user" data-testid="nav-user" style={{ marginLeft: "auto" }}>
               {me.displayName} ({me.roles.join(", ")})
             </span>
+            {link("#/account", "Mi cuenta", "nav-account")}
             <button type="button" data-testid="logout" onClick={props.onLogout}>
               Salir
             </button>
