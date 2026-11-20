@@ -147,7 +147,7 @@ Ningún secreto va en `.env`.
 `latest` o con un formato que la CI no publica, esta instalación no puede continuar:
 
 ```bash
-node infrastructure/scripts/check-env.mjs --env-file infrastructure/.env
+node infrastructure/scripts/check-env.mjs --file infrastructure/.env
 # rc 0 = etiquetas válidas; rc 1 = vacía/latest/inválida (nombra la variable); rc 2 = no se pudo leer el fichero
 ```
 

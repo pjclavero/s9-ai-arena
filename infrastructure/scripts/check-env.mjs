@@ -16,7 +16,10 @@
  * Como en Compose, una variable ya exportada en el entorno del shell gana a
  * la del fichero; se valida el valor EFECTIVO.
  *
- *   node infrastructure/scripts/check-env.mjs [--env-file infrastructure/.env]
+ *   node infrastructure/scripts/check-env.mjs [--file infrastructure/.env]
+ *
+ * (El flag NO se llama `--env-file`: Node lo interpreta él mismo, también tras el
+ * nombre del script, y sale con rc=9 si el fichero no existe.)
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -63,7 +66,7 @@ export function validarEtiquetas(envFichero, envShell = {}) {
 }
 
 function main(argv) {
-  const i = argv.indexOf("--env-file");
+  const i = argv.indexOf("--file");
   const ruta = i >= 0 ? argv[i + 1] : "infrastructure/.env";
   let texto;
   try {

@@ -24,7 +24,7 @@ function correr(contenido: string | null, env: Record<string, string> = {}) {
     if (contenido !== null) writeFileSync(f, contenido);
     const limpio = { ...process.env } as Record<string, string | undefined>;
     for (const k of Object.keys(limpio)) if (/(^|_)TAG$/.test(k)) delete limpio[k];
-    const r = spawnSync("node", [SCRIPT, "--env-file", f], { encoding: "utf8", env: { ...limpio, ...env } });
+    const r = spawnSync("node", [SCRIPT, "--file", f], { encoding: "utf8", env: { ...limpio, ...env } });
     return { rc: r.status, out: r.stdout + r.stderr };
   } finally {
     rmSync(dir, { recursive: true, force: true });

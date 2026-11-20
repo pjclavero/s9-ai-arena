@@ -34,7 +34,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await h.db("audit_log").del();
   await h.db("user_roles").del();
   await h.db("users").del();
 });
@@ -80,7 +79,8 @@ describe("createAdmin (servicio)", () => {
   });
 
   it("con allowAdditionalAdmin crea el segundo y lo AUDITA como adicional, sin la contraseña", async () => {
-    await createAdmin(h.db, { email: "uno@ejemplo.test", displayName: "Uno", password: PW });
+    // audit_log es de sólo inserción (no se vacía entre tests): se filtra por el objetivo.
+    const uno = await createAdmin(h.db, { email: "uno@ejemplo.test", displayName: "Uno", password: PW });
     const r = await createAdmin(h.db, {
       email: "dos@ejemplo.test",
       displayName: "Dos",
@@ -88,8 +88,13 @@ describe("createAdmin (servicio)", () => {
       allowAdditionalAdmin: true,
     });
     expect(r.additional).toBe(true);
-    const rows = await h.db("audit_log").where({ action: "admin.create_cli" }).orderBy("id");
+    const rows = await h
+      .db("audit_log")
+      .where({ action: "admin.create_cli" })
+      .whereIn("target", [`user:${uno.userId}`, `user:${r.userId}`])
+      .orderBy("id");
     expect(rows).toHaveLength(2);
+    expect(rows[0].detail.additional).toBe(false);
     expect(rows[1].detail.additional).toBe(true);
     expect(JSON.stringify(rows)).not.toContain(PW);
   });
