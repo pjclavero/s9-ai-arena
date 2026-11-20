@@ -76,7 +76,7 @@ const MUTANTES = [
   {
     id: "M8-acepta-password-en-argv",
     fichero: "apps/api/src/db/password-input.ts",
-    de: '/^--?password(=|$)/.test(a) || a === "-p"',
+    de: '/^--?password(=|$)/.test(a) || /^-p/.test(a)',
     a: "false",
     test: T_DB,
     nombre: "rechaza TODA forma de contraseña en argv",
