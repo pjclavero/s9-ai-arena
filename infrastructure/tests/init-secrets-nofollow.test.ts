@@ -137,6 +137,18 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     expect(tree()).toEqual(before);
   });
 
+  // N-2: la instalación sin privilegios documentada: quien ejecuta no es el uid del runtime
+  // (RUNTIME_UID por defecto 1000). owner_ok sólo debe actuar con root; si no, sería rc=3.
+  it.skipIf(uid === 0)("sin privilegios con RUNTIME_UID distinto del uid de quien ejecuta: instala y es idempotente (N-2)", () => {
+    const otro = String(uid + 1);
+    const r1 = run({ RUNTIME_UID: otro });
+    expect(r1.status, r1.stderr).toBe(0);
+    const t1 = tree();
+    const r2 = run({ RUNTIME_UID: otro });
+    expect(r2.status, r2.stderr).toBe(0);
+    expect(tree()).toEqual(t1);
+  });
+
   it("S9_SECRETS_DIR: una copia del script fuera del árbol escribe en el directorio indicado", () => {
     const copy = join(base, "copia-de-confianza.sh");
     copyFileSync(SUT, copy);
@@ -500,5 +512,20 @@ describe.skipIf(!userns)("TD-064 · como root (propietarios reales)", () => {
     expect(r.rc).not.toBe(0);
     expect(r.content).toBe("conocido");
     expect(r.owner).toBe("1002");
+  });
+
+  it("ADOPT con tls/fullchain.pem y tls/privkey.pem regulares plantados por otro usuario: no se adoptan (N-1)", () => {
+    const r = scenarios()["R18-adopt-tls-foreign-regular"];
+    expect(r.rc).not.toBe(0);
+    expect(r.privkey).toBe("atacante");
+    expect(r.owner).toBe("1002");
+    expect(r.mode).toBe("644");
+  });
+
+  it("enlace admitido (de root) cuyo destino es un regular de otro uid: se rechaza y el destino no se toca (N-3)", () => {
+    const r = scenarios()["R19-link-target-foreign-owner"];
+    expect(r.rc).not.toBe(0);
+    expect(r.target_owner).toBe("1002");
+    expect(r.target_mode).toBe("644");
   });
 });

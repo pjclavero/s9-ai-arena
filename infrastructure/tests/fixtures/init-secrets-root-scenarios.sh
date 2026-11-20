@@ -121,5 +121,15 @@ rc=$(run); printf '{"id":"R16-link-foreign-owner","rc":%s,"target_mode":"%s"}\n'
 mk; printf 'conocido\n' > "$(S)/jwt_secret.txt"; chown $APPUID:$APPUID "$(S)/jwt_secret.txt"
 rc=$(run S9_SECRETS_ADOPT=1); printf '{"id":"R17-adopt-foreign-regular","rc":%s,"content":"%s","owner":"%s"}\n' "$rc" "$(cat "$(S)/jwt_secret.txt")" "$(stat -c %u "$(S)/jwt_secret.txt")"
 
+# R18 (N-1): ADOPT con tls/fullchain.pem y tls/privkey.pem REGULARES plantados por otro usuario => se rechaza
+mk; mkdir "$(S)/tls"; chown $APPUID:$APPUID "$(S)/tls"
+for f in fullchain.pem privkey.pem; do printf 'atacante\n' > "$(S)/tls/$f"; chown $APPUID:$APPUID "$(S)/tls/$f"; chmod 0644 "$(S)/tls/$f"; done
+rc=$(run S9_SECRETS_ADOPT=1)
+printf '{"id":"R18-adopt-tls-foreign-regular","rc":%s,"privkey":"%s","owner":"%s","mode":"%s"}\n' "$rc" "$(cat "$(S)/tls/privkey.pem")" "$(stat -c %u "$(S)/tls/privkey.pem")" "$(stat -c %a "$(S)/tls/privkey.pem")"
+# R19 (N-3): enlace admitido (de root) cuyo DESTINO es un regular de otro uid => se rechaza y no se toca
+mk; chown 0:0 "$(S)"; printf 'ajeno\n' > "$(S)/s9b"; chown $APPUID:$APPUID "$(S)/s9b"; chmod 0644 "$(S)/s9b"
+ln -s s9b "$(S)/restic_ssh_key"; chown -h 0:0 "$(S)/restic_ssh_key"
+rc=$(run); printf '{"id":"R19-link-target-foreign-owner","rc":%s,"target_owner":"%s","target_mode":"%s"}\n' "$rc" "$(stat -c %u "$(S)/s9b")" "$(stat -c %a "$(S)/s9b")"
+
 # Limpieza DENTRO del namespace o contenedor: fuera, los ficheros de subuids no se pueden borrar.
 rm -rf "$BASE/t" "$BASE/victim" "$BASE/out.log" "$BASE/rv"

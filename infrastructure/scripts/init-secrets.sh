@@ -308,6 +308,9 @@ harden restic_ssh_known_hosts
 # En tls/ no se admite ningún enlace: cada nombre o no existe o es regular.
 for n in tls/fullchain.pem tls/privkey.pem; do
   case "$(lkind "$n")" in absent|file) ;; *) die "$n existe y no es un fichero regular" ;; esac
+  # Un regular preexistente en tls/ obedece la misma regla que el resto (N-1): con root,
+  # sólo de root o del uid del runtime; si no, no se adopta.
+  if [ "$(lkind "$n")" = file ]; then owner_ok "$n"; fi
 done
 if [ "$(lkind tls/fullchain.pem)" = absent ]; then
   if command -v openssl >/dev/null; then

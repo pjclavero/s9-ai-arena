@@ -171,5 +171,17 @@ equiv M5a "(defensa en profundidad) sin chequeo de tipo de secrets/; lo cubre la
 mutate M25 'mv -fT -- "$tmp" "${RES:-$n}"' 'if [ "$n" = stream_secrets_private.pem ]; then cat -- "$tmp" > "${RES:-$n}"; rm -f -- "$tmp"; else mv -fT -- "$tmp" "${RES:-$n}"; fi' || exit 2
 check M25 "stream privada escrita en el sitio" "regular de root con un descriptor abierto antes por el atacante"
 
+# ---- ronda 3 (revisión del PR #169): N-1, N-2, N-3.
+# M31 · (N-1) owner_ok no se aplica a los regulares de tls/
+mutate M31 'if [ "$(lkind "$n")" = file ]; then owner_ok "$n"; fi' ':' || exit 2
+check M31 "owner_ok ausente en tls/" "no se adoptan (N-1)"
+# M32 · (N-2, revisor N2) owner_ok actúa también sin privilegios (se quita el guard de ME=0)
+mutate M32 '[ "$ME" = 0 ] || return 0' ':' || exit 2
+check M32 "owner_ok sin guard de root" "sin privilegios con RUNTIME_UID distinto"
+# M33 · (N-3, revisor N1) owner_ok ausente en el destino de un enlace admitido
+mutate M33 '      owner_ok "$t"
+' '' || exit 2
+check M33 "owner_ok ausente en el destino del enlace" "destino es un regular de otro uid (N-3)"
+
 echo "== resultado: $([ $fail = 0 ] && echo TODOS_MUERTOS || echo HAY_SUPERVIVIENTES)"
 exit $fail
