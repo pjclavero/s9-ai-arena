@@ -66,7 +66,7 @@ bash infrastructure/scripts/init-secrets.sh
 Genera, sólo si no existen, en `infrastructure/secrets/` (permisos `0400`, dueño
 `RUNTIME_UID:RUNTIME_GID`, por defecto `1000:1000`): `postgres_password.txt`, `jwt_secret.txt`,
 `grafana_admin_password.txt`, `restic_password.txt`, `arena_engine_internal_secret.txt`,
-`replay_ingest_secret.txt`, `artifact_signing_key.pem` (ed25519), `restic_ssh_key` (+ `.pub`),
+`replay_ingest_secret.txt`, `artifact_signing_key.pem` (ed25519), el par `stream_secrets_*.pem` (RSA-3072), `restic_ssh_key` (+ `.pub`),
 `stream_key.txt` y `restic_ssh_known_hosts` vacíos, y un TLS autofirmado en `tls/`.
 
 Después:
@@ -80,6 +80,36 @@ Después:
    los certificados reales.
 
 Nunca imprimas los ficheros de secretos en pantalla ni los pases por la línea de comandos.
+
+### Ejecutar `init-secrets.sh` como root: `S9_SECRETS_ADOPT` y residuales
+
+El script no sigue enlaces simbólicos ni escribe a través de ellos (cada secreto se crea en un
+temporal exclusivo y se instala con `rename`). Con **root**, además:
+
+- **Directorio ajeno: se niega.** Si `infrastructure/secrets/` (o `tls/`) pertenece a otro usuario,
+  root aborta con rc 3 y no escribe nada: un usuario sin privilegios podría haber plantado enlaces.
+- **`S9_SECRETS_ADOPT=1`** hace que root se apropie del directorio (`chown root:root`,
+  `chmod 0755`) y siga. Úsalo **sólo** cuando el directorio es de un usuario de despliegue legítimo
+  (p. ej. el que lo creó en la instalación) y **tras inspeccionarlo en sólo lectura**:
+
+  ```bash
+  find -P infrastructure/secrets -mindepth 1 \( -type l -o -links +1 -o -name '*.tmp' -o -name '.init-secrets.*' \)
+  ls -ln infrastructure/secrets infrastructure/secrets/tls
+  ```
+
+  Esperado: sin resultados en el `find` (salvo el enlace legítimo `restic_ssh_key`, si lo usas) y
+  ficheros con dueño `root` o `RUNTIME_UID`. La apropiación **no valida el contenido**: un fichero
+  regular con un secreto conocido y dueño del runtime (1000) se acepta como «ya existe». Por eso
+  root rechaza los regulares preexistentes cuyo dueño no sea root ni `RUNTIME_UID`, y los que
+  tengan más de un enlace duro; pero si el atacante es el propio uid del runtime, la única
+  defensa es la inspección previa.
+- Como alternativa a `S9_SECRETS_ADOPT`, corrige a mano (`chown root:root`, `chmod 0755`) tras inspeccionar.
+- **Residual aceptado:** los componentes **padre** de `secrets/` (p. ej. `infrastructure/`) no se
+  validan; quien controle un padre puede sustituir `secrets/` por un enlace. El script lo detecta en
+  la ventana entre la comprobación y la entrada (compara dispositivo:inodo tras `cd -P`), pero no
+  puede impedir que alguien con control del padre haga que root escriba ficheros de nombre fijo en
+  otro directorio **si el cambio ocurre antes de que el script empiece**. Mantén los padres de
+  `secrets/` en propiedad de root o del usuario de despliegue.
 
 ## 4. Elegir la versión de las imágenes
 
@@ -263,7 +293,7 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 | Afirmación | Estado | Evidencia |
 |---|---|---|
 | Pasos 3, 5, 6, 7, 8, 10 ejecutados en un entorno aislado (Docker rootless, proyecto distinto, puerto 18080, imágenes `sha-27f70bb…`) | RUNTIME_VERIFIED | script de verificación de la consolidación (no versionado): `bootstrap` ×2 rc=0, gateway `/healthz` ok, `/api/v1/healthz` JSON, registro 201, promoción SQL, login, `pg_roles` = sólo `arena` |
-| `init-secrets.sh` genera esos ficheros con `0400` y dueño 1000:1000 | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/scripts/init-secrets.sh:28-107` |
+| `init-secrets.sh` genera esos ficheros con `0400` y dueño 1000:1000 | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/scripts/init-secrets.sh` (función `gen`/`harden_file`), `infrastructure/tests/init-secrets-nofollow.test.ts` |
 | La CI etiqueta `sha-<commit>` y `v<version ?? 0.0.0>`; no `latest` | CODE_VERIFIED + RUNTIME_VERIFIED | `.github/workflows/ci.yml:362,375-377`; GHCR: `latest` 404, `sha-27f70bb…` 200 en los 11 repos de imagen |
 | `.env.example` trae `TAG=latest` y `BACKUP_TAG=latest` | CODE_VERIFIED | `infrastructure/.env.example` sección Imágenes |
 | La API no migra al arrancar; `bootstrap` = migrate + seedContent sin usuarios | CODE_VERIFIED | `apps/api/src/server.ts:15-58`; `apps/api/src/db/cli.ts:56-59` |

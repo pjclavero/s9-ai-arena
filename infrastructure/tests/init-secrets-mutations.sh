@@ -14,8 +14,16 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 WORKERS=${MAXWORKERS:-1}
 
+# ROOT_CONTAINER=1: los escenarios de root se ejecutan con root REAL en un contenedor
+# desechable sin red (VM111 no tiene user namespaces) y el test consume su salida.
+# Sin eso, los mutantes que sólo mueren con root real sobreviven en VM111 (test omitido).
 runtest() { # $1 = script bajo prueba -> JSON en $2
-  (cd "$REPO" && INIT_SECRETS_UNDER_TEST="$1" npx vitest run "$TEST" --maxWorkers="$WORKERS" \
+  local rootenv=()
+  if [ "${ROOT_CONTAINER:-0}" = 1 ]; then
+    bash "$REPO/infrastructure/tests/init-secrets-root-container.sh" "$1" "$2.root" >/dev/null
+    rootenv=(INIT_SECRETS_ROOT_OUTPUT="$2.root")
+  fi
+  (cd "$REPO" && env "${rootenv[@]}" INIT_SECRETS_UNDER_TEST="$1" npx vitest run "$TEST" --maxWorkers="$WORKERS" \
     --reporter=json --outputFile="$2" >/dev/null 2>&1)
   echo $?
 }
@@ -100,6 +108,45 @@ check M12 "ADOPT sin chown" "se niega en un dir ajeno"
 # M13 · un enlace admitido deja de respetarse (se rechaza todo enlace)
 mutate M13 '[ "$lo" = 0 ] || [ "$lo" = "$ME" ] || die' '[ "$lo" = 9999 ] || die' || exit 2
 check M13 "enlace admitido rechazado" "respeta el enlace admitido restic_ssh_key"
+
+# ---- ronda 2 (revisión del PR #169): bloque stream_secrets y defensas secundarias.
+# Los que mueren por root real exigen ROOT_CONTAINER=1 (o un runner con userns).
+# M14 · la privada de stream_secrets se escribe con `-out` al nombre final (sigue enlaces)
+mutate M14 'rsa_keygen_bits:3072 -out "$t"' 'rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem"' || exit 2
+check M14 "stream privada escrita a través del nombre final" "stream_secrets_private.pem como enlace COLGANTE absoluto"
+# M15 · la pública de stream_secrets vuelve al .tmp predecible
+mutate M15 '-in "$SIGN2" -pubout -out "$t" 2>/dev/null; then' '-in "$SIGN2" -pubout -out "$DIR/stream_secrets_public.pem.tmp" 2>/dev/null && cp -f "$DIR/stream_secrets_public.pem.tmp" "$t"; then' || exit 2
+check M15 "stream pública vía .tmp predecible" "stream_secrets_public.pem.tmp -> víctima"
+# M16 · el temporal deja de ser exclusivo (nombre predecible, se trunca lo que haya)
+mutate M16 'newtmp() { mktemp -- "${1:-}.init-secrets.XXXXXX"; }' 'newtmp() { local p="${1:-}.init-secrets.tmp"; cat /dev/null > "$p"; echo "$p"; }' || exit 2
+check M16 "temporal predecible sin O_EXCL" "temporal predecible plantado"
+# M17 · (R1 del revisor) tls/ de otro usuario tolerado
+mutate M17 'trust_dir tls "$DIR/tls"' ':' || exit 2
+check M17 "tls/ sin trust_dir" "con tls/ de otro usuario"
+# M18 · (R2) el directorio raíz no se valida
+mutate M18 'trust_dir . "$DIR"' ':' || exit 2
+check M18 "directorio raíz sin trust_dir" "se niega en un dir ajeno"
+# M19 · (R3) el dueño del enlace admitido no se comprueba
+mutate M19 '[ "$lo" = 0 ] || [ "$lo" = "$ME" ] || die "$n es un enlace de uid $lo (no admitido)"' ':' || exit 2
+check M19 "dueño del enlace sin comprobar" "enlace admitido cuyo dueño es otro uid"
+# M20 · (R5) ADOPT deja el directorio 0777
+mutate M20 'chown -h 0:0 -- "$d"; chmod 0755 -- "$d"' 'chown -h 0:0 -- "$d"; chmod 0777 -- "$d"' || exit 2
+check M20 "ADOPT deja 0777" "carrera: tras apropiarse"
+# M21 · (R9) nlink del destino de un enlace admitido sin comprobar
+mutate M21 '[ "$(stat -c '"'"'%h'"'"' -- "$t")" = 1 ] || die "$t tiene enlaces duros (nlink > 1)"' ':' || exit 2
+check M21 "nlink del destino sin comprobar" "enlace admitido cuyo destino es un hardlink de la víctima"
+# M22 · (R14) vuelve el .tmp predecible de artifact_verify_key
+mutate M22 'if openssl pkey -in "$SIGN" -pubout -out "$t" 2>/dev/null; then' 'if openssl pkey -in "$SIGN" -pubout -out "$DIR/artifact_verify_key.pem.tmp" 2>/dev/null && cp -f "$DIR/artifact_verify_key.pem.tmp" "$t"; then' || exit 2
+check M22 "artifact_verify_key vía .tmp predecible" "artifact_verify_key.pem.tmp -> víctima"
+# M23 · H3: se adoptan regulares de otro usuario
+mutate M23 '[ "$o" = 0 ] || [ "$o" = "$RUNTIME_UID" ] || die "$1 es de uid' '[ "$o" != x ] || die "$1 es de uid' || exit 2
+check M23 "owner_ok no rechaza ajenos" "ADOPT con un fichero regular plantado por otro usuario"
+# M24 · H4: sin la comprobación de identidad tras cd -P
+mutate M24 '[ "$(dir_id .)" = "$DIR_ID" ] || die' ': || die' || exit 2
+check M24 "sin comprobar identidad tras cd -P" "secrets/ sustituido por un enlace ENTRE la comprobación y la entrada"
+# M25 · la privada de stream se escribe EN EL SITIO si existe (sin rename)
+mutate M25 'mv -fT -- "$tmp" "${RES:-$n}"' 'if [ "$n" = stream_secrets_private.pem ]; then cat -- "$tmp" > "${RES:-$n}"; rm -f -- "$tmp"; else mv -fT -- "$tmp" "${RES:-$n}"; fi' || exit 2
+check M25 "stream privada escrita en el sitio" "regular de root con un descriptor abierto antes por el atacante"
 
 echo "== resultado: $([ $fail = 0 ] && echo TODOS_MUERTOS || echo HAY_SUPERVIVIENTES)"
 exit $fail

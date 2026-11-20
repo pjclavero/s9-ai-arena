@@ -20,6 +20,8 @@
 #   4. Nada se escribe sobre un nombre existente: se escribe en un temporal
 #      nuevo (mktemp, O_EXCL) y se instala con rename(2) (`mv -T`), que
 #      sustituye la entrada de directorio y nunca sigue un enlace.
+#   4b. Con root, un regular preexistente sólo se acepta si es de root o del uid
+#      del runtime (un fichero plantado por otro usuario se rechaza).
 #   5. chown con -h y sólo sobre ficheros ya comprobados como regulares.
 # S9_SECRETS_DIR (absoluta) permite ejecutar una COPIA de confianza del script
 # contra el directorio real sin depender de la ubicación del script.
@@ -82,6 +84,14 @@ trust_dir() {
 
 # Resuelve un nombre del directorio actual al fichero REGULAR sobre el que se
 # opera. Deja el resultado en RES ("" si no existe). Aborta en cualquier otro caso.
+# Cuando ejecuta root, un fichero preexistente sólo se acepta si es de root o del
+# uid del runtime (lo que el script mismo deja): un regular plantado por otro
+# usuario (secreto conocido, descriptor abierto) se rechaza.
+owner_ok() {
+  [ "$ME" = 0 ] || return 0
+  local o; o=$(stat -c '%u' -- "$1")
+  [ "$o" = 0 ] || [ "$o" = "$RUNTIME_UID" ] || die "$1 es de uid $o (ni root ni el uid del runtime $RUNTIME_UID): no se adopta"
+}
 RES=""
 resolve() {
   local n=$1 k t lo
@@ -91,6 +101,7 @@ resolve() {
     absent) return 0 ;;
     file)
       [ "$(stat -c '%h' -- "$n")" = 1 ] || die "$n tiene enlaces duros (nlink > 1)"
+      owner_ok "$n"
       RES=$n; return 0 ;;
     link)
       t=$(readlink -- "$n")
@@ -99,6 +110,7 @@ resolve() {
       [ "$lo" = 0 ] || [ "$lo" = "$ME" ] || die "$n es un enlace de uid $lo (no admitido)"
       [ "$(lkind "$t")" = file ] || die "$n -> $t: el destino no es un fichero regular existente"
       [ "$(stat -c '%h' -- "$t")" = 1 ] || die "$t tiene enlaces duros (nlink > 1)"
+      owner_ok "$t"
       RES=$t; return 0 ;;
     *) die "$n existe y no es un fichero regular (tipo $k)" ;;
   esac
@@ -111,7 +123,7 @@ trap cleanup EXIT
 newtmp() { mktemp -- "${1:-}.init-secrets.XXXXXX"; }  # $1 = "" o "tls/"
 track() { TMPS+=("$1"); }
 
-harden_file() { # sólo sobre ficheros regulares ya comprobados
+harden_file() { # $1 = fichero regular ya comprobado; $2 = "-" para un temporal (sin aviso)
   [ "$(lkind "$1")" = file ] || die "harden: $1 no es un fichero regular"
   # EQ5c (revisión EQ6b, P2-3) · el chown no falla en silencio: si no se puede
   # (sin privilegios) y el dueño no es el uid del runtime, el contenedor no podrá
@@ -120,7 +132,7 @@ harden_file() { # sólo sobre ficheros regulares ya comprobados
   if ! chown -h "$RUNTIME_UID:$RUNTIME_GID" -- "$1" 2>/dev/null; then
     local owner
     owner="$(stat -c %u -- "$1" 2>/dev/null || echo '?')"
-    if [ "$owner" != "$RUNTIME_UID" ]; then
+    if [ "$owner" != "$RUNTIME_UID" ] && [ "${2:-}" != "-" ]; then
       echo "AVISO: no se pudo dar $1 al uid $RUNTIME_UID (dueño actual: $owner); el contenedor no podrá leerlo." \
         "Repite init-secrets.sh con privilegios o ajusta RUNTIME_UID/RUNTIME_GID." >&2
     fi
@@ -137,12 +149,18 @@ install_as() {
 }
 
 # ------------------------------------------------------------- directorio
-case "$(lkind "$DIR")" in
-  absent) mkdir -m 0755 -- "$DIR" ;;
-  dir) ;;
-  *) die "$DIR no es un directorio real (¿enlace?)" ;;
+# Una sola llamada a stat da tipo e identidad (dispositivo:inodo); tras `cd -P` se
+# comprueba que "." es ESE directorio: si el último componente se cambia por un
+# enlace entre ambos pasos, no coincide y se aborta. Los componentes PADRE de
+# $DIR no se validan (residual documentado en docs/operations/installation.md).
+dir_id() { stat -c '%F|%d:%i' -- "$1" 2>/dev/null || echo "absent|"; }
+case "$(dir_id "$DIR")" in
+  absent*) mkdir -m 0755 -- "$DIR" ;;
 esac
+DIR_ID=$(dir_id "$DIR")
+[ "${DIR_ID%%|*}" = directory ] || die "$DIR no es un directorio real (¿enlace?)"
 cd -P -- "$DIR" || die "no se puede entrar en $DIR"
+[ "$(dir_id .)" = "$DIR_ID" ] || die "$DIR cambió entre la comprobación y la entrada (¿carrera?)"
 trust_dir . "$DIR"
 [ "$(lkind tls)" = absent ] && mkdir -m 0755 tls
 trust_dir tls "$DIR/tls"
@@ -154,7 +172,7 @@ gen() {
   else
     local t; t=$(newtmp); track "$t"
     head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 40 > "$t"
-    harden_file "$t"
+    harden_file "$t" -
     install_as "$t" "$1"
     echo "generado:  $1"
   fi
@@ -184,7 +202,7 @@ if [ -z "$RES" ] || [ "$(stat -c '%s' -- "$RES")" -eq 0 ]; then
   if command -v openssl >/dev/null; then
     t=$(newtmp); track "$t"
     openssl genpkey -algorithm ed25519 -out "$t" 2>/dev/null
-    harden_file "$t"
+    harden_file "$t" -
     install_as "$t" artifact_signing_key.pem
     echo "generado:  artifact_signing_key.pem (ed25519)"
   else
@@ -203,7 +221,7 @@ if [ -n "$SIGN" ] && [ "$(stat -c '%s' -- "$SIGN")" -gt 0 ] && command -v openss
   if openssl pkey -in "$SIGN" -pubout -out "$t" 2>/dev/null; then
     resolve artifact_verify_key.pem
     if [ -z "$RES" ] || ! cmp -s -- "$t" "$RES"; then
-      harden_file "$t"
+      harden_file "$t" -
       install_as "$t" artifact_verify_key.pem
       echo "generado:  artifact_verify_key.pem (pública de artifact_signing_key.pem)"
     fi
@@ -215,7 +233,7 @@ resolve artifact_verify_key.pem
 # stream_key es del proveedor (YouTube): placeholder vacío que el operador rellena.
 resolve stream_key.txt
 if [ -z "$RES" ]; then
-  t=$(newtmp); track "$t"; harden_file "$t"; install_as "$t" stream_key.txt
+  t=$(newtmp); track "$t"; harden_file "$t" -; install_as "$t" stream_key.txt
   echo "creado vacío: stream_key.txt (rellenar con la clave de YouTube si se usa streaming)"
 fi
 harden stream_key.txt
@@ -227,27 +245,34 @@ gen streamer_control_secret.txt
 # desde la web: la API sólo tiene la PÚBLICA (cifra y guarda el sobre en la BD;
 # no puede descifrar), el streamer la PRIVADA (abre en memoria al emitir).
 # Rotarla invalida las credenciales guardadas: hay que volver a introducirlas.
-if [ ! -s "$DIR/stream_secrets_private.pem" ]; then
+resolve stream_secrets_private.pem
+if [ -z "$RES" ] || [ "$(stat -c '%s' -- "$RES")" -eq 0 ]; then
   if command -v openssl >/dev/null; then
-    umask 077
-    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem" 2>/dev/null
+    t=$(newtmp); track "$t"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$t" 2>/dev/null
+    harden_file "$t" -
+    install_as "$t" stream_secrets_private.pem
     echo "generado:  stream_secrets_private.pem (RSA-3072)"
   else
     echo "AVISO: sin openssl; sin stream_secrets_private.pem no se pueden guardar claves de emisión desde la web"
   fi
 fi
-[ -f "$DIR/stream_secrets_private.pem" ] && harden stream_secrets_private.pem
-if [ -s "$DIR/stream_secrets_private.pem" ] && command -v openssl >/dev/null; then
-  umask 077
-  openssl pkey -in "$DIR/stream_secrets_private.pem" -pubout -out "$DIR/stream_secrets_public.pem.tmp" 2>/dev/null &&
-    if ! cmp -s "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem" 2>/dev/null; then
-      mv "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem"
+resolve stream_secrets_private.pem
+[ -n "$RES" ] && harden stream_secrets_private.pem
+resolve stream_secrets_private.pem; SIGN2=$RES
+if [ -n "$SIGN2" ] && [ "$(stat -c '%s' -- "$SIGN2")" -gt 0 ] && command -v openssl >/dev/null; then
+  t=$(newtmp); track "$t"
+  if openssl pkey -in "$SIGN2" -pubout -out "$t" 2>/dev/null; then
+    resolve stream_secrets_public.pem
+    if [ -z "$RES" ] || ! cmp -s -- "$t" "$RES"; then
+      harden_file "$t" -
+      install_as "$t" stream_secrets_public.pem
       echo "generado:  stream_secrets_public.pem (pública de stream_secrets_private.pem)"
-    else
-      rm -f "$DIR/stream_secrets_public.pem.tmp"
     fi
+  fi
 fi
-[ -f "$DIR/stream_secrets_public.pem" ] && harden stream_secrets_public.pem
+resolve stream_secrets_public.pem
+[ -n "$RES" ] && harden stream_secrets_public.pem
 
 # fix/backup-sftp-scheduled-runtime: clave SSH dedicada al backend sftp: de
 # restic. Se puede generar sin intervención del operador (es sólo un par de
@@ -261,7 +286,7 @@ if [ -z "$RES" ] || [ "$(stat -c '%s' -- "$RES")" -eq 0 ]; then
   if command -v ssh-keygen >/dev/null; then
     td=$(mktemp -d -- ".init-secrets.XXXXXX"); track "$td"
     ssh-keygen -t ed25519 -N "" -C "s9-ai-arena-backup" -f "$td/k" >/dev/null
-    harden_file "$td/k"
+    harden_file "$td/k" -
     chmod 0644 -- "$td/k.pub"
     install_as "$td/k" restic_ssh_key
     install_as "$td/k.pub" restic_ssh_key.pub
@@ -274,7 +299,7 @@ resolve restic_ssh_key
 [ -n "$RES" ] && harden restic_ssh_key
 resolve restic_ssh_known_hosts
 if [ -z "$RES" ]; then
-  t=$(newtmp); track "$t"; harden_file "$t"; install_as "$t" restic_ssh_known_hosts
+  t=$(newtmp); track "$t"; harden_file "$t" -; install_as "$t" restic_ssh_known_hosts
   echo "creado vacío: restic_ssh_known_hosts (rellenar con 'ssh-keyscan -t ed25519 <backup-host>' TRAS verificar la huella; NUNCA StrictHostKeyChecking=no)"
 fi
 harden restic_ssh_known_hosts

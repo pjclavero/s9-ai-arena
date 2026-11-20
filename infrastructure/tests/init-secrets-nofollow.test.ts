@@ -49,6 +49,8 @@ const GENERATED = [
   "artifact_signing_key.pem",
   "artifact_verify_key.pem",
   "stream_key.txt",
+  "stream_secrets_private.pem",
+  "stream_secrets_public.pem",
   "restic_ssh_key",
   "restic_ssh_known_hosts",
 ];
@@ -236,6 +238,94 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
     expect(lstatSync(f).ino).not.toBe(ino);
   });
 
+  // --- bloque stream_secrets (H1 de la revisión de la ronda 1) ---
+  it("stream_secrets_public.pem.tmp -> víctima: la víctima no cambia (ya no se usa ese nombre)", () => {
+    const before = victimState();
+    symlinkSync(victim, join(secrets, "stream_secrets_public.pem.tmp"));
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(victimState()).toEqual(before);
+    expect(lstatSync(join(secrets, "stream_secrets_public.pem")).isFile()).toBe(true);
+  });
+
+  it("stream_secrets_private.pem como enlace COLGANTE absoluto: no se crea la clave fuera", () => {
+    const target = join(base, "priv-fuera");
+    symlinkSync(target, join(secrets, "stream_secrets_private.pem"));
+    const r = run();
+    expect(existsSync(target)).toBe(false);
+    expect(r.status, "fail-closed").not.toBe(0);
+  });
+
+  it("stream_secrets_private.pem como enlace COLGANTE literal sin '/': aborta y no crea el destino", () => {
+    symlinkSync("priv-no-existe", join(secrets, "stream_secrets_private.pem"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(existsSync(join(secrets, "priv-no-existe"))).toBe(false);
+  });
+
+  it("stream_secrets_public.pem -> directorio: no se deposita nada dentro", () => {
+    const d = join(base, "dir-fuera");
+    mkdirSync(d);
+    symlinkSync(d, join(secrets, "stream_secrets_public.pem"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(readdirSync(d)).toEqual([]);
+  });
+
+  it("stream_secrets_public.pem -> directorio del mismo árbol (destino sin '/'): aborta y no deposita nada", () => {
+    mkdirSync(join(secrets, "adir"), { mode: 0o755 });
+    symlinkSync("adir", join(secrets, "stream_secrets_public.pem"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(readdirSync(join(secrets, "adir"))).toEqual([]);
+  });
+
+  it("stream_secrets_private.pem -> víctima VACÍA: sigue vacía (la clave no se escribe a través del enlace)", () => {
+    writeFileSync(victim, "", { mode: 0o644 });
+    symlinkSync(victim, join(secrets, "stream_secrets_private.pem"));
+    run();
+    expect(readFileSync(victim, "utf8")).toBe("");
+    expect((lstatSync(victim).mode & 0o777).toString(8)).toBe("644");
+  });
+
+  it("stream_secrets_public.pem -> víctima: la víctima no cambia", () => {
+    const before = victimState();
+    symlinkSync(victim, join(secrets, "stream_secrets_public.pem"));
+    run();
+    expect(victimState()).toEqual(before);
+  });
+
+  it("stream_secrets_private.pem vacío regular existente: se SUSTITUYE por rename (nuevo inodo), la pública casa", () => {
+    const f = join(secrets, "stream_secrets_private.pem");
+    writeFileSync(f, "", { mode: 0o600 });
+    const ino = lstatSync(f).ino;
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(lstatSync(f).ino).not.toBe(ino);
+    const pub = createPublicKey(readFileSync(f)).export({ type: "spki", format: "pem" }).toString();
+    expect(readFileSync(join(secrets, "stream_secrets_public.pem"), "utf8")).toBe(pub);
+  });
+
+  it("temporal predecible plantado (.init-secrets.tmp -> víctima): la víctima no cambia (mktemp exclusivo)", () => {
+    const before = victimState();
+    symlinkSync(victim, join(secrets, ".init-secrets.tmp"));
+    mkdirSync(join(secrets, "tls"), { mode: 0o755 });
+    symlinkSync(victim, join(secrets, "tls/.init-secrets.tmp"));
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(victimState()).toEqual(before);
+  });
+
+  // --- H2 · R9: nlink del destino de un enlace admitido ---
+  it("enlace admitido cuyo destino es un hardlink de la víctima: la víctima no cambia", () => {
+    const before = victimState();
+    linkSync(victim, join(secrets, "s9backup_ssh_key"));
+    symlinkSync("s9backup_ssh_key", join(secrets, "restic_ssh_key"));
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(victimState()).toEqual(before);
+  });
+
   it("tls/fullchain.pem como enlace colgante (openssl req -out): no se crea fuera", () => {
     const target = join(base, "cert-fuera");
     mkdirSync(join(secrets, "tls"), { mode: 0o755 });
@@ -255,6 +345,40 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
     expect(readdirSync(other)).toEqual([]);
   });
 
+  it("secrets/ sustituido por un enlace ENTRE la comprobación y la entrada (carrera): aborta y no escribe en el destino (H4)", () => {
+    const other = join(base, "otro-carrera");
+    mkdirSync(other);
+    const fake = join(base, "fakebin");
+    mkdirSync(fake);
+    // stat de verdad, pero tras la 2.ª llamada de identidad sobre secrets/ lo cambia por un enlace.
+    writeFileSync(
+      join(fake, "stat"),
+      [
+        "#!/bin/bash",
+        'out=$(/usr/bin/stat "$@"); rc=$?',
+        `if [ "$1" = -c ] && [ "$2" = '%F|%d:%i' ] && [ "$4" = "${secrets}" ]; then`,
+        `  n=$(cat "${base}/cnt" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${base}/cnt"`,
+        `  if [ $n = 2 ]; then mv "${secrets}" "${secrets}.old"; ln -s "${other}" "${secrets}"; fi`,
+        "fi",
+        'printf "%s\\n" "$out"; exit $rc',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const r = spawnSync("bash", [join(base, "infrastructure/scripts/init-secrets.sh")], {
+      encoding: "utf8",
+      env: {
+        PATH: `${fake}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        RUNTIME_UID: String(uid),
+        RUNTIME_GID: String(process.getgid?.() ?? 0),
+        S9_SECRETS_DIR: secrets,
+      },
+    });
+    expect(existsSync(join(base, "cnt")), "el stat falso debe haberse invocado").toBe(true);
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(readdirSync(other)).toEqual([]);
+  });
+
   it("un enlace no admitido aborta con rc != 0 (fail-closed) antes de generar los siguientes", () => {
     symlinkSync(victim, join(secrets, "jwt_secret.txt"));
     const r = run();
@@ -263,25 +387,43 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
   });
 });
 
+
 // ---------------------------------------------------------------- root real
 const probe = spawnSync("unshare", ["--map-root-user", "--map-auto", "true"], { encoding: "utf8" });
-const userns = probe.status === 0;
-describe.skipIf(!userns)("TD-064 · como root (user namespace con propietarios reales)", () => {
-  it("se niega en un dir ajeno, se apropia con ADOPT, y lo plantado antes sigue bloqueando", () => {
+// Alternativa: INIT_SECRETS_ROOT_OUTPUT = salida del fixture ejecutado con root REAL
+// (contenedor desechable, infrastructure/tests/init-secrets-root-container.sh).
+const rootOut = process.env.INIT_SECRETS_ROOT_OUTPUT;
+const userns = probe.status === 0 || !!rootOut;
+
+type Res = Record<string, Record<string, any>>;
+let cached: Res | undefined;
+// El fixture se ejecuta UNA vez (en el primer test que lo pide; `base` existe entonces).
+function scenarios(): Res {
+  if (cached) return cached;
+  let stdout: string;
+  if (rootOut) stdout = readFileSync(rootOut, "utf8");
+  else {
     const r = spawnSync("unshare", ["--map-root-user", "--map-auto", "bash", ROOT_SCENARIOS, SUT, base], {
       encoding: "utf8",
     });
     expect(r.status, r.stderr).toBe(0);
-    const res = Object.fromEntries(
-      r.stdout
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => {
-          const j = JSON.parse(l);
-          return [j.id, j];
-        }),
-    );
+    stdout = r.stdout;
+  }
+  cached = Object.fromEntries(
+    stdout
+      .trim()
+      .split("\n")
+      .filter((l) => l.startsWith("{"))
+      .map((l) => {
+        const j = JSON.parse(l);
+        return [j.id, j];
+      }),
+  );
+  return cached;
+}
+describe.skipIf(!userns)("TD-064 · como root (propietarios reales)", () => {
+  it("se niega en un dir ajeno, se apropia con ADOPT, y lo plantado antes sigue bloqueando", () => {
+    const res = scenarios();
     expect(res["R1-refuse"].rc).not.toBe(0);
     expect(res["R1-refuse"].files).toBe(0);
     expect(res["R1-refuse"].dir_owner).toBe("1002:1002 755");
@@ -296,11 +438,68 @@ describe.skipIf(!userns)("TD-064 · como root (user namespace con propietarios r
     expect(res["R6-root-dir-allowed-link"].victim_after).toBe("symbolic link 400 1000:1000");
     expect(res["R7-secrets-is-link"].rc).not.toBe(0);
     expect(res["R7-secrets-is-link"].evil_files).toBe(0);
-    // Carrera: tras apropiarse, el antiguo dueño ya no puede plantar nada.
-    const race = res["R8-race-after-adopt"];
+  });
+
+  it("carrera: tras apropiarse, el antiguo dueño ya no puede plantar nada", () => {
+    const race = scenarios()["R8-race-after-adopt"];
     expect(race.rc, "root debe completar").toBe(0);
     expect(race.tries).toBeGreaterThan(0);
     expect(race.planted, "ningún enlace plantado tras la apropiación").toBe(0);
     expect(race.victim_after).toBe(race.victim_before);
+  });
+
+  it("ADOPT + stream_secrets_public.pem.tmp -> víctima: la víctima no cambia", () => {
+    const r = scenarios()["R9-stream-pub-tmp-link"];
+    expect(r.victim_after).toBe(r.victim_before);
+  });
+
+  it("ADOPT + stream_secrets_private.pem colgante: se niega y la clave no se crea fuera", () => {
+    const r = scenarios()["R10-stream-priv-dangling"];
+    expect(r.rc).not.toBe(0);
+    expect(r.victim_after).toBe("absent");
+  });
+
+  it("ADOPT + stream_secrets_public.pem -> directorio ajeno: se niega y no deposita nada dentro", () => {
+    const r = scenarios()["R11-stream-pub-dir-link"];
+    expect(r.rc).not.toBe(0);
+    expect(r.vdir_files).toBe(0);
+  });
+
+  it("ADOPT + stream_secrets_private.pem -> víctima vacía: la víctima sigue vacía", () => {
+    const r = scenarios()["R12-stream-priv-empty-victim"];
+    expect(r.rc).not.toBe(0);
+    expect(r.victim_after).toBe(r.victim_before);
+  });
+
+  it("ADOPT + regular plantado con un descriptor abierto por el atacante: la clave privada no le llega y no se adopta", () => {
+    const r = scenarios()["R13-stream-priv-planted-fd"];
+    expect(r.leaked, "la clave llegó al fd del atacante").toBe(0);
+    expect(r.rc, "un regular de otro usuario no se adopta").not.toBe(0);
+  });
+
+  it("regular de root con un descriptor abierto antes por el atacante: se SUSTITUYE por rename, nunca se escribe en el sitio", () => {
+    const r = scenarios()["R14-stream-priv-rootowned-fd"];
+    expect(r.leaked, "escritura en el sitio: la clave llegó al fd").toBe(0);
+    expect(r.rc).toBe(0);
+    expect(r.final_size_gt0).toBe(true);
+  });
+
+  it("secrets/ de root con tls/ de otro usuario: se niega antes de crear nada (R1)", () => {
+    const r = scenarios()["R15-tls-foreign-owner"];
+    expect(r.rc).not.toBe(0);
+    expect(r.files).toBe(0);
+  });
+
+  it("enlace admitido cuyo dueño es otro uid: se rechaza y el destino no cambia de modo (R3)", () => {
+    const r = scenarios()["R16-link-foreign-owner"];
+    expect(r.rc).not.toBe(0);
+    expect(r.target_mode).toBe("644");
+  });
+
+  it("ADOPT con un fichero regular plantado por otro usuario (secreto conocido): no se adopta", () => {
+    const r = scenarios()["R17-adopt-foreign-regular"];
+    expect(r.rc).not.toBe(0);
+    expect(r.content).toBe("conocido");
+    expect(r.owner).toBe("1002");
   });
 });
