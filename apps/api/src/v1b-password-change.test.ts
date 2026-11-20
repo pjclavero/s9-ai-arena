@@ -223,7 +223,9 @@ describe("V1-B · límite de la ruta y aislamiento por usuario", () => {
     const a = await newUser("aisla-a");
     const b = await newUser("aisla-b");
     for (let i = 0; i < 3; i++) {
-      expect((await change(a.a.accessToken, { currentPassword: `mala-${i}-xxxxxxxx`, newPassword: NEW })).status).toBe(401);
+      expect((await change(a.a.accessToken, { currentPassword: `mala-${i}-xxxxxxxx`, newPassword: NEW })).status).toBe(
+        401,
+      );
     }
     expect((await change(a.a.accessToken, { currentPassword: OLD, newPassword: NEW })).status).toBe(429);
     const rb = await change(b.a.accessToken, { currentPassword: OLD, newPassword: NEW });
