@@ -17,7 +17,7 @@ const MUTANTS = [
   {
     id: "M1-no-fija-modo",
     from: 'if (f === "teams") setMode(TEAM_TOURNAMENT_MODE);',
-    to: "void 0;",
+    to: "setMode(mode);",
     killedBy: "V1T1_DEFAULT_MODE",
   },
   {

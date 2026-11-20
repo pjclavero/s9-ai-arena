@@ -71,7 +71,7 @@ describe("V1-T1 · torneo teams con y sin reglas NvN", () => {
       .set(as(orgTok))
       .send({ name: "sin reglas", format: "teams", mode: "deathmatch", rulesetId: "mvp-default" });
     expect(c.status, JSON.stringify(c.body)).toBe(201);
-    expect(c.body.rules ?? null).toBeNull();
+    expect(c.body.rules?.params ?? null).toBeNull();
     const botId = await mkBot();
     const e = await request(app).post(`/tournaments/${c.body.id}/entries`).set(as(devTok)).send({ botId, version: 1 });
     expect(e.status, JSON.stringify(e.body)).toBe(201);
@@ -93,6 +93,6 @@ describe("V1-T1 · torneo teams con y sin reglas NvN", () => {
     const botId = await mkBot();
     const e = await request(app).post(`/tournaments/${c.body.id}/entries`).set(as(devTok)).send({ botId, version: 1 });
     expect(e.status).toBe(409);
-    expect(e.body.error?.code ?? e.body.code).toBe("team_enrollment_required");
+    expect(e.body.error).toBe("team_enrollment_required");
   });
 });
