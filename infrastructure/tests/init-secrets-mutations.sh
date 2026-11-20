@@ -181,7 +181,7 @@ check M32 "owner_ok sin guard de root" "sin privilegios con RUNTIME_UID distinto
 # M33 · (N-3, revisor N1) owner_ok ausente en el destino de un enlace admitido
 mutate M33 '      owner_ok "$t"
 ' '' || exit 2
-check M33 "owner_ok ausente en el destino del enlace" "destino es un regular de otro uid (N-3)"
+check M33 "owner_ok ausente en el destino del enlace" "cuyo destino es un regular de otro uid"
 
 echo "== resultado: $([ $fail = 0 ] && echo TODOS_MUERTOS || echo HAY_SUPERVIVIENTES)"
 exit $fail
