@@ -111,6 +111,24 @@ check M13 "enlace admitido rechazado" "respeta el enlace admitido restic_ssh_key
 
 # ---- ronda 2 (revisión del PR #169): bloque stream_secrets y defensas secundarias.
 # Los que mueren por root real exigen ROOT_CONTAINER=1 (o un runner con userns).
+# Equivalentes (los del revisor R6-R8, R10, R13): el resultado observable no cambia, así que
+# DEBEN sobrevivir; si alguno muriera, el test depende de un detalle ajeno al contrato.
+equiv() { # id, descripción
+  local id=$1 desc=$2 rc
+  [ -z "$ONLY" ] || [ "$ONLY" = "$id" ] || return 0
+  rc=$(runtest "$W/$id.sh" "$W/$id.json")
+  if [ "$rc" = 0 ]; then echo "EQUIVALENTE $id · $desc (sobrevive, esperado)"; else echo "INESPERADO $id · $desc (rc=$rc)"; fail=1; fi
+}
+mutate M26 'chown -h "$RUNTIME_UID:$RUNTIME_GID" -- "$1"' 'chown "$RUNTIME_UID:$RUNTIME_GID" -- "$1"' || exit 2
+equiv M26 "(R6) chown sin -h: sólo opera sobre regulares ya comprobados"
+mutate M27 'cd -P -- "$DIR"' 'cd -- "$DIR"' || exit 2
+equiv M27 "(R7) cd sin -P: el último componente ya se comprueba"
+mutate M28 '  mv -fT -- "$tmp" "${RES:-$n}"' '  mv -f -- "$tmp" "${RES:-$n}"' || exit 2
+equiv M28 "(R8) mv sin -T en install_as: los destinos ya son regulares"
+mutate M29 'mv -fT -- "$tk" tls/privkey.pem' 'cp -f -- "$tk" tls/privkey.pem' || exit 2
+equiv M29 "(R13) tls: cp -f en vez de mv -fT: tls/ es de confianza y sin enlaces"
+mutate M30 'echo "Secretos en $DIR' 'echo "Secretos en $DIR' || exit 2
+equiv M30 "(R10, control) mutante identidad"
 # M14 · la privada de stream_secrets se escribe con `-out` al nombre final (sigue enlaces)
 mutate M14 'rsa_keygen_bits:3072 -out "$t"' 'rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem"' || exit 2
 check M14 "stream privada escrita a través del nombre final" "stream_secrets_private.pem como enlace COLGANTE absoluto"
