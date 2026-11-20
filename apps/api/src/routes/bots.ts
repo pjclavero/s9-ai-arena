@@ -8,16 +8,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam, queryUuid } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import {
-  applyCursor,
-  cursorTsSql,
-  decodeCursor,
-  encodeCursor,
-  encodeSealedCursor,
-  parseLimit,
-  runCursorQuery,
-  type PageCursor,
-} from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import {
   applyTransition,
   assertLoadoutRevisionUsable,
@@ -28,6 +19,7 @@ import {
   isBotOwner,
   isStaff,
   validateLoadoutServerSide,
+  whereBotVisible,
 } from "../services/bots.js";
 import { PIPELINE_STAGES, type BotManagerClient } from "../services/bot-manager.js";
 import { sharedRateLimit, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
@@ -45,10 +37,6 @@ import { audit } from "../audit.js";
  * 019): nunca en una caché compartida ni en la del navegador.
  */
 const CODE_NO_STORE = "private, no-store";
-
-/** TD-068 · filas por bloque de lectura de `listBots` y tope de bloques por petición. */
-export const LIST_BOTS_CHUNK = 200;
-export const LIST_BOTS_MAX_CHUNKS = 10;
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -230,46 +218,22 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     const ownerId = queryUuid(req, "ownerId");
-    const chunkQuery = (cur: PageCursor | null) => {
-      let q = db("bots")
-        .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
-        .orderBy([
-          { column: "created_at", order: "desc" },
-          { column: "id", order: "desc" },
-        ])
-        .limit(LIST_BOTS_CHUNK);
-      if (ownerId !== undefined) q = q.where({ owner_id: ownerId });
-      return applyCursor(q, cur, "bots.created_at", ["bots.id"]);
-    };
-
-    // TD-068 · la visibilidad se filtra en memoria (`canSeeBot`), así que se leen BLOQUES de
-    // LIST_BOTS_CHUNK filas hasta completar la página (limit + 1 para saber si hay más) o agotar la
-    // tabla. Antes se leía un único bloque de 200: con muchos bots ajenos privados intercalados la
-    // página salía corta y, peor, SIN nextCursor, de modo que el resto de la lista era inalcanzable.
-    // Tope de bloques por petición: si se alcanza, la página puede ser corta pero SIEMPRE lleva
-    // nextCursor (el cliente continúa); nunca se pierde el final en silencio.
-    const visible: Record<string, unknown>[] = [];
-    let cur = cursor;
-    let lastScanned: Record<string, unknown> | undefined;
-    let exhausted = false;
-    for (let chunk = 0; chunk < LIST_BOTS_MAX_CHUNKS && visible.length <= limit; chunk++) {
-      const rows = await runCursorQuery(chunkQuery(cur), cur);
-      for (const bot of rows) {
-        lastScanned = bot;
-        if (await canSeeBot(db, req.auth, bot)) visible.push(bot);
-        if (visible.length > limit) break;
-      }
-      if (visible.length > limit) break;
-      if (rows.length < LIST_BOTS_CHUNK) {
-        exhausted = true;
-        break;
-      }
-      cur = decodeCursor(encodeCursor(lastScanned!, [lastScanned!.id as string]));
-    }
+    // TD-068 / D-OP-6 · la visibilidad se filtra EN SQL (`whereBotVisible`, misma regla que `canSeeBot`):
+    // nunca se leen filas que el solicitante no puede ver, así que no hay bucle por bloques, ni páginas
+    // cortas o vacías con cursor, ni id/instante ajeno en el cursor (el cursor es siempre el del último
+    // elemento VISIBLE de la página). Coste O(limit) por petición.
+    let q = db("bots")
+      .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .limit(limit + 1);
+    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });
+    q = whereBotVisible(db, q, req.auth);
+    q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
+    const visible: Record<string, unknown>[] = await runCursorQuery(q, cursor);
     const page = visible.slice(0, limit);
-    // Hay más si ya hay un elemento visible de sobra o si quedan filas sin escanear (tope de bloques).
-    const hasMore = visible.length > limit || !exhausted;
-    const cursorRow = visible.length > limit ? page[page.length - 1] : lastScanned;
     const items = await Promise.all(
       page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
     );
@@ -295,12 +259,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     }
     res.json({
       items,
-      // Frontera visible (último elemento de la página): cursor normal. Frontera ESCANEADA (puede ser un bot
-      // privado ajeno): cursor sellado, para no revelar su id ni su instante (R316-1).
       nextCursor:
-        hasMore && cursorRow
-          ? (visible.length > limit ? encodeCursor : encodeSealedCursor)(cursorRow, [cursorRow.id as string])
-          : undefined,
+        visible.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
       ...(counts ? { counts } : {}),
     });
   });

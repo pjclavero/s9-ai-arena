@@ -147,7 +147,7 @@
       "id": "V1B-02-owner-filter-applied",
       "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "      if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
+      "from": "    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
       "to": "",
       "killedBy": [
         "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro un uuid válido SIGUE filtrando: con bots de dos dueños, sólo salen los del dueño pedido"

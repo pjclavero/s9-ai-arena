@@ -1,7 +1,5 @@
 /** Proyecciones a los shapes del contrato de E1. Los campos x-private solo salen para el propio usuario/admin. */
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { badRequest } from "./errors.js";
-import { sessionSecret } from "./auth/tokens.js";
 
 export function userToJson(
   user: Record<string, unknown>,
@@ -93,39 +91,6 @@ export function encodeCursor(row: Record<string, unknown>, keys: CursorKey[]): s
 }
 
 /**
- * V1-B (R316-1) · Cursor SELLADO (AES-256-GCM, clave derivada del secreto de sesión con separación de
- * dominio). Se usa cuando la frontera del cursor es una fila ESCANEADA que el solicitante puede no ver
- * (p. ej. un bot privado ajeno): un cursor v2 lleva el id y el instante en claro (base64), así que
- * delataría su existencia. Sellado, el cliente sólo ve bytes opacos. Es estado efímero de la UI: si el
- * proceso reinicia con otro secreto, el cursor es «inválido o caducado» (400), como cualquier cursor viejo.
- */
-function cursorSealKey(): Buffer {
-  return Buffer.from(hkdfSync("sha256", sessionSecret(), "", "s9-arena/list-cursor/v1", 32));
-}
-
-export function encodeSealedCursor(row: Record<string, unknown>, keys: CursorKey[]): string {
-  const inner = encodeCursor(row, keys);
-  const iv = randomBytes(12);
-  const c = createCipheriv("aes-256-gcm", cursorSealKey(), iv);
-  const ct = Buffer.concat([c.update(inner, "utf8"), c.final()]);
-  const s = Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64url");
-  return Buffer.from(JSON.stringify({ v: 3, s })).toString("base64url");
-}
-
-function openSealedCursor(sealed: unknown): unknown {
-  if (typeof sealed !== "string") return undefined;
-  try {
-    const raw = Buffer.from(sealed, "base64url");
-    const d = createDecipheriv("aes-256-gcm", cursorSealKey(), raw.subarray(0, 12));
-    d.setAuthTag(raw.subarray(12, 28));
-    const inner = Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8");
-    return JSON.parse(Buffer.from(inner, "base64url").toString("utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * Tipo de cada desempate del cursor, en el orden de la clave. Se valida en
  * `decodeCursor` ANTES de tocar la BD (EQ6, #223: un cursor v2 forjado con un valor que
  * PostgreSQL no puede convertir acababa en 500).
@@ -177,8 +142,6 @@ export function decodeCursor(cursor: string | undefined, keyTypes: CursorKeyType
   } catch {
     parsed = undefined;
   }
-  const outer = parsed as { v?: unknown; s?: unknown } | undefined;
-  if (outer && typeof outer === "object" && outer.v === 3) parsed = openSealedCursor(outer.s);
   const p = parsed as { v?: unknown; t?: unknown; k?: unknown } | undefined;
   const ok =
     p !== null &&

@@ -1,48 +1,89 @@
 {
-  "_doc": "Mutantes de TD-068 (listBots por bloques). MUTANTS_SPEC=scripts/v1b-bots-pagination-mutants.json node scripts/rescue-mutants.mjs <id> base|mut.",
+  "_doc": "Mutantes de TD-068 (listBots con filtro de visibilidad en SQL, D-OP-6). MUTANTS_SPEC=scripts/v1b-bots-pagination-mutants.json node scripts/rescue-mutants.mjs <id> base|mut.",
   "mutants": [
     {
-      "id": "V1B-BOTS-01-un-solo-bloque",
+      "id": "V1B-BOTS-01-filtro-sql-desactivado",
       "test": "apps/api/src/v1b-bots-pagination.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "cur = decodeCursor(encodeCursor(lastScanned!, [lastScanned!.id as string]));\n",
-      "to": "break;\n",
+      "from": "    q = whereBotVisible(db, q, req.auth);\n",
+      "to": "",
       "killedBy": [
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante la primera página sale COMPLETA (antes: vacía y sin nextCursor)"
+        "V1 · TD-068 · listBots con visibilidad en SQL G1 · ningún id privado ajeno en los items ni en el cursor (el cursor apunta al último item visible)",
+        "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
+        "V1 · TD-068 · listBots con visibilidad en SQL G5 · el listado coincide con `canSeeBot` para anónimo, dueño/miembro, ajeno, organizador, moderador y admin"
       ],
       "controls": []
     },
     {
-      "id": "V1B-BOTS-02-sin-cursor-al-agotar-tope",
+      "id": "V1B-BOTS-02-original-ventana-200-sin-cursor",
       "test": "apps/api/src/v1b-bots-pagination.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "const hasMore = visible.length > limit || !exhausted;",
-      "to": "const hasMore = visible.length > limit;",
+      "from": "      .limit(limit + 1);\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n    q = whereBotVisible(db, q, req.auth);\n    q = applyCursor(q, cursor, \"bots.created_at\", [\"bots.id\"]);\n    const visible: Record<string, unknown>[] = await runCursorQuery(q, cursor);\n",
+      "to": "      .limit(200);\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n    q = applyCursor(q, cursor, \"bots.created_at\", [\"bots.id\"]);\n    const scanned: Record<string, unknown>[] = await runCursorQuery(q, cursor);\n    const visible: Record<string, unknown>[] = [];\n    for (const bot of scanned) {\n      if (await canSeeBot(db, req.auth, bot)) visible.push(bot);\n      if (visible.length > limit) break;\n    }\n",
       "killedBy": [
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el tope de bloques se aplica: con más filas ajenas que tope×bloque, la primera página sale VACÍA pero CON nextCursor"
+        "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
+        "V1 · TD-068 · listBots con visibilidad en SQL G3 · sin páginas vacías artificiales: la primera página ya sale llena y todas salvo la última también"
       ],
       "controls": []
     },
     {
-      "id": "V1B-BOTS-04-tope-1000",
+      "id": "V1B-BOTS-03-original-cursor-con-fila-escaneada",
       "test": "apps/api/src/v1b-bots-pagination.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "export const LIST_BOTS_MAX_CHUNKS = 10;",
-      "to": "export const LIST_BOTS_MAX_CHUNKS = 1000;",
+      "from": "      .limit(limit + 1);\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n    q = whereBotVisible(db, q, req.auth);\n    q = applyCursor(q, cursor, \"bots.created_at\", [\"bots.id\"]);\n    const visible: Record<string, unknown>[] = await runCursorQuery(q, cursor);\n    const page = visible.slice(0, limit);\n    const items = await Promise.all(\n      page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),\n    );\n    // EQ4 (rev. EQ6 P2-2) · `includeCounts=true` con `ownerId` = el propio usuario:\n    // recuento REAL de sus bots (total / activos / retirados), no el de la página.\n    // Sólo de los propios: con otro ownerId se ignora (no revela nada ajeno).\n    let counts: { total: number; active: number; retired: number } | undefined;\n    if (\n      req.query.includeCounts === \"true\" &&\n      req.auth &&\n      typeof req.query.ownerId === \"string\" &&\n      req.query.ownerId === req.auth.userId\n    ) {\n      const [row] = (await db(\"bots\")\n        .where({ owner_id: req.auth.userId })\n        .select(\n          db.raw(\"count(*)::int AS total\"),\n          db.raw(\"count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired\"),\n        )) as { total?: number; retired?: number }[];\n      const total = Number(row?.total ?? 0);\n      const retired = Number(row?.retired ?? 0);\n      counts = { total, active: total - retired, retired };\n    }\n    res.json({\n      items,\n      nextCursor:\n        visible.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,\n",
+      "to": "      .limit(200);\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n    q = applyCursor(q, cursor, \"bots.created_at\", [\"bots.id\"]);\n    const scanned: Record<string, unknown>[] = await runCursorQuery(q, cursor);\n    const visible: Record<string, unknown>[] = [];\n    for (const bot of scanned) {\n      if (await canSeeBot(db, req.auth, bot)) visible.push(bot);\n      if (visible.length > limit) break;\n    }\n    const lastScanned = scanned[scanned.length - 1];\n    const page = visible.slice(0, limit);\n    const items = await Promise.all(\n      page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),\n    );\n    // EQ4 (rev. EQ6 P2-2) · `includeCounts=true` con `ownerId` = el propio usuario:\n    // recuento REAL de sus bots (total / activos / retirados), no el de la página.\n    // Sólo de los propios: con otro ownerId se ignora (no revela nada ajeno).\n    let counts: { total: number; active: number; retired: number } | undefined;\n    if (\n      req.query.includeCounts === \"true\" &&\n      req.auth &&\n      typeof req.query.ownerId === \"string\" &&\n      req.query.ownerId === req.auth.userId\n    ) {\n      const [row] = (await db(\"bots\")\n        .where({ owner_id: req.auth.userId })\n        .select(\n          db.raw(\"count(*)::int AS total\"),\n          db.raw(\"count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired\"),\n        )) as { total?: number; retired?: number }[];\n      const total = Number(row?.total ?? 0);\n      const retired = Number(row?.retired ?? 0);\n      counts = { total, active: total - retired, retired };\n    }\n    res.json({\n      items,\n      nextCursor:\n        scanned.length === 200 || visible.length > limit\n          ? encodeCursor(lastScanned, [lastScanned.id as string])\n          : undefined,\n",
       "killedBy": [
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el coste por petición está acotado: bloques de 200 y como mucho 10 por petición (2000 filas)",
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante el tope de bloques se aplica: con más filas ajenas que tope×bloque, la primera página sale VACÍA pero CON nextCursor"
+        "V1 · TD-068 · listBots con visibilidad en SQL G1 · ningún id privado ajeno en los items ni en el cursor (el cursor apunta al último item visible)",
+        "V1 · TD-068 · listBots con visibilidad en SQL G3 · sin páginas vacías artificiales: la primera página ya sale llena y todas salvo la última también"
       ],
       "controls": []
     },
     {
-      "id": "V1B-BOTS-05-cursor-en-claro",
+      "id": "V1B-BOTS-04-staff-de-replays",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/services/bots.ts",
+      "from": "  if (isStaff(auth)) return q;\n  const userId = auth?.userId ?? null;\n  return q.where",
+      "to": "  if ((auth?.rank ?? 0) >= ROLE_RANK.organizer) return q;\n  const userId = auth?.userId ?? null;\n  return q.where",
+      "killedBy": [
+        "V1 · TD-068 · listBots con visibilidad en SQL G5 · el listado coincide con `canSeeBot` para anónimo, dueño/miembro, ajeno, organizador, moderador y admin"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-05-equipo-sin-membresia",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/services/bots.ts",
+      "from": "          .whereExists(\n            db(\"team_members\").whereRaw(\"team_members.team_id = bots.team_id\").where(\"team_members.user_id\", userId),\n          ),\n",
+      "to": "          .whereRaw(\"1 = 1\"),\n",
+      "killedBy": [
+        "V1 · TD-068 · listBots con visibilidad en SQL G1 · ningún id privado ajeno en los items ni en el cursor (el cursor apunta al último item visible)",
+        "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
+        "V1 · TD-068 · listBots con visibilidad en SQL G5 · el listado coincide con `canSeeBot` para anónimo, dueño/miembro, ajeno, organizador, moderador y admin"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-06-sin-bots-propios",
+      "test": "apps/api/src/v1b-bots-pagination.test.ts",
+      "file": "apps/api/src/services/bots.ts",
+      "from": "w.orWhere(\"bots.owner_id\", userId).orWhere((t: any) =>",
+      "to": "w.orWhere((t: any) =>",
+      "killedBy": [
+        "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
+        "V1 · TD-068 · listBots con visibilidad en SQL G4 · contrato estable: cursor v2 en claro {v,t,k}, items con su forma y nextCursor ausente al agotar",
+        "V1 · TD-068 · listBots con visibilidad en SQL G5 · el listado coincide con `canSeeBot` para anónimo, dueño/miembro, ajeno, organizador, moderador y admin"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-BOTS-07-sin-fila-de-mas",
       "test": "apps/api/src/v1b-bots-pagination.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "(visible.length > limit ? encodeCursor : encodeSealedCursor)(cursorRow,",
-      "to": "encodeCursor(cursorRow,",
+      "from": "      .limit(limit + 1);\n    if (ownerId",
+      "to": "      .limit(limit);\n    if (ownerId",
       "killedBy": [
-        "V1-B · TD-068 · listBots con >200 bots ajenos privados delante PRIVACIDAD: el nextCursor NO lleva el id ni el instante de ningún bot privado ajeno"
+        "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
+        "V1 · TD-068 · listBots con visibilidad en SQL G3 · sin páginas vacías artificiales: la primera página ya sale llena y todas salvo la última también"
       ],
       "controls": []
     }
