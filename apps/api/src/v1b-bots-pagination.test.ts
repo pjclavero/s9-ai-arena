@@ -164,7 +164,10 @@ describe("V1-B · TD-068 · listBots con >200 bots ajenos privados delante", () 
     })();
     for (const text of [outer, inner]) {
       for (const id of foreignIds) expect(text.includes(id), `el cursor expone el id ${id}`).toBe(false);
-      expect(foreignAt.some((t) => text.includes(t.slice(0, 19))), "el cursor expone un instante ajeno").toBe(false);
+      expect(
+        foreignAt.some((t) => text.includes(t.slice(0, 19))),
+        "el cursor expone un instante ajeno",
+      ).toBe(false);
     }
     // y sigue siendo utilizable
     const next = await request(app)
@@ -178,7 +181,9 @@ describe("V1-B · TD-068 · listBots con >200 bots ajenos privados delante", () 
     const first = await request(app).get("/bots?limit=3").set("Authorization", `Bearer ${viewer.token}`);
     const o = JSON.parse(Buffer.from(first.body.nextCursor, "base64url").toString("utf8")) as { v: number; s: string };
     const bad = Buffer.from(JSON.stringify({ v: 3, s: o.s.slice(0, -4) + "AAAA" })).toString("base64url");
-    const r = await request(app).get(`/bots?cursor=${encodeURIComponent(bad)}`).set("Authorization", `Bearer ${viewer.token}`);
+    const r = await request(app)
+      .get(`/bots?cursor=${encodeURIComponent(bad)}`)
+      .set("Authorization", `Bearer ${viewer.token}`);
     expect(r.status).toBe(400);
   }, 180000);
 });
