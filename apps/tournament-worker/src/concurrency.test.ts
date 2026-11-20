@@ -74,7 +74,9 @@ describe("lectura de cgroup simulada", () => {
     expect(l).toEqual({ cpus: 2, memBytes: 4 * GiB, memUsedBytes: 1 * GiB, origen: "cgroup-v2" });
   });
   it("v2 sin límite ('max') ⇒ sin cpus ni memoria", () => {
-    const l = readCgroupLimits(fakeFs({ "/sys/fs/cgroup/cpu.max": "max 100000\n", "/sys/fs/cgroup/memory.max": "max\n" }));
+    const l = readCgroupLimits(
+      fakeFs({ "/sys/fs/cgroup/cpu.max": "max 100000\n", "/sys/fs/cgroup/memory.max": "max\n" }),
+    );
     expect(l.cpus).toBeUndefined();
     expect(l.memBytes).toBeUndefined();
   });

@@ -38,7 +38,7 @@ describe("concurrencyFromEnv", () => {
       );
     }
   });
-  it("`auto` (cualquier caja) ⇒ \"auto\"; el automático ya no mide el host sino cgroup + batalla", () => {
+  it('`auto` (cualquier caja) ⇒ "auto"; el automático ya no mide el host sino cgroup + batalla', () => {
     expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: "auto" })).toBe("auto");
     expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: " AUTO " })).toBe("auto");
     expect(computeConcurrency({ cpuCount: 4, memGiB: 8 })).toBe(1);

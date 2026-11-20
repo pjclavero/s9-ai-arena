@@ -24,8 +24,7 @@ export function buildLoadConfig(env: Record<string, string | undefined>): LoadCo
   const concurrency = concurrencyFromEnv(env);
   return {
     concurrency,
-    effectiveConcurrency:
-      concurrency === "auto" ? computeConcurrency() : (concurrency ?? DEFAULT_CONCURRENCY),
+    effectiveConcurrency: concurrency === "auto" ? computeConcurrency() : (concurrency ?? DEFAULT_CONCURRENCY),
     cpuSampleMs: cpuSampleMsFromEnv(env),
   };
 }

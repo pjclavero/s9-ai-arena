@@ -39,9 +39,7 @@ if (modo === "containers") {
   process.exit(0);
 }
 
-const map = toEngineMap(
-  JSON.parse(readFileSync(new URL("../../maps/mvp-arena-01.json", import.meta.url), "utf8")),
-);
+const map = toEngineMap(JSON.parse(readFileSync(new URL("../../maps/mvp-arena-01.json", import.meta.url), "utf8")));
 await initPhysics();
 
 interface Fila {
