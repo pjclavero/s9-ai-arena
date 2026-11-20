@@ -32,6 +32,18 @@ const MUTANTS = [
     to: ";",
     killedBy: "V1T1_LEAVE_TEAMS",
   },
+  {
+    id: "R2-pisa-modo-no-teams",
+    from: 'else if (mode === TEAM_TOURNAMENT_MODE && format === "teams") setMode("deathmatch");',
+    to: 'else setMode("deathmatch");',
+    killedBy: "V1T1_KEEP_MODE",
+  },
+  {
+    id: "R8-reglas-sin-comprobar-formato",
+    from: 'const teamRules = format === "teams" && mode === TEAM_TOURNAMENT_MODE;',
+    to: "const teamRules = mode === TEAM_TOURNAMENT_MODE;",
+    killedBy: "V1T1_TDM_NO_TEAMS_NO_RULES",
+  },
 ];
 
 function run() {
