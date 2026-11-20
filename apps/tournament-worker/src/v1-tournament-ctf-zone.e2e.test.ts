@@ -94,7 +94,10 @@ async function playClassic(mode: string, rulesetId: string) {
       .update({ run_after: new Date(Date.now() - 1000) });
     await drainAll();
   }
-  const t = { ...((await h.db("tournaments").where({ id: r.body.id }).first()) as Row), retryRounds: rounds };
+  const t: Row & { retryRounds: number } = {
+    ...((await h.db("tournaments").where({ id: r.body.id }).first()) as Row),
+    retryRounds: rounds,
+  };
   const battles = (await h.db("battles").where({ tournament_id: r.body.id })) as Row[];
   const ids = new Set(battles.map((b) => b.id as string));
   const jobs = ((await h.db("jobs").where({ status: "needs_review", kind: "run_battle" })) as Row[]).filter((j) => {

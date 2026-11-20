@@ -112,6 +112,46 @@ const MUTANTS = [
     find: 'if (v.state !== "published") continue;',
     repl: "continue;",
   },
+  {
+    id: "X1",
+    file: "apps/api/src/routes/tournaments.ts",
+    dies: "V1C_TDM_standings",
+    why: "team-standings: el rank se desplaza una posición",
+    find: "        rank: i + 1,",
+    repl: "        rank: i + 2,",
+  },
+  {
+    id: "X1b",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "V1C_TDM_standings",
+    why: "tabla: desempate por semilla invertido",
+    find: "      a.seed - b.seed ||",
+    repl: "      b.seed - a.seed ||",
+  },
+  {
+    id: "X1c",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "V1C_TDM_standings",
+    why: "tabla: se anula el criterio de puntos",
+    find: "      b.points - a.points ||",
+    repl: "      0 ||",
+  },
+  {
+    id: "X2",
+    file: "apps/tournament-worker/src/formats.ts",
+    dies: "V1C_SW_pairing",
+    why: "suizo: se empareja por semilla en lugar de por puntos",
+    find: "b.points - a.points || a.seed - b.seed);\n  let byeId",
+    repl: "a.seed - b.seed);\n  let byeId",
+  },
+  {
+    id: "X3b",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "V1C_SE_cycle",
+    why: "eliminatoria: al bracket avanza siempre el local, no el ganador",
+    find: "const winner = isTeams ? finished.winner_team_id : finished.winner_bot_id;",
+    repl: "const winner = isTeams ? finished.winner_team_id : fp.home;",
+  },
 ];
 
 const sh = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8" }).trim();
