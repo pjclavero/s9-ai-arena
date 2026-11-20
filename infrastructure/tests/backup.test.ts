@@ -1106,16 +1106,36 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     expect(metricValue(m, "s9_backup_check_read_data_fraction")).toBe("0.1429");
   });
 
-  it("RESTIC_CHECK_SLOT fija la franja y la rotación cubre las 7 partes", () => {
+  it("RESTIC_CHECK_SLOT fija la franja", () => {
     makeDirs();
     writeFakePgDumpOk(fakebin);
     writeFakeResticFaithful(fakebin, store, resticLog);
     expect(runReal({ RESTIC_CHECK_SLOT: "3" }).code).toBe(0);
     expect(readFileSync(resticLog, "utf8")).toContain("check --read-data-subset=3/7");
-    // La franja por día es (día-época mod 7)+1: 7 días consecutivos las cubren todas.
-    const slots = new Set<number>();
-    for (let d = 0; d < 7; d++) slots.add((Math.floor(Date.now() / 86400000) + d) % 7 + 1);
-    expect(slots.size).toBe(7);
+  });
+
+  it("la franja rotativa cubre las 7 partes en 7 días consecutivos (date falso)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    // date falso: `date +%s` devuelve FAKE_EPOCH; el resto pasa al date real.
+    const realDate = execFileSync("sh", ["-c", "command -v date"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      join(fakebin, "date"),
+      `#!/usr/bin/env bash\nif [ "$1" = "+%s" ]; then echo "$FAKE_EPOCH"; else exec ${realDate} "$@"; fi\n`,
+      { mode: 0o755 },
+    );
+    const base = 20000; // día-época arbitrario
+    const seen: number[] = [];
+    for (let d = 0; d < 7; d++) {
+      writeFileSync(resticLog, "");
+      writeFakeResticFaithful(fakebin, store, resticLog);
+      expect(runReal({ FAKE_EPOCH: String((base + d) * 86400 + 3600) }).code).toBe(0);
+      const m = readFileSync(resticLog, "utf8").match(/^check --read-data-subset=(\d)\/7$/m);
+      expect(m).not.toBeNull();
+      seen.push(Number(m![1]));
+    }
+    expect([...seen].sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(seen[0]).toBe((base % 7) + 1); // fórmula documentada: día-época mod 7 + 1
   });
 
   it("repositorio corrupto: el check con datos falla => FULL FAILURE (rc=1) y métrica check_ok=0", () => {
