@@ -15,7 +15,7 @@ import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { seedContent } from "./seeds/dev.js";
 import { createAdmin, CreateAdminError } from "../services/create-admin.js";
 import { verifyPassword } from "../auth/passwords.js";
-import { parseCreateAdminArgs, PasswordInputError, readPasswordFile, stripTrailingNewline } from "./password-input.js";
+import { parseCreateAdminArgs, readPasswordFile, stripTrailingNewline } from "./password-input.js";
 
 const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const PW = "una-clave-larga-de-prueba-42";
@@ -108,7 +108,15 @@ describe("createAdmin (servicio)", () => {
 
   it("dos altas simultáneas: sólo UNA gana el «primer admin»", async () => {
     const intentos = await Promise.allSettled(
-      [1, 2, 3].map((i) => createAdmin(h.db, { email: `c${i}@ejemplo.test`, displayName: `C${i}`, password: PW })),
+      [1, 2, 3].map((i) =>
+        createAdmin(h.db, {
+          email: `c${i}@ejemplo.test`,
+          displayName: `C${i}`,
+          password: PW,
+          // Ventana de carrera ancha y determinista: sin el cerrojo, las tres ven 0 admins.
+          afterAdminCount: () => new Promise((r) => setTimeout(r, 400)),
+        }),
+      ),
     );
     expect(intentos.filter((x) => x.status === "fulfilled")).toHaveLength(1);
     const n = await h.db("user_roles").where({ role: "admin" }).count({ c: "*" }).first();
@@ -119,7 +127,7 @@ describe("createAdmin (servicio)", () => {
 describe("password-input (argv, fichero 0600)", () => {
   it("rechaza TODA forma de contraseña en argv", () => {
     for (const bad of [["--password", "x"], ["--password=x"], ["-p", "x"], ["-password=x"]]) {
-      expect(() => parseCreateAdminArgs(["a@b.test", "N", "--password-stdin", ...bad])).toThrow(PasswordInputError);
+      expect(() => parseCreateAdminArgs(["a@b.test", "N", "--password-stdin", ...bad])).toThrow(/NO se pasa por argv/);
     }
   });
 

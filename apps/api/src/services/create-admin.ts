@@ -34,6 +34,8 @@ export interface CreateAdminInput {
   password: string;
   /** Permite crear un admin aunque ya exista otro. Queda auditado. */
   allowAdditionalAdmin?: boolean;
+  /** Sólo para tests: pausa entre el recuento y el alta, para ensanchar la ventana de carrera. */
+  afterAdminCount?: () => Promise<void>;
 }
 
 export interface CreateAdminResult {
@@ -64,6 +66,7 @@ export async function createAdmin(db: Db, input: CreateAdminInput): Promise<Crea
     }
     const existing = await trx("user_roles").where({ role: "admin" }).count<{ count: string }[]>({ count: "*" });
     const adminCount = Number(existing[0].count);
+    if (input.afterAdminCount) await input.afterAdminCount();
     if (adminCount > 0 && !input.allowAdditionalAdmin) {
       throw new CreateAdminError(
         "admin_exists",
