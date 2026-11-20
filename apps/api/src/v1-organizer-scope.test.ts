@@ -275,3 +275,35 @@ describe("#306 · hiddenBotIds / whereBotIdentifiable (capa de política)", () =
     expect((await ids(randomUUID(), ROLE_RANK.moderator)).size).toBe(3);
   });
 });
+
+describe("V1-A · ajustes de acceso público (migración 021): sólo admin, y persisten en la BD", () => {
+  const patch = (a: Actor, body: Record<string, unknown>) =>
+    request(app).patch("/admin/settings/public-access").set(auth(a)).send(body);
+
+  it("anónimo ⇒ 401; usuario, organizer y moderator ⇒ 403 en GET y PATCH, y la fila no cambia", async () => {
+    const before = await h.db("app_runtime_settings").where({ id: 1 }).first();
+    for (const [actor, code] of [
+      ["anon", 401],
+      ["stranger", 403],
+      ["orgA", 403],
+      ["moderator", 403],
+    ] as const) {
+      expect((await get(actor, "/admin/settings/public-access")).status, `GET ${actor}`).toBe(code);
+      expect((await patch(actor, { publicReplaysEnabled: true })).status, `PATCH ${actor}`).toBe(code);
+    }
+    const after = await h.db("app_runtime_settings").where({ id: 1 }).first();
+    expect(after?.public_replays_enabled ?? false).toBe(before?.public_replays_enabled ?? false);
+  });
+
+  it("admin cambia el ajuste, queda en la fila `app_runtime_settings` y en la auditoría; la fila manda", async () => {
+    const r = await patch("admin", { publicReplaysEnabled: true, publicSpectateEnabled: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const row = await h.db("app_runtime_settings").where({ id: 1 }).first();
+    expect([row.public_replays_enabled, row.public_spectate_enabled]).toEqual([true, true]);
+    const log = await h.db("audit_log").where({ action: "settings.public_access.update" });
+    expect(log.length).toBeGreaterThanOrEqual(1);
+    expect((await patch("admin", { publicReplaysEnabled: false, publicSpectateEnabled: false })).status).toBe(200);
+    const off = await h.db("app_runtime_settings").where({ id: 1 }).first();
+    expect([off.public_replays_enabled, off.public_spectate_enabled]).toEqual([false, false]);
+  });
+});
