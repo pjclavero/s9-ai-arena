@@ -8,7 +8,7 @@
 #
 # NOTA para el operador: CODEOWNERS solo bloquea el merge si la protección de
 # rama de main activa "Require review from Code Owners". Ver pasos del operador
-# en docs/despliegue.md (sección "Protección de ramas").
+# en docs/operations/installation.md (sección "Protección de ramas").
 
 # Por defecto, todo requiere al menos una revisión del propietario.
 *                           @pjclavero

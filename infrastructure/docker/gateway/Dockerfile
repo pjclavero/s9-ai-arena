@@ -2,7 +2,7 @@
 FROM nginx:1.27-alpine
 
 # Config por defecto: modo standalone (TLS en el gateway). El Compose puede
-# montar nginx-behind-proxy.conf encima (GATEWAY_CONF, docs/despliegue.md).
+# montar nginx-behind-proxy.conf encima (GATEWAY_CONF, docs/operations/installation.md).
 COPY infrastructure/gateway/nginx.conf /etc/nginx/nginx.conf
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \

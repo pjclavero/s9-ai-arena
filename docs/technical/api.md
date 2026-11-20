@@ -34,7 +34,7 @@ Autenticación:
 | App | `src/app.ts`: JSON ≤ 1 MB, contexto de petición (correlación), cabeceras de seguridad y CORS, autenticación, routers, 404 genérico y manejador de errores |
 | Contrato | `openapi.yaml` + `src/openapi.ts` (carga y `ROLE_RANK`) |
 | Registro | `src/registry.ts` (`defineOperation`, `defineExtension`, `rbacGuard`) |
-| Routers | `src/routes/{auth,users,teams,bots,catalog,keys,admin,battles,standings,tournaments,maps,system}.ts` |
+| Routers | `src/routes/{auth,users,teams,bots,catalog,keys,admin,battles,battle-rules,standings,tournaments,maps,replays,runtime-settings,streaming,system}.ts` |
 | Errores | `src/errors.ts` |
 
 `servers` del contrato: `https://arena.example/api/v1`, un ejemplo.
@@ -60,7 +60,7 @@ Autenticación:
 - **`POST /auth/logout`** (extensión): revoca la sesión de la cookie.
 - **Otras**: `GET/DELETE /auth/sessions[/{id}]`, `POST/DELETE /auth/2fa`, `POST /auth/recover`, `POST /auth/reset`.
   - `recover` y `reset` son extensiones y no tienen transporte de correo.
-- **Cambio de contraseña**: no existe.
+- **Cambio de contraseña**: no existe en `main`; lo añade el PR #315 (abierto).
 
 ## Autorización (RBAC)
 
@@ -77,7 +77,7 @@ La autorización por recurso va dentro de cada ruta (dueño del bot, capitán de
 ## Convenciones
 
 - **Paginación**: `?limit` (por defecto 20, máximo 100) y `?cursor` opaco (`created_at`+`id`), con `nextCursor` en la respuesta. Afecta a bots, batallas, mapas, torneos y equipos.
-- **Transiciones** como acciones: `POST …/actions/{submit|publish|suspend|retire|close-entries|dry-run}`.
+- **Transiciones** como acciones: `POST …/actions/{submit|publish|suspend|retire|clone|close-entries|dry-run|cancel}`.
 - **Caché**: hay `Cache-Control` en las lecturas públicas (5–60 s; los replays, `immutable`).
 - **Correlación**: cada respuesta de error incluye `correlationId`.
 
@@ -91,7 +91,7 @@ Forma única (`errors.ts`): `{error: <código>, message, correlationId, …extra
 | 401 | `unauthorized` | Sin credencial o credencial inválida |
 | 403 | `forbidden` | «Requiere rol organizer», «Solo el dueño del bot puede hacer esto» |
 | 404 | `not_found` | Recurso inexistente **o no visible** (no revela existencia); «Ruta no encontrada» |
-| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state`, `bot_version_not_eligible` (con `notEligible`), `entries_not_eligible` (con `notEligibleEntries`) |
+| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state`, `bot_version_not_eligible` (con `notEligible`), `entries_not_eligible` (con `notEligibleEntries`), `not_enough_participants` (cerrar inscripciones con menos de 2; con `required`, `current`, `unit`), `tournament_not_cancellable`, `entries_closed` |
 | 413 | `source_too_large` | Código > 10 MB |
 | 422 | `loadout_invalid` (`violations`), `map_invalid` (`checks`) | Validadores del catálogo y de mapas |
 | 429 | `too_many_requests`, `too_many_running_battles` | Límites |
@@ -154,7 +154,7 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | Método y ruta | Rol |
 |---|---|
 | `GET /tournaments`, `GET /tournaments/{id}/matches`, `GET /tournaments/{id}/team-standings` | anón. |
-| `POST /tournaments`, `POST …/actions/close-entries`, `POST …/actions/dry-run` | organizer |
+| `POST /tournaments`, `POST …/actions/close-entries`, `POST …/actions/dry-run`, `POST …/actions/cancel` | organizer (y ser quien creó el torneo, o staff: `canManageTournament`) |
 | `POST /tournaments/{id}/entries` | user |
 | `GET /standings`, `GET /bots/{botId}/rating-history` | anón. |
 
@@ -177,12 +177,13 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 |---|---|
 | `GET /admin/security-findings`, `GET /admin/audit-log` | admin |
 | `GET /system/status`, `GET /system/rbac` | admin |
-| `GET /admin/settings/public-access`, `PATCH /admin/settings/public-access` | admin (MG, contrato 0.18.0: espectador y replays públicos en caliente, auditados) |
+| `GET /admin/settings/public-access`, `PATCH /admin/settings/public-access` | admin (MG, contrato 0.18.0: espectador y replays públicos en caliente, auditados; la fila `app_runtime_settings` manda sobre el entorno) |
+| `GET /admin/streaming`, `PUT …/settings`, `PUT/DELETE …/credentials/{platform}`, `PUT …/ingests/{platform}`, `GET …/destinations`, `GET …/target`, `POST …/test`, `POST …/start`, `POST …/restart`, `POST …/stop`, `GET …/recordings`, `POST …/retention`, `GET …/audit` | admin (administración de la emisión; ver [streaming.md](../operations/streaming.md)) |
 
 ## Rutas del contrato no recogidas en las tablas anteriores
 
-Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 2026). Estas 23 operaciones de `apps/api/openapi.yaml` (contrato
-0.12.0, `main` `e3bf2fa`) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
+Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 2026). Estas operaciones de `apps/api/openapi.yaml` (contrato
+0.25.0, 106 operaciones, `main` `80f4952`, 2026-11-20) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
 
 | operationId | Método y ruta | Rol mínimo |
 |---|---|---|
@@ -210,6 +211,15 @@ Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 
 | `getReplaySegment` | `GET /replays/{battleId}/segment` | visitor |
 | `getTeamStandings` | `GET /tournaments/{tournamentId}/team-standings` | visitor |
 | `getBotVersionEligibilityInventory` | `GET /admin/bot-version-eligibility` | admin |
+| `getTeam` | `GET /teams/{teamId}` | visitor |
+| `updateTeam` | `PATCH /teams/{teamId}` | team_captain |
+| `setBotVersionCodeVisibility` | `PUT /bots/{botId}/versions/{version}/code-visibility` | user |
+| `enterTournamentTeam` | `POST /tournaments/{tournamentId}/team-entries` | user (inscripción atómica de un equipo completo, #290) |
+| `listTeamEntryConsents` | `GET /tournaments/{tournamentId}/team-consents` | user |
+| `putTeamEntryConsent` | `PUT /tournaments/{tournamentId}/team-consents/{botId}` | user (autorización del dueño del bot) |
+| `deleteTeamEntryConsent` | `DELETE /tournaments/{tournamentId}/team-consents/{botId}` | user |
+| `cancelTournament` | `POST /tournaments/{tournamentId}/actions/cancel` | organizer (dueño del torneo o staff, #289) |
+| `getStreamingAdmin` y las demás de `/admin/streaming…` | ver la tabla «Administración» | admin |
 
 ## Extensiones fuera del contrato
 
@@ -243,7 +253,7 @@ Los contadores se guardan en la tabla `api_usage`, compartidos entre réplicas.
 
 ## Endpoints sin pantalla en la web
 
-`PATCH /users/me`, sesiones, 2FA, `recover` y `reset`, `GET /users/{id}`, quitar miembro de equipo, `GET/PATCH /bots/{id}`, código fuente, `suspend`, `retire`, `GET /builds/{id}`, `POST /maps/drafts`, `GET/PUT /maps/{id}/versions/{v}`, `POST /catalog/versions`, `dry-run`, `team-standings`, `/battles/{id}/audit`, **`/battles/{id}/stats`**, `GET /replays/{id}`, `POST /replays/{id}/verify`, **`/bots/{id}/rating-history`** y `/public/replays*`. Mapa completo de páginas a endpoints en [frontend.md](frontend.md#mapa-de-páginas--endpoints).
+`PATCH /users/me`, sesiones, 2FA, `recover` y `reset`, `GET /users/{id}`, código fuente, `suspend`, `retire`, `GET /builds/{id}`, `PUT /maps/{id}/versions/{v}`, `POST /catalog/versions`, `dry-run`, `team-standings`, `GET /replays/{id}`, `POST /replays/{id}/verify`, **`/bots/{id}/rating-history`** y `/public/replays*`. Mapa completo de páginas a endpoints en [frontend.md](frontend.md#mapa-de-páginas--endpoints).
 
 ## Estado actual
 
@@ -266,7 +276,8 @@ Verificado contra `27f70bb`.
 |---|---|---|
 | Rutas y roles del contrato (tablas anteriores) | CODE_VERIFIED | `apps/api/openapi.yaml` (operaciones con `x-min-role` volcadas con un script) |
 | El rol mínimo sale del contrato | CODE_VERIFIED | `apps/api/src/registry.ts:20-60` |
-| Rutas del contrato 0.12.0 que faltaban en las tablas (sección añadida el 2026-11-02) | CODE_VERIFIED (`e3bf2fa`) | generadas leyendo `apps/api/openapi.yaml` |
+| Rutas del contrato 0.25.0 que faltan en las tablas (sección actualizada el 2026-11-20; 106 operaciones) | CODE_VERIFIED (`80f4952`) | contraste por script de las operaciones de `apps/api/openapi.yaml` con este documento |
+| Los endpoints «sin pantalla» (lista corregida el 2026-11-20: ya tienen pantalla bots, borradores de mapa, auditoría y estadísticas de batalla, quitar miembro y la emisión) | CODE_VERIFIED (`80f4952`) | llamadas `api(...)` de `apps/web/src` |
 | 8 extensiones con `defineExtension` | CODE_VERIFIED | `routes/auth.ts:297,384,399`; `routes/keys.ts:19`; `routes/bots.ts:217,236`; `routes/tournaments.ts:129,143` |
 | Prefijo `/api/v1` quitado por nginx | CODE_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-76` |
 | Registro abierto con `user`+`developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts:148-174` |

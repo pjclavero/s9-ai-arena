@@ -1,6 +1,6 @@
 # ADR-023 · Streaming: relé RTMP en el propio streamer y credenciales de emisión selladas
 
-**Estado:** propuesto (2026-11-02, EQ5b · PR #227; corregido por EQ5c tras la revisión EQ6b, ronda 1) · **Ámbito:** `apps/streamer` (`rtmp/*`, `ffmpeg.ts`, `supervisor.ts`, `control.ts`, `session.ts`, `recordings.ts`), `packages/stream-secrets`, `apps/api` (`routes/streaming.ts`, `services/streaming.ts`, `services/streamer-client.ts`, migración 017), `infrastructure` (`docker-compose.yml`, `scripts/init-secrets.sh`, alertas)
+**Estado:** aceptado e implementado en `main` (PR #227; revisado el 2026-11-20) (propuesto el 2026-11-02, EQ5b · PR #227; corregido por EQ5c tras la revisión EQ6b, ronda 1) · **Ámbito:** `apps/streamer` (`rtmp/*`, `ffmpeg.ts`, `supervisor.ts`, `control.ts`, `session.ts`, `recordings.ts`), `packages/stream-secrets`, `apps/api` (`routes/streaming.ts`, `services/streaming.ts`, `services/streamer-client.ts`, migración 017), `infrastructure` (`docker-compose.yml`, `scripts/init-secrets.sh`, alertas)
 
 ## Contexto
 

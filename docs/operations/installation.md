@@ -43,7 +43,7 @@ con el perfil `production`. Los datos viven en volúmenes Docker (`infrastructur
 | `restic` (opcional) | sólo para **restaurar** desde el host ([restore.md](restore.md)) | el backup programado lo trae su propia imagen |
 | Un usuario de despliegue sin privilegios, dueño del clon | operar sin `root` | los contenedores Node corren como uid 1000 y leen los secretos con ese uid |
 | Un repositorio restic (SFTP o ruta montada) | copias diarias | ver [backup.md](backup.md) |
-| Opcional: el proxy de Docker del host | ejecución real de bots | hoy apagado en producción; ver [docker-proxy.md](docker-proxy.md) |
+| El proxy de Docker del host | build y ejecución de los bots de usuario en contenedores aislados | **necesario** para que el producto compile y juegue bots: sin él no hay build ni batallas con código real. Se instala aparte, como root (paso 6), y hay que fijar `DOCKER_PROXY_URL` en `.env` (paso 5); ver [docker-proxy.md](docker-proxy.md) |
 
 ## 2. Clonar el repositorio
 
@@ -66,7 +66,10 @@ bash infrastructure/scripts/init-secrets.sh
 Genera, sólo si no existen, en `infrastructure/secrets/` (permisos `0400`, dueño
 `RUNTIME_UID:RUNTIME_GID`, por defecto `1000:1000`): `postgres_password.txt`, `jwt_secret.txt`,
 `grafana_admin_password.txt`, `restic_password.txt`, `arena_engine_internal_secret.txt`,
-`replay_ingest_secret.txt`, `artifact_signing_key.pem` (ed25519), el par `stream_secrets_*.pem` (RSA-3072), `restic_ssh_key` (+ `.pub`),
+`replay_ingest_secret.txt`, `artifact_signing_key.pem` (ed25519) y su pública
+`artifact_verify_key.pem` (la verificación de artefactos del worker usa sólo la pública),
+`streamer_control_secret.txt`, el par `stream_secrets_private.pem` / `stream_secrets_public.pem`
+(RSA-3072, para guardar claves de emisión sin dejarlas en claro), `restic_ssh_key` (+ `.pub`),
 `stream_key.txt` y `restic_ssh_known_hosts` vacíos, y un TLS autofirmado en `tls/`.
 
 Después:
@@ -83,8 +86,9 @@ Nunca imprimas los ficheros de secretos en pantalla ni los pases por la línea d
 
 ### Ejecutar `init-secrets.sh` como root: `S9_SECRETS_ADOPT` y residuales
 
-El script no sigue enlaces simbólicos ni escribe a través de ellos (cada secreto se crea en un
-temporal exclusivo y se instala con `rename`). Con **root**, además:
+Desde el PR #169 (TD-064) el script no sigue enlaces simbólicos ni escribe a través de ellos (cada
+secreto se crea en un temporal exclusivo y se instala con `rename`; prueba:
+`infrastructure/tests/init-secrets-nofollow.test.ts`). Con **root**, además:
 
 - **Directorio ajeno: se niega.** Si `infrastructure/secrets/` (o `tls/`) pertenece a otro usuario,
   root aborta con rc 3 y no escribe nada: un usuario sin privilegios podría haber plantado enlaces.
@@ -140,6 +144,7 @@ Edita **como mínimo** (detalle de cada variable en [configuration.md](configura
 | `RESTIC_REPOSITORY` | p. ej. `sftp:<backup-user>@<backup-host>:/restic` | vacío → el backup no puede copiar |
 | `RESTIC_HOSTNAME` | nombre lógico fijo de esta instalación | agrupa la retención; no cambiarlo después |
 | `COMPOSE_PROFILES` | `production` (opcional) | evita olvidar `--profile production` |
+| `DOCKER_PROXY_URL` | `http://docker-proxy.internal:2375` | **sin valor por defecto en `tournament-worker`**: vacío, el worker no reclama batallas y quedan `scheduled`. Se fija una vez instalado y validado el proxy del paso 6 ([configuration.md](configuration.md)) |
 
 Ningún secreto va en `.env`.
 
@@ -245,7 +250,7 @@ Desde el host (sustituye el puerto si cambiaste `HTTP_PORT`):
 curl -s http://127.0.0.1:${HTTP_PORT:-80}/healthz          # gateway → "ok"
 curl -s http://127.0.0.1:${HTTP_PORT:-80}/api/v1/healthz   # API → {"status":"ok","service":"api"}
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:${HTTP_PORT:-80}/   # web → 200
-$DC ps --format '{{.Service}} {{.Status}}'                 # 11 healthy + backup
+$DC ps --format '{{.Service}} {{.Status}}'                 # los 12 servicios del perfil `production`; `backup` sale `unhealthy` hasta su primera copia
 ```
 
 Con `GATEWAY_CONF=nginx.conf` el puerto 80 redirige a HTTPS salvo `/healthz` y `/version`: usa
@@ -273,10 +278,15 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE:** pasos 1-8 y 10 con imágenes `sha-<commit>` publicadas.
-- **PARCIAL:** el producto instalado tiene limitaciones funcionales (ningún bot llega a
-  `published`, batallas con stub, creación de batallas desde la web rota): ver
-  [../roadmap/current-status.md](../roadmap/current-status.md).
+- **FUNCIONA ACTUALMENTE:** pasos 1-8 y 10 con imágenes `sha-<commit>` publicadas. Una instalación
+  con el proxy de Docker instalado y `DOCKER_PROXY_URL` fijado compila bots en el sandbox, los publica y juega batallas con su
+  código firmado: lo ejerce la CI obligatoria (`functional-e2e`) y lo recoge el registro de
+  verificación de la reinstalación de noviembre (ver
+  [../roadmap/current-status.md](../roadmap/current-status.md), que separa lo probado de lo
+  verificado en producción).
+- **PARCIAL:** el streaming (perfil `streaming`, fuera del perfil `production`) y el acceso público
+  (espectador y replays, apagados por defecto y gobernados por la fila `app_runtime_settings`, no por
+  el entorno) se activan aparte: [streaming.md](streaming.md) y [configuration.md](configuration.md).
 - **PENDIENTE:** primer administrador sin SQL; `.env.example` con un `TAG` válido; humo fiable
   ([TD-024](../roadmap/technical-debt.md#td-024), [TD-020](../roadmap/technical-debt.md#td-020)).
 

@@ -21,11 +21,11 @@
 # Seguridad (cap. 28, R1.7/ERR-SEC-02): NINGÚN servicio corre privilegiado ni
 #   monta docker.sock — sin excepciones. El bot-manager lanza contenedores a
 #   través del proxy de la API de Docker que corre EN EL HOST
-#   (apps/bot-manager/src/docker-proxy-main.ts; ver docs/despliegue.md), con
+#   (apps/bot-manager/src/docker-proxy-main.ts; ver docs/operations/installation.md), con
 #   allowlist estricta (crear/arrancar/parar/inspeccionar). Lo verifica
 #   infrastructure/scripts/scan-compose.mjs en la etapa 6 de la CI.
 #
-# Arranque: ver docs/despliegue.md (instalación limpia en 3 pasos).
+# Arranque: ver docs/operations/installation.md (instalación limpia en 3 pasos).
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ADR-016 · identidad de build: los tres valores viajan DENTRO de cada imagen
@@ -115,7 +115,7 @@ services:
     volumes:
       # Modo (a) standalone: nginx.conf (TLS en el gateway, 80/443 al exterior).
       # Modo (b) detrás del proxy de VM104: GATEWAY_CONF=nginx-behind-proxy.conf
-      # (solo HTTP a la LAN; VM104 termina TLS). Ver docs/despliegue.md.
+      # (solo HTTP a la LAN; el proxy externo termina TLS). Ver docs/operations/installation.md.
       # Sintaxis larga: el default `${VAR:-...}` mete un ':' que la sintaxis corta
       # confunde con separador bajo `docker compose config --no-interpolate`
       # ("too many colons"). La forma larga es inmune y equivalente en runtime.

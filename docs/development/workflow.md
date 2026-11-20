@@ -127,7 +127,7 @@ y que la documentación canónica dice la verdad.
 ## 9. Merge
 
 Merge a `main` con CI verde (recuento completo, `semaforo` y `functional-e2e` incluidos) y review
-aprobada. Antes de un release, gate manual `functional-e2e` (`workflow_dispatch`) sobre el commit. No reescribas `main`. Si el PR
+aprobada. La protección de la rama exige los cuatro checks (también a administradores) pero **no exige aprobaciones de revisión** (`required_approving_review_count` = 0): la «revisión independiente» es una regla de proceso (AGENTS.md), no una puerta de GitHub. Antes de un release, gate manual `functional-e2e` (`workflow_dispatch`) sobre el commit. No reescribas `main`. Si el PR
 forma parte de una pila, reapunta los PR dependientes antes de borrar la rama.
 
 ## 10. Construcción y despliegue
