@@ -11,7 +11,7 @@ usarse en producción.
 
 - [Orden](#orden)
 - [1. Contenido base (`bootstrap`)](#1-contenido-base-bootstrap)
-- [2. Primera cuenta](#2-primera-cuenta)
+- [2. Cuentas normales](#2-cuentas-normales)
 - [3. Primer administrador](#3-primer-administrador)
 - [4. Repositorio de copias](#4-repositorio-de-copias)
 - [5. Readiness](#5-readiness)
@@ -24,8 +24,8 @@ usarse en producción.
 
 ## Orden
 
-1. secretos y `.env` (ya hechos en la instalación) → 2. `up -d` → 3. `bootstrap` → 4. registrar la
-primera cuenta → 5. promoverla a administrador → 6. `backup.sh --init-repo` → 7. readiness.
+1. secretos y `.env` (ya hechos en la instalación) → 2. `up -d` → 3. `bootstrap` → 4. primer
+administrador (`create-admin`) → 5. `backup.sh --init-repo` → 6. readiness.
 
 ```bash
 DC="docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env --profile production"
@@ -56,9 +56,9 @@ Limitación conocida: la web crea batallas con identificadores de modo que no so
 `mvp-default` sembrado, y la creación devuelve `400 rulesetId desconocido`
 ([TD-003](../roadmap/technical-debt.md#td-003)).
 
-## 2. Primera cuenta
+## 2. Cuentas normales
 
-Registro normal desde la web, o por API:
+El primer administrador se crea en el paso 3. Las demás cuentas se registran desde la web, o por API:
 
 ```bash
 curl -s -H 'content-type: application/json' \
@@ -71,31 +71,41 @@ alcance la web ([TD-012](../roadmap/technical-debt.md#td-012)).
 
 ## 3. Primer administrador
 
-No hay comando ni pantalla para crear el primer administrador
-([TD-023](../roadmap/technical-debt.md#td-023)). El único camino que funciona hoy es SQL directo.
-
-> **DANGER** — escritura directa en la tabla de roles de producción.
->
-> **PRECONDITION:** la cuenta existe (paso 2) y has comprobado el email exacto; ventana sin otros
-> cambios de roles en curso.
->
-> **EFFECT:** añade el rol `admin` a esa cuenta (no quita los otros). La cuenta gana acceso total
-> al panel de administración.
->
-> **ROLLBACK:** `DELETE FROM user_roles WHERE role = 'admin' AND user_id = (SELECT id FROM users WHERE email = '<email>');`
+Un comando crea el primer administrador **sin SQL** ([TD-023](../roadmap/technical-debt.md#td-023)).
+Sustituye al paso 2 para esa cuenta: no hace falta registrarla antes (de hecho, si el email ya
+existe, el comando se niega y no la promueve).
 
 ```bash
-$DC exec postgres psql -U arena -d arena -v ON_ERROR_STOP=1 -c \
-  "INSERT INTO user_roles (user_id, role) SELECT id, 'admin' FROM users WHERE email = lower('<email>') ON CONFLICT DO NOTHING;"
-# Comprobar: debe listar admin entre sus roles
+# stdin (la contraseña no queda en el historial ni en `ps`)
+printf '%s' "<contraseña de al menos 12 caracteres>" | $DC exec -T -w /app api \
+  npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
+
+# o desde un fichero 0600 del usuario que ejecuta el comando
+$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" \
+  --password-file <ruta-0600>
+```
+
+- La contraseña **nunca** va en argv (`--password=…`, `-p` y similares se rechazan con rc 2). El
+  fichero debe ser regular, del mismo usuario y sin permisos de grupo/otros (`0600`).
+- Aplica la misma política que el registro (≥ 12 caracteres). Roles resultantes: `user`,
+  `developer` y `admin`.
+- **Se niega (rc 1) si ya existe un administrador**, y si faltan los roles base (ejecuta antes
+  `bootstrap`). Para añadir otro por esta vía: `--allow-additional-admin`; queda auditado
+  (`admin.create_cli`, con `additional: true`, sin la contraseña). Lo normal es gestionar roles
+  desde la web ([../user/administration.md](../user/administration.md)).
+- No usa `seed` ni credenciales del repositorio.
+- Alta y recuento van en una transacción con cerrojo: dos ejecuciones simultáneas no producen dos
+  «primeros» administradores.
+
+Comprobación (lectura):
+
+```bash
 $DC exec postgres psql -U arena -d arena -tAc \
   "SELECT role FROM user_roles WHERE user_id = (SELECT id FROM users WHERE email = lower('<email>')) ORDER BY role;"
 ```
 
-Los roles se leen de la base de datos en cada petición autenticada, así que el cambio es
-efectivo sin volver a iniciar sesión (basta recargar la web). A partir de ahí el resto de roles
-se gestionan desde la web
-([../user/administration.md](../user/administration.md)), indicando el identificador del usuario.
+Los roles se leen de la base de datos en cada petición autenticada, así que el login es efectivo
+de inmediato.
 
 ## 4. Repositorio de copias
 
@@ -123,7 +133,9 @@ npx tsx scripts/readiness.ts
 
 Requiere Node ≥ 22.15 y `npm ci` en el clon. Hoy el veredicto **nunca** es `READY`: varias
 comprobaciones obligatorias no se pueden ejercer desde el CLI. Qué mide y qué no en
-[readiness.md](readiness.md).
+[readiness.md](readiness.md). El CLI **no consulta** si existe un administrador: compruébalo con la
+consulta del paso 3 (el sondeo `admin.bootstrap_identity` de `packages/first-run` no está cableado
+al CLI; [TD-024](../roadmap/technical-debt.md#td-024)).
 
 ## 6. Opcional: equipos de demostración
 
@@ -139,7 +151,7 @@ de la creación por API ([TD-011](../roadmap/technical-debt.md#td-011)).
 
 | Comando | Por qué |
 |---|---|
-| `cli.ts seed` | migra y crea **usuarios de desarrollo con contraseña conocida del repositorio** |
+| `cli.ts seed` | (usa `create-admin`, no `seed`) migra y crea **usuarios de desarrollo con contraseña conocida del repositorio** |
 | `cli.ts rollback:all` | revierte todas las migraciones: **destruye el esquema completo** |
 | `cli.ts rollback:1` | revierte la última migración; sólo con un plan de vuelta atrás probado |
 | `cli.ts rollback:name <NNN_tema>` | revierte esa migración concreta, esté donde esté; mismo requisito |
@@ -157,9 +169,9 @@ la instalación. El diseño original está archivado en
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE:** `bootstrap`, registro, promoción por SQL, `--init-repo`.
+- **FUNCIONA ACTUALMENTE:** `bootstrap`, registro, `create-admin` (primer administrador sin SQL), `--init-repo`.
 - **PARCIAL:** readiness (CLI, sin `READY` posible).
-- **PENDIENTE:** alta de administrador sin SQL; cierre del registro abierto; asistente de primer
+- **PENDIENTE:** cierre del registro abierto; asistente de primer
   arranque usable ([TD-023](../roadmap/technical-debt.md#td-023),
   [TD-012](../roadmap/technical-debt.md#td-012), [TD-024](../roadmap/technical-debt.md#td-024)).
 
@@ -176,9 +188,9 @@ la instalación. El diseño original está archivado en
 | `bootstrap` = `migrateToLatest` + `seedContent`, sin usuarios; idempotente | CODE_VERIFIED + RUNTIME_VERIFIED | `apps/api/src/db/cli.ts:56-59`; ejecutado dos veces en el entorno aislado |
 | `seed` crea usuarios de desarrollo; `rollback:all` destruye el esquema; `rollback` a secas rechazado; `rollback:name` revierte una migración concreta | CODE_VERIFIED | `apps/api/src/db/cli.ts:12-22,37-67` |
 | Los roles los crean las migraciones | CODE_VERIFIED | `apps/api/src/db/migrations.ts:20,97-105` |
-| El registro asigna `user` + `developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts:167-171` |
-| No existe endpoint ni comando para el primer admin; roles por `PUT /users/{id}/roles` | CODE_VERIFIED | `apps/api/src/routes/users.ts:51-53`; `cli.ts` sin comando |
-| Promoción por SQL y login posterior | RUNTIME_VERIFIED | entorno aislado (`INSERT … user_roles`) |
+| El registro asigna `user` + `developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts` (`register`) |
+| `create-admin`: sin SQL, contraseña por stdin/fichero 0600 (nunca argv), política ≥12, se niega con admin existente, auditado | TEST (PostgreSQL real, proceso real) | `apps/api/src/db/create-admin.test.ts`; mutantes `scripts/v1-first-admin-mutants.mjs` |
+| Roles de otros usuarios: `PUT /users/{id}/roles` (exige admin) | CODE_VERIFIED | `apps/api/src/routes/users.ts:51-53` |
 | Los roles se leen de BD en cada petición | CODE_VERIFIED | `apps/api/src/middleware/authenticate.ts:30,47-48` |
 | El usuario de BD es `arena`; `postgres` no existe | CODE_VERIFIED + RUNTIME_VERIFIED | compose `POSTGRES_USER: arena`; `SELECT rolname FROM pg_roles` en el entorno aislado; auditoría 2026-10-15 en producción |
 | `--init-repo` idempotente y no automático | CODE_VERIFIED | `infrastructure/backup/backup.sh:505-517` |

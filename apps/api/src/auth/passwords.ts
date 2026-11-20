@@ -5,6 +5,17 @@ export function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, { type: argon2.argon2id });
 }
 
+/** Política de contraseñas ÚNICA: registro, recuperación y alta del primer administrador. */
+export const PASSWORD_MIN_LENGTH = 12;
+
+/** Devuelve el motivo del rechazo, o `null` si la contraseña cumple la política. */
+export function passwordPolicyViolation(password: unknown): string | null {
+  if (typeof password !== "string" || password.length < PASSWORD_MIN_LENGTH) {
+    return `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`;
+  }
+  return null;
+}
+
 export function verifyPassword(hash: string, password: string): Promise<boolean> {
   return argon2.verify(hash, password).catch(() => false);
 }
