@@ -387,7 +387,6 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
   });
 });
 
-
 // ---------------------------------------------------------------- root real
 const probe = spawnSync("unshare", ["--map-root-user", "--map-auto", "true"], { encoding: "utf8" });
 // Alternativa: INIT_SECRETS_ROOT_OUTPUT = salida del fixture ejecutado con root REAL

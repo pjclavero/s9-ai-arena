@@ -134,7 +134,7 @@ mutate M30 'echo "Secretos en $DIR' 'echo "Secretos en $DIR' || exit 2
 equiv M30 "(R10, control) mutante identidad"
 # M14 · la privada de stream_secrets se escribe con `-out` al nombre final (sigue enlaces)
 mutate M14 'rsa_keygen_bits:3072 -out "$t"' 'rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem"' || exit 2
-check M14 "stream privada escrita a través del nombre final" "stream_secrets_private.pem como enlace COLGANTE absoluto"
+check M14 "stream privada escrita a través del nombre final" "regular de root con un descriptor abierto antes por el atacante"
 # M15 · la pública de stream_secrets vuelve al .tmp predecible
 mutate M15 '-in "$SIGN2" -pubout -out "$t" 2>/dev/null; then' '-in "$SIGN2" -pubout -out "$DIR/stream_secrets_public.pem.tmp" 2>/dev/null && cp -f "$DIR/stream_secrets_public.pem.tmp" "$t"; then' || exit 2
 check M15 "stream pública vía .tmp predecible" "stream_secrets_public.pem.tmp -> víctima"
