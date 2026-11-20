@@ -142,6 +142,39 @@
         "V1-B · #305 · ids mal formados nunca dan 5xx POST/PUT/PATCH/DELETE con id de ruta inválido y cuerpo vacío: nunca 5xx"
       ],
       "controls": []
+    },
+    {
+      "id": "V1B-02-owner-filter-applied",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/routes/bots.ts",
+      "from": "    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
+      "to": "",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro un uuid válido SIGUE filtrando: con bots de dos dueños, sólo salen los del dueño pedido"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-03-uuid-re-sin-ancla-fin",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/params.ts",
+      "from": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "to": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;\n",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)"
+      ],
+      "controls": []
+    },
+    {
+      "id": "V1B-04-uuid-re-sin-ancla-inicio",
+      "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
+      "file": "apps/api/src/params.ts",
+      "from": "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "to": "const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId con basura antes o después de un uuid válido es 400 (anclas de la expresión)"
+      ],
+      "controls": []
     }
   ]
 }

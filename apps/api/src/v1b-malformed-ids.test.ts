@@ -29,8 +29,13 @@ afterAll(async () => {
 });
 
 const BAD = "no-es-uuid";
-// 503 = capacidad no configurada en el entorno de test (p. ej. grabaciones de streaming): no es un id.
-const isServerError = (status: number) => status >= 500 && status !== 503;
+// 503 = capacidad no configurada en el entorno de test. SÓLO se tolera en las operaciones listadas, con su
+// motivo; en cualquier otra, un 503 ante un id mal formado es un fallo.
+const CAPABILITY_503: Record<string, string> = {
+  listStreamingRecordings: "grabaciones de streaming: sin streamer configurado en test, 503 con cualquier parámetro",
+};
+const isServerError = (status: number, operationId: string) =>
+  status >= 500 && !(status === 503 && operationId in CAPABILITY_503);
 // Parámetros de query que son identificadores (el resto tiene su propia validación).
 const ID_QUERY = ["ownerId", "teamId", "id", "botId", "battleId", "seasonId", "bot", "team", "user"];
 
@@ -42,7 +47,7 @@ describe("V1-B · #305 · ids mal formados nunca dan 5xx", () => {
     for (const o of ops) {
       const url = o.path.replace(/\{[^}]+\}/g, BAD);
       const res = await request(app).get(url).set("Authorization", `Bearer ${tok}`);
-      if (isServerError(res.status)) fails.push(`${o.operationId} ${url} → ${res.status}`);
+      if (isServerError(res.status, o.operationId)) fails.push(`${o.operationId} ${url} → ${res.status}`);
     }
     expect(fails).toEqual([]);
   });
@@ -54,7 +59,7 @@ describe("V1-B · #305 · ids mal formados nunca dan 5xx", () => {
       if (skip.has(o.operationId)) continue;
       const url = o.path.replace(/\{[^}]+\}/g, BAD);
       const res = await (request(app) as any)[o.method](url).set("Authorization", `Bearer ${tok}`).send({});
-      if (isServerError(res.status)) fails.push(`${o.operationId} ${o.method} ${url} → ${res.status}`);
+      if (isServerError(res.status, o.operationId)) fails.push(`${o.operationId} ${o.method} ${url} → ${res.status}`);
     }
     expect(fails).toEqual([]);
   });
@@ -68,7 +73,7 @@ describe("V1-B · #305 · ids mal formados nunca dan 5xx", () => {
     const fails: string[] = [];
     for (const o of ops.filter((x) => !x.path.includes("{"))) {
       const res = await request(app).get(`${o.path}?${name}=${BAD}`).set("Authorization", `Bearer ${tok}`);
-      if (isServerError(res.status)) fails.push(`${o.operationId} ${o.path}?${name} → ${res.status}`);
+      if (isServerError(res.status, o.operationId)) fails.push(`${o.operationId} ${o.path}?${name} → ${res.status}`);
     }
     expect(fails).toEqual([]);
   });

@@ -241,6 +241,7 @@ paths:
       responses:
         '204': { description: Revocada }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'La sesión no existe (también si el id no es un uuid)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/2fa:
     post:
@@ -549,6 +550,7 @@ paths:
           schema: { type: string, enum: ['true', 'false'] }
       responses:
         '200': { description: Bots, content: { application/json: { schema: { $ref: '#/components/schemas/BotPage' } } } }
+        '400': { description: 'ownerId no es un uuid (vacío, repetido o con otra forma) o cursor inválido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     post:
       tags: [bots]
       operationId: createBot
