@@ -16,8 +16,8 @@ const orig = readFileSync(FILE, "utf8");
 const MUTANTS = [
   {
     id: "M1-no-fija-modo",
-    from: 'if (f === "teams") setMode(TEAM_TOURNAMENT_MODE);',
-    to: "setMode(mode);",
+    from: 'if (f === "teams") setMode(TEAM_TOURNAMENT_MODE)',
+    to: 'if (f === "teams") setMode(mode)',
     killedBy: "V1T1_DEFAULT_MODE",
   },
   {
