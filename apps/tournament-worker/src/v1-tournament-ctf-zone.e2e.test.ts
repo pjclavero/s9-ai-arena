@@ -96,7 +96,11 @@ async function playClassic(mode: string, rulesetId: string) {
   }
   const t = { ...((await h.db("tournaments").where({ id: r.body.id }).first()) as Row), retryRounds: rounds };
   const battles = (await h.db("battles").where({ tournament_id: r.body.id })) as Row[];
-  const jobs = (await h.db("jobs").where({ status: "needs_review", kind: "run_battle" })) as Row[];
+  const ids = new Set(battles.map((b) => b.id as string));
+  const jobs = ((await h.db("jobs").where({ status: "needs_review", kind: "run_battle" })) as Row[]).filter((j) => {
+    const pl = typeof j.payload === "string" ? JSON.parse(j.payload) : (j.payload as { battleId?: string });
+    return ids.has(String(pl.battleId));
+  });
   return { t, battles, jobs };
 }
 
@@ -129,6 +133,7 @@ describe("V1-C · CTF y control de zona en torneos (caracterización, fuera de V
     const { t, battles, jobs } = await playClassic("capture_the_flag", "capture-the-flag-mvp");
     // El mapa por defecto no tiene bandera ni base: el motor se niega a arrancar (3 intentos).
     expect(battles.map((b) => b.status)).toEqual(["failed"]);
+    expect(jobs.length).toBe(1);
     expect(String(jobs[0].last_error)).toMatch(/incompatible \(mvp-arena-01 \/ capture_the_flag\)/);
     expect(Number(jobs[0].attempts)).toBe(3);
     expect(t.state).toBe("finished"); // política «failed definitiva»: el torneo termina…
@@ -138,6 +143,7 @@ describe("V1-C · CTF y control de zona en torneos (caracterización, fuera de V
   it("V1C_ZONE_classic_fails · un control de zona clásico se juega UNA vez y falla: el mapa no tiene zona de captura", async () => {
     const { t, battles, jobs } = await playClassic("zone_control", "zone-control-mvp");
     expect(battles.map((b) => b.status)).toEqual(["failed"]);
+    expect(jobs.length).toBe(1);
     expect(String(jobs[0].last_error)).toMatch(/0 zona\(s\) de captura/);
     expect(t.state).toBe("finished");
     expect(t.champion_bot_id).toBeNull();
