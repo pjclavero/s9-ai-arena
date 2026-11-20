@@ -95,11 +95,16 @@ afterAll(async () => {
 // ---------------------------------------------------------------- utilidades
 
 /** Bots del developer, con v1 publicada y loadout elegible: se inscriben por la API real. */
-async function mkBots(n: number, label: string, teamId: string | null = null): Promise<TestBot[]> {
+async function mkBots(
+  n: number,
+  label: string,
+  teamId: string | null = null,
+  pattern: boolean[] = [],
+): Promise<TestBot[]> {
   const out: TestBot[] = [];
   for (let i = 0; i < n; i++) {
     const b = await createPublishedBot(h.db, `${label}-${++seq}`, { ownerId: developerId });
-    if (i % 2 === 0) strong.add(b.botId);
+    if (pattern.length > 0 ? pattern[i] : i % 2 === 0) strong.add(b.botId);
     if (teamId) await h.db("bots").where({ id: b.botId }).update({ team_id: teamId });
     out.push(b);
   }
@@ -149,8 +154,8 @@ function oraclePointsByBot(rows: { battle: Row; parts: Row[] }[]) {
     for (const p of parts) {
       const id = p.bot_id as string;
       const r = t.get(id) ?? { points: 0, wins: 0, losses: 0, draws: 0 };
-      if (p.outcome === "win") (r.points += 3), r.wins++;
-      else if (p.outcome === "draw") (r.points += 1), r.draws++;
+      if (p.outcome === "win") ((r.points += 3), r.wins++);
+      else if (p.outcome === "draw") ((r.points += 1), r.draws++);
       else if (p.outcome === "loss") r.losses++;
       t.set(id, r);
     }
@@ -338,7 +343,9 @@ describe("V1-C · eliminación simple 4 bots de principio a fin", () => {
     await drainAll();
     const { t, matches, battles } = await expectFinishedCleanly(tid, 3);
     // 3 rondas del método del círculo: 3 enfrentamientos reales + 3 descansos (byes) sin batalla.
-    expect(matches.filter((m) => !(typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing).bye).length).toBe(3);
+    expect(matches.filter((m) => !(typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing).bye).length).toBe(
+      3,
+    );
     const final = matches.find((m) => m.final)!;
     expect(final).toBeTruthy();
     expect(final.winner_bot_id).toBe(t.champion_bot_id);
@@ -351,9 +358,9 @@ describe("V1-C · eliminación simple 4 bots de principio a fin", () => {
       else expect(parts.map((p) => p.bot_id)).toContain(m.winner_bot_id);
     }
     // El campeón disputó la final y no perdió ninguna batalla.
-    expect(
-      rows.filter((r) => r.parts.some((p) => p.bot_id === t.champion_bot_id && p.outcome === "loss")).length,
-    ).toBe(0);
+    expect(rows.filter((r) => r.parts.some((p) => p.bot_id === t.champion_bot_id && p.outcome === "loss")).length).toBe(
+      0,
+    );
     // La final se retransmite en visible; el resto, diferido.
     const finalBattle = battles.find((b) => b.match_id === final.id)!;
     expect(finalBattle.spectator_mode).toBe("visible");
@@ -396,8 +403,12 @@ describe("V1-C · suizo 4 bots de principio a fin", () => {
     }
     // Cada bot juega exactamente una vez por ronda.
     for (const b of bots) {
-      const n = (await h.db("participants").join("battles", "battles.id", "participants.battle_id")
-        .where({ "battles.tournament_id": tid, "participants.bot_id": b.botId }).count("* as n").first()) as Row;
+      const n = (await h
+        .db("participants")
+        .join("battles", "battles.id", "participants.battle_id")
+        .where({ "battles.tournament_id": tid, "participants.bot_id": b.botId })
+        .count("* as n")
+        .first()) as Row;
       expect(Number(n.n)).toBe(2);
     }
     // La ronda 2 empareja por puntos tras la 1: ganadores entre sí y perdedores entre sí (sin empates).
@@ -405,156 +416,203 @@ describe("V1-C · suizo 4 bots de principio a fin", () => {
     const r1Battles = r1.filter((x) => matches.find((m) => m.id === x.battle.match_id)!.round === 1);
     const decisive = r1Battles.every((x) => x.parts.every((p) => p.outcome === "win" || p.outcome === "loss"));
     if (decisive) {
-      const winners = new Set(r1Battles.flatMap((x) => x.parts.filter((p) => p.outcome === "win").map((p) => p.bot_id)));
+      const winners = new Set(
+        r1Battles.flatMap((x) => x.parts.filter((p) => p.outcome === "win").map((p) => p.bot_id)),
+      );
       const r2 = r1.filter((x) => matches.find((m) => m.id === x.battle.match_id)!.round === 2);
       for (const x of r2) {
         const ws = x.parts.map((p) => winners.has(p.bot_id as string));
         expect(ws[0]).toBe(ws[1]); // mismo grupo de puntos
       }
     }
-    await expectStandingsMatchOracle(tid, bots.map((b) => b.botId), "deathmatch");
-    await expectEloLedgerCorrect(tid, bots.map((b) => b.botId), "deathmatch");
+    await expectStandingsMatchOracle(
+      tid,
+      bots.map((b) => b.botId),
+      "deathmatch",
+    );
+    await expectEloLedgerCorrect(
+      tid,
+      bots.map((b) => b.botId),
+      "deathmatch",
+    );
     await expectReplaysServed((await h.db("battles").where({ tournament_id: tid })) as Row[]);
   });
 });
 
 // ------------------------------------------------- Team Deathmatch 2v2
 
-describe("V1-C · Team Deathmatch por equipos 2v2 de principio a fin", () => {
-  let tid: string;
-  const teams: { teamId: string; bots: TestBot[] }[] = [];
-  const teamOf = new Map<string, string>();
+for (const n of [2, 3, 4])
+  describe(`V1-C · Team Deathmatch por equipos ${n}v${n} de principio a fin`, () => {
+    let tid: string;
+    const teams: { teamId: string; bots: TestBot[] }[] = [];
+    const teamOf = new Map<string, string>();
 
-  it("V1C_TDM_cycle · inscripción de EQUIPOS, cierre, ejecución 2v2 con el motor y torneo terminado", async () => {
-    // 3 equipos de 2 bots; el developer es capitán/miembro de los tres.
-    for (let i = 0; i < 3; i++) {
-      const [team] = await h
-        .db("teams")
-        .insert({ name: `v1c-team-${++seq}`, captain_id: developerId })
-        .returning("*");
-      await h.db("team_members").insert({ team_id: team.id, user_id: developerId, role: "captain" });
-      const bots = await mkBots(2, "tdm", team.id as string);
-      teams.push({ teamId: team.id as string, bots });
-      for (const b of bots) teamOf.set(b.botId, team.id as string);
-    }
-    tid = await createTournament({
-      name: `v1c-tdm-${++seq}`,
-      format: "teams",
-      mode: "team_deathmatch",
-      rulesetId: "team-deathmatch-mvp",
-      rules: { preset: "team_deathmatch", teamSize: 2 },
-    });
+    it(`V1C_TDM_cycle · ${n}v${n}: inscripción de EQUIPOS, cierre, ejecución con el motor y torneo terminado`, async () => {
+      // 3 equipos de 2 bots; el developer es capitán/miembro de los tres.
+      for (let i = 0; i < 3; i++) {
+        const [team] = await h
+          .db("teams")
+          .insert({ name: `v1c-team-${++seq}`, captain_id: developerId })
+          .returning("*");
+        await h.db("team_members").insert({ team_id: team.id, user_id: developerId, role: "captain" });
+        // Equipo 0: todos fuertes; equipo 1: mitad y mitad; equipo 2: todos débiles (hay victorias, derrotas y empates).
+        const strongCount = [n, Math.floor(n / 2), 0][i];
+        const bots = await mkBots(
+          n,
+          "tdm",
+          team.id as string,
+          Array.from({ length: n }, (_, k) => k < strongCount),
+        );
+        teams.push({ teamId: team.id as string, bots });
+        for (const b of bots) teamOf.set(b.botId, team.id as string);
+      }
+      tid = await createTournament({
+        name: `v1c-tdm-${++seq}`,
+        format: "teams",
+        mode: "team_deathmatch",
+        rulesetId: "team-deathmatch-mvp",
+        rules: { preset: "team_deathmatch", teamSize: n },
+      });
 
-    // Un bot suelto NO se puede inscribir en un torneo NvN (la unidad es el equipo completo).
-    const loose = await request(app)
-      .post(`/tournaments/${tid}/entries`)
-      .set(as(developer))
-      .send({ botId: teams[0].bots[0].botId, version: 1 });
-    expect(loose.status).toBe(409);
-    expect(JSON.stringify(loose.body)).toMatch(/team_enrollment_required/);
+      // Un bot suelto NO se puede inscribir en un torneo NvN (la unidad es el equipo completo).
+      const loose = await request(app)
+        .post(`/tournaments/${tid}/entries`)
+        .set(as(developer))
+        .send({ botId: teams[0].bots[0].botId, version: 1 });
+      expect(loose.status).toBe(409);
+      expect(JSON.stringify(loose.body)).toMatch(/team_enrollment_required/);
 
-    // Un equipo de tamaño equivocado se rechaza.
-    const wrong = await request(app)
-      .post(`/tournaments/${tid}/team-entries`)
-      .set(as(developer))
-      .send({ teamId: teams[0].teamId, members: [{ botId: teams[0].bots[0].botId, version: 1 }] });
-    expect(wrong.status).toBe(409);
-    expect(JSON.stringify(wrong.body)).toMatch(/rules_team_size/);
-
-    for (const t of teams) {
-      const r = await request(app)
+      // Un equipo de tamaño equivocado se rechaza.
+      const wrong = await request(app)
         .post(`/tournaments/${tid}/team-entries`)
         .set(as(developer))
-        .send({ teamId: t.teamId, members: t.bots.map((b) => ({ botId: b.botId, version: 1 })) });
-      expect(r.status, JSON.stringify(r.body)).toBe(201);
-      expect(r.body.entries.length).toBe(2);
-    }
-    await closeEntries(tid);
-    await drainAll();
+        .send({ teamId: teams[0].teamId, members: [{ botId: teams[0].bots[0].botId, version: 1 }] });
+      expect(wrong.status).toBe(409);
+      expect(JSON.stringify(wrong.body)).toMatch(/rules_team_size/);
 
-    // 3 equipos → liguilla: 3 enfrentamientos reales (una batalla 2v2 cada uno) + 3 descansos (byes).
-    const { matches } = await expectFinishedCleanly(tid, 3);
-    const real = matches.filter((m) => !(typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing).bye);
-    expect(real.length).toBe(3);
-  });
-
-  it("V1C_TDM_roster · cada batalla enfrenta DOS bandos, cada uno la plantilla COMPLETA de un equipo inscrito", async () => {
-    const rosterOf = new Map(teams.map((x) => [x.teamId, x.bots.map((b) => b.botId).sort().join(",")]));
-    const rows = await battleOutcomes(tid);
-    const pairsPlayed = new Set<string>();
-    for (const { battle, parts } of rows) {
-      expect(battle.mode).toBe("team_deathmatch");
-      expect(parts.length).toBe(4);
-      const sides = new Map<string, string[]>();
-      for (const p of parts) sides.set(p.team as string, [...(sides.get(p.team as string) ?? []), p.bot_id as string]);
-      expect(sides.size).toBe(2);
-      const rosters = [...sides.values()].map((b) => b.sort().join(","));
-      for (const r of rosters) expect([...rosterOf.values()]).toContain(r);
-      expect(new Set(rosters).size).toBe(2);
-      pairsPlayed.add([...rosters].sort().join("|"));
-      // Los dos miembros de un bando comparten resultado (gana un BANDO, no un bot).
-      for (const members of sides.values()) {
-        const outs = new Set(parts.filter((p) => members.includes(p.bot_id as string)).map((p) => p.outcome));
-        expect(outs.size).toBe(1);
+      for (const t of teams) {
+        const r = await request(app)
+          .post(`/tournaments/${tid}/team-entries`)
+          .set(as(developer))
+          .send({ teamId: t.teamId, members: t.bots.map((b) => ({ botId: b.botId, version: 1 })) });
+        expect(r.status, JSON.stringify(r.body)).toBe(201);
+        expect(r.body.entries.length).toBe(n);
       }
-    }
-    expect(pairsPlayed.size).toBe(3); // todos contra todos, una vez
-  });
+      await closeEntries(tid);
+      await drainAll();
 
-  /** Oráculo por equipos: 3/1/0 por BANDO desde participants.outcome. */
-  async function teamOracle() {
-    const oracle = new Map<string, { points: number; wins: number; losses: number; draws: number }>();
-    for (const x of teams) oracle.set(x.teamId, { points: 0, wins: 0, losses: 0, draws: 0 });
-    for (const { parts } of await battleOutcomes(tid)) {
-      const perTeam = new Map<string, unknown>();
-      for (const p of parts) perTeam.set(teamOf.get(p.bot_id as string)!, p.outcome);
-      for (const [teamId, outcome] of perTeam) {
-        const r = oracle.get(teamId)!;
-        if (outcome === "win") (r.points += 3), r.wins++;
-        else if (outcome === "draw") (r.points += 1), r.draws++;
-        else r.losses++;
+      // 3 equipos → liguilla: 3 enfrentamientos reales (una batalla NvN cada uno) + 3 descansos (byes).
+      const { matches } = await expectFinishedCleanly(tid, 3);
+      const real = matches.filter((m) => !(typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing).bye);
+      expect(real.length).toBe(3);
+    });
+
+    it(`V1C_TDM_roster · ${n}v${n}: cada batalla enfrenta DOS bandos, cada uno la plantilla COMPLETA de un equipo inscrito`, async () => {
+      const rosterOf = new Map(
+        teams.map((x) => [
+          x.teamId,
+          x.bots
+            .map((b) => b.botId)
+            .sort()
+            .join(","),
+        ]),
+      );
+      const rows = await battleOutcomes(tid);
+      const pairsPlayed = new Set<string>();
+      for (const { battle, parts } of rows) {
+        expect(battle.mode).toBe("team_deathmatch");
+        expect(parts.length).toBe(2 * n);
+        const sides = new Map<string, string[]>();
+        for (const p of parts)
+          sides.set(p.team as string, [...(sides.get(p.team as string) ?? []), p.bot_id as string]);
+        expect(sides.size).toBe(2);
+        const rosters = [...sides.values()].map((b) => b.sort().join(","));
+        for (const r of rosters) expect([...rosterOf.values()]).toContain(r);
+        expect(new Set(rosters).size).toBe(2);
+        pairsPlayed.add([...rosters].sort().join("|"));
+        // Los dos miembros de un bando comparten resultado (gana un BANDO, no un bot).
+        for (const members of sides.values()) {
+          const outs = new Set(parts.filter((p) => members.includes(p.bot_id as string)).map((p) => p.outcome));
+          expect(outs.size).toBe(1);
+        }
       }
-    }
-    return oracle;
-  }
+      expect(pairsPlayed.size).toBe(3); // todos contra todos, una vez
+    });
 
-  it("V1C_TDM_standings · derrotas, empates y orden de la clasificación por equipos coinciden con el oráculo", async () => {
-    const st = await request(app).get(`/tournaments/${tid}/team-standings`);
-    expect(st.status, JSON.stringify(st.body)).toBe(200);
-    expect(st.body.length).toBe(3);
-    const oracle = await teamOracle();
-    for (const row of st.body as Row[]) {
-      const o = oracle.get(row.teamId as string)!;
-      expect({ l: row.losses, d: row.draws }).toEqual({ l: o.losses, d: o.draws });
-      // Con 3 equipos cada uno descansa UNA ronda (bye): la tabla le suma 3 puntos y una victoria
-      // (defecto V1C-D01). Aquí se verifica el resto: puntos y victorias = oráculo + el descanso.
-      expect({ p: row.points, w: row.wins }).toEqual({ p: o.points + 3, w: o.wins + 1 });
+    /** Oráculo por equipos: 3/1/0 por BANDO desde participants.outcome. */
+    async function teamOracle() {
+      const oracle = new Map<string, { points: number; wins: number; losses: number; draws: number }>();
+      for (const x of teams) oracle.set(x.teamId, { points: 0, wins: 0, losses: 0, draws: 0 });
+      for (const { parts } of await battleOutcomes(tid)) {
+        const perTeam = new Map<string, unknown>();
+        for (const p of parts) perTeam.set(teamOf.get(p.bot_id as string)!, p.outcome);
+        for (const [teamId, outcome] of perTeam) {
+          const r = oracle.get(teamId)!;
+          if (outcome === "win") ((r.points += 3), r.wins++);
+          else if (outcome === "draw") ((r.points += 1), r.draws++);
+          else r.losses++;
+        }
+      }
+      return oracle;
     }
-    // Orden por puntos descendente y líder = máximo del oráculo.
-    const pts = (st.body as Row[]).map((r) => Number(r.points));
-    expect(pts).toEqual([...pts].sort((a, b) => b - a));
-    const maxPts = Math.max(...[...oracle.values()].map((o) => o.points));
-    expect(oracle.get((st.body as Row[])[0].teamId as string)!.points).toBe(maxPts);
-  });
 
-  // V1C-D01 · el descanso (bye) de un round robin de equipos puntúa como victoria disputada.
-  // `it.fails`: pasa MIENTRAS el defecto exista y se pone rojo cuando se corrija (entonces hay que
-  // quitar `.fails` y la compensación `+ 3` del test anterior).
-  it.fails("V1C_TDM_bye_defect · el descanso NO debería sumar puntos ni victorias a la tabla por equipos", async () => {
-    const st = await request(app).get(`/tournaments/${tid}/team-standings`);
-    const oracle = await teamOracle();
-    for (const row of st.body as Row[]) {
-      const o = oracle.get(row.teamId as string)!;
-      expect({ p: row.points, w: row.wins }).toEqual({ p: o.points, w: o.wins });
-    }
-  });
+    it(`V1C_TDM_standings · ${n}v${n}: derrotas, empates y orden de la clasificación por equipos coinciden con el oráculo`, async () => {
+      const st = await request(app).get(`/tournaments/${tid}/team-standings`);
+      expect(st.status, JSON.stringify(st.body)).toBe(200);
+      expect(st.body.length).toBe(3);
+      const oracle = await teamOracle();
+      for (const row of st.body as Row[]) {
+        const o = oracle.get(row.teamId as string)!;
+        expect({ l: row.losses, d: row.draws }).toEqual({ l: o.losses, d: o.draws });
+        // Con 3 equipos cada uno descansa UNA ronda (bye): la tabla le suma 3 puntos y una victoria
+        // (defecto V1C-D01). Aquí se verifica el resto: puntos y victorias = oráculo + el descanso.
+        expect({ p: row.points, w: row.wins }).toEqual({ p: o.points + 3, w: o.wins + 1 });
+      }
+      // Orden por puntos descendente y líder = máximo del oráculo.
+      const pts = (st.body as Row[]).map((r) => Number(r.points));
+      expect(pts).toEqual([...pts].sort((a, b) => b - a));
+      const maxPts = Math.max(...[...oracle.values()].map((o) => o.points));
+      expect(oracle.get((st.body as Row[])[0].teamId as string)!.points).toBe(maxPts);
+    });
 
-  it("V1C_TDM_replays · cada batalla 2v2 tiene replay servido y el torneo por equipos no escribe la tabla por bot", async () => {
-    const battles = (await h.db("battles").where({ tournament_id: tid })) as Row[];
-    await expectReplaysServed(battles);
-    const t = (await h.db("tournaments").where({ id: tid }).first()) as Row;
-    const botIds = teams.flatMap((x) => x.bots.map((b) => b.botId));
-    const rows = await h.db("standings").where({ season_id: t.season_id, mode: "team_deathmatch" }).whereIn("bot_id", botIds);
-    expect(rows).toEqual([]);
+    // V1C-D01 · el descanso (bye) de un round robin de equipos puntúa como victoria disputada.
+    // `it.fails`: pasa MIENTRAS el defecto exista y se pone rojo cuando se corrija (entonces hay que
+    // quitar `.fails` y la compensación `+ 3` del test anterior).
+    it.fails(
+      `V1C_TDM_bye_defect · ${n}v${n}: el descanso NO debería sumar puntos ni victorias a la tabla por equipos`,
+      async () => {
+        const st = await request(app).get(`/tournaments/${tid}/team-standings`);
+        const oracle = await teamOracle();
+        for (const row of st.body as Row[]) {
+          const o = oracle.get(row.teamId as string)!;
+          expect({ p: row.points, w: row.wins }).toEqual({ p: o.points, w: o.wins });
+        }
+      },
+    );
+
+    it(`V1C_TDM_elo · ${n}v${n}: cada batalla escribe ${2 * n} eventos Elo de suma cero; los del bando vencedor suben y los del vencido bajan`, async () => {
+      for (const { battle, parts } of await battleOutcomes(tid)) {
+        const ev = (await h.db("rating_events").where({ battle_id: battle.id })) as Row[];
+        expect(ev.length).toBe(2 * n);
+        expect(ev.reduce((x, e) => x + Number(e.delta), 0)).toBeCloseTo(0, 6);
+        for (const e of ev) {
+          const o = parts.find((p) => p.bot_id === e.bot_id)!.outcome;
+          // Con rating inicial parejo, un bando que gana nunca baja y uno que pierde nunca sube.
+          if (o === "win") expect(Number(e.delta)).toBeGreaterThanOrEqual(0);
+          if (o === "loss") expect(Number(e.delta)).toBeLessThanOrEqual(0);
+        }
+      }
+    });
+
+    it(`V1C_TDM_replays · ${n}v${n}: cada batalla tiene replay servido y el torneo por equipos no escribe la tabla por bot`, async () => {
+      const battles = (await h.db("battles").where({ tournament_id: tid })) as Row[];
+      await expectReplaysServed(battles);
+      const t = (await h.db("tournaments").where({ id: tid }).first()) as Row;
+      const botIds = teams.flatMap((x) => x.bots.map((b) => b.botId));
+      const rows = await h
+        .db("standings")
+        .where({ season_id: t.season_id, mode: "team_deathmatch" })
+        .whereIn("bot_id", botIds);
+      expect(rows).toEqual([]);
+    });
   });
-});

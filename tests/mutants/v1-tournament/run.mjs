@@ -120,11 +120,9 @@ const only = onlyArg >= 0 ? process.argv[onlyArg + 1].split(",") : [];
 
 function run() {
   const out = join(mkdtempSync(join(tmpdir(), "v1c-mut-")), "r.json");
-  const r = spawnSync(
-    "npx",
-    ["vitest", "run", TEST, "--maxWorkers=1", "--reporter=json", `--outputFile=${out}`],
-    { encoding: "utf8" },
-  );
+  const r = spawnSync("npx", ["vitest", "run", TEST, "--maxWorkers=1", "--reporter=json", `--outputFile=${out}`], {
+    encoding: "utf8",
+  });
   let failed = [];
   try {
     const j = JSON.parse(readFileSync(out, "utf8"));
