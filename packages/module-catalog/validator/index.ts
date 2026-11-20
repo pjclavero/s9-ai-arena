@@ -40,6 +40,31 @@ export interface Violation {
   acceptedAmmo?: string[];
 }
 
+/**
+ * V1 · B4 · ÚNICA fuente del coste de un loadout (D-OP-10, D-OP-15): chasis + módulos +
+ * la munición embebida (`ammo:` del arma) que resolveVehicle materializa como módulo y que
+ * no está además montada de forma explícita. La usan el validador (`budget_exceeded`), el
+ * editor, el `summary` guardado, el tope `botCredits`/`teamCredits` de las reglas de batalla
+ * y el presupuesto del torneo. Nunca lanza: una pieza que no resuelve cuenta 0 (lo reporta
+ * el validador, no esta suma).
+ */
+export function loadoutCostCredits(
+  loadout: { chassis: string; modules: readonly { moduleId: string; ammo?: unknown }[] },
+  catalog: ModuleDefinition[],
+): number {
+  let total = findModule(catalog, loadout.chassis)?.costCredits ?? 0;
+  const explicitIds = new Set(loadout.modules.map((m) => m.moduleId));
+  for (const m of loadout.modules) {
+    const def = findModule(catalog, m.moduleId);
+    if (!def) continue;
+    total += def.costCredits;
+    if (def.category !== "weapon" || typeof m.ammo !== "string" || explicitIds.has(m.ammo)) continue;
+    const ammoDef = findModule(catalog, m.ammo);
+    if (ammoDef && ammoDef.category === "ammo") total += ammoDef.costCredits;
+  }
+  return total;
+}
+
 const SIZE_RANK: Record<Size, number> = { S: 0, M: 1, L: 2, XL: 3 };
 
 interface Accepted {
@@ -266,8 +291,8 @@ export function validateLoadout(
   }
 
   // ---------------------------------------------------------------------- presupuesto
-  const modulesCost = materialized.reduce((sum, a) => sum + a.moduleDef.costCredits, 0);
-  const totalCost = chassisDef.costCredits + modulesCost;
+  // Misma suma que `loadoutCostCredits` (una sola fuente), no una paralela.
+  const totalCost = loadoutCostCredits(loadout, catalog);
   if (totalCost > budgetCredits) {
     violations.push({
       code: "budget_exceeded",

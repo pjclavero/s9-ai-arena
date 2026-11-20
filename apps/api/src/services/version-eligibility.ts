@@ -36,7 +36,7 @@ import { ApiError } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { getCatalog } from "./catalog.js";
 import { canManageTournament } from "./tournament-access.js";
-import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import { loadoutCostCredits, validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import { BUDGET_CREDITS_MVP } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
@@ -350,11 +350,14 @@ export function isCompetitionState(state: unknown): boolean {
  * OLA 2 (EQUIPMENT_PRIVATE) · `viewer` decide cuánto detalle del loadout lleva el 409: la
  * ruta de inscripción ya exige ser el dueño, así que pasa `{ userId, staff: false }` y el
  * dueño ve el motivo real; sin `viewer`, sólo el veredicto genérico (falla hacia menos).
+ * V1 · B4 · `budgetCredits` (el del torneo; null = sin presupuesto propio): ver
+ * `assertWithinTournamentBudget`.
  */
 export async function assertTournamentEligible(
   db: Knex,
   version: Record<string, unknown> | undefined | null,
   viewer?: EligibilityViewer,
+  budgetCredits?: number | null,
 ): Promise<void> {
   if (!version || !isCompetitionState(version.state)) {
     throw new ApiError(
@@ -366,7 +369,73 @@ export async function assertTournamentEligible(
       version ? { currentState: String(version.state) } : undefined,
     );
   }
-  await assertVersionsEligible(db, [{ botId: String(version.bot_id), version: Number(version.version) }], viewer);
+  const ref = { botId: String(version.bot_id), version: Number(version.version) };
+  await assertVersionsEligible(db, [ref], viewer);
+  await assertWithinTournamentBudget(db, [ref], budgetCredits, viewer);
+}
+
+/**
+ * V1 · B4 (D-OP-10) · `budgetCredits` del torneo es una REGLA REAL: un bot cuyo coste (la
+ * única fuente `loadoutCostCredits`: chasis + módulos + munición embebida) supera el
+ * presupuesto no puede INSCRIBIRSE. `null`/`undefined` = el torneo no fija presupuesto
+ * propio (rige el del ruleset, que ya valida el guardado del loadout) y no restringe.
+ *
+ * Política de transición: sólo se evalúa al INSCRIBIR (alta, cambio de versión, autorización
+ * de equipo e inscripción de equipo). Ni toca versiones publicadas (siguen válidas para
+ * batallas sueltas) ni revoca inscripciones ya existentes ni resultados históricos.
+ * Sólo el dueño (o staff) ve las cifras: un tercero recibe el veredicto genérico.
+ */
+export async function assertWithinTournamentBudget(
+  db: Knex,
+  refs: VersionRef[],
+  budgetCredits: number | null | undefined,
+  viewer?: EligibilityViewer,
+): Promise<void> {
+  if (typeof budgetCredits !== "number" || !Number.isFinite(budgetCredits) || refs.length === 0) return;
+  const costs = await loadoutCostsOf(db, refs);
+  const over = refs.filter((r) => (costs.get(eligibilityKey(r.botId, r.version)) ?? 0) > budgetCredits);
+  if (over.length === 0) return;
+  const detail = !!viewer && (viewer.staff || viewer.userId !== null);
+  const items = over.map((r) => {
+    const cost = costs.get(eligibilityKey(r.botId, r.version)) ?? 0;
+    return detail
+      ? { botId: r.botId, version: r.version, costCredits: cost, budgetCredits, excessCredits: cost - budgetCredits }
+      : { botId: r.botId, version: r.version };
+  });
+  const f = items[0] as { costCredits?: number; excessCredits?: number; botId: string; version: number };
+  throw new ApiError(
+    409,
+    "bot_version_not_eligible",
+    detail
+      ? `${f.botId} v${f.version} cuesta ${f.costCredits} créditos y el presupuesto de este torneo es de ${budgetCredits} (se pasa en ${f.excessCredits}). La versión sigue siendo válida para batallas sueltas; usa otra versión o crea una con un loadout más barato.`
+      : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
+    { reason: "exceeds_tournament_budget", budgetCredits, overBudget: items },
+  );
+}
+
+/** Coste (única fuente) del loadout congelado de cada versión. Sólo LEE. */
+async function loadoutCostsOf(db: Knex, refs: VersionRef[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const rows = (await db("bot_versions as v")
+    .join("bot_loadouts as l", function () {
+      this.on("l.bot_id", "=", "v.bot_id").andOn("l.revision", "=", "v.loadout_revision");
+    })
+    .where((q) => {
+      for (const r of refs) q.orWhere({ "v.bot_id": canonicalUuid(r.botId), "v.version": r.version });
+    })
+    .select("v.bot_id", "v.version", "l.catalog_version", "l.chassis", "l.modules")) as Record<string, unknown>[];
+  const catalogs = new Map<string, ModuleDefinition[]>();
+  for (const r of rows) {
+    const cv = String(r.catalog_version);
+    if (!catalogs.has(cv)) catalogs.set(cv, await getCatalog(db, cv));
+    const modules = parseModules(r.modules);
+    if (!Array.isArray(modules)) continue;
+    out.set(
+      eligibilityKey(String(r.bot_id), Number(r.version)),
+      loadoutCostCredits({ chassis: String(r.chassis), modules: modules as { moduleId: string; ammo?: unknown }[] }, catalogs.get(cv)!),
+    );
+  }
+  return out;
 }
 
 /**
