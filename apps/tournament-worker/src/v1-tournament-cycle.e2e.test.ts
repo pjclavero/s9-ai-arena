@@ -32,6 +32,7 @@ import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { clearStandingsCache } from "../../api/src/services/standings.js";
 import { TournamentWorker } from "./worker.js";
+import { sortTable, type TableRow } from "./results.js";
 import { makeDefaultHandlers, type AgentDriver } from "./engine-executor.js";
 import { IdleBot } from "../../arena-engine/src/stubs.js";
 import { replayFromBattle } from "../../arena-engine/src/replay.js";
@@ -599,6 +600,24 @@ async function expectEloTeamsCorrect(tid: string, botIds: string[]) {
     expect(Number(r.rating)).toBeCloseTo(rating.get(id)!, 4);
   }
 }
+
+describe("V1-C · criterios de orden de la tabla", () => {
+  it("V1C_TDM_standings_sort · puntos, luego diferencia, luego semilla (con puntos y diferencia en conflicto)", () => {
+    const row = (id: string, points: number, scoreDiff: number, seed: number): TableRow => ({
+      id,
+      points,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      scoreDiff,
+      seed,
+    });
+    // R tiene la mejor diferencia pero menos puntos; P y Q empatan a puntos y los separa la diferencia;
+    // S empata con Q en puntos y diferencia y sólo lo separa la semilla.
+    const rows = [row("R", 5, 5, 1), row("P", 6, 1, 3), row("Q", 6, 2, 2), row("S", 6, 2, 4)];
+    expect(sortTable(rows, new Map()).map((r) => r.id)).toEqual(["Q", "S", "P", "R"]);
+  });
+});
 
 for (const n of [2, 3, 4])
   describe(`V1-C · Team Deathmatch por equipos ${n}v${n} de principio a fin`, () => {
