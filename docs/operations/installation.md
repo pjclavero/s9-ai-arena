@@ -151,7 +151,7 @@ node infrastructure/scripts/check-env.mjs --file infrastructure/.env
 # rc 0 = etiquetas válidas; rc 1 = vacía/latest/inválida (nombra la variable); rc 2 = no se pudo leer el fichero
 ```
 
-Valida el valor **efectivo** (una variable exportada en el shell gana a la del fichero, como en
+Sólo mira `TAG` y las `*_TAG` que usa el compose del proyecto (otras `*_TAG` del shell, como `CI_COMMIT_TAG`, se ignoran). Valida el valor **efectivo** (una variable exportada en el shell gana a la del fichero, como en
 Compose). Sólo necesita Node ≥ 22.15, sin `npm ci`.
 
 ## 6. Descargar las imágenes
@@ -246,11 +246,11 @@ Dentro del contenedor la conexión sale de `PGHOST`/`PGUSER`/`PGDATABASE` + `PGP
 Para el **primero** hay un comando, sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)):
 
 ```bash
-printf '%s' "<contraseña>" | $DC exec -T -w /app api \
-  npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
+$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
 ```
 
-La contraseña va por stdin o por un fichero `0600` (`--password-file`), **nunca** por argumento;
+
+Con terminal pide la contraseña **sin eco** (dos veces); en scripts, por un fichero `0600` (`--password-file`) o por tubería, **nunca** por argumento;
 cumple la política de registro (≥ 12 caracteres) y el comando se niega si ya hay un
 administrador. Detalle en [first-run.md](first-run.md#3-primer-administrador).
 

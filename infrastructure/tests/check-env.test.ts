@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnv, validarEtiquetas } from "../scripts/check-env.mjs";
+import { etiquetasDelCompose, parseEnv, validarEtiquetas } from "../scripts/check-env.mjs";
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = join(RAIZ, "scripts", "check-env.mjs");
@@ -83,6 +83,26 @@ describe("AUD2-08 · puerta de etiquetas", () => {
     const f = `TAG=${SHA}\nBACKUP_TAG=${SHA}\n`;
     expect(correr(f, { TAG: "latest" }).rc).toBe(1);
     expect(correr("TAG=latest\nBACKUP_TAG=latest\n", { TAG: SHA, BACKUP_TAG: SHA }).rc).toBe(0);
+  });
+
+  it("H5 · una *_TAG ajena del shell (CI_COMMIT_TAG) NO hace fallar la puerta", () => {
+    const f = `TAG=${SHA}\nBACKUP_TAG=${SHA}\n`;
+    expect(correr(f, { CI_COMMIT_TAG: "release", FOO_TAG: "latest" }).rc).toBe(0);
+    // ...y una *_TAG del compose sí cuenta aunque venga del shell
+    expect(correr(f, { API_TAG: "latest" }).rc).toBe(1);
+  });
+
+  it("H5 · una *_TAG ajena escrita en el fichero tampoco se valida", () => {
+    expect(correr(`TAG=${SHA}\nBACKUP_TAG=${SHA}\nINVENTADA_TAG=latest\n`).rc).toBe(0);
+  });
+
+  it("H5 · el conjunto de variables sale del compose real (incluye las de servicio y BACKUP_TAG)", () => {
+    const compose = readFileSync(join(RAIZ, "docker-compose.yml"), "utf8");
+    const nombres = etiquetasDelCompose(compose);
+    expect(nombres).toContain("BACKUP_TAG");
+    expect(nombres).toContain("API_TAG");
+    expect(nombres).not.toContain("CI_COMMIT_TAG");
+    expect(etiquetasDelCompose("image: x:${TAG:-latest} # ${ZZ_TAG:-a}")).toEqual(["ZZ_TAG"]);
   });
 
   it("fichero inexistente es NO COMPROBADO (rc=2), nunca aprobado", () => {

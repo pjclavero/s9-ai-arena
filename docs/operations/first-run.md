@@ -75,22 +75,46 @@ Un comando crea el primer administrador **sin SQL** ([TD-023](../roadmap/technic
 Sustituye al paso 2 para esa cuenta: no hace falta registrarla antes (de hecho, si el email ya
 existe, el comando se niega y no la promueve).
 
-```bash
-# stdin (la contraseña no queda en el historial ni en `ps`)
-printf '%s' "<contraseña de al menos 12 caracteres>" | $DC exec -T -w /app api \
-  npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
+Forma recomendada: **prompt sin eco** (con terminal, sin `-T`). Pide la contraseña dos veces y no la
+escribe en pantalla ni en el historial:
 
-# o desde un fichero 0600 del usuario que ejecuta el comando
-$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" \
-  --password-file <ruta-0600>
+```bash
+$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
 ```
 
-- La contraseña **nunca** va en argv (`--password=…`, `-p` y similares se rechazan con rc 2). El
-  fichero debe ser regular, del mismo usuario y sin permisos de grupo/otros (`0600`).
+Alternativas no interactivas:
+
+```bash
+# Fichero 0600 (recomendada en scripts): dentro del contenedor, créalo con el mismo usuario que
+# ejecuta el comando y con umask 077 (un `docker cp` lo dejaría como root y el CLI lo rechaza).
+# Escribir la contraseña aquí exige una fuente que no deje rastro (p. ej. un gestor de secretos).
+$DC exec -T api sh -c 'umask 077; cat > /tmp/s9-admin.pw' < <fichero-0600-del-host>
+$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" \
+  --password-file /tmp/s9-admin.pw
+$DC exec -T api rm -f /tmp/s9-admin.pw
+
+# Tubería: sólo si el valor NO se teclea en un shell interactivo. Un `printf '%s' "<clave>" | …`
+# escrito a mano SÍ queda en `~/.bash_history` (aunque no en `ps`, porque `printf` es interno
+# del shell); usa `read -rs P` y `printf '%s' "$P" | …`, o un espacio inicial con
+# `HISTCONTROL=ignorespace`.
+printf '%s' "$P" | $DC exec -T -w /app api \
+  npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
+```
+
+(El procedimiento del fichero dentro del contenedor no se ha ejercitado con el stack Compose
+completo; la lectura del fichero sí está probada. Si `/tmp` del contenedor no es escribible,
+usa el prompt.)
+
+- La contraseña **nunca** va en argv (`--password=…`, `-p…` y similares se rechazan con rc 2, sin
+  repetir el valor). El fichero se abre sin seguir enlaces simbólicos y se valida sobre el
+  descriptor abierto: debe ser regular, del mismo usuario y sin permisos de grupo/otros (`0600`).
 - Aplica la misma política que el registro (≥ 12 caracteres). Roles resultantes: `user`,
   `developer` y `admin`.
-- **Se niega (rc 1) si ya existe un administrador**, y si faltan los roles base (ejecuta antes
-  `bootstrap`). Para añadir otro por esta vía: `--allow-additional-admin`; queda auditado
+- **Códigos de salida:** `0` creado · `1` ya existe un administrador · `2` uso o entrada inválidos
+  (argumentos, fichero de contraseña inexistente, con permisos/propietario/tipo inválidos o enlace
+  simbólico, política de contraseñas, contraseñas del prompt distintas) · `3` precondición de
+  estado (el email ya existe, o faltan los roles base: ejecuta antes `bootstrap`) · `4` error
+  inesperado (sin traza). Para añadir otro administrador por esta vía: `--allow-additional-admin`; queda auditado
   (`admin.create_cli`, con `additional: true`, sin la contraseña). Lo normal es gestionar roles
   desde la web ([../user/administration.md](../user/administration.md)).
 - No usa `seed` ni credenciales del repositorio.

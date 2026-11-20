@@ -34,7 +34,11 @@ export interface CreateAdminInput {
   password: string;
   /** Permite crear un admin aunque ya exista otro. Queda auditado. */
   allowAdditionalAdmin?: boolean;
-  /** Sólo para tests: pausa entre el recuento y el alta, para ensanchar la ventana de carrera. */
+}
+
+/** Puntos de inyección SÓLO para tests; no forman parte del contrato de `createAdmin` (H10). */
+export interface CreateAdminTestHooks {
+  /** Pausa entre el recuento y el alta, para ensanchar la ventana de carrera. */
   afterAdminCount?: () => Promise<void>;
 }
 
@@ -44,7 +48,16 @@ export interface CreateAdminResult {
   additional: boolean;
 }
 
-export async function createAdmin(db: Db, input: CreateAdminInput): Promise<CreateAdminResult> {
+export function createAdmin(db: Db, input: CreateAdminInput): Promise<CreateAdminResult> {
+  return createAdminWithHooks(db, input, {});
+}
+
+/** Implementación con hooks de test. Los llamadores de producción usan `createAdmin`. */
+export async function createAdminWithHooks(
+  db: Db,
+  input: CreateAdminInput,
+  hooks: CreateAdminTestHooks,
+): Promise<CreateAdminResult> {
   if (typeof input.email !== "string" || !EMAIL_RE.test(input.email)) {
     throw new CreateAdminError("invalid_input", "email inválido");
   }
@@ -66,7 +79,7 @@ export async function createAdmin(db: Db, input: CreateAdminInput): Promise<Crea
     }
     const existing = await trx("user_roles").where({ role: "admin" }).count<{ count: string }[]>({ count: "*" });
     const adminCount = Number(existing[0].count);
-    if (input.afterAdminCount) await input.afterAdminCount();
+    if (hooks.afterAdminCount) await hooks.afterAdminCount();
     if (adminCount > 0 && !input.allowAdditionalAdmin) {
       throw new CreateAdminError(
         "admin_exists",

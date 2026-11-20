@@ -84,7 +84,9 @@ arrancado en aislado. Para `postgres`/`queue` no aplica (imágenes oficiales por
 En el host productivo, como usuario de despliegue, desde el clon productivo:
 
 1. Preflight: [shutdown.md](shutdown.md#1-preflight) (sin trabajo en vuelo) y copia manual.
-2. Cambiar en `infrastructure/.env` la etiqueta (`TAG`, o `<SERVICIO>_TAG` si es un override).
+2. Cambiar en `infrastructure/.env` la etiqueta (`TAG`, o `<SERVICIO>_TAG` si es un override) y
+   **validarla** antes de seguir: `node infrastructure/scripts/check-env.mjs --file infrastructure/.env`
+   (rc 0; un `TAG`/`BACKUP_TAG` vacío o `latest` es rc 1: Compose resolvería `:latest` en silencio).
 3. Comprobar qué va a cambiar **antes** de tocar nada:
 
    ```bash
@@ -297,7 +299,7 @@ Objetivo pendiente para salir del estado mezclado ([TD-006](../roadmap/technical
 1. Elegir un commit de `main` con CI completa (todas las conclusiones `success`).
 2. Comprobar que las 11 imágenes `sha-<commit>` existen y pasan `verify-image-provenance.mjs`.
 3. En `.env`: `TAG=sha-<commit>`, **quitar** los `<SERVICIO>_TAG` (o declararlos), `BACKUP_TAG=sha-<commit>`
-   en su propia ventana.
+   en su propia ventana. Valida el resultado con `node infrastructure/scripts/check-env.mjs --file infrastructure/.env` (rc 0).
 4. Desplegar los servicios de aplicación por grupos (`web gateway`, `api`, `replay-service map-service`,
    `bot-manager bot-build-worker`, `arena-engine`, `tournament-worker`) con `--no-deps`, verificando
    cada grupo.

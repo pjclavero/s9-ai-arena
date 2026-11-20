@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const T_DB = "apps/api/src/db/create-admin.test.ts";
+const T_PW = "apps/api/src/db/password-input.test.ts";
 const T_ENV = "infrastructure/tests/check-env.test.ts";
 
 const MUTANTES = [
@@ -107,8 +108,8 @@ const MUTANTES = [
   {
     id: "M12-ignora-entorno-del-shell",
     fichero: "infrastructure/scripts/check-env.mjs",
-    de: "for (const k of Object.keys(envShell)) if",
-    a: "for (const k of []) if",
+    de: "efectivo[k] = envShell[k] !== undefined ? envShell[k] : envFichero[k];",
+    a: "efectivo[k] = envFichero[k];",
     test: T_ENV,
     nombre: "se valida el valor EFECTIVO",
   },
@@ -127,6 +128,94 @@ const MUTANTES = [
     a: "\nTAG=latest\n",
     test: T_ENV,
     nombre: "ninguna variable de etiqueta trae `latest`",
+  },
+  {
+    id: "X4-mascara-sólo-otros",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "(st.mode & 0o077) !== 0",
+    a: "(st.mode & 0o007) !== 0",
+    test: T_PW,
+    nombre: "permisos \\d+ se rechazan",
+  },
+  {
+    id: "X5-sin-comprobar-propietario",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "if (uid !== undefined && st.uid !== uid) {",
+    a: "if (false) {",
+    test: T_PW,
+    nombre: "un propietario distinto se rechaza",
+  },
+  {
+    id: "X6-sin-comprobar-fichero-regular",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "if (!st.isFile())",
+    a: "if (false)",
+    test: T_PW,
+    nombre: "un directorio se rechaza",
+  },
+  {
+    id: "X7-sigue-enlaces-simbolicos",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK",
+    a: "constants.O_RDONLY | constants.O_NONBLOCK",
+    test: T_PW,
+    nombre: "un enlace simbólico se rechaza",
+  },
+  {
+    id: "X8-tty-sin-prompt",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "if (stream.isTTY) {",
+    a: "if (false) {",
+    test: T_PW,
+    nombre: "en una TTY pide la contraseña dos veces",
+  },
+  {
+    id: "X9-tty-sin-confirmar",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: "if (first !== second) throw",
+    a: "if (false) throw",
+    test: T_PW,
+    nombre: "dos entradas distintas se rechazan",
+  },
+  {
+    id: "X10-error-de-fichero-rc1-como-admin-existente",
+    fichero: "apps/api/src/db/cli.ts",
+    de: "console.error(`create-admin: ${e.message}`);\n        process.exitCode = 2;",
+    a: "console.error(`create-admin: ${e.message}`);\n        process.exitCode = 1;",
+    test: T_DB,
+    nombre: "H8 · fichero de contraseña inexistente",
+  },
+  {
+    id: "X11-valida-tags-ajenas-del-shell",
+    fichero: "infrastructure/scripts/check-env.mjs",
+    de: "const nombres = [...new Set([...TAGS_OBLIGATORIAS, ...conocidas])];",
+    a: "const nombres = [...new Set([...TAGS_OBLIGATORIAS, ...conocidas, ...Object.keys(envShell).filter((k) => /_TAG$/.test(k))])];",
+    test: T_ENV,
+    nombre: "una \\*_TAG ajena del shell",
+  },
+  {
+    id: "X12-tag-ajena-del-fichero",
+    fichero: "infrastructure/scripts/check-env.mjs",
+    de: "const nombres = [...new Set([...TAGS_OBLIGATORIAS, ...conocidas])];",
+    a: "const nombres = [...new Set([...TAGS_OBLIGATORIAS, ...conocidas, ...Object.keys(envFichero).filter((k) => /_TAG$/.test(k))])];",
+    test: T_ENV,
+    nombre: "ajena escrita en el fichero",
+  },
+  {
+    id: "X13-argv-repite-el-secreto",
+    fichero: "apps/api/src/db/password-input.ts",
+    de: 'a.split("=")[0]',
+    a: "a",
+    test: T_PW,
+    nombre: "no repite en el error",
+  },
+  {
+    id: "X14-email-existente-rc1",
+    fichero: "apps/api/src/db/cli.ts",
+    de: 'e.code === "admin_exists" ? 1 : 3',
+    a: 'e.code === "admin_exists" ? 1 : 1',
+    test: T_DB,
+    nombre: "email ya registrado: rc=3",
   },
 ];
 

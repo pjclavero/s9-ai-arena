@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { seedContent } from "./seeds/dev.js";
-import { createAdmin, CreateAdminError } from "../services/create-admin.js";
+import { createAdmin, createAdminWithHooks, CreateAdminError } from "../services/create-admin.js";
 import { verifyPassword } from "../auth/passwords.js";
 import { parseCreateAdminArgs, readPasswordFile, stripTrailingNewline } from "./password-input.js";
 
@@ -109,13 +109,12 @@ describe("createAdmin (servicio)", () => {
   it("dos altas simultáneas: sólo UNA gana el «primer admin»", async () => {
     const intentos = await Promise.allSettled(
       [1, 2, 3].map((i) =>
-        createAdmin(h.db, {
-          email: `c${i}@ejemplo.test`,
-          displayName: `C${i}`,
-          password: PW,
+        createAdminWithHooks(
+          h.db,
+          { email: `c${i}@ejemplo.test`, displayName: `C${i}`, password: PW },
           // Ventana de carrera ancha y determinista: sin el cerrojo, las tres ven 0 admins.
-          afterAdminCount: () => new Promise((r) => setTimeout(r, 400)),
-        }),
+          { afterAdminCount: () => new Promise((r) => setTimeout(r, 400)) },
+        ),
       ),
     );
     expect(intentos.filter((x) => x.status === "fulfilled")).toHaveLength(1);
@@ -191,5 +190,19 @@ describe("cli.ts create-admin (proceso real)", () => {
     const r = runCli(["s@ejemplo.test", "S", "--password-stdin"], "corta\n");
     expect(r.status).toBe(2);
     expect(await rolesOf("s@ejemplo.test")).toEqual([]);
+  }, 120_000);
+
+  it("H8 · fichero de contraseña inexistente: rc=2, mensaje claro y SIN traza (rc distinto de «ya existe admin»)", async () => {
+    const r = runCli(["n@ejemplo.test", "N", "--password-file", join(dir, "no-existe")]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/el fichero no existe/);
+    expect(r.stderr).not.toMatch(/\n\s+at /);
+    expect(await rolesOf("n@ejemplo.test")).toEqual([]);
+  }, 120_000);
+
+  it("email ya registrado: rc=3 (precondición), distinto de rc=1 (admin existente) y de rc=2 (entrada)", async () => {
+    await h.db("users").insert({ email: "ya@ejemplo.test", password_hash: "x", display_name: "Ya" });
+    const r = runCli(["ya@ejemplo.test", "Ya", "--password-stdin"], PW);
+    expect(r.status).toBe(3);
   }, 120_000);
 });

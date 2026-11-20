@@ -80,6 +80,7 @@ aislado (nombre de proyecto y puertos propios, nunca contra producción):
 
 ```bash
 cp infrastructure/.env.example /tmp/dev.env      # y fija TAG/BACKUP_TAG=sha-<commit>, HTTP_PORT=18080, GATEWAY_CONF=nginx-behind-proxy.conf
+node infrastructure/scripts/check-env.mjs --file /tmp/dev.env   # rc 0 = TAG/BACKUP_TAG válidas (vacías o `latest` => rc 1)
 bash infrastructure/scripts/init-secrets.sh
 docker compose -p s9dev -f infrastructure/docker-compose.yml --env-file /tmp/dev.env --profile production up -d --no-build postgres queue api web gateway
 ```

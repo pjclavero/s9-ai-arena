@@ -13,7 +13,8 @@
  * dice qué variable, qué valor y qué se espera. Fichero ilegible => rc=2
  * (NO COMPROBADO): la ausencia nunca es un aprobado.
  *
- * Como en Compose, una variable ya exportada en el entorno del shell gana a
+ * Sólo se miran `TAG` y las `*_TAG` que el compose del proyecto interpola; otras `*_TAG` del
+ * shell (p. ej. `CI_COMMIT_TAG`) se ignoran. Como en Compose, una variable ya exportada en el entorno del shell gana a
  * la del fichero; se valida el valor EFECTIVO.
  *
  *   node infrastructure/scripts/check-env.mjs [--file infrastructure/.env]
@@ -22,6 +23,7 @@
  * nombre del script, y sale con rc=9 si el fichero no existe.)
  */
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const TAG_VALIDA = /^(sha-[0-9a-f]{7,40}|v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)$/;
@@ -41,10 +43,26 @@ export function parseEnv(texto) {
   return env;
 }
 
-/** @returns {{ok: boolean, errores: string[]}} */
-export function validarEtiquetas(envFichero, envShell = {}) {
-  const efectivo = { ...envFichero };
-  for (const k of Object.keys(envShell)) if (/_?TAG$/.test(k)) efectivo[k] = envShell[k];
+/** Variables `*_TAG` que el compose del proyecto interpola (H5): sólo ésas importan. */
+export function etiquetasDelCompose(texto) {
+  const r = new Set();
+  for (const m of texto.matchAll(/\$\{([A-Z_]+_TAG)(?::-|\})/g)) r.add(m[1]);
+  return [...r].sort();
+}
+
+/**
+ * @param {Record<string,string>} envFichero
+ * @param {Record<string,string|undefined>} envShell
+ * @param {string[]} conocidas  variables de etiqueta del despliegue (TAG + las del compose);
+ *   cualquier otra `*_TAG` del shell (p. ej. `CI_COMMIT_TAG`) se ignora.
+ * @returns {{ok: boolean, errores: string[]}}
+ */
+export function validarEtiquetas(envFichero, envShell = {}, conocidas = TAGS_OBLIGATORIAS) {
+  const nombres = [...new Set([...TAGS_OBLIGATORIAS, ...conocidas])];
+  const efectivo = {};
+  for (const k of nombres) {
+    efectivo[k] = envShell[k] !== undefined ? envShell[k] : envFichero[k];
+  }
   const errores = [];
   const motivo = (k, v) =>
     v === undefined || v === ""
@@ -58,8 +76,9 @@ export function validarEtiquetas(envFichero, envShell = {}) {
       errores.push(`${motivo(k, v)}; se espera sha-<commit> (7-40 hex) o v<X.Y.Z>`);
     }
   }
-  for (const [k, v] of Object.entries(efectivo)) {
-    if (TAGS_OBLIGATORIAS.includes(k) || !/_TAG$/.test(k) || v === "") continue;
+  for (const k of nombres) {
+    const v = efectivo[k];
+    if (TAGS_OBLIGATORIAS.includes(k) || v === undefined || v === "") continue;
     if (!TAG_VALIDA.test(v)) errores.push(`${motivo(k, v)}; se espera sha-<commit> (7-40 hex) o v<X.Y.Z>`);
   }
   return { ok: errores.length === 0, errores };
@@ -77,7 +96,16 @@ function main(argv) {
     );
     return 2;
   }
-  const r = validarEtiquetas(parseEnv(texto), process.env);
+  const j = argv.indexOf("--compose");
+  const rutaCompose = j >= 0 ? argv[j + 1] : join(dirname(fileURLToPath(import.meta.url)), "..", "docker-compose.yml");
+  let conocidas;
+  try {
+    conocidas = etiquetasDelCompose(readFileSync(rutaCompose, "utf8"));
+  } catch (e) {
+    console.error(`NO COMPROBADO: no se pudo leer el compose ${rutaCompose} (${e.code ?? e.message}).`);
+    return 2;
+  }
+  const r = validarEtiquetas(parseEnv(texto), process.env, conocidas);
   if (!r.ok) {
     console.error(`ETIQUETAS NO VÁLIDAS en ${ruta}:`);
     for (const e of r.errores) console.error(`  - ${e}`);

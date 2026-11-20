@@ -88,11 +88,21 @@ try {
       });
       console.log(`Administrador creado: ${r.email} (id ${r.userId})${r.additional ? " [adicional, auditado]" : ""}.`);
     } catch (e) {
-      if (e instanceof PasswordInputError || e instanceof CreateAdminError) {
+      // Códigos de salida de create-admin (documentados en docs/operations/first-run.md):
+      //   0 creado · 1 ya existe un administrador · 2 uso o entrada inválidos (argumentos, fichero de
+      //   contraseña inexistente o con permisos/propietario/tipo inválidos, política de contraseñas)
+      //   · 3 precondición de estado (el email ya existe, o faltan los roles base: ejecuta `bootstrap`)
+      //   · 4 error inesperado (sin traza; sólo el tipo y el código).
+      if (e instanceof PasswordInputError) {
         console.error(`create-admin: ${e.message}`);
-        process.exitCode = e instanceof CreateAdminError && e.code !== "invalid_input" ? 1 : 2;
+        process.exitCode = 2;
+      } else if (e instanceof CreateAdminError) {
+        console.error(`create-admin: ${e.message}`);
+        process.exitCode = e.code === "invalid_input" ? 2 : e.code === "admin_exists" ? 1 : 3;
       } else {
-        throw e;
+        const err = e as { name?: string; code?: string };
+        console.error(`create-admin: error inesperado (${err.name ?? "Error"}${err.code ? ` ${err.code}` : ""})`);
+        process.exitCode = 4;
       }
     }
   } else if (cmd === "demo-teams") {
