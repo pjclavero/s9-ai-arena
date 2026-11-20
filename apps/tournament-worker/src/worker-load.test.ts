@@ -12,13 +12,14 @@ import {
   MAX_CPU_SAMPLE_MS,
   MIN_CPU_SAMPLE_MS,
 } from "./cpu-sampler.js";
+import { DEFAULT_CONCURRENCY } from "./concurrency.js";
 import { computeConcurrency, concurrencyFromEnv, MAX_CONFIGURED_CONCURRENCY, TournamentWorker } from "./worker.js";
 import type { ContainerHandle } from "../../bot-manager/src/container-runner.js";
 
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("concurrencyFromEnv", () => {
-  it("ausente o vacía ⇒ undefined (el worker usa computeConcurrency)", () => {
+  it("ausente o vacía ⇒ undefined (el worker usa DEFAULT_CONCURRENCY = 1)", () => {
     expect(concurrencyFromEnv({})).toBeUndefined();
     expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: "" })).toBeUndefined();
     expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: "  " })).toBeUndefined();
@@ -37,8 +38,10 @@ describe("concurrencyFromEnv", () => {
       );
     }
   });
-  it("el automático sigue siendo computeConcurrency (no cambia)", () => {
-    expect(computeConcurrency({ cpuCount: 4, memMb: 8192 })).toBe(3);
+  it("`auto` (cualquier caja) ⇒ \"auto\"; el automático ya no mide el host sino cgroup + batalla", () => {
+    expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: "auto" })).toBe("auto");
+    expect(concurrencyFromEnv({ TOURNAMENT_WORKER_CONCURRENCY: " AUTO " })).toBe("auto");
+    expect(computeConcurrency({ cpuCount: 4, memGiB: 8 })).toBe(1);
   });
 });
 
@@ -64,6 +67,9 @@ describe("TournamentWorker respeta la concurrencia configurada", () => {
   it("2 bucles ⇒ 2 reclamaciones simultáneas; 1 ⇒ 1 (M-C4: ignora config.concurrency)", async () => {
     expect(await claimsIniciales(2)).toBe(2);
     expect(await claimsIniciales(1)).toBe(1);
+  });
+  it("sin concurrencia configurada ⇒ 1 bucle [M-B1-2: el worker arranca con más de 1] (B1: el defecto es 1, no el automático)", async () => {
+    expect(await claimsIniciales(undefined)).toBe(DEFAULT_CONCURRENCY);
   });
 });
 
