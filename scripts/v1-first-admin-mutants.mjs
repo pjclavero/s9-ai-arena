@@ -227,6 +227,10 @@ function vitest(test, nombre) {
   return { rc: r.status, out: r.stdout + r.stderr };
 }
 
+// Opcional: ids de mutantes a ejecutar (p. ej. `node ... M13-fichero-ausente-es-aprobado`).
+const SOLO = process.argv.slice(2);
+if (SOLO.length)
+  for (let i = MUTANTES.length - 1; i >= 0; i--) if (!SOLO.includes(MUTANTES[i].id)) MUTANTES.splice(i, 1);
 let fallos = 0;
 // Línea base: cada test nombrado en verde y encontrado (rc 0 con «No test» sería un verde vacuo).
 for (const m of MUTANTES) {
