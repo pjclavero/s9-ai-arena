@@ -83,7 +83,7 @@
       "to": "      .limit(limit);\n    if (ownerId",
       "killedBy": [
         "V1 · TD-068 · listBots con visibilidad en SQL G2 · con 2300 bots, casi todos privados ajenos: la paginación completa devuelve EXACTAMENTE el conjunto visible, sin duplicados ni saltos",
-        "V1 · TD-068 · listBots con visibilidad en SQL G3 · sin páginas vacías artificiales: la primera página ya sale llena y todas salvo la última también"
+        "V1 · TD-068 · listBots con visibilidad en SQL G4 · contrato estable: cursor v2 en claro {v,t,k}, items con su forma y nextCursor ausente al agotar"
       ],
       "controls": []
     }
