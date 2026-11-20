@@ -35,6 +35,7 @@ MUTANTES=(
 "apps/api/src/battle-access.ts~  if (isReplayStaff(auth)) return true;\n  return Boolean(auth?.userId)~  if (isReplayStaff(auth) || (auth?.rank ?? 0) >= ROLE_RANK.organizer) return true;\n  return Boolean(auth?.userId)~M7 el organizer ve diagnóstico y CPU ajenos~orgA: diagnosticsVisible/cpuMs"
 "apps/api/src/battle-access.ts~          .where(\"tournaments.created_by\", userId),~          .whereNotNull(\"tournaments.created_by\"),~M8 whereBotIdentifiable sin acotar al creador~whereBotIdentifiable: el organizer identifica"
 "apps/api/src/battle-access.ts~    if (userId && (auth?.rank ?? 0) >= ROLE_RANK.organizer) {~    if (false as boolean) {~M9 el organizer no identifica los bots de su torneo en los filtros~whereBotIdentifiable: el organizer identifica"
+"apps/api/src/replay-access.ts~  return auth?.userId && (auth.rank ?? 0) >= ROLE_RANK.organizer ? auth.userId : null;~  return auth?.userId ? auth.userId : null;~X5 organizerUserId sin comprobar el rango (un ex-organizer conserva lectura)~GET /battles/{id} del torneo que creó ⇒ 404"
 )
 
 fallos=0

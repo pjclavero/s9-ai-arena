@@ -32,6 +32,9 @@ const T: Record<string, string> = {}; // torneos
 const B: Record<string, string> = {}; // batallas
 let privA: string; // bot privado jugando en el torneo de orgA
 let privB: string; // bot privado jugando en el torneo de orgB
+let privD: string; // bot privado en el torneo de un ex-organizer
+let demotedId: string;
+let demotedTok: string;
 let privP: string; // bot privado sólo en práctica
 const SECRET_NAMES: Record<string, string> = {};
 
@@ -136,6 +139,25 @@ beforeAll(async () => {
   B.tb = await newBattle([privB, other], T.B);
   await newMatch(T.A, privA, other, privA);
   await newMatch(T.B, privB, other, privB);
+  // Ex-organizer: creó un torneo y luego fue degradado a `user`.
+  const demoted = await newUser("v1a-demoted", ["user"]);
+  demotedId = demoted.id;
+  demotedTok = demoted.token;
+  const [td] = await h
+    .db("tournaments")
+    .insert({
+      name: "v1a-torneo-ex-organizer",
+      format: "round_robin",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      state: "running",
+      created_by: demoted.id,
+    })
+    .returning("id");
+  T.D = td.id;
+  privD = await newBot(owner.id, "D");
+  B.td = await newBattle([privD, other], T.D);
+  await newMatch(T.D, privD, other, privD);
 }, 240_000);
 
 afterAll(async () => {
@@ -305,5 +327,53 @@ describe("V1-A · ajustes de acceso público (migración 021): sólo admin, y pe
     expect((await patch("admin", { publicReplaysEnabled: false, publicSpectateEnabled: false })).status).toBe(200);
     const off = await h.db("app_runtime_settings").where({ id: 1 }).first();
     expect([off.public_replays_enabled, off.public_spectate_enabled]).toEqual([false, false]);
+  });
+});
+
+describe("V1-A · X5 · ex-organizer: figura como `created_by` pero su rol ya es `user`", () => {
+  // Contrato declarado: el alcance «mis torneos» exige AMBAS cosas, rol >= organizer Y created_by.
+  // Un usuario degradado no conserva la lectura de lo que creó (sólo moderator/admin la tendrían).
+  const asDemoted = (path: string) => request(app).get(path).set("Authorization", `Bearer ${demotedTok}`);
+
+  it("GET /battles/{id} del torneo que creó ⇒ 404 (el dueño sí la lee: control)", async () => {
+    expect((await asDemoted(`/battles/${B.td}`)).status).toBe(404);
+    expect((await get("owner", `/battles/${B.td}`)).status).toBe(200);
+  });
+  it("listado de batallas y de replays no la incluye", async () => {
+    const b = await asDemoted("/battles?limit=100");
+    expect((b.body.items as { id: string }[]).map((x) => x.id)).not.toContain(B.td);
+    const r = await asDemoted("/replays?limit=100");
+    expect((r.body.items as { battleId: string }[]).map((x) => x.battleId)).not.toContain(B.td);
+  });
+  it("cuadro de su torneo: «Bot privado», sin nombre", async () => {
+    const r = await asDemoted(`/tournaments/${T.D}/matches`);
+    expect(r.status).toBe(200);
+    expect(JSON.stringify(r.body)).not.toContain("SECRETO-");
+  });
+  it("capa de política: no oculta-nada sólo con created_by, ni identifica sus bots", async () => {
+    const a = { userId: demotedId, sessionId: "s", roles: ["user"], rank: ROLE_RANK.user } as never;
+    expect((await hiddenBotIds(h.db, a, [privD], { tournamentId: T.D })).has(privD)).toBe(true);
+  });
+});
+
+describe("V1-A · GET /replays?bot=: el filtro no revela bots privados ajenos al organizer sin torneo propio", () => {
+  const list = (a: Actor, qs: string) => get(a, `/replays?limit=100&${qs}`);
+  const ids = (r: request.Response) => (r.body.items as { battleId: string }[]).map((x) => x.battleId);
+  it("por id y por nombre de un bot privado de OTRO torneo: vacío para orgA; control: orgB sí lo encuentra", async () => {
+    for (const qs of [`bot=${privB}`, `bot=${encodeURIComponent(SECRET_NAMES[privB])}`]) {
+      const a = await list("orgA", qs);
+      expect(a.status).toBe(200);
+      expect(ids(a)).toEqual([]);
+      expect(JSON.stringify(a.body)).not.toContain(SECRET_NAMES[privB]);
+      expect(ids(await list("orgB", qs))).toEqual([B.tb]);
+    }
+  });
+  it("organizer sin NINGÚN torneo propio: nada por el filtro (práctica y ajenos)", async () => {
+    const lone = await newUser("v1a-lone-org", ["user", "organizer"]);
+    for (const bot of [privP, privA, privB]) {
+      const r = await request(app).get(`/replays?limit=100&bot=${bot}`).set("Authorization", `Bearer ${lone.token}`);
+      expect(r.status).toBe(200);
+      expect(r.body.items).toEqual([]);
+    }
   });
 });
