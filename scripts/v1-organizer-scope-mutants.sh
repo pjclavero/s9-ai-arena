@@ -9,7 +9,7 @@
 # (el restaurado es `git checkout -- <fichero>`); árbol limpio antes y después; ancla
 # perdida = fallo, nunca «supervivencia».
 #
-# Uso (en VM111, con node en el PATH):  bash scripts/v1-organizer-scope-mutants.sh
+# Uso (en el laboratorio de pruebas, con node en el PATH):  bash scripts/v1-organizer-scope-mutants.sh
 set -u
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RAIZ" || exit 2
