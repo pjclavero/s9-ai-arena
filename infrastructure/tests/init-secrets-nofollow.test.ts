@@ -240,8 +240,9 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
     const target = join(base, "cert-fuera");
     mkdirSync(join(secrets, "tls"), { mode: 0o755 });
     symlinkSync(target, join(secrets, "tls/fullchain.pem"));
-    run();
+    const r = run();
     expect(existsSync(target)).toBe(false);
+    expect(r.status, "un enlace en tls/ es fail-closed").not.toBe(0);
   });
 
   it("secrets/ sustituido por un enlace a otro directorio: no escribe en él", () => {
