@@ -80,9 +80,12 @@ check M3 "sin comprobar nlink" "jwt_secret.txt = hardlink de la víctima"
 # M4 · se escribe EN EL SITIO sobre el nombre (abre el nombre final) en vez de rename(2)
 mutate M4 'mv -fT -- "$tmp" "${RES:-$n}"' 'cat -- "$tmp" > "${RES:-$n}"; rm -f -- "$tmp"' || exit 2
 check M4 "escritura en el sitio en vez de rename" "escritura por rename"
-# M5 · secrets/ puede ser un enlace
-mutate M5 '*) die "$DIR no es un directorio real (¿enlace?)" ;;' '*) ;;' || exit 2
-check M5 "secrets/ como enlace aceptado" "secrets/ sustituido por un enlace a otro directorio"
+# M5 · secrets/ puede ser un enlace: se quitan A LA VEZ el chequeo de tipo y el de identidad
+# tras `cd -P` (cada uno por separado es redundante con el otro: defensa en profundidad,
+# ver M5a y M24 más abajo).
+mutate M5a '[ "${DIR_ID%%|*}" = directory ] || die "$DIR no es un directorio real (¿enlace?)"' ':' || exit 2
+SRC=$W/M5a.sh mutate M5 '[ "$(dir_id .)" = "$DIR_ID" ] || die' ': || die' || exit 2
+check M5 "secrets/ como enlace aceptado (sin tipo ni identidad)" "secrets/ sustituido por un enlace a otro directorio"
 # M6 · el destino de un enlace admitido no se valida (ni regular ni nlink): un enlace colgante crea el destino
 mutate M6 '      [ "$(lkind "$t")" = file ] || die "$n -> $t: el destino no es un fichero regular existente"
       [ "$(stat -c '"'"'%h'"'"' -- "$t")" = 1 ] || die "$t tiene enlaces duros (nlink > 1)"' '      :' || exit 2
@@ -159,9 +162,11 @@ check M22 "artifact_verify_key vía .tmp predecible" "artifact_verify_key.pem.tm
 # M23 · H3: se adoptan regulares de otro usuario
 mutate M23 '[ "$o" = 0 ] || [ "$o" = "$RUNTIME_UID" ] || die "$1 es de uid' '[ "$o" != x ] || die "$1 es de uid' || exit 2
 check M23 "owner_ok no rechaza ajenos" "ADOPT con un fichero regular plantado por otro usuario"
-# M24 · H4: sin la comprobación de identidad tras cd -P
+# M24 · H4: sin la comprobación de identidad tras cd -P (el chequeo de tipo sigue en pie)
 mutate M24 '[ "$(dir_id .)" = "$DIR_ID" ] || die' ': || die' || exit 2
 check M24 "sin comprobar identidad tras cd -P" "secrets/ sustituido por un enlace ENTRE la comprobación y la entrada"
+# M5a · sólo sin el chequeo de tipo: la identidad tras cd -P lo cubre (equivalente por redundancia)
+equiv M5a "(defensa en profundidad) sin chequeo de tipo de secrets/; lo cubre la identidad tras cd -P"
 # M25 · la privada de stream se escribe EN EL SITIO si existe (sin rename)
 mutate M25 'mv -fT -- "$tmp" "${RES:-$n}"' 'if [ "$n" = stream_secrets_private.pem ]; then cat -- "$tmp" > "${RES:-$n}"; rm -f -- "$tmp"; else mv -fT -- "$tmp" "${RES:-$n}"; fi' || exit 2
 check M25 "stream privada escrita en el sitio" "regular de root con un descriptor abierto antes por el atacante"
