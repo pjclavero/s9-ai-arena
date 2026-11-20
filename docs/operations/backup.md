@@ -38,12 +38,14 @@ Cada ejecución de `backup.sh`:
 
 1. `pg_dump -Fc` de la base `arena` con el usuario `arena` (**fuente crítica**).
 2. Copia al staging de `arena_maps`, `arena_bot_sources`, `arena_assets` y `arena_replays`
-   (replays de menos de `REPLAY_RETENTION_DAYS` días; los de `official/` siempre).
+   (**todos** los replays, sin límite de edad; ver [Replays: qué se copia y qué no](#replays-qué-se-copia-y-qué-no)).
 3. `manifest.sha256` (incluye el dump) y `manifest.json` (cobertura por fuente).
 4. `restic backup --tag s9-arena-data --host $RESTIC_HOSTNAME <staging>` y, aparte,
    `restic backup --tag s9-arena-secrets` de `infrastructure/secrets` (**fuente crítica**).
 5. `restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host … --group-by host,tags`
-   y `restic check`.
+   y `restic check --read-data-subset=n/7` (lectura de datos rotativa; ver
+   [Verificación de integridad](#verificación-de-integridad-del-repositorio)). Si el check falla, la
+   ejecución es `FULL FAILURE`.
 
 Una fuente no crítica vacía o con error se registra en el manifest y en métricas, pero no impide
 la copia de las demás; un fallo de PostgreSQL o de los secretos es `FULL FAILURE`.
@@ -146,7 +148,66 @@ datos actual.
 | «ARRANQUE ABORTADO: backend sftp mal configurado» | falta `ssh`, la clave o `known_hosts` (o está vacío) | rellenar los secretos `restic_ssh_*` |
 | `SSH_BOOTSTRAP_RESULT=HOST_KEY_MISMATCH` | la huella del host no coincide con `known_hosts` | verificar el host; nunca desactivar la comprobación |
 | `pg_dump FALLÓ` | BD caída o contraseña distinta de `postgres_password` | `$DC ps postgres`, logs |
-| Disco del host lleno durante la copia | el staging duplica los volúmenes en `backup_work` | más espacio o menos retención de replays |
+| Disco del host lleno durante la copia | el staging duplica los volúmenes en `backup_work` | más espacio, mover `WORK_DIR` o, sabiendo lo que se pierde, `REPLAY_BACKUP_MAX_AGE_DAYS` ([estimación](#estimación-de-almacenamiento)) |
+| `restic check … FALLÓ` → `FULL FAILURE` | corrupción en el repositorio (p. ej. `Pack ID does not match`) | no borrar nada; inspeccionar el destino, `restic check --read-data` completo y, si se confirma, nuevo repositorio + copia completa |
+
+## Replays: qué se copia y qué no
+
+Cinco conceptos distintos que no se deben mezclar:
+
+| Concepto | Quién lo decide | Regla |
+|---|---|---|
+| Retención / borrado | `replay-service` (`sweepRetention`) | borra sólo los replays **temporales** caducados; un replay oficial/permanente no se borra nunca |
+| Inclusión en el backup | `backup.sh` | **todo** lo que hay en el volumen entra, tenga la edad que tenga (`REPLAY_BACKUP_MAX_AGE_DAYS=0`, valor por defecto). Antes de V1 sólo entraban los de menos de 180 días (AUD2-03): un replay permanente más viejo seguía referenciado en la BD pero salía de la copia |
+| Retención de snapshots | restic (`forget` 14 diarios / 8 semanales / 12 mensuales) | un replay vive en la copia mientras algún snapshot lo contenga; al estar siempre en el staging, está en todos |
+| Restauración | `restore.sh` | devuelve los bytes tal cual y `--verify` comprueba su checksum del manifest |
+| Compatibilidad v1 / 0.5 | motor (ADR-022) | la copia no interpreta el formato. Que un replay restaurado se pueda **verificar** (re-simular) depende de que el motor actual reproduzca su versión; si no, se puede ver pero devuelve `engine_version_mismatch`, lo que no significa que esté manipulado |
+
+`REPLAY_BACKUP_MAX_AGE_DAYS=N` (N > 0) es una política **opcional** de ahorro de staging: excluye los replays de más
+de N días fuera de `official/`. Con ella se acepta que ese histórico no está protegido. `REPLAY_RETENTION_DAYS` queda
+obsoleta: se ignora y el backup avisa si sigue definida.
+
+### Estimación de almacenamiento
+
+Sea `S` el tamaño medio de un replay (bytes, completo y comprimido en disco tal como lo guarda el replay-service),
+`B` batallas por día y `D` días de operación. Los replays permanentes se acumulan; los temporales los barre el replay-service.
+
+- Volumen de replays y **staging** (copia sin comprimir en `backup_work`): `V = S · B · D · p + T`, con `p` la fracción de
+  replays permanentes y `T` los temporales vivos (`S · B · ventana_temporales`). El staging necesita `V` más el resto
+  de volúmenes (maps, bot_sources, assets) y el dump, **además** del volumen original.
+- Repositorio restic: restic deduplica por contenido y comprime (repos v2); un replay que no cambia cuesta una sola vez,
+  así que el crecimiento diario del repo es sólo el de los replays **nuevos** (`≈ S · B · p`), no `V` por snapshot.
+  Medido en laboratorio con datos sintéticos: 16 MiB de repo para 15,4 MiB de replays (AUD2).
+- Coste del cambio respecto a `-mtime -180`: `S · B · p · (D − 180)` de staging para `D > 180`.
+
+Ejemplos (50 kB de replay sintético; 0,5 MB y 5 MB como cotas de replays reales largos; `p = 1`):
+
+| `S` | `B` por día | `D` = 180 | `D` = 365 | `D` = 730 | Coste añadido a 365 d |
+|---|---|---|---|---|---|
+| 50 kB | 200 | 1,7 GiB | 3,4 GiB | 6,8 GiB | +1,7 GiB |
+| 0,5 MB | 200 | 17 GiB | 34 GiB | 68 GiB | +17 GiB |
+| 5 MB | 100 | 84 GiB | 170 GiB | 340 GiB | +86 GiB |
+
+Antes de aceptar el valor por defecto, mide `S` y `B` reales en producción con `find <volumen replays> -type f -printf '%s\n'`
+(sólo lectura) y comprueba el hueco libre del disco donde vive `backup_work`. Si no hay hueco, la opción no es perder
+el histórico en silencio sino fijar `REPLAY_BACKUP_MAX_AGE_DAYS` con conocimiento de causa, o mover `WORK_DIR` a un
+disco mayor. Pendiente conocido (AUD2-07): la grabación `video/` del streamer también entra en el staging sin tope.
+
+## Verificación de integridad del repositorio
+
+`restic check` a secas sólo comprueba la **estructura** del repositorio: un pack con bytes corruptos pasa con rc=0
+(AUD2-02, probado). `backup.sh` ejecuta ahora `restic check --read-data-subset=n/7`, donde `n` rota cada día
+(día-época mod 7 + 1): **todo el repositorio se lee cada 7 días**. Una corrupción en el subconjunto del día da rc≠0 y la
+ejecución termina en `FULL FAILURE` (métrica `s9_backup_run_success 0`, healthcheck `UNHEALTHY`).
+
+| Variable | Defecto | Efecto |
+|---|---|---|
+| `RESTIC_CHECK_MODE` | `subset` | `subset` lee 1/`PARTS` por día; `all` = `--read-data` completo (más lento); `none` = sólo estructura (**no** detecta corrupción de datos) |
+| `RESTIC_CHECK_SUBSET_PARTS` | `7` | partes del repositorio; todo se lee cada `PARTS` días |
+| `RESTIC_CHECK_SLOT` | vacío | fija la franja (1..`PARTS`) en vez de la rotativa; para pruebas |
+
+Métricas nuevas: `s9_backup_check_ok` (1 bien, 0 fallo, -1 no ejecutado) y `s9_backup_check_read_data_fraction`
+(0 = sólo estructura, 1/7 ≈ 0,1429 = subconjunto diario, 1 = todo), para distinguir «estructura» de «datos leídos».
 
 ## Estado actual
 

@@ -433,7 +433,16 @@ case "$1" in
     mkdir -p "$target"
     cp -a "${store}/$id/." "$target/"
     ;;
-  forget|check)
+  check)
+    # Modela el restic real (AUD2-02): sin lectura de datos sólo se valida la
+    # ESTRUCTURA y una corrupción de pack pasa con rc=0; con --read-data* falla.
+    if [ -e "${store}/.corrupt-pack" ]; then
+      case " $* " in
+        *" --read-data"*) echo "Pack ID does not match, corrupted data" >&2; exit 1 ;;
+      esac
+    fi
+    ;;
+  forget)
     :
     ;;
 esac
@@ -998,7 +1007,7 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
   // antiguo (fuera de retención, y NO bajo official/) y se fija
   // REPLAY_RETENTION_DAYS a un valor pequeño para no depender de fechas
   // lejanas. ────────────────────────────────────────────────────────────
-  it("REPLAY_RETENTION_DAYS excluye replays antiguos fuera de official/ (N4)", () => {
+  it("REPLAY_BACKUP_MAX_AGE_DAYS=N excluye replays antiguos fuera de official/ (N4, política opcional)", () => {
     makeDirs();
     const replaysDir = join(root, "replays");
     writeFileSync(join(replaysDir, "reciente.jsonl"), '{"tick":1}\n');
@@ -1009,7 +1018,7 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     execSync(`touch -t ${touchStamp} "${join(replaysDir, "antiguo.jsonl")}"`);
     writeFakePgDumpOk(fakebin);
     writeFakeResticFaithful(fakebin, store, resticLog);
-    const { code } = runReal({ REPLAY_RETENTION_DAYS: "2" });
+    const { code } = runReal({ REPLAY_BACKUP_MAX_AGE_DAYS: "2" });
     expect([0, 2]).toContain(code);
     const manifest = readManifest();
     expect(manifest.replays.status).toBe("ok");
@@ -1019,7 +1028,7 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     expect(existsSync(join(staged, "antiguo.jsonl"))).toBe(false);
   });
 
-  it("REPLAY_RETENTION_DAYS NO se aplica dentro de official/ (siempre preferente)", () => {
+  it("REPLAY_BACKUP_MAX_AGE_DAYS NO se aplica dentro de official/ (siempre preferente)", () => {
     makeDirs();
     const officialDir = join(root, "replays", "official");
     mkdirSync(officialDir, { recursive: true });
@@ -1029,11 +1038,130 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     execSync(`touch -t ${touchStamp} "${join(officialDir, "muy-viejo.jsonl")}"`);
     writeFakePgDumpOk(fakebin);
     writeFakeResticFaithful(fakebin, store, resticLog);
-    const { code } = runReal({ REPLAY_RETENTION_DAYS: "1" }); // retención mínima
+    const { code } = runReal({ REPLAY_BACKUP_MAX_AGE_DAYS: "1" }); // límite mínimo
     expect([0, 2]).toContain(code);
     const manifest = readManifest();
     expect(manifest.replays.status).toBe("ok");
     expect(manifest.replays.files).toBe(1); // official/ ignora la retención
+  });
+
+  // ── V1-OPS · AUD2-03 / D-OP-11: los replays de más de 180 días ENTRAN en el
+  // backup por defecto. Sin el arreglo (`-mtime -180` fijo) el de 250 días
+  // faltaba en el snapshot y el manifest cuadraba igual. ────────────────────
+  function touchDaysAgo(file: string, days: number) {
+    const t = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const stamp = `${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, "0")}${String(t.getDate()).padStart(2, "0")}0000`;
+    execSync(`touch -t ${stamp} "${file}"`);
+  }
+
+  it("por defecto un replay de 250 días SÍ entra en el backup (AUD2-03)", () => {
+    makeDirs();
+    const replaysDir = join(root, "replays");
+    writeFileSync(join(replaysDir, "reciente.replay.json"), '{"tick":1}\n');
+    writeFileSync(join(replaysDir, "viejo250.replay.json"), '{"tick":0}\n');
+    touchDaysAgo(join(replaysDir, "viejo250.replay.json"), 250);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({});
+    expect([0, 2]).toContain(code);
+    expect(readManifest().replays.files).toBe(2);
+    const staged = join(store, "s9-arena-data", join(root, "work"), "staging", "replays");
+    expect(existsSync(join(staged, "viejo250.replay.json"))).toBe(true);
+    expect(existsSync(join(staged, "reciente.replay.json"))).toBe(true);
+  });
+
+  it("REPLAY_RETENTION_DAYS (obsoleta) se ignora y se avisa: no recorta el backup", () => {
+    makeDirs();
+    const replaysDir = join(root, "replays");
+    writeFileSync(join(replaysDir, "viejo250.replay.json"), '{"tick":0}\n');
+    touchDaysAgo(join(replaysDir, "viejo250.replay.json"), 250);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({ REPLAY_RETENTION_DAYS: "180" });
+    expect([0, 2]).toContain(code);
+    expect(out).toContain("REPLAY_RETENTION_DAYS está OBSOLETA");
+    expect(readManifest().replays.files).toBe(1);
+  });
+
+  it("REPLAY_BACKUP_MAX_AGE_DAYS inválido: exit 1 y mensaje claro", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({ REPLAY_BACKUP_MAX_AGE_DAYS: "abc" });
+    expect(code).toBe(1);
+    expect(out).toContain("REPLAY_BACKUP_MAX_AGE_DAYS='abc' inválido");
+  });
+
+  // ── V1-OPS · AUD2-02: restic check LEE DATOS y una corrupción da fallo. ─────
+  it("restic check se invoca con --read-data-subset=n/7 (rotativo por defecto)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({});
+    expect(code).toBe(0);
+    const calls = readFileSync(resticLog, "utf8");
+    expect(calls).toMatch(/^check --read-data-subset=[1-7]\/7$/m);
+    const m = readMetrics();
+    expect(metricValue(m, "s9_backup_check_ok")).toBe("1");
+    expect(metricValue(m, "s9_backup_check_read_data_fraction")).toBe("0.1429");
+  });
+
+  it("RESTIC_CHECK_SLOT fija la franja y la rotación cubre las 7 partes", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    expect(runReal({ RESTIC_CHECK_SLOT: "3" }).code).toBe(0);
+    expect(readFileSync(resticLog, "utf8")).toContain("check --read-data-subset=3/7");
+    // La franja por día es (día-época mod 7)+1: 7 días consecutivos las cubren todas.
+    const slots = new Set<number>();
+    for (let d = 0; d < 7; d++) slots.add((Math.floor(Date.now() / 86400000) + d) % 7 + 1);
+    expect(slots.size).toBe(7);
+  });
+
+  it("repositorio corrupto: el check con datos falla => FULL FAILURE (rc=1) y métrica check_ok=0", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    writeFileSync(join(store, ".corrupt-pack"), "x");
+    // sin el arreglo (`restic check` desnudo) este caso daba SUCCESS.
+    const { code, out } = runReal({ RESTIC_CHECK_SLOT: "1" });
+    expect(code).toBe(1);
+    expect(out).toContain("restic check --read-data-subset=1/7 FALLÓ");
+    expect(out).toContain("backup FULL FAILURE");
+    const m = readMetrics();
+    expect(metricValue(m, "s9_backup_check_ok")).toBe("0");
+    expect(metricValue(m, "s9_backup_run_success")).toBe("0");
+  });
+
+  it("RESTIC_CHECK_MODE=all usa --read-data completo y también falla ante corrupción", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    writeFileSync(join(store, ".corrupt-pack"), "x");
+    const { code } = runReal({ RESTIC_CHECK_MODE: "all" });
+    expect(code).toBe(1);
+    expect(readFileSync(resticLog, "utf8")).toMatch(/^check --read-data$/m);
+    expect(metricValue(readMetrics(), "s9_backup_check_read_data_fraction")).toBe("1");
+  });
+
+  it("RESTIC_CHECK_MODE=none sólo valida estructura: la métrica lo declara (fracción 0)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    writeFileSync(join(store, ".corrupt-pack"), "x");
+    const { code } = runReal({ RESTIC_CHECK_MODE: "none" });
+    expect(code).toBe(0); // limitación documentada, y no se oculta: ver métrica
+    expect(readFileSync(resticLog, "utf8")).toMatch(/^check$/m);
+    expect(metricValue(readMetrics(), "s9_backup_check_read_data_fraction")).toBe("0");
+  });
+
+  it("configuración de check inválida: exit 1", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    expect(runReal({ RESTIC_CHECK_MODE: "mucho" }).code).toBe(1);
+    expect(runReal({ RESTIC_CHECK_SUBSET_PARTS: "0" }).code).toBe(1);
+    expect(runReal({ RESTIC_CHECK_SLOT: "9" }).code).toBe(1);
   });
 
   // ── D1-R5 (ronda 6, HALLAZGO DEL SUPERVISOR — bloqueante, ALTA): un
