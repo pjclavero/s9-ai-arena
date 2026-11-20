@@ -9,7 +9,10 @@
       "from": "      original(victim, killerTeam, ctx);\n",
       "to": "",
       "killedBy": "TDM 4v4 ácido+minas+fuego amigo",
-      "controls": ["apps/replay-service/tests/fix-4v4-kills-score.test.ts", "apps/arena-engine/tests/mode-score-poisoned-team.test.ts"]
+      "controls": [
+        "apps/replay-service/tests/fix-4v4-kills-score.test.ts",
+        "apps/arena-engine/tests/mode-score-poisoned-team.test.ts"
+      ]
     },
     {
       "id": "M02-demo-seed-historic-revision",
@@ -19,7 +22,9 @@
       "from": "      loadout = undefined;\n",
       "to": "",
       "killedBy": "no reutiliza una revisión histórica inválida",
-      "controls": ["apps/api/src/db/demo-teams.test.ts"]
+      "controls": [
+        "apps/api/src/db/demo-teams.test.ts"
+      ]
     },
     {
       "id": "M03-ammo-validator-skip-weapons",
@@ -29,7 +34,10 @@
       "from": "    if (accepts.length === 0) continue;\n",
       "to": "    continue;\n",
       "killedBy": "0 violaciones ⇒ toda arma montada dispara (sin no_ammo)",
-      "controls": ["packages/module-catalog/validator/ammo-compat.test.ts", "apps/api/src/loadout-ammo.test.ts"]
+      "controls": [
+        "packages/module-catalog/validator/ammo-compat.test.ts",
+        "apps/api/src/loadout-ammo.test.ts"
+      ]
     },
     {
       "id": "M04-participants-canonical-uuid",
@@ -38,8 +46,10 @@
       "file": "apps/api/src/services/battle-participants.ts",
       "from": "    p.botId = canonicalUuid(p.botId); // ELIG · PG acepta MAYÚSCULAS/{llaves}: una sola forma\n",
       "to": "",
-      "killedBy": "bot propio en MAYÚSCULAS",
-      "controls": ["apps/api/src/elig-review-regressions2.test.ts"]
+      "killedBy": "el mismo bot dos veces con distinta grafía",
+      "controls": [
+        "apps/api/src/elig-review-regressions2.test.ts"
+      ]
     },
     {
       "id": "M05-initphysics-poisoned-promise",
@@ -49,7 +59,10 @@
       "from": "    initializing = null; // un fallo (p. ej. checksum) no deja la promesa envenenada\n",
       "to": "",
       "killedBy": "",
-      "controls": ["apps/arena-engine/tests/physics-init-concurrent-failure.test.ts", "apps/arena-engine/tests/physics-init-concurrent.test.ts"]
+      "controls": [
+        "apps/arena-engine/tests/physics-init-concurrent-failure.test.ts",
+        "apps/arena-engine/tests/physics-init-concurrent.test.ts"
+      ]
     },
     {
       "id": "M06-custom-rules-unknown-keys",
@@ -59,7 +72,10 @@
       "from": "  for (const k of Object.keys(o)) {\n    if (allowed.includes(k)) continue;\n",
       "to": "  for (const k of [] as string[]) {\n    if (allowed.includes(k)) continue;\n",
       "killedBy": "rechaza: física: damageMultiplier",
-      "controls": ["packages/game-rules/battle-rules.test.ts", "packages/game-rules/rules-040.test.ts"]
+      "controls": [
+        "packages/game-rules/battle-rules.test.ts",
+        "packages/game-rules/rules-040.test.ts"
+      ]
     },
     {
       "id": "M07-detach-delay",
@@ -69,7 +85,9 @@
       "from": "  return baseMs + delayMs;\n",
       "to": "  return baseMs;\n",
       "killedBy": "con retardo, el detach del worker espera",
-      "controls": ["apps/tournament-worker/src/rules-snapshot-runner.test.ts"]
+      "controls": [
+        "apps/tournament-worker/src/rules-snapshot-runner.test.ts"
+      ]
     },
     {
       "id": "M08-overtime-technical-limit-winner",
@@ -79,7 +97,9 @@
       "from": "      winner: technical ? null : winner,\n",
       "to": "      winner: technical ? \"draw\" : winner,\n",
       "killedBy": "sin captura: la salvaguarda técnica detiene",
-      "controls": ["apps/arena-engine/tests/rules-040-engine.test.ts"]
+      "controls": [
+        "apps/arena-engine/tests/rules-040-engine.test.ts"
+      ]
     },
     {
       "id": "M09-cursor-mask-fix-flip",
@@ -100,7 +120,11 @@
       "from": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: true });\n",
       "to": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: false });\n",
       "killedBy": "V2",
-      "controls": ["apps/tournament-worker/src/ratings.test.ts", "apps/tournament-worker/src/review-eq6-229.test.ts", "apps/tournament-worker/src/standings-season.test.ts"]
+      "controls": [
+        "apps/tournament-worker/src/ratings.test.ts",
+        "apps/tournament-worker/src/review-eq6-229.test.ts",
+        "apps/tournament-worker/src/standings-season.test.ts"
+      ]
     },
     {
       "id": "M11-relay-log-redaction",
@@ -110,7 +134,12 @@
       "from": "    if (typeof v === \"string\") return registry.redact(v);\n",
       "to": "    if (typeof v === \"string\") return v;\n",
       "killedBy": "REGRESIÓN · una clave ADMITIDA",
-      "controls": ["apps/streamer/src/eq6b-relay-break.test.ts", "apps/streamer/src/eq6c-relay-break.test.ts", "apps/streamer/src/r3-relay-break.test.ts", "apps/streamer/src/streamer.test.ts"]
+      "controls": [
+        "apps/streamer/src/eq6b-relay-break.test.ts",
+        "apps/streamer/src/eq6c-relay-break.test.ts",
+        "apps/streamer/src/r3-relay-break.test.ts",
+        "apps/streamer/src/streamer.test.ts"
+      ]
     },
     {
       "id": "M12-rollback-named-closed-list",
@@ -120,7 +149,74 @@
       "from": "  if (!NAMED_ROLLBACK_ALLOWED.includes(name)) {\n",
       "to": "  if (false) {\n",
       "killedBy": "(existe pero fuera de la lista) se rechaza sin tocar la BD",
-      "controls": ["apps/api/src/db/review-244-migration.test.ts"]
+      "controls": [
+        "apps/api/src/db/review-244-migration.test.ts"
+      ]
+    },
+    {
+      "id": "M02b-loadout-invalid-contract",
+      "pr": 194,
+      "test": "apps/api/src/loadout-ammo.review.test.ts",
+      "file": "apps/api/src/services/bots.ts",
+      "from": "    \"loadout_invalid\",\n    `La revisión ${revision} del loadout ya no es válida",
+      "to": "    \"loadout_invalid_x\",\n    `La revisión ${revision} del loadout ya no es válida",
+      "killedBy": "422 conforme al contrato en las 5 rutas",
+      "controls": [
+        "apps/api/src/loadout-ammo.test.ts"
+      ]
+    },
+    {
+      "id": "M03b-engine-fires-without-ammo",
+      "pr": 194,
+      "test": "packages/module-catalog/validator/ammo-differential.review.test.ts",
+      "file": "apps/arena-engine/src/sim/combat.ts",
+      "from": "  if (!ammo || ammo.ammo <= 0) return \"no_ammo\";\n",
+      "to": "  if (false as boolean) return \"no_ammo\";\n",
+      "killedBy": "sin falsos positivos",
+      "controls": [
+        "apps/arena-engine/tests/ammo-loadout-regression.test.ts",
+        "apps/arena-engine/tests/combat.test.ts"
+      ]
+    },
+    {
+      "id": "M04b-private-bot-visibility",
+      "pr": 206,
+      "test": "apps/api/src/rules-review-break-2.test.ts",
+      "file": "apps/api/src/services/battle-participants.ts",
+      "from": "    let visible = Boolean(bot) && (isAdmin || bot.owner_id === userId || bot.visibility === \"public\");\n",
+      "to": "    let visible = Boolean(bot);\n",
+      "killedBy": "privado ajeno con versión NO elegible",
+      "controls": [
+        "apps/api/src/battles-create-ownership.test.ts",
+        "apps/api/src/rules-review-break.test.ts",
+        "apps/api/src/version-eligibility-api.test.ts"
+      ]
+    },
+    {
+      "id": "M10b-rating-revert-lock-order",
+      "pr": 239,
+      "test": "apps/tournament-worker/src/review-229-r2.test.ts",
+      "file": "apps/tournament-worker/src/ratings.ts",
+      "from": "    .where({ battle_id: battleId, reverted: false })\n    .orderBy(\"bot_id\", \"asc\")\n    .forUpdate();\n",
+      "to": "    .where({ battle_id: battleId, reverted: false })\n    .orderBy(\"bot_id\", \"desc\")\n    .forUpdate();\n",
+      "killedBy": "",
+      "controls": [
+        "apps/tournament-worker/src/ratings.test.ts",
+        "apps/tournament-worker/src/review-eq6-229.test.ts"
+      ]
+    },
+    {
+      "id": "M11b-relay-log-redact-serialized",
+      "pr": 240,
+      "test": "apps/streamer/src/r4-relay-break.test.ts",
+      "file": "apps/streamer/src/config.ts",
+      "from": "    write(JSON.stringify({ level, service: \"streamer\", msg, ...extra }, replacer));\n",
+      "to": "    write(registry.redact(JSON.stringify({ level, service: \"streamer\", msg, ...extra })));\n",
+      "killedBy": "REGRESIÓN · una clave ADMITIDA",
+      "controls": [
+        "apps/streamer/src/streamer.test.ts",
+        "apps/streamer/src/eq6c-relay-break.test.ts"
+      ]
     }
   ]
 }
