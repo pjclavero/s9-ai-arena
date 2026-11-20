@@ -2,7 +2,7 @@
 
 Esta página es para quien tiene un rol de **administrador dentro del juego**. No es la guía del **operador del servidor** (instalar, hacer copias, actualizar), que está en [operaciones](../operations/index.md).
 
-Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Encima de todas ellas, el panel **«Acceso público / Broadcast»** (ver [Acceso público](#acceso-público)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
+Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
 
 No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloqueo ni borrado.
 
@@ -24,15 +24,6 @@ Tabla de las últimas 100 acciones: fecha, acción (por ejemplo `tournament.crea
 ## Roles y permisos
 
 La jerarquía de roles con su rango y la **matriz** de qué rol mínimo exige cada acción, con un filtro por ruta, método o rol.
-
-## Acceso público
-
-El panel **«Acceso público / Broadcast»**, en la parte superior de Administración, tiene dos interruptores que sólo puede cambiar un **admin** (cualquier otro rol recibe 403):
-
-- **Espectador público**: batallas en directo sin cuenta.
-- **Replays públicos**: batallas terminadas sin cuenta.
-
-El valor se guarda en la base de datos y **manda siempre**; el cambio se aplica sin reiniciar nada y llega a todos los servicios en unos segundos (cinco por defecto). Cada cambio queda en la auditoría. Activarlos no publica todo: una batalla con un bot privado o de equipo sigue siendo privada salvo que sea de un torneo con retransmisión pública ([Visibilidad](visibility.md)). Poner un interruptor en apagado cierra el acceso aunque el operador haya dejado la variable de entorno encendida; ver [configuración](../operations/configuration.md).
 
 ## Streaming
 
@@ -65,6 +56,6 @@ No son pantallas de administración, pero exigen roles altos:
 
 ## Lo que no se hace desde la web
 
-Listar o buscar usuarios, bloquear cuentas, restablecer contraseñas, importar catálogos, suspender bots o activar la ejecución de batallas. Esas tareas son del operador del servidor: ver [operaciones](../operations/index.md) y [configuración](../operations/configuration.md).
+Listar o buscar usuarios, bloquear cuentas, restablecer contraseñas, importar catálogos, suspender bots o activar la ejecución de batallas y la emisión pública. Esas tareas son del operador del servidor: ver [operaciones](../operations/index.md) y [configuración](../operations/configuration.md).
 
 Siguiente: [Cuentas](accounts.md).
