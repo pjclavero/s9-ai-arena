@@ -116,8 +116,8 @@ const MUTANTES = [
   {
     id: "M13-fichero-ausente-es-aprobado",
     fichero: "infrastructure/scripts/check-env.mjs",
-    de: "    return 2;\n  }\n  const r =",
-    a: "    return 0;\n  }\n  const r =",
+    de: "    return 2;\n  }\n  const j =",
+    a: "    return 0;\n  }\n  const j =",
     test: T_ENV,
     nombre: "fichero inexistente es NO COMPROBADO",
   },
