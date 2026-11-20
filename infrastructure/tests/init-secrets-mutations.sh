@@ -37,13 +37,20 @@ open(sys.argv[2],"w").write(src.replace(old,new))
 PY
 }
 
-echo "== línea base"
-rc=$(runtest "$SRC" "$W/base.json"); echo "BASE_RC=$rc"
-[ "$rc" = 0 ] || { echo "la línea base no está en verde"; exit 2; }
+# ONLY=M3 ejecuta un único mutante (y NO la línea base: ejecútala antes con ONLY=BASE);
+# permite al orquestador comprobar la presión del host antes de cada ejecución.
+ONLY=${ONLY:-}
+if [ -z "$ONLY" ] || [ "$ONLY" = BASE ]; then
+  echo "== línea base"
+  rc=$(runtest "$SRC" "$W/base.json"); echo "BASE_RC=$rc"
+  [ "$rc" = 0 ] || { echo "la línea base no está en verde"; exit 2; }
+  [ "$ONLY" = BASE ] && exit 0
+fi
 
 fail=0
 check() { # id, descripción, subcadena del test que DEBE morir
   local id=$1 desc=$2 want=$3 rc names
+  [ -z "$ONLY" ] || [ "$ONLY" = "$id" ] || return 0
   rc=$(runtest "$W/$id.sh" "$W/$id.json")
   names=$(failed_names "$W/$id.json" 2>/dev/null || true)
   if [ "$rc" != 0 ] && grep -qF -- "$want" <<<"$names"; then
