@@ -1,5 +1,5 @@
 // RESCATE B3 (2026-11) · origen: PR #248 (rama review/visibilidad-244-final, commit a1f52d4d), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs}.
 /**
  * REVISIÓN FINAL #244 @ 470482f (NO MERGEAR) · pruebas del revisor independiente.
  *
@@ -7,11 +7,10 @@
  *    Nombres raros, prefijos (`019`), con espacios, de prototipo o fuera de la lista se
  *    rechazan SIN tocar la BD (la BD es un Proxy que revienta al primer uso).
  *  - RVF-2 · P3-6: `winnerBotName` sigue la MISMA regla que `winnerBotId` (hiddenBotIds).
- *    Documenta un límite: el rol `organizer` es «replay staff» (isReplayStaff ≥ organizer),
- *    así que `hiddenBotIds` no le oculta nada y recibe el NOMBRE del ganador privado
- *    también en un torneo SIN broadcast. Es la política previa de replays (TD-004), no una
- *    vía nueva, pero contradice el titular de docs/user/visibility.md («La organización
- *    de torneos no ve tu bot privado»).
+ *    Defecto documentado con `it.fails` (issue #306): el rol `organizer` es «replay staff»
+ *    (isReplayStaff ≥ organizer), así que `hiddenBotIds` no le oculta nada y recibe el NOMBRE
+ *    del ganador privado también en un torneo SIN broadcast, lo que contradice docs/user/visibility.md
+ *    («La organización de torneos no ve tu bot privado»). El test afirma la política documentada.
  */
 import { describe, it, expect } from "vitest";
 import { NAMED_ROLLBACK_ALLOWED, rollbackNamed } from "./db/migrations.js";
@@ -30,6 +29,22 @@ const explodingDb = new Proxy(
     },
   },
 ) as never;
+
+/** BD falsa: `bots` devuelve un bot privado de OTRO usuario; cualquier otra consulta (p. ej. torneo con broadcast) no encuentra nada. */
+function privateBotDb(botId: string): never {
+  const rows = [{ id: botId, owner_id: "otro-usuario", visibility: "private", team_id: null }];
+  const chain = (): unknown =>
+    new Proxy(function () {}, {
+      get(_t, p) {
+        if (p === "first") return () => Promise.resolve(undefined);
+        if (p === "select") return () => Promise.resolve(rows);
+        if (p === "then") return undefined;
+        return () => chain();
+      },
+      apply: () => chain(),
+    });
+  return chain() as never;
+}
 
 describe("RVF-1 · P2-1 · lista cerrada de rollback:name con la 019", () => {
   it("la lista cerrada incluye la 019, sólo contiene migraciones >= 016, no tiene repetidos y está congelada", () => {
@@ -81,20 +96,26 @@ describe("RVF-2 · P3-6 · winnerBotName y el rol organizer", () => {
     winner_team_id: null,
     final: true,
   };
-  const names = new Map([[PRIV, "A-DEF"]]);
+  const names = new Map([[PRIV, "BOT-SINTETICO"]]);
 
   it("oculto ⇒ ni id ni nombre aunque el mapa de nombres lo traiga (defensa en la proyección)", () => {
     const j = tournamentMatchToJson(match, new Set([PRIV]), false, names);
     expect(j.winnerBotId).toBeNull();
     expect(j).not.toHaveProperty("winnerBotName");
-    expect(JSON.stringify(j)).not.toContain("A-DEF");
+    expect(JSON.stringify(j)).not.toContain("BOT-SINTETICO");
   });
 
-  it("LÍMITE · organizer: hiddenBotIds no oculta nada (sin consultar la BD) ⇒ recibe el nombre en un torneo SIN broadcast", async () => {
+  // DEFECTO VIGENTE (issue #306): la doc (docs/user/visibility.md) dice que la organización de torneos
+  // NO ve un bot privado, pero el rol `organizer` cuenta como «replay staff» y recibe el NOMBRE del
+  // ganador privado en un torneo SIN broadcast. Este test afirma la política DOCUMENTADA y por eso
+  // falla hoy: `it.fails` se pone ROJO cuando se corrija el código (entonces, quitar `.fails`); si en
+  // cambio se decide corregir la doc, hay que reescribirlo. No consolida el defecto como garantía.
+  it.fails("organizer NO debería recibir el nombre de un ganador privado en un torneo sin broadcast (#306)", async () => {
     const organizer = { userId: "u", sessionId: "s", roles: ["organizer"], rank: ROLE_RANK.organizer };
-    const hidden = await hiddenBotIds(explodingDb, organizer as never, [PRIV], { tournamentId: "t-sin-broadcast" });
-    expect(hidden.size).toBe(0);
+    const hidden = await hiddenBotIds(privateBotDb(PRIV), organizer as never, [PRIV], { tournamentId: "t-sin-broadcast" });
     const j = tournamentMatchToJson(match, hidden, false, names);
-    expect(j.winnerBotName).toBe("A-DEF");
+    expect(hidden.has(PRIV)).toBe(true);
+    expect(j.winnerBotId).toBeNull();
+    expect(j).not.toHaveProperty("winnerBotName");
   });
 });

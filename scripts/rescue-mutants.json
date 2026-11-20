@@ -1,5 +1,5 @@
 {
-  "_doc": "Mutantes de los tests rescatados de los PR de revisión antiguos (B3, 2026-11). Cada entrada: un cambio de UNA ocurrencia exacta en código de producto (`from` -> `to`), el test candidato que debe morir y el test concreto (killedBy) que lo mata. `controls` son tests ya existentes en main que se ejecutan con el mismo mutante para medir si el candidato aporta algo propio. kind=fix-flip: el 'mutante' es la REPARACIÓN de un defecto vigente y el test (it.fails) debe ponerse rojo al repararlo.",
+  "_doc": "Mutantes de los tests rescatados de los PR de revisión antiguos (B3, 2026-11). Cada entrada: un cambio de UNA ocurrencia exacta en código de producto (`from` -> `to`), el test candidato que debe morir y los tests concretos (killedBy: nombres COMPLETOS de vitest, igualdad exacta, deben fallar todos) que lo matan. `controls` son tests ya existentes en main que se ejecutan con el mismo mutante para medir si el candidato aporta algo propio. kind=fix-flip: el 'mutante' es la REPARACIÓN de un defecto vigente y el test (it.fails) debe ponerse rojo al repararlo.",
   "mutants": [
     {
       "id": "M01-onkill-observer",
@@ -8,23 +8,13 @@
       "file": "apps/arena-engine/src/replay.ts",
       "from": "      original(victim, killerTeam, ctx);\n",
       "to": "",
-      "killedBy": "TDM 4v4 ácido+minas+fuego amigo",
+      "killedBy": [
+        "RE-REVIEW-4V4 · onKill no altera la simulación TDM 4v4 ácido+minas+fuego amigo",
+        "RE-REVIEW-4V4 · onKill no altera la simulación DM 4 con ácido y respawn"
+      ],
       "controls": [
         "apps/replay-service/tests/fix-4v4-kills-score.test.ts",
         "apps/arena-engine/tests/mode-score-poisoned-team.test.ts"
-      ]
-    },
-    {
-      "id": "M03-ammo-validator-skip-weapons",
-      "pr": 194,
-      "test": "packages/module-catalog/validator/ammo-differential.review.test.ts",
-      "file": "packages/module-catalog/validator/index.ts",
-      "from": "    if (accepts.length === 0) continue;\n",
-      "to": "    continue;\n",
-      "killedBy": "0 violaciones ⇒ toda arma montada dispara (sin no_ammo)",
-      "controls": [
-        "packages/module-catalog/validator/ammo-compat.test.ts",
-        "apps/api/src/loadout-ammo.test.ts"
       ]
     },
     {
@@ -35,7 +25,9 @@
       "file": "apps/api/src/routes/bots.ts",
       "from": "    if (typeof req.query.ownerId === \"string\") q = q.where({ owner_id: req.query.ownerId });\n",
       "to": "    if (typeof req.query.ownerId === \"string\") {\n      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.query.ownerId)) {\n        throw badRequest(\"ownerId debe ser un uuid\");\n      }\n      q = q.where({ owner_id: req.query.ownerId });\n    }\n",
-      "killedBy": "ownerId no-UUID",
+      "killedBy": [
+        "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId no-UUID: con y sin cursor válido, MISMA respuesta (y nunca «cursor inválido»)"
+      ],
       "controls": []
     },
     {
@@ -45,7 +37,10 @@
       "file": "apps/tournament-worker/src/ratings.ts",
       "from": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: true });\n",
       "to": "    await trx(\"rating_events\").where({ id: e.id }).update({ reverted: false });\n",
-      "killedBy": "V2",
+      "killedBy": [
+        "[R2 #229] H2 · reversión con marca propia V2 · después del Elo: rating vuelve a 1000 exacto; doble = already_reverted; recálculo estable",
+        "[R2 #229] H2 · reversión con marca propia V5 · doble reversión SIMULTÁNEA: exactamente una 'reverted' y la otra 'already_reverted'"
+      ],
       "controls": [
         "apps/tournament-worker/src/ratings.test.ts",
         "apps/tournament-worker/src/review-eq6-229.test.ts",
@@ -59,7 +54,9 @@
       "file": "apps/streamer/src/config.ts",
       "from": "    if (typeof v === \"string\") return registry.redact(v);\n",
       "to": "    if (typeof v === \"string\") return v;\n",
-      "killedBy": "REGRESIÓN · una clave ADMITIDA",
+      "killedBy": [
+        "R4 · R3-A · plegado de longitud constante REGRESIÓN · una clave ADMITIDA por la API (`validStreamKey`: ASCII imprimible, incluye `\"`) que contiene `streamer\"` NO rompe el JSON de la línea de log y no se filtra"
+      ],
       "controls": [
         "apps/streamer/src/eq6b-relay-break.test.ts",
         "apps/streamer/src/eq6c-relay-break.test.ts",
@@ -74,22 +71,13 @@
       "file": "apps/api/src/db/migrations.ts",
       "from": "  if (!NAMED_ROLLBACK_ALLOWED.includes(name)) {\n",
       "to": "  if (false) {\n",
-      "killedBy": "(existe pero fuera de la lista) se rechaza sin tocar la BD",
+      "killedBy": [
+        "RVF-1 · P2-1 · lista cerrada de rollback:name con la 019 001_identity (existe pero fuera de la lista) se rechaza sin tocar la BD",
+        "RVF-1 · P2-1 · lista cerrada de rollback:name con la 019 012_bot_versioning (existe pero fuera de la lista) se rechaza sin tocar la BD",
+        "RVF-1 · P2-1 · lista cerrada de rollback:name con la 019 015_bot_retired (existe pero fuera de la lista) se rechaza sin tocar la BD"
+      ],
       "controls": [
         "apps/api/src/db/review-244-migration.test.ts"
-      ]
-    },
-    {
-      "id": "M03b-engine-fires-without-ammo",
-      "pr": 194,
-      "test": "packages/module-catalog/validator/ammo-differential.review.test.ts",
-      "file": "apps/arena-engine/src/sim/combat.ts",
-      "from": "  if (!ammo || ammo.ammo <= 0) return \"no_ammo\";\n",
-      "to": "  if (false as boolean) return \"no_ammo\";\n",
-      "killedBy": "sin falsos positivos",
-      "controls": [
-        "apps/arena-engine/tests/ammo-loadout-regression.test.ts",
-        "apps/arena-engine/tests/combat.test.ts"
       ]
     },
     {
@@ -99,7 +87,10 @@
       "file": "apps/tournament-worker/src/ratings.ts",
       "from": "    .where({ battle_id: battleId, reverted: false })\n    .orderBy(\"bot_id\", \"asc\")\n    .forUpdate();\n",
       "to": "    .where({ battle_id: battleId, reverted: false })\n    .orderBy(\"bot_id\", \"desc\")\n    .forUpdate();\n",
-      "killedBy": "",
+      "killedBy": [
+        "[R2 #229] H3 · concurrencia del Elo C2 · Elo + reversión mezclados (otras batallas y la misma), dos torneos de la misma temporada, 15 rondas",
+        "[R2 #229] H3 · concurrencia del Elo C3 · interbloqueos: reversiones y Elo de batallas entre los MISMOS dos bots (lados alternos), 25 rondas"
+      ],
       "controls": [
         "apps/tournament-worker/src/ratings.test.ts",
         "apps/tournament-worker/src/review-eq6-229.test.ts"
@@ -112,10 +103,31 @@
       "file": "apps/streamer/src/config.ts",
       "from": "    write(JSON.stringify({ level, service: \"streamer\", msg, ...extra }, replacer));\n",
       "to": "    write(registry.redact(JSON.stringify({ level, service: \"streamer\", msg, ...extra })));\n",
-      "killedBy": "REGRESIÓN · una clave ADMITIDA",
+      "killedBy": [
+        "R4 · R3-A · plegado de longitud constante REGRESIÓN · una clave ADMITIDA por la API (`validStreamKey`: ASCII imprimible, incluye `\"`) que contiene `streamer\"` NO rompe el JSON de la línea de log y no se filtra",
+        "R4b · la redacción sobre la línea YA serializada rompe el JSON del log DEFECTO P3 · barrido con 500 claves aleatorias con forma YouTube: toda clave admite el ataque y TODA línea sale rota"
+      ],
       "controls": [
         "apps/streamer/src/streamer.test.ts",
         "apps/streamer/src/eq6c-relay-break.test.ts"
+      ]
+    },
+    {
+      "id": "M03c-twin-bay-fix-flip",
+      "kind": "fix-flip",
+      "pr": 194,
+      "test": "packages/module-catalog/validator/ammo-differential.review.test.ts",
+      "file": "packages/module-catalog/resolve/index.ts",
+      "from": "      const ammoSlot = ammoSlotIds[ammoSlotCursor++] ?? `${entry.slot}_ammo`;\n",
+      "to": "      const occupied = new Set(loadout.modules.map((x) => x.slot));\n      const freeBays = ammoSlotIds.filter((id) => !occupied.has(id));\n      const ammoSlot = freeBays[ammoSlotCursor++] ?? `${entry.slot}_ammo`;\n",
+      "killedBy": [
+        "diferencial validador ↔ motor · chasis sintético de dos torretas 0 violaciones ⇒ toda arma montada dispara",
+        "diferencial validador ↔ motor · chasis sintético de dos torretas caso mínimo: mg con munición embebida + munición explícita en la bahía donde se materializa"
+      ],
+      "controls": [
+        "packages/module-catalog/resolve/ammo-materialization.test.ts",
+        "packages/module-catalog/resolve/index.test.ts",
+        "packages/module-catalog/validator/ammo-compat.test.ts"
       ]
     }
   ]

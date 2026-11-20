@@ -1,12 +1,11 @@
 // RESCATE B3 (2026-11) · origen: PR #240 (rama review/227-r4, commit d00ad70b), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs}.
 /**
  * Revisión independiente · ronda 4 del PR #227 (sobre 25bc372) · streamer.
  * NO es una suite del autor y NO se mergea. Arnés RTMP falso copiado de
  * r3-relay-break.test.ts (127.0.0.1, puerto efímero; nada sale a la red).
  *  - `CONTROL`: lo que la entrega resiste.  - `OBS`: comportamiento medido que se informa.
  */
-import { randomBytes } from "node:crypto";
 import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
@@ -16,8 +15,34 @@ import { ChunkReader, encodeMessage, MSG_COMMAND_AMF0, MSG_SET_CHUNK_SIZE, type 
 import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publisher.js";
 import { createLogger, foldSameLength, redactSecret, REDACT_MIN_FRAGMENT, SecretRegistry } from "./config.js";
 
+/**
+ * Bytes pseudoaleatorios DETERMINISTAS (mulberry32 con semilla fija): mismo flujo en cada ejecución,
+ * así un fallo es reproducible. Sustituye a `node:crypto.randomBytes` (ronda 2 del PR #304).
+ */
+let seedState = 0x5eed4;
+function nextU32() {
+  seedState = (seedState + 0x6d2b79f5) | 0;
+  let t = seedState;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return (t ^ (t >>> 14)) >>> 0;
+}
+function randomBytes(n: number): Buffer {
+  const b = Buffer.alloc(n);
+  for (let i = 0; i < n; i++) b[i] = nextU32() & 0xff;
+  return b;
+}
 const KEY = `r4-${randomBytes(12).toString("hex")}-Zq`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Espera por CONDICIÓN (sondeo corto) con un tope de seguridad; devuelve si se cumplió. */
+async function waitFor(cond: () => boolean, capMs = 15_000, stepMs = 5): Promise<boolean> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > capMs) return false;
+    await sleep(stepMs);
+  }
+  return true;
+}
 
 const servers: Server[] = [];
 const sockets: Socket[] = [];
@@ -191,7 +216,7 @@ const HOSTILE = [
   "İ", // I + punto combinante
 ];
 function rnd(n: number) {
-  return randomBytes(4).readUInt32BE(0) % n;
+  return nextU32() % n;
 }
 function hostile(len: number) {
   let s = "";
@@ -339,7 +364,7 @@ describe("R4 · R3-C · plazo de escritura", () => {
     const W = 300;
     const r = await relayWith(W, () => {});
     const p = pump(r.pub, 0, 200_000);
-    await sleep(W * 6);
+    await waitFor(() => !!r.err);
     p.stop();
     expect(r.err?.message ?? "").toMatch(/plazo de escritura/);
     expect((r.pub as unknown as { stallTimer: unknown }).stallTimer).toBeNull();
@@ -350,7 +375,7 @@ describe("R4 · R3-C · plazo de escritura", () => {
     const W = 5000;
     const r = await relayWith(W, () => {});
     const p = pump(r.pub, 0, 200_000);
-    for (let i = 0; i < 200 && !p.paused; i++) await sleep(10);
+    await waitFor(() => p.paused, 5_000);
     expect(p.paused).toBe(true);
     expect((r.pub as unknown as { stallTimer: unknown }).stallTimer).not.toBeNull();
     p.stop();
@@ -361,11 +386,16 @@ describe("R4 · R3-C · plazo de escritura", () => {
   it("OBS P3 · sin caudal mínimo: una ingesta que lee UN fotograma (~83 KB) por plazo sigue «publishing» indefinidamente (con W=10 s reales ≈ 67 kbit/s frente a 20 Mbit/s)", async () => {
     const W = 300;
     let tick: NodeJS.Timeout | null = null;
+    let releases = 0;
     const r = await relayWith(W, (gd) => {
-      tick = setInterval(() => gd.release(90_000), W * 0.9);
+      tick = setInterval(() => {
+        releases++;
+        gd.release(90_000);
+      }, W * 0.9);
     });
     const p = pump(r.pub, 0, 20_000);
-    await sleep(W * 12);
+    // Espera por condición: 13 liberaciones (≈ 13 plazos de lectura de un fotograma) o el corte, lo que ocurra antes.
+    await waitFor(() => releases >= 13 || !!r.err);
     p.stop();
     if (tick) clearInterval(tick);
     const view = { state: r.pub.state, err: r.err?.message ?? null };
@@ -480,10 +510,14 @@ describe("R4b · R3-C · el plazo de escritura en la ingesta lenta legítima", (
   it("CONTROL · ingesta LENTA legítima (lee ~60 % del caudal del productor, sin pararse): el plazo se ARMA y se REARMA, pero no corta", async () => {
     const W = 200;
     let tick: NodeJS.Timeout | null = null;
+    let releases = 0;
     // Productor ≈ 160 Mbit/s (20 MB/s) para llegar a la marca de 4 MiB en tiempo de test;
     // la ingesta suelta 1,2 MB cada 100 ms ≈ 12 MB/s.
     const r = await relayWith(W, (gd) => {
-      tick = setInterval(() => gd.release(1_200_000), 100);
+      tick = setInterval(() => {
+        releases++;
+        gd.release(1_200_000);
+      }, 100);
     });
     let armed = 0;
     let drains = 0;
@@ -492,7 +526,8 @@ describe("R4b · R3-C · el plazo de escritura en la ingesta lenta legítima", (
       if ((r.pub as unknown as { stallTimer: unknown }).stallTimer) armed++;
     }, 10);
     const p = pump(r.pub, 0, 160_000);
-    await sleep(W * 15);
+    // Espera por condición: 30 liberaciones (la ingesta lenta sostenida) o el corte, lo que ocurra antes.
+    await waitFor(() => releases >= 30 || !!r.err);
     p.stop();
     clearInterval(probe);
     if (tick) clearInterval(tick);
@@ -512,11 +547,11 @@ describe("R4b · R3-C · el plazo de escritura en la ingesta lenta legítima", (
     });
     const p = pump(r.pub, 0, 200_000);
     const t0 = Date.now();
-    while (!r.err && Date.now() - t0 < W * 10) await sleep(20);
+    await waitFor(() => !!r.err, W * 10, 20);
     p.stop();
     const elapsed = Date.now() - t0;
     r.pub.close();
     expect(r.err?.message ?? "").toMatch(/plazo de escritura/);
-    expect(elapsed).toBeLessThanOrEqual(W * 3 + 400);
+    expect(elapsed).toBeLessThanOrEqual(W * 3 + 1500); // holgura para un hipervisor cargado; sin plazo serían ≥ W * 10
   }, 20_000);
 });

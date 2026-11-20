@@ -1,5 +1,5 @@
 // RESCATE B3 (2026-11) · origen: PR #192 (rama review/re-4v4, commit 085a3bac), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs}.
 /**
  * RE-REVIEW-4V4 · El gancho `onKill` de `resimulateWithEvents` es SÓLO de
  * observación: con y sin él, la re-simulación produce el mismo `finalStateHash`

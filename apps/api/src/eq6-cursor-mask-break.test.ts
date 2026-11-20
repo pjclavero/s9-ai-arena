@@ -1,5 +1,5 @@
 // RESCATE B3 (2026-11) · origen: PR #224 (rama review/eq6-221-r2, commit 7eb5fa44), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs}.
 /**
  * EQ6 · revisión independiente de #221 (R2) · ¿la defensa de PostgreSQL de `runCursorQuery`
  * enmascara errores que NO son del cursor?
@@ -37,7 +37,7 @@ const validCursor = Buffer.from(
 ).toString("base64url");
 
 describe("EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro", () => {
-  // DEFECTO VIGENTE en main 8f380eb (medido en VM de pruebas): `GET /bots?ownerId=no-es-uuid` da 500 sin
+  // DEFECTO VIGENTE (issue #305) en main 8f380eb (medido en VM de pruebas): `GET /bots?ownerId=no-es-uuid` da 500 sin
   // cursor y, con un cursor válido, un 400 «Cursor de paginación inválido» (runCursorQuery culpa al cursor
   // de un error de filtro). `it.fails` fija el defecto: se pone ROJO cuando se corrija (validar ownerId
   // como uuid → 400 en ambos casos); entonces basta con quitar `.fails`.

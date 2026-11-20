@@ -9,15 +9,34 @@
  *   node scripts/rescue-mutants.mjs <id> ctl <n>       el control n (test ya existente en main) con el mutante
  *   node scripts/rescue-mutants.mjs <id> check         sólo comprueba que `from` aparece UNA vez
  *   node scripts/rescue-mutants.mjs list               ids
- * El fichero mutado se restaura SIEMPRE (finally) desde su contenido original en memoria.
+ * El fichero mutado se restaura SIEMPRE: en `finally` y también ante SIGINT/SIGTERM/SIGHUP (un SIGKILL
+ * no es capturable: si ocurre, `git checkout -- <file>` lo deja limpio).
+ * `killedBy` es una lista de nombres COMPLETOS de test (fullName de vitest); se compara por igualdad
+ * exacta y el mutante sólo cuenta como muerto si TODOS esos tests fallan.
  * Escribe una línea JSON con el resultado en stdout; el código de salida es el rc real de vitest
  * (en `mut` y `ctl` un rc != 0 es lo esperado: el orquestador interpreta el JSON).
  */
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+let activeChild = null;
+/** Ejecuta un comando y resuelve con su rc (nunca rechaza). El hijo se mata por PID al vencer el plazo. */
+function run(cmd, args, { cwd, timeout, env }) {
+  return new Promise((resolveRc) => {
+    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "ignore", "ignore"] });
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeout);
+    activeChild = child;
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      activeChild = null;
+      resolveRc(code ?? 1);
+    });
+    child.on("error", () => resolveRc(1));
+  });
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(readFileSync(join(ROOT, "scripts", "rescue-mutants.json"), "utf8"));
@@ -51,6 +70,20 @@ if (!testFile) {
   process.exit(2);
 }
 
+let restored = false;
+const restore = () => {
+  if (restored) return;
+  restored = true;
+  writeFileSync(target, original);
+};
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => {
+    activeChild?.kill("SIGKILL"); // por PID, nunca pkill -f
+    restore();
+    process.exit(128 + ({ SIGINT: 2, SIGTERM: 15, SIGHUP: 1 })[sig]);
+  });
+}
+
 const dir = mkdtempSync(join(tmpdir(), "rescue-mut-"));
 const out = join(dir, "r.json");
 let rc = 1;
@@ -60,15 +93,16 @@ try {
       target,
       original.replace(m.from, () => m.to),
     );
-  const r = spawnSync("npx", ["vitest", "run", testFile, "--maxWorkers=2", "--reporter=json", `--outputFile=${out}`], {
+  // spawnSync bloquea el bucle de eventos: los manejadores de señal sólo corren si el hijo termina,
+  // así que se usa un hijo asíncrono (spawn) y se espera su cierre.
+  const r = await run("npx", ["vitest", "run", testFile, "--maxWorkers=2", "--reporter=json", `--outputFile=${out}`], {
     cwd: ROOT,
-    encoding: "utf8",
     timeout: 900_000,
     env: { ...process.env, ARENA_DEV_INSECURE_SECRETS: "1" },
   });
-  rc = r.status ?? 1;
+  rc = r;
 } finally {
-  writeFileSync(target, original);
+  restore();
 }
 let failed = [];
 let passed = 0;
@@ -87,7 +121,13 @@ if (existsSync(out)) {
   }
 }
 rmSync(dir, { recursive: true, force: true });
-const killedByNamed = m.killedBy ? failed.some((n) => n.includes(m.killedBy)) : failed.length > 0;
+const named = [].concat(m.killedBy ?? []);
+if (named.length === 0) {
+  console.error(`${id}: falta killedBy (nombre completo de test)`);
+  process.exit(2);
+}
+// Igualdad exacta (no subcadena) y TODOS los nombrados deben haber fallado.
+const killedByNamed = named.every((n) => failed.includes(n));
 console.log(
   JSON.stringify({
     id,

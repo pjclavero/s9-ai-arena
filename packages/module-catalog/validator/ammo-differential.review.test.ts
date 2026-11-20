@@ -1,22 +1,22 @@
 // RESCATE B3 (2026-11) · origen: PR #194 (rama review/ammo, commit b6a83555), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs} (M03c, fix-flip).
 /**
- * [AMMO-REVIEW] Diferencial validador ↔ motor sobre la regla arma ↔ munición.
+ * [AMMO-REVIEW] Diferencial validador ↔ motor sobre la regla arma ↔ munición, SÓLO el caso que
+ * main no cubre: un chasis sintético de DOS torretas y DOS bahías (el MVP no lo tiene, pero el
+ * validador y el resolutor lo admiten). Seguimiento: issue #197.
  *
- * Para cada loadout generado: si validateLoadout da 0 violaciones, el vehículo que sale de
- * resolveVehicle tiene que poder disparar CADA arma (canFire ≠ no_ammo). Y al revés: si la
- * única objeción es `incompatible_ammo` sobre un ARMA, el motor no debe poder disparar
- * con esa arma (si no, es un falso positivo).
+ * Poda de la ronda 2: la parte sobre el catálogo real (0 violaciones ⇒ dispara; sin falsos
+ * positivos; `ammo` no-texto; arquetipos) la matan igual `ammo-compat`, `loadout-ammo`,
+ * `ammo-loadout-regression` y `combat` de main, así que se quitó del fichero.
  *
- * Catálogo REAL (loadCatalog) y un catálogo sintético con un chasis de DOS torretas y
- * DOS bahías, que el MVP no tiene pero el validador y el resolutor admiten.
+ * Los dos `it.fails` documentan un defecto latente y se ponen ROJOS al repararlo (M03c lo
+ * demuestra: con la reparación ambos fallan; los tests de main siguen verdes con ella).
  */
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { validateLoadout, validateAmmo } from "./index.js";
+import { validateLoadout } from "./index.js";
 import { loadCatalog } from "../loadCatalog.js";
 import { resolveVehicle } from "../resolve/index.js";
-import { ARCHETYPES } from "../resolve/archetypes.js";
 import { Vehicle } from "../../../apps/arena-engine/src/sim/vehicle.js";
 import { canFire } from "../../../apps/arena-engine/src/sim/combat.js";
 import { Rng } from "../../../apps/arena-engine/src/rng.js";
@@ -39,138 +39,7 @@ function engineFire(loadout: LoadoutInput, catalog: ModuleDefinition[]): Map<str
 }
 
 const AMMO_IDS = ["ammo.ap@1", "ammo.he@1", "ammo.standard@1"];
-const WEIRD_AMMO = [
-  "ammo.ap@01",
-  "ammo.ap@1.0",
-  "ammo.ap@ 1",
-  "AMMO.AP@1",
-  " ammo.ap@1",
-  "ammo.ap@9",
-  "ammo.ap",
-  "__proto__",
-  "constructor@1",
-  "mine.explosive@1",
-  "weapon.mg@1",
-];
 const WEAPONS = ["weapon.cannon@1", "weapon.mg@1", "weapon.mg@2"];
-const WEIRD_WEAPONS = ["weapon.cannon@01", "WEAPON.CANNON@1", "weapon.cannon@2", "weapon.mg@1.0"];
-
-const optAmmo = fc.option(fc.constantFrom(...AMMO_IDS, ...WEIRD_AMMO), { nil: undefined });
-
-const realLoadout = fc
-  .record({
-    chassis: fc.constantFrom("chassis.heavy@1", "chassis.medium@1", "chassis.medium@2", "chassis.light@1"),
-    weapon: fc.option(fc.constantFrom(...WEAPONS, ...WEIRD_WEAPONS), { nil: undefined }),
-    embedded: optAmmo,
-    bayAmmo: optAmmo,
-    baySlot: fc.constantFrom(
-      "ammo_main",
-      "AMMO_MAIN",
-      " ammo_main",
-      "sensor_b",
-      "mine_bay",
-      "__proto__",
-      "turret_main",
-    ),
-    mine: fc.boolean(),
-    order: fc.constantFrom("weapon-first", "ammo-first"),
-  })
-  .map((r): LoadoutInput => {
-    const w: LoadoutModuleEntry[] = r.weapon
-      ? [{ slot: "turret_main", moduleId: r.weapon, ...(r.embedded ? { ammo: r.embedded } : {}) }]
-      : [];
-    const a: LoadoutModuleEntry[] = r.bayAmmo ? [{ slot: r.baySlot, moduleId: r.bayAmmo }] : [];
-    const mods = r.order === "weapon-first" ? [...w, ...a] : [...a, ...w];
-    return {
-      loadoutId: "x",
-      revision: 1,
-      catalogVersion: "mvp@1",
-      chassis: r.chassis,
-      modules: [
-        { slot: "drive", moduleId: "movement.tracks@1" },
-        { slot: "power", moduleId: "power.generator@2" },
-        ...mods,
-        ...(r.mine ? [{ slot: "mine_bay", moduleId: "mine.explosive@1" }] : []),
-      ],
-    };
-  });
-
-describe("diferencial validador ↔ motor · catálogo real", () => {
-  it("0 violaciones ⇒ toda arma montada dispara (sin no_ammo)", () => {
-    let valid = 0;
-    fc.assert(
-      fc.property(realLoadout, (l) => {
-        const v = validateLoadout(l, CATALOG, BUDGET);
-        if (v.length > 0) return true;
-        valid++;
-        for (const [slot, ok] of engineFire(l, CATALOG)) {
-          if (!ok) throw new Error(`validador OK pero ${slot} no dispara: ${JSON.stringify(l.modules)}`);
-        }
-        return true;
-      }),
-      { numRuns: 3000, seed: 42 },
-    );
-    expect(valid).toBeGreaterThan(20);
-  });
-
-  it("incompatible_ammo sobre un arma ⇒ el motor tampoco la dispararía (sin falsos positivos)", () => {
-    fc.assert(
-      fc.property(realLoadout, (l) => {
-        const v = validateLoadout(l, CATALOG, BUDGET);
-        const weaponAmmo = v.filter((x) => x.code === "incompatible_ammo" && x.slot === "turret_main");
-        if (weaponAmmo.length === 0 || v.length !== weaponAmmo.length) return true;
-        let fire: Map<string, boolean>;
-        try {
-          fire = engineFire(l, CATALOG);
-        } catch {
-          return true; // el resolutor tampoco lo acepta
-        }
-        // Falso positivo sólo si el motor la dispara SEA CUAL SEA el orden de los módulos
-        // (con munición embebida + módulo en la misma bahía, el resolutor pisa la ranura y
-        // el resultado depende del orden: rechazarlo es lo correcto).
-        const rev = { ...l, modules: [...l.modules].reverse() };
-        if (fire.get("turret_main") && engineFire(rev, CATALOG).get("turret_main"))
-          throw new Error(`falso positivo: ${JSON.stringify(l.modules)} → ${v[0]!.message}`);
-        return true;
-      }),
-      { numRuns: 3000, seed: 7 },
-    );
-  });
-
-  // P3 corregido en 09e2936: `ammo` no-texto da incompatible_ammo y no lanza (validateAmmo y validateLoadout).
-  it("validateAmmo y validateLoadout nunca lanzan con `ammo` no-texto y lo rechazan", () => {
-    for (const bad of [{}, 7, ["ammo.ap@1"], null, true]) {
-      const l: LoadoutInput = {
-        loadoutId: "x",
-        revision: 1,
-        catalogVersion: "mvp@1",
-        chassis: "chassis.heavy@1",
-        modules: [
-          { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: bad as unknown as string },
-          { slot: "ammo_main", moduleId: "ammo.ap@1" },
-        ],
-      };
-      const a = validateAmmo(l, CATALOG);
-      const f = validateLoadout(l, CATALOG, BUDGET);
-      expect(
-        a.some((v) => v.code === "incompatible_ammo"),
-        JSON.stringify(bad),
-      ).toBe(true);
-      expect(
-        f.some((v) => v.code === "incompatible_ammo"),
-        JSON.stringify(bad),
-      ).toBe(true);
-    }
-  });
-
-  it("todos los arquetipos validan y disparan", () => {
-    for (const [name, a] of Object.entries(ARCHETYPES)) {
-      const l = { loadoutId: name, revision: 1, catalogVersion: "mvp@1", chassis: a.chassis, modules: a.modules };
-      expect(validateLoadout(l, CATALOG, BUDGET), name).toEqual([]);
-      for (const ok of engineFire(l, CATALOG).values()) expect(ok, name).toBe(true);
-    }
-  });
-});
 
 // --------------------------------------------------------------- catálogo sintético
 const TWIN: ModuleDefinition = {

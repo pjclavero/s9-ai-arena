@@ -1,13 +1,13 @@
 // RESCATE B3 (2026-11) · origen: PR #239 (rama review/229-r2, commit f7e28125), test de revisión no integrado.
-// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants/ (ver mutants.json).
+// Verificado contra main 8f380eb; mutante asociado en scripts/rescue-mutants.{json,mjs}.
 /**
  * [REVIEW] #229 ronda 2 (revisor independiente) · STANDINGS_POLICY = official_played_not_reverted.
  * NO MERGEAR. Tests de rotura contra PostgreSQL REAL (embedded-postgres) sobre 3b24d0e:
  *  - D · reglas de rating sin cambios: diferencial contra una copia LITERAL del
  *    applyBattleRating de main (e3bf2fa), sin concurrencia, con victorias, empates,
  *    descalificaciones, técnicas, prácticas, 2v2 y K propio. Igualdad EXACTA (===).
- *  - P · réplica del torneo finished de producción con los números reales del libro mayor
- *    (EQ4 phase1/phase2, solo lectura): ratings bit a bit, posiciones, V-D-E sólo cambia por bye.
+ *  - P · réplica de un torneo finished de 6 inscritos con datos SINTÉTICOS (nombres genéricos; ratings contra
+ *    un oráculo de Elo independiente): posiciones, ratings y V-D-E sólo cambia por bye.
  *  - H2 · reversión antes / durante / después del Elo, doble, concurrente, valor de retorno.
  *  - H3 · concurrencia del Elo: mismo bot, Elo + su reversión, dos torneos simultáneos;
  *    ledger = ratings, cadena before/after continua, W/L/D = eventos vivos, sin interbloqueos.
@@ -436,44 +436,44 @@ describe("[R2 #229] D · reglas de rating sin cambios (diferencial contra main)"
   });
 });
 
-// ------------------------------------------------------------------ P · producción
+// ------------------------------------------------------------------ P · réplica sintética
 
-describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo lectura)", () => {
-  it("P1 · ratings bit a bit iguales a producción, posiciones iguales, V-D-E sólo cambia por bye", async () => {
+describe("[R2 #229] P · réplica de un torneo finished de 6 inscritos (EQ4, datos sintéticos)", () => {
+  it("P1 · ratings iguales al oráculo de Elo (1e-9), posiciones iguales, V-D-E sólo cambia por bye", async () => {
     // Orden de inscripción = seed (scheduler.ts: seed = i+1 por entries.created_at); se deduce
     // del bracket publicado con seedPositions(8) = 1,8,4,5,2,7,3,6 (todos del mismo dueño:
     // avoidSameOwnerRound1 no permuta).
-    const names = ["A-ATK-2", "A-DEF", "A-ATK-1", "B-DEF", "B-ATK-1", "prueba1"];
+    const names = ["BOT-1", "BOT-2", "BOT-3", "BOT-4", "BOT-5", "BOT-6"];
     const bots = await createBots(h.db, 6, "prd");
     const by = Object.fromEntries(names.map((n, i) => [n, bots[i]]));
     const t = await tournament({ season: "PRD", format: "single_elimination", state: "running", bots });
     const W = { bracket: "winners" };
-    await match(t, by["A-ATK-2"].botId, null, { ...W, slot: "W1M1", bye: true, winner: by["A-ATK-2"].botId });
-    const m2 = await match(t, by["B-DEF"].botId, by["B-ATK-1"].botId, {
+    await match(t, by["BOT-1"].botId, null, { ...W, slot: "W1M1", bye: true, winner: by["BOT-1"].botId });
+    const m2 = await match(t, by["BOT-4"].botId, by["BOT-5"].botId, {
       ...W,
       slot: "W1M2",
-      winner: by["B-ATK-1"].botId,
+      winner: by["BOT-5"].botId,
     });
-    await match(t, by["A-DEF"].botId, null, { ...W, slot: "W1M3", bye: true, winner: by["A-DEF"].botId });
-    const m4 = await match(t, by["A-ATK-1"].botId, by["prueba1"].botId, {
+    await match(t, by["BOT-2"].botId, null, { ...W, slot: "W1M3", bye: true, winner: by["BOT-2"].botId });
+    const m4 = await match(t, by["BOT-3"].botId, by["BOT-6"].botId, {
       ...W,
       slot: "W1M4",
-      winner: by["prueba1"].botId,
+      winner: by["BOT-6"].botId,
     });
-    const m5 = await match(t, by["A-ATK-2"].botId, by["B-ATK-1"].botId, {
+    const m5 = await match(t, by["BOT-1"].botId, by["BOT-5"].botId, {
       ...W,
       slot: "W2M1",
-      winner: by["B-ATK-1"].botId,
+      winner: by["BOT-5"].botId,
     });
-    const m6 = await match(t, by["A-DEF"].botId, by["prueba1"].botId, {
+    const m6 = await match(t, by["BOT-2"].botId, by["BOT-6"].botId, {
       ...W,
       slot: "W2M2",
-      winner: by["A-DEF"].botId,
+      winner: by["BOT-2"].botId,
     });
-    const m7 = await match(t, by["B-ATK-1"].botId, by["A-DEF"].botId, {
+    const m7 = await match(t, by["BOT-5"].botId, by["BOT-2"].botId, {
       ...W,
       slot: "W3M1",
-      winner: by["B-ATK-1"].botId,
+      winner: by["BOT-5"].botId,
     });
     const win = (s: "A" | "B") => ({
       score: { A: s === "A" ? 1 : 0, B: s === "B" ? 1 : 0 },
@@ -482,14 +482,14 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
       disqualified: [],
     });
     const draw = { score: { A: 0, B: 0 }, winner: "draw", endReason: "completed", disqualified: [] };
-    // Las 5 batallas oficiales, en el orden real de finishedAt (cb90771b, da091a53, 6abcf42f, fdacf019, c27fc8a6).
+    // Las 5 batallas oficiales, en orden de finishedAt.
     const seq: [string, number, [TestBot, string, string][], Record<string, unknown>][] = [
       [
         m2,
         1,
         [
-          [by["B-DEF"], "A", "loss"],
-          [by["B-ATK-1"], "B", "win"],
+          [by["BOT-4"], "A", "loss"],
+          [by["BOT-5"], "B", "win"],
         ],
         win("B"),
       ],
@@ -497,8 +497,8 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
         m4,
         1,
         [
-          [by["A-ATK-1"], "A", "loss"],
-          [by["prueba1"], "B", "win"],
+          [by["BOT-3"], "A", "loss"],
+          [by["BOT-6"], "B", "win"],
         ],
         win("B"),
       ],
@@ -506,8 +506,8 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
         m5,
         1,
         [
-          [by["A-ATK-2"], "A", "loss"],
-          [by["B-ATK-1"], "B", "win"],
+          [by["BOT-1"], "A", "loss"],
+          [by["BOT-5"], "B", "win"],
         ],
         win("B"),
       ],
@@ -515,8 +515,8 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
         m6,
         1,
         [
-          [by["A-DEF"], "A", "draw"],
-          [by["prueba1"], "B", "draw"],
+          [by["BOT-2"], "A", "draw"],
+          [by["BOT-6"], "B", "draw"],
         ],
         draw,
       ],
@@ -524,8 +524,8 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
         m7,
         1,
         [
-          [by["B-ATK-1"], "A", "draw"],
-          [by["A-DEF"], "B", "draw"],
+          [by["BOT-5"], "A", "draw"],
+          [by["BOT-2"], "B", "draw"],
         ],
         draw,
       ],
@@ -538,42 +538,61 @@ describe("[R2 #229] P · réplica del torneo finished de producción (EQ4, solo 
     await recomputeSeasonStandings(h.db, "PRD", "deathmatch");
     const rows = await table("PRD");
     const nm = (id: string) => names[bots.findIndex((b) => b.botId === id)];
-    // Producción (phase1.standings.deathmatch): rank, rating EXACTO.
-    const PROD: [string, number, string][] = [
-      ["B-ATK-1", 1022.7865721147986, "3-0-0"],
-      ["A-DEF", 1001.2134278852014, "2-1-0"],
-      ["prueba1", 1011.5856994136229, "1-1-0"],
-      ["A-ATK-2", 988.4143005863771, "1-1-0"],
-      ["A-ATK-1", 988, "0-1-0"],
-      ["B-DEF", 988, "0-1-0"],
+    // Orden esperado de la tabla y V-D-E (estructura del cuadro). Los ratings NO son literales: salen de
+    // un oráculo de Elo independiente (K=24, secuencia oficial de `seq`), ver más abajo.
+    const TABLE: [string, string][] = [
+      ["BOT-5", "3-0-0"],
+      ["BOT-2", "2-1-0"],
+      ["BOT-6", "1-1-0"],
+      ["BOT-1", "1-1-0"],
+      ["BOT-3", "0-1-0"],
+      ["BOT-4", "0-1-0"],
     ];
-    expect(rows.map((r) => [nm(r.id), r.rating])).toEqual(PROD.map(([n, rt]) => [n, rt]));
+    const K = 24;
+    const exp = (ra: number, rb: number) => 1 / (1 + 10 ** ((rb - ra) / 400));
+    const elo = new Map<string, number>(names.map((n) => [n, 1000]));
+    const ledger = new Map<string, [number, number, number][]>();
+    for (const [, , parts] of seq) {
+      const [[ba, , oa], [bb]] = parts;
+      const [na, nb] = [nm(ba.botId), nm(bb.botId)];
+      const sa = oa === "win" ? 1 : oa === "loss" ? 0 : 0.5;
+      const d = K * (sa - exp(elo.get(na)!, elo.get(nb)!));
+      for (const [n, dl] of [
+        [na, d],
+        [nb, -d],
+      ] as [string, number][]) {
+        const before = elo.get(n)!;
+        elo.set(n, before + dl);
+        ledger.set(n, [...(ledger.get(n) ?? []), [before, dl, before + dl]]);
+      }
+    }
+    const EXPECT_RATING = TABLE.map(([n]) => [n, elo.get(n)!] as const);
+    expect(rows.map((r) => nm(r.id))).toEqual(EXPECT_RATING.map(([n]) => n));
+    rows.forEach((r, k) => expect(r.rating).toBeCloseTo(EXPECT_RATING[k][1], 9));
     expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5, 6]);
-    const byeChange: Record<string, string> = { "A-DEF": "1-1-0", "A-ATK-2": "0-1-0" };
+    const byeChange: Record<string, string> = { "BOT-2": "1-1-0", "BOT-1": "0-1-0" };
     expect(rows.map((r) => `${nm(r.id)} ${r.w}-${r.l}-${r.d}`)).toEqual(
-      PROD.map(([n, , v]) => `${n} ${byeChange[n] ?? v}`),
+      TABLE.map(([n, v]) => `${n} ${byeChange[n] ?? v}`),
     );
-    // Calibración de la réplica: con la tabla de main sale EXACTAMENTE lo publicado hoy.
+    // Calibración de la réplica: la tabla de main da el mismo V-D-E antes del ajuste por bye.
     const main = await seasonTableMain(h.db, "PRD", "deathmatch");
     expect(main.map((r) => `${nm(r.id)} ${r.wins}-${r.losses}-${r.draws}`)).toEqual(
-      PROD.map(([n, , v]) => `${n} ${v}`),
+      TABLE.map(([n, v]) => `${n} ${v}`),
     );
-    // Libro mayor de producción (phase2.hist): B-ATK-1 y A-DEF, before/delta/after exactos.
+    // Libro mayor (before/delta/after) de dos bots, contra el oráculo.
     const ev = async (n: string) =>
       (await h.db("rating_events").where({ bot_id: by[n].botId }).orderBy("id")).map((e: Record<string, any>) => [
         e.rating_before,
         e.delta,
         e.rating_after,
       ]);
-    expect(await ev("B-ATK-1")).toEqual([
-      [1000, 12, 1012],
-      [1012, 11.585699413622972, 1023.5856994136229],
-      [1023.5856994136229, -0.799127298824363, 1022.7865721147986],
-    ]);
-    expect(await ev("A-DEF")).toEqual([
-      [1000, 0.4143005863770286, 1000.4143005863771],
-      [1000.4143005863771, 0.799127298824363, 1001.2134278852014],
-    ]);
+    for (const n of ["BOT-5", "BOT-2"]) {
+      const got = await ev(n);
+      expect(got).toHaveLength(ledger.get(n)!.length);
+      got.forEach((row: number[], k: number) =>
+        row.forEach((v, c) => expect(v).toBeCloseTo(ledger.get(n)![k][c], 9)),
+      );
+    }
     expect(await ledgerAudit("PRD")).toEqual([]);
   });
 });
