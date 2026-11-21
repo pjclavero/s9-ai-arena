@@ -6,7 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { pathParam } from "../params.js";
+import { pathParam, queryUuid } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import {
@@ -19,6 +19,7 @@ import {
   isBotOwner,
   isStaff,
   validateLoadoutServerSide,
+  whereBotVisible,
 } from "../services/bots.js";
 import { PIPELINE_STAGES, type BotManagerClient } from "../services/bot-manager.js";
 import { sharedRateLimit, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
@@ -216,22 +217,22 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBots", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
+    const ownerId = queryUuid(req, "ownerId");
+    // TD-068 / D-OP-6 · la visibilidad se filtra EN SQL (`whereBotVisible`, misma regla que `canSeeBot`):
+    // nunca se leen filas que el solicitante no puede ver, así que no hay bucle por bloques, ni páginas
+    // cortas o vacías con cursor, ni id/instante ajeno en el cursor (el cursor es siempre el del último
+    // elemento VISIBLE de la página). Coste O(limit) por petición.
     let q = db("bots")
       .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
       .orderBy([
         { column: "created_at", order: "desc" },
         { column: "id", order: "desc" },
       ])
-      .limit(200);
-    if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
+      .limit(limit + 1);
+    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });
+    q = whereBotVisible(db, q, req.auth);
     q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
-
-    const rows = await runCursorQuery(q, cursor);
-    const visible: Record<string, unknown>[] = [];
-    for (const bot of rows) {
-      if (await canSeeBot(db, req.auth, bot)) visible.push(bot);
-      if (visible.length > limit) break;
-    }
+    const visible: Record<string, unknown>[] = await runCursorQuery(q, cursor);
     const page = visible.slice(0, limit);
     const items = await Promise.all(
       page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),

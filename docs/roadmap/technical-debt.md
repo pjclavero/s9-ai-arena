@@ -97,7 +97,7 @@ Estados posibles:
 | [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
 | [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
-| [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA |
+| [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA (corrige el PR #316) |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
 | [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (rechazado con motivo) |
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
@@ -1373,15 +1373,14 @@ Estados posibles:
 <a id="td-068"></a>
 ## TD-068 — `listBots` puede devolver páginas más cortas que `limit`
 
-- **Estado:** ABIERTA
+- **Estado:** ABIERTA hasta el merge del PR #316 (rama `fix/v1-bots-pagination`, V1, D-OP-6), que la corrige.
 - **Prioridad:** P3
-- **Área:** API (`apps/api/src/routes/bots.ts`)
+- **Área:** API (`apps/api/src/routes/bots.ts`, `apps/api/src/services/bots.ts`)
 - **Detectado:** 2026-11-02, revisión de integración
-- **Evidencia:** `bots.ts:205-223`: la consulta trae como máximo 200 filas (`.limit(200)`) y la visibilidad se filtra después en memoria con `canSeeBot`; la página se corta con `visible.slice(0, limit)`. Si entre las 200 filas hay pocas visibles para el solicitante, la página sale con menos de `limit` elementos aunque haya más bots visibles detrás.
-- **Problema:** el cliente no puede deducir el final de la lista por el tamaño de la página.
-- **Impacto:** bajo; afecta a listados con muchos bots privados ajenos.
-- **Solución prevista:** aplicar la visibilidad en SQL o seguir leyendo hasta completar la página.
-- **Condición de cierre:** un test con más de 200 bots ajenos privados intercalados devuelve páginas completas.
+- **Problema original:** la consulta traía 200 filas y la visibilidad se filtraba después en memoria con `canSeeBot`; con muchos bots privados ajenos la página salía corta o vacía, y sin `nextCursor`.
+- **Solución:** `listBots` filtra la visibilidad en SQL con `whereBotVisible` (`services/bots.ts`), que replica `canSeeBot` cláusula por cláusula (público; propios y staff = rango moderador o superior; `team` con `team_id` y miembro). El cursor es el del último elemento visible; coste O(limit) por petición; sin cifrado de cursores.
+- **Coherencia entre reglas:** `whereBotVisible` sigue a la ficha del bot (`canSeeBot`, staff = moderador). `whereBotIdentifiable` (`battle-access.ts`) sigue a los replays (`isReplayStaff`; moderador/admin tras #311). Pueden diferir por diseño; el test diferencial `v1b-bots-pagination` G5 compara el listado con `canSeeBot` para cada rol.
+- **Condición de cierre:** test con 2300 bots (casi todos privados ajenos) que devuelve páginas completas y el conjunto visible exacto: `apps/api/src/v1b-bots-pagination.test.ts`.
 
 <a id="td-069"></a>
 ## TD-069 — El comparador del desempate por enfrentamientos directos no es transitivo

@@ -37,6 +37,34 @@ export async function canSeeBot(db: Db, auth: Auth, bot: Record<string, unknown>
   return false;
 }
 
+/**
+ * V1 (D-OP-6) · Versión SQL de `canSeeBot`: restringe una consulta con `bots` en el FROM a los bots que el
+ * solicitante puede ver. MISMA regla que `canSeeBot`, cláusula por cláusula: público; sin sesión nada más;
+ * propios y staff (`isStaff`, rango moderador o superior) todos; `team` con `team_id` sólo si es miembro.
+ *
+ * Es deliberadamente distinta de `whereBotIdentifiable` (battle-access.ts), que usa `isReplayStaff`
+ * (organizador hoy; moderador/admin tras #311) porque gobierna replays. Las dos reglas pueden divergir
+ * por diseño: esta sigue a la ficha del bot (`GET /bots/{id}`) y por eso el listado y la ficha nunca se
+ * contradicen. Un test diferencial (v1b-bots-pagination) compara ambas contra `canSeeBot`.
+ */
+export function whereBotVisible(db: Db, q: any, auth: Auth): any {
+  if (isStaff(auth)) return q;
+  const userId = auth?.userId ?? null;
+  return q.where((w: any) => {
+    w.where("bots.visibility", "public");
+    if (userId) {
+      w.orWhere("bots.owner_id", userId).orWhere((t: any) =>
+        t
+          .where("bots.visibility", "team")
+          .whereNotNull("bots.team_id")
+          .whereExists(
+            db("team_members").whereRaw("team_members.team_id = bots.team_id").where("team_members.user_id", userId),
+          ),
+      );
+    }
+  });
+}
+
 /** 404 si no existe O no es visible (no revelar existencia de bots privados). */
 export async function getVisibleBot(db: Db, auth: Auth, botId: string): Promise<Record<string, unknown>> {
   const bot = await db("bots")
