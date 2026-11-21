@@ -90,7 +90,7 @@ publica y no debe publicarse; restringir el acceso es responsabilidad del despli
 | Afirmación | Estado | Evidencia |
 |---|---|---|
 | Servicios del perfil `observability` | CODE_VERIFIED (`e3bf2fa`) | `infrastructure/docker-compose.yml:936-1122` (prometheus, alertmanager, grafana, loki, promtail, cadvisor, node-exporter) y `:1122` (postgres-exporter) |
-| Las once alertas | CODE_VERIFIED | `infrastructure/observability/prometheus/alerts.yml:9-101` |
+| Las dieciséis alertas (2026-11-20; en octubre eran once) | CODE_VERIFIED | `infrastructure/observability/prometheus/alerts.yml:9-101` |
 | Canal por webhook y valor de relleno | CODE_VERIFIED | `infrastructure/observability/alertmanager/alertmanager.yml.tpl`; `docker-compose.yml:962-985` |
 | Grafana en `/grafana/` | CODE_VERIFIED | `infrastructure/gateway/nginx.conf:134-138` |
 | Métricas de la API apagadas por defecto, sin autenticación | CODE_VERIFIED | `apps/api/src/metrics.ts:21-31`; `apps/api/src/app.ts:107-120` |

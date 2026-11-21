@@ -5,8 +5,8 @@
 Estado **verificado** de la retransmisión de S9 AI Arena (auditoría EQ5,
 2026-11-02, sobre `main` `a1a6c4e` y la rama `equipo5/streaming`). Distingue lo
 **implementado** de lo **verificado**, y lo verificado en un entorno **local
-aislado** de lo verificado en **producción** (nada de esto último: la
-producción no ejecuta el streamer). Sustituye como runbook vigente al de E11,
+aislado** de lo verificado en **producción** (de esto último, hasta el
+2026-11-20, sólo la instalación nueva del 19-nov con el servicio desplegado y la emisión desactivada; sin emisión real). Sustituye como runbook vigente al de E11,
 que se conserva en [history/operaciones/streaming-runbook.md](../history/operaciones/streaming-runbook.md).
 
 **Actualización EQ5b (2026-11-02, rama `equipo5/streaming-admin`, PR #227):** la
@@ -497,8 +497,8 @@ puede probar sin algo externo · **NOT TESTED** no se ha probado.
 ## Requisitos para emitir de verdad
 
 1. **Capabilities públicas.** `/broadcast` es anónima por construcción. Sin
-   `S9_PUBLIC_SPECTATE_ENABLED=1` no obtiene ticket ni ve ninguna batalla; sin
-   `S9_PUBLIC_REPLAYS_ENABLED=1` no ve las terminadas (no hay marcador en el
+   el ajuste «espectador público» activado no obtiene ticket ni ve ninguna batalla; sin
+   el de «replays públicos» no ve las terminadas (no hay marcador en el
    intermedio ni en el final). Además, sólo se emiten batallas cuyos bots sean
    **públicos**. Activarlas es una decisión de producto, no de este servicio.
 2. **Clave de emisión**: `infrastructure/secrets/stream_key.txt`, rellenada a
@@ -695,8 +695,10 @@ hash con los comandos de arriba. Nunca hagas `cat` de los ficheros. Prueba local
 
 ## Despliegue del perfil `streaming` (plan, NO ejecutado)
 
-Estado de partida: la producción ejecuta la RC6, que ya incluye la API de administración y la
-migración 017. El servicio `streamer` **no** está desplegado. Los tres secretos ya existen con 0400 y
+> **Actualización 2026-11-20.** Este plan se escribió el 2026-11-06 sobre la instalación anterior. Producción se reinstaló el 19-nov con el perfil `streaming` (el servicio `streamer` está desplegado y sano, con la emisión **desactivada**), según los informes de migración. Lo que sigue **sin ejecutarse** es la emisión real a YouTube (issue #256 abierto; falta una clave de prueba del operador).
+
+Estado de partida del plan (instalación anterior): la producción ejecutaba la RC6, que ya incluía la API de administración y la
+migración 017. El servicio `streamer` **no** estaba desplegado. Los tres secretos ya existen con 0400 y
 uid 1000 y están en el backup, con restore verificado. Este plan **no se ha ejecutado**: desplegar
 exige la autorización del operador.
 
