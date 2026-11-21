@@ -139,7 +139,7 @@ describe("B4 · budgetCredits del torneo es una regla real (inscripción individ
       .send({
         mode: "deathmatch",
         rulesetId: "deathmatch-mvp",
-        mapId: "mvp-arena-01",
+        mapId: "mvp-arena-02",
         participants: [{ botId: bot.botId, version: 1 }],
       });
     expect(rc.status, JSON.stringify(rc.body)).toBe(200);
@@ -148,7 +148,10 @@ describe("B4 · budgetCredits del torneo es una regla real (inscripción individ
 
 describe("B4 · budgetCredits en torneos por equipos", () => {
   async function mkTeam(n: number) {
-    const [team] = await h.db("teams").insert({ name: `b4-team-${++seq}`, captain_id: devId }).returning("*");
+    const [team] = await h
+      .db("teams")
+      .insert({ name: `b4-team-${++seq}`, captain_id: devId })
+      .returning("*");
     await h.db("team_members").insert({ team_id: team.id, user_id: devId, role: "captain" });
     const bots: TestBot[] = [];
     for (let i = 0; i < n; i++) {

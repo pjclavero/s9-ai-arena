@@ -41,7 +41,12 @@ import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
-import { eligibilityKey, eligibilityOf, evaluateTournamentBudget, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
+import {
+  eligibilityKey,
+  eligibilityOf,
+  evaluateTournamentBudget,
+  evaluateVersionsEligibility,
+} from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
@@ -332,7 +337,11 @@ async function adminDisqualifications(
           "bot_id",
           live.map((p) => p.bot_id),
         )
-        .select("bot_id", "version", "loadout_revision")) as { bot_id: string; version: number; loadout_revision: number }[];
+        .select("bot_id", "version", "loadout_revision")) as {
+        bot_id: string;
+        version: number;
+        loadout_revision: number;
+      }[];
       const revOf = new Map(entries.map((e) => [`${e.bot_id}@${e.version}`, e.loadout_revision]));
       const verdicts = await evaluateTournamentBudget(
         db,
@@ -422,7 +431,13 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
 
     try {
       const participants = await loadBattleParticipants(db, battleId);
-      const adminDq = await adminDisqualifications(db, battleId, participants, deps, (battle.tournament_id as string | null) ?? null);
+      const adminDq = await adminDisqualifications(
+        db,
+        battleId,
+        participants,
+        deps,
+        (battle.tournament_id as string | null) ?? null,
+      );
       const activeTeams = new Set(participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => p.team));
 
       // Walkover: si tras las DQ administrativas queda un solo bando, no hay batalla que lanzar.

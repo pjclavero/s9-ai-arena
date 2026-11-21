@@ -26,7 +26,14 @@ afterAll(async () => {
 function scripted(log: string[]) {
   return async (ctx: BattleContext): Promise<BattleExecution> => {
     log.push(ctx.battle.id);
-    return { winner: "A", ticks: 10, score: { A: 1, B: 0 }, finalStateHash: "h", disqualified: [], versions: { engine: "test" } };
+    return {
+      winner: "A",
+      ticks: 10,
+      score: { A: 1, B: 0 },
+      finalStateHash: "h",
+      disqualified: [],
+      versions: { engine: "test" },
+    };
   };
 }
 const job = (battleId: string, id: string) =>
@@ -48,17 +55,26 @@ async function tournamentWith(budget: number | null, a: TestBot, b: TestBot) {
   for (const x of [a, b]) {
     await h
       .db("entries")
-      .insert({ tournament_id: t.id, bot_id: x.botId, version: x.version, loadout_revision: x.loadoutRevision, frozen: true });
+      .insert({
+        tournament_id: t.id,
+        bot_id: x.botId,
+        version: x.version,
+        loadout_revision: x.loadoutRevision,
+        frozen: true,
+      });
   }
   return t.id as string;
 }
 const run = async (tournamentId: string | undefined, a: TestBot, b: TestBot) => {
   const id = await insertScheduledBattle(h.db, a, b, tournamentId ? { tournamentId } : {});
   const log: string[] = [];
-  await makeRunBattleHandler({ executor: scripted(log) })(job(id, `00000000-0000-0000-0000-00000000b4${String(++n).padStart(2, "0")}`), {
-    db: h.db,
-    workerId: "B4",
-  });
+  await makeRunBattleHandler({ executor: scripted(log) })(
+    job(id, `00000000-0000-0000-0000-00000000b4${String(++n).padStart(2, "0")}`),
+    {
+      db: h.db,
+      workerId: "B4",
+    },
+  );
   return { id, log };
 };
 

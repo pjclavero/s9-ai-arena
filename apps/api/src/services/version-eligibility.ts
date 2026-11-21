@@ -36,7 +36,12 @@ import { ApiError } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { getCatalog } from "./catalog.js";
 import { canManageTournament } from "./tournament-access.js";
-import { budgetViolations, loadoutCostCredits, validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import {
+  budgetViolations,
+  loadoutCostCredits,
+  validateLoadout,
+  type Violation,
+} from "../../../../packages/module-catalog/validator/index.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import { BUDGET_CREDITS_MVP } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
@@ -432,12 +437,7 @@ export async function evaluateTournamentBudget(
         .select("bot_id", "revision", "catalog_version", "chassis", "modules")) as Record<string, unknown>[])
     : [];
   const catalogs = new Map<string, ModuleDefinition[]>();
-  const verdict = async (
-    botId: string,
-    version: number,
-    revision: number,
-    row: { catalog_version: unknown; chassis: unknown; modules: unknown },
-  ) => {
+  const verdict = async (botId: string, version: number, revision: number, row: Record<string, unknown>) => {
     const cv = String(row.catalog_version);
     if (!catalogs.has(cv)) catalogs.set(cv, await getCatalog(db, cv));
     const modules = parseModules(row.modules);
@@ -506,7 +506,9 @@ export async function assertWithinTournamentBudget(
   viewer?: EligibilityViewer,
 ): Promise<void> {
   const verdicts = await evaluateTournamentBudget(db, refs, budgetCredits);
-  const over = refs.map((r) => verdicts.get(eligibilityKey(r.botId, r.version))).filter((x): x is BudgetVerdict => !!x?.over);
+  const over = refs
+    .map((r) => verdicts.get(eligibilityKey(r.botId, r.version)))
+    .filter((x): x is BudgetVerdict => !!x?.over);
   if (over.length === 0) return;
   const detail = !!viewer && (viewer.staff || viewer.userId !== null);
   const items = over.map((b) =>
@@ -525,7 +527,9 @@ export async function assertWithinTournamentBudget(
   throw new ApiError(
     409,
     "bot_version_not_eligible",
-    detail ? budgetMessage(f, `${f.botId} v${f.version}`) : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
+    detail
+      ? budgetMessage(f, `${f.botId} v${f.version}`)
+      : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
     { reason: "exceeds_tournament_budget", budgetCredits: f.budgetCredits, overBudget: items },
   );
 }

@@ -7,7 +7,11 @@ import { ApiError, conflict, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { audit } from "../audit.js";
 // Validador y resolutor REALES de E3 (T3.2/T3.3): importados, no reescritos.
-import { loadoutCostCredits, validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import {
+  loadoutCostCredits,
+  validateLoadout,
+  type Violation,
+} from "../../../../packages/module-catalog/validator/index.js";
 import { resolveVehicle } from "../../../../packages/module-catalog/resolve/index.js";
 import {
   findModule,

@@ -19,7 +19,11 @@ import { slotName, slotPurpose, categoryName } from "../help/names.js";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
-import { loadoutCostCredits, validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import {
+  loadoutCostCredits,
+  validateLoadout,
+  type Violation,
+} from "../../../../packages/module-catalog/validator/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import {
   CHASSIS_CHOICE_EFFECT,

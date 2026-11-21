@@ -348,7 +348,12 @@ export function tournamentRoutes(
       // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
       // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
       // OLA 2 (EQUIPMENT_PRIVATE) · sólo el dueño llega aquí: ve el motivo real de su loadout.
-      await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false }, t.budget_credits as number | null | undefined);
+      await assertTournamentEligible(
+        db,
+        v,
+        { userId: req.auth!.userId, staff: false },
+        t.budget_credits as number | null | undefined,
+      );
       // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente que ya no compite se
       // puede cambiar por otra versión válida (nunca se sustituye sola).
       const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
@@ -530,7 +535,10 @@ export function tournamentRoutes(
       }
       // OLA 2 (EQUIPMENT_PRIVATE) · el detalle del 409 sólo para los bots propios del solicitante.
       await assertVersionsEligible(trx, roster, { userId, staff: false });
-      await assertWithinTournamentBudget(trx, roster, t.budget_credits as number | null | undefined, { userId, staff: false }); // B4
+      await assertWithinTournamentBudget(trx, roster, t.budget_credits as number | null | undefined, {
+        userId,
+        staff: false,
+      }); // B4
       if (await trx("entries").where({ tournament_id: t.id, team_id: teamId }).first()) {
         throw conflict("team_already_entered", "El equipo ya está inscrito en este torneo");
       }

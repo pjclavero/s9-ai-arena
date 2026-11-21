@@ -61,7 +61,10 @@ const MINI = {
 async function mkBot(loadout: object, version = 1, botId?: string): Promise<string> {
   let id = botId;
   if (!id) {
-    const [bot] = await h.db("bots").insert({ name: `b4t-${++seq}`, owner_id: userId, visibility: "private" }).returning("*");
+    const [bot] = await h
+      .db("bots")
+      .insert({ name: `b4t-${++seq}`, owner_id: userId, visibility: "private" })
+      .returning("*");
     id = bot.id as string;
   }
   await createLoadoutRevision(h.db, id, loadout as never, SUMMARY);
@@ -132,10 +135,13 @@ describe("B4 · datos modificados DESPUÉS de inscribir no saltan el presupuesto
     expect((await enter(t, a)).status).toBe(201);
     expect((await enter(t, b)).status).toBe(201);
     // Sin ningún trigger sobre bot_loadouts, alguien con acceso a BD abarata… o encarece la revisión.
-    await h.db("bot_loadouts").where({ bot_id: a, revision: 1 }).update({
-      chassis: GUNNER.chassis,
-      modules: JSON.stringify(GUNNER.modules),
-    });
+    await h
+      .db("bot_loadouts")
+      .where({ bot_id: a, revision: 1 })
+      .update({
+        chassis: GUNNER.chassis,
+        modules: JSON.stringify(GUNNER.modules),
+      });
     const r = await close(t);
     expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(r.body.error).toBe("entries_not_eligible");
@@ -220,7 +226,10 @@ describe("B4 · module_cost_cap_exceeded en torneos con presupuesto (D-OP-19)", 
     const t = await mkTournament(MIN_BUDGET);
     expect((await enter(t, a)).status).toBe(201);
     expect((await enter(t, b)).status).toBe(201);
-    await h.db("tournaments").where({ id: t }).update({ budget_credits: MIN_BUDGET - 1 });
+    await h
+      .db("tournaments")
+      .where({ id: t })
+      .update({ budget_credits: MIN_BUDGET - 1 });
     const r = await close(t);
     expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(r.body.error).toBe("entries_not_eligible");
