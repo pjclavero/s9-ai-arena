@@ -37,6 +37,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: npm ci
+      - name: Espacios de nombres de usuario sin privilegios (los exigen b13-data-volumes e init-secrets-nofollow)
+        # V1-B · `npm test` ejecuta TAMBIÉN infrastructure/**, cuyos tests corren el entrypoint
+        # como uid 0 dentro de `unshare -rm` + chroot. En los runners ubuntu-24.04 AppArmor
+        # bloquea los userns sin privilegios y esos tests salen rojos (b13-data-volumes
+        # «unshare -rm no funciona», init-secrets-nofollow × 13). Mismo paso, y la misma
+        # comprobación, que el job `unit` de ci.yml: se habilita y se COMPRUEBA, no se relaja
+        # ninguna suite. Es el runner efímero de la CI, no un servidor.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          unshare -rm /bin/true
+          echo "userns sin privilegios: disponible"
+      - name: ffmpeg real para las pruebas del streamer
+        # V1-B · stream-tap, streamer-2 y streamer-real ejecutan el ffmpeg REAL y en CI FALLAN si
+        # falta (no se saltan). ci.yml lo instala en `unit`; este job no, y daba `spawn ffmpeg ENOENT`.
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
+          ffmpeg -hide_banner -version | head -1
       - name: Provisionar el venv de arena-sdk (Python) para el CTF 2v2 cross-lenguaje
         # ctf-integration.test.ts (RUN_SLOW) lanza explorer.py/defender.py como
         # subprocesos reales desde sdks/python/.venv. Sin este venv el spawn daba
