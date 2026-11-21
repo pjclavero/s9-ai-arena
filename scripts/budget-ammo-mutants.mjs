@@ -56,9 +56,8 @@ const MUTANTS = [
   { id: "M11", name: "la autorización de equipo ignora el presupuesto",
     edits: [{ file: T, from: "await assertTournamentEligible(tx, v, { userId, staff: false }, t.budget_credits as number | null | undefined);", to: "await assertTournamentEligible(tx, v, { userId, staff: false });" }],
     tests: [API], kill: "B4_TEAM_CONSENT" },
-  { id: "M12", name: "el rechazo degrada la versión publicada (efecto lateral)",
-    edits: [{ file: VE, from: "  const f = over[0];", to: "  await db(\"bot_versions\").whereIn(\"bot_id\", over.map((r) => r.botId)).update({ state: \"validated\" });\n  const f = over[0];" }],
-    tests: [API], kill: "B4_PUBLISHED_UNTOUCHED" },
+  // M12 (efecto lateral sobre la versión al rechazar) se RETIRÓ: todas las rutas llaman dentro de una
+  // transacción y el 409 la revierte, así que el mutante era equivalente (sobrevivía sin ser un hueco de test).
   // ---- D-OP-18 (b) cierre / materialización
   { id: "M13", name: "el cierre ignora el presupuesto (no emite over_budget)",
     edits: [{ file: VE, from: '    if (budget.get(eligibilityKey(ref.botId, ref.version))?.over) issues.push("over_budget");\n', to: "" }],
@@ -86,7 +85,10 @@ const MUTANTS = [
     edits: [{ file: WR, from: "          loadoutRevision: revOf.get(`${p.bot_id}@${p.version}`),", to: "          loadoutRevision: undefined," }],
     tests: [EXEC], kill: "B4_EXEC_PINNED" },
   { id: "M21", name: "el worker descalifica también sin presupuesto propio (null tratado como 0)",
-    edits: [{ file: WR, from: 'if (typeof budget === "number") {', to: "if (true) { const budget0 = (budget ?? 0) as number; void budget0;" }],
+    edits: [
+      { file: WR, from: 'if (typeof budget === "number") {', to: "if (true) {" },
+      { file: WR, from: "        budget,\n      );\n      for (const p of live)", to: "        budget ?? 0,\n      );\n      for (const p of live)" },
+    ],
     tests: [EXEC], kill: "B4_EXEC_CONTROL" },
   // ---- D-OP-19 tope por pieza y casos límite
   { id: "M22", name: "el tope por pieza no bloquea (sólo el total)",
