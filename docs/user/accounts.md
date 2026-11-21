@@ -21,6 +21,14 @@ Escribe tu email y tu contraseña y pulsa **«Entrar»**. Si tu cuenta tiene act
 
 Tu nombre y tus roles aparecen en la barra de navegación, por ejemplo `Nombre (user, developer)`.
 
+## Cambiar la contraseña
+
+Con la sesión iniciada, entra en **«Mi cuenta»** (barra de navegación, junto a tu nombre) y rellena **«Contraseña actual»**, **«Contraseña nueva»** (mínimo 12 caracteres, distinta de la actual) y su repetición. Si tu cuenta tiene verificación en dos pasos, escribe también el **«Código TOTP»** (o un código de recuperación). Pulsa **«Cambiar la contraseña»**.
+
+- Se cierran **todas tus otras sesiones** (otros navegadores o dispositivos); la actual sigue abierta.
+- Tras **5 intentos fallidos** seguidos con la contraseña actual, el cambio queda bloqueado unos 15 minutos («Demasiados intentos fallidos»).
+- No desactiva la verificación en dos pasos: el siguiente inicio de sesión sigue pidiendo el código.
+
 ## Roles
 
 Los roles se acumulan: cada uno incluye todo lo de los anteriores.
@@ -46,10 +54,12 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 | «Credenciales inválidas» | Email o contraseña incorrectos. |
 | «Se requiere un código TOTP válido (2FA activo)» | Falta el código de dos pasos o es incorrecto. |
 | «Demasiados intentos fallidos: bloqueo temporal» | Muchos fallos seguidos; espera unos minutos. |
+| «Reautenticación requerida: contraseña inválida» | Al cambiar la contraseña, la actual no es correcta. |
+| «La nueva contraseña debe ser distinta de la actual» | La contraseña nueva coincide con la actual. |
 
 ## Lo que todavía no puedes hacer desde la web
 
-- **Cambiar la contraseña** y **recuperarla** si la olvidas (la plataforma no envía correos): pídeselo a un administrador.
+- **Recuperar la contraseña** si la olvidas: la plataforma no envía correos y todavía no existe un restablecimiento iniciado por un administrador (propuesto, pendiente de decisión). Hasta entonces no hay un procedimiento soportado para recuperar una cuenta cuya contraseña se ha olvidado: guarda la tuya y cámbiala desde «Mi cuenta» mientras tengas la sesión abierta.
 - **Activar la verificación en dos pasos**, ver tus sesiones abiertas o cambiar tu nombre visible: existen en la plataforma, pero no tienen pantalla.
 - El registro está abierto a cualquiera.
 
