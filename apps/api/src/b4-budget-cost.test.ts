@@ -15,6 +15,7 @@ import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { validateLoadoutServerSide } from "./services/bots.js";
+import { eligibilityOf, evaluateVersionsEligibility } from "./services/version-eligibility.js";
 import { createPublishedBot, EXAMPLE_LOADOUT, type TestBot } from "../../tournament-worker/src/testing/fixtures.js";
 
 let h: TestDbHandle;
@@ -132,17 +133,12 @@ describe("B4 · budgetCredits del torneo es una regla real (inscripción individ
     expect((await enter(userTok, t, bot)).status).toBe(409);
     const v = await h.db("bot_versions").where({ bot_id: bot.botId, version: 1 }).first();
     expect(v.state).toBe("published");
-    // Sigue valiendo para una batalla suelta (rules-check sin topes ni presupuesto de torneo).
-    const rc = await request(app)
-      .post("/battles/rules-check")
-      .set(as(userTok))
-      .send({
-        mode: "deathmatch",
-        rulesetId: "deathmatch-mvp",
-        mapId: "mvp-arena-02",
-        participants: [{ botId: bot.botId, version: 1 }],
-      });
-    expect(rc.status, JSON.stringify(rc.body)).toBe(200);
+    // Sigue elegible para batallas sueltas (la regla de presupuesto es sólo de la inscripción).
+    const e = eligibilityOf(await evaluateVersionsEligibility(h.db, [{ botId: bot.botId, version: 1 }]), {
+      botId: bot.botId,
+      version: 1,
+    });
+    expect(e.eligible).toBe(true);
   });
 });
 

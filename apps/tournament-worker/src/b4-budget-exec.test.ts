@@ -53,15 +53,13 @@ async function tournamentWith(budget: number | null, a: TestBot, b: TestBot) {
     })
     .returning("id");
   for (const x of [a, b]) {
-    await h
-      .db("entries")
-      .insert({
-        tournament_id: t.id,
-        bot_id: x.botId,
-        version: x.version,
-        loadout_revision: x.loadoutRevision,
-        frozen: true,
-      });
+    await h.db("entries").insert({
+      tournament_id: t.id,
+      bot_id: x.botId,
+      version: x.version,
+      loadout_revision: x.loadoutRevision,
+      frozen: true,
+    });
   }
   return t.id as string;
 }
