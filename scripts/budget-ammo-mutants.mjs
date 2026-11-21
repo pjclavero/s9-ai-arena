@@ -110,7 +110,7 @@ function treeDirty() {
   return sh("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
 }
 function runVitest(files) {
-  const r = spawnSync("npx", ["vitest", "run", "--config", "vitest.config.ts", ...files], {
+  const r = spawnSync("npx", ["vitest", "run", "--config", "vitest.config.ts", "--maxWorkers=1", ...files], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
