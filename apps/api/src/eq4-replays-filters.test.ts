@@ -143,6 +143,7 @@ beforeAll(async () => {
     tok[k] = u.token;
   }
   tok.organizer = await tokenFor(h.db, DEV_USERS.organizer);
+  tok.moderator = await tokenFor(h.db, DEV_USERS.moderator); // #306 · staff de lectura: moderator/admin
 
   teamXName = `Alfa-${RUN}`;
   const [t] = await h.db("teams").insert({ name: teamXName, captain_id: U.C }).returning("id");
@@ -273,9 +274,9 @@ describe("EQ4 · seguridad: el filtro nunca amplía ni sirve de oráculo", () =>
     expect(await ids("A", q({ bot: "secretoB" }))).toEqual([]);
     expect(await ids("A", q({ user: U.B }))).toEqual([]);
     expect(await ids("A", q({ user: `eq4b-${RUN}` }))).toEqual([]);
-    // Control: el dueño y el staff sí.
+    // Control: el dueño y el staff (moderator; el organizer sin torneo propio ya NO, #306) sí.
     expect(await ids("B", q({ bot: BOT.privB }))).toEqual([B.b4, B.b3]);
-    expect(await ids("organizer", q({ bot: "secretoB" }))).toEqual([B.b4, B.b3]);
+    expect(await ids("moderator", q({ bot: "secretoB" }))).toEqual([B.b4, B.b3]);
   });
 
   it("un bot `team` sólo casa para miembros de su equipo", async () => {
@@ -424,7 +425,7 @@ describe("EQ4 · paginación", () => {
 
   it("total no cuenta lo que no es legible (staff ve 6, A ve 5, B ve 2)", async () => {
     const t = async (actor: string) => (await list(actor, "includeTotal=true")).body.total;
-    expect(await t("organizer")).toBeGreaterThanOrEqual(6);
+    expect(await t("moderator")).toBeGreaterThanOrEqual(6);
     expect(await t("A")).toBe(5);
     expect(await t("B")).toBe(2);
   });
