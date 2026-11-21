@@ -18,6 +18,7 @@ echo "BASE verde rc=$rc: $(grep -E '^ +Tests ' /tmp/mut-b1-base.log)"
 fail=0
 mut() { # id fichero sed-expr test-asesino
   local id=$1 f=$2 expr=$3 killer=$4
+  [ -z "${ONLY:-}" ] || [ "$ONLY" = "$id" ] || return 0 # ONLY=M-B1-13 ejecuta un solo mutante
   sed -i -E "$expr" "$f"
   if git diff --quiet -- "$f"; then echo "$id: el sed no cambió nada"; fail=1; return; fi
   out=$($RUN 2>&1); rc=$?
@@ -42,6 +43,6 @@ mut M-B1-10 $K 's/const bots = Math\.max\(1, Math\.floor\(botsPerBattle\)\);/con
 mut M-B1-11 $K 's/Math\.floor\(res\.memGiB \/ \(BOT_MEM_GIB \* bots \+ ENGINE_MEM_GIB\)\)/Infinity/' "M-B1-11:"
 mut M-B1-12 $L 's/\(concurrency \?\? DEFAULT_CONCURRENCY\)/(concurrency ?? 5)/' "M-B1-12:"
 mut M-B1-O4 $K 's/Math\.min\(Math\.max\(0, cg\.memBytes - \(cg\.memUsedBytes \?\? 0\)\), host\.freeMemBytes\)/Math.max(0, cg.memBytes - (cg.memUsedBytes ?? 0))/' "M-B1-O4:"
-mut M-B1-13 $K 's/if \(!Number\.isFinite\(res\.cpus\)[^{]*\{/if (false) {/' "M-B1-13:"
+mut M-B1-13 $K '/^  if \($/,/^  \) \{$/c\  if (false) {' "M-B1-13:"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 exit $fail
