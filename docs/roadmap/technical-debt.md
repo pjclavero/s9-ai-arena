@@ -94,6 +94,7 @@ Estados posibles:
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA (PR #164, RC2) |
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en `main` (PR #167); migración de producción a cargo del operador |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
+| [TD-064](#td-064) | `init-secrets.sh` seguía enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | CERRADA (PR #169) |
 | [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
 | [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
@@ -585,6 +586,10 @@ Estados posibles:
 - **Impacto:** se pierde la señal de CI, y queda un verde falso latente.
 - **Solución prevista:** arreglar los dos fallos del nightly, y hacer que `deploy-staging` despliegue de verdad o falle cuando no despliega.
 - **Condición de cierre:** el nightly pasa a verde, y `deploy-staging` no puede dar verde sin desplegar (lo demuestra un test o una mutación).
+- **Causa exacta y arreglo propuesto (RC3, 2026-10-22, rescatado del PR #168):** fallan siempre los mismos dos tests de `slow-suites`.
+  - `restore-sftp-bootstrap.test.ts`: la imagen `backup:e2e-test` no está cargada, porque `nightly.yml` no descarga el artefacto `backup-image-tar` que sí usa `ci.yml`.
+  - `b13-data-volumes.test.ts`: `unshare -rm` no funciona en el runner, porque `nightly.yml` no aplica el `sysctl kernel.apparmor_restrict_unprivileged_userns=0` de `ci.yml:82`.
+  - Arreglo: cargar la imagen `backup` como hace `ci.yml` y añadir el mismo `sysctl` en `nightly.yml`. Sigue sin aplicarse en `main` (a 2026-11-20 el nightly sigue en `failure`); hay que comprobar que la causa no ha cambiado antes de aplicarlo.
 - **RC2 (2026-10-21):** la propuesta TD-050 de RC1 («nightly `slow-suites` en rojo crónico por el arnés») es esta misma deuda y no se abre aparte. Evidencia nueva: `nightly.yml` en `failure` las 10 noches del 12 al 21 de octubre, sobre 3 commits distintos (`gh run list --workflow nightly.yml`).
 
 <a id="td-020"></a>
@@ -1295,6 +1300,22 @@ Estados posibles:
 - **Problema:** Superficie del host alcanzable desde contenedores con ruta por defecto.
 - **Solución prevista:** Inventario de escuchas y, para cada una, bind acotado o regla en `S9-HOST-GUARD`.
 - **Condición de cierre:** Sonda desde un contenedor de cada red ⇒ sólo los puertos justificados responden.
+
+<a id="td-064"></a>
+## TD-064 — `init-secrets.sh` seguía enlaces simbólicos al endurecer los secretos
+
+- **Estado:** CERRADA (PR #169, `main` `32954415`). Registro rescatado del PR #168 para que las referencias a «TD-064» del código y de los tests tengan su entrada.
+- **Prioridad:** P1
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-22, RC3
+- **Evidencia (versión anterior del script):**
+  - `harden()` hacía `chown` y `chmod` sin `-h`, de modo que actuaban sobre el destino de un enlace simbólico.
+  - Las comprobaciones `-s` y las escrituras con `>` y `openssl -out` seguían también el enlace.
+  - El script lo ejecuta root, y el directorio de secretos pertenecía a un usuario sin privilegios.
+- **Problema:** un enlace plantado en ese directorio acababa en un cambio de dueño o modo, o en una escritura, sobre un fichero ajeno al directorio.
+- **Cierre:** `infrastructure/scripts/init-secrets.sh` fija el directorio con `cd -P`, mira cada nombre con `lstat` (sólo acepta inexistente, regular con un único enlace duro o un enlace admitido), escribe en un temporal nuevo (`mktemp`) que instala con `mv -T`, y usa `chown -h` sólo sobre regulares. Con root se niega a escribir en un directorio que no sea suyo (rc 3) salvo `S9_SECRETS_ADOPT=1`.
+- **Cobertura:** `infrastructure/tests/init-secrets-nofollow.test.ts` y los mutantes de `infrastructure/tests/init-secrets-mutations.sh`.
+- **Operación:** ejecutar siempre el script desde un fichero, nunca por la entrada estándar: calcula su directorio a partir de su propia ruta (o de `S9_SECRETS_DIR`).
 
 <a id="td-065"></a>
 ## TD-065 — `status=finished` no garantiza que existan los stats de la batalla
