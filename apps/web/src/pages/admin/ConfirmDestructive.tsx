@@ -69,7 +69,10 @@ export function ConfirmDestructive(props: {
           Acción irreversible: la tiene que confirmar un segundo administrador, distinto de quien la solicitó.
         </p>
       )}
-      <Field label="Escribe la frase exacta para confirmar" hint={<code data-testid="confirm-phrase">{props.phrase}</code>}>
+      <Field
+        label="Escribe la frase exacta para confirmar"
+        hint={<code data-testid="confirm-phrase">{props.phrase}</code>}
+      >
         {(c) => (
           <input
             {...c}
@@ -110,7 +113,9 @@ export function ConfirmDestructive(props: {
         <Button
           data-testid="confirm-submit"
           disabled={!ready || props.busy}
-          onClick={() => void props.onConfirm({ phrase: typed.trim(), password, totp: props.needsTotp ? totp.trim() : undefined })}
+          onClick={() =>
+            void props.onConfirm({ phrase: typed.trim(), password, totp: props.needsTotp ? totp.trim() : undefined })
+          }
         >
           Confirmar
         </Button>{" "}

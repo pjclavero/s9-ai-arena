@@ -83,7 +83,12 @@ function SettingRow(props: { s: SystemSetting; busy: boolean; onSave: (s: System
             onChange={(e) => setDraft(e.target.checked)}
           />
         ) : s.type === "enum" ? (
-          <select id={id} data-testid={`setting-input-${s.key}`} value={String(draft)} onChange={(e) => setDraft(e.target.value)}>
+          <select
+            id={id}
+            data-testid={`setting-input-${s.key}`}
+            value={String(draft)}
+            onChange={(e) => setDraft(e.target.value)}
+          >
             {(s.options ?? []).map((o) => (
               <option key={o}>{o}</option>
             ))}

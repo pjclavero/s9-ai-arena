@@ -46,8 +46,7 @@ export interface SettingDef {
 export const KEY_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
 export type Validation =
-  | { ok: true; value: SettingValue; error?: undefined }
-  | { ok: false; error: string; value?: undefined };
+  { ok: true; value: SettingValue; error?: undefined } | { ok: false; error: string; value?: undefined };
 
 /** Validación ESTRICTA de tipo y rango (sin coerción: "5" no es 5, 1 no es true). */
 function validateRaw(d: SettingDef, v: unknown): Validation {

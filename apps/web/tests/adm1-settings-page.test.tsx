@@ -105,7 +105,9 @@ describe("ADM-1 · página Ajustes del sistema", () => {
         changes: [{ key: "ops.probe_hot", value: 12, expectedVersion: 3 }],
       }),
     );
-    await waitFor(() => expect((screen.getByTestId("setting-input-ops.probe_hot") as HTMLInputElement).value).toBe("12"));
+    await waitFor(() =>
+      expect((screen.getByTestId("setting-input-ops.probe_hot") as HTMLInputElement).value).toBe("12"),
+    );
     expect(screen.queryByTestId("settings-pending-restart")).toBeNull();
   });
 
@@ -130,7 +132,9 @@ describe("ADM-1 · página Ajustes del sistema", () => {
     render(<SettingsPage me={ME} />);
     await screen.findByTestId("settings-table");
     fireEvent.change(screen.getByTestId("setting-input-ops.probe_hot"), { target: { value: "99" } });
-    apiMock.mockRejectedValueOnce(Object.assign(new Error("ops.probe_hot no puede superar el techo del entorno (40)"), { status: 400 }));
+    apiMock.mockRejectedValueOnce(
+      Object.assign(new Error("ops.probe_hot no puede superar el techo del entorno (40)"), { status: 400 }),
+    );
     apiMock.mockResolvedValueOnce({ settings: [HOT] });
     fireEvent.click(screen.getByTestId("setting-save-ops.probe_hot"));
     await screen.findByTestId("settings-error");
@@ -167,7 +171,14 @@ describe("ADM-1 · componente ConfirmDestructive", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
     render(
-      <ConfirmDestructive title="Limpiar" impact={impact} phrase={PHRASE} onConfirm={onConfirm} onCancel={onCancel} {...extra} />,
+      <ConfirmDestructive
+        title="Limpiar"
+        impact={impact}
+        phrase={PHRASE}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+        {...extra}
+      />,
     );
     return { onConfirm, onCancel };
   }

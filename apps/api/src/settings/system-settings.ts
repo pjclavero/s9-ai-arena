@@ -55,12 +55,7 @@ interface Row {
   updated_by: string | null;
 }
 
-function view(
-  registry: SettingsRegistry,
-  key: string,
-  row: Row | undefined,
-  env: NodeJS.ProcessEnv,
-): SettingView {
+function view(registry: SettingsRegistry, key: string, row: Row | undefined, env: NodeJS.ProcessEnv): SettingView {
   const d = registry.get(key)!;
   const e = effectiveValue(d, row?.value, env);
   return {
@@ -112,7 +107,8 @@ export function parsePatchBody(body: unknown): PatchItem[] {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw badRequest(`changes[${i}] debe ser un objeto`);
     const it = raw as Record<string, unknown>;
     for (const k of Object.keys(it)) {
-      if (k !== "key" && k !== "value" && k !== "expectedVersion") throw badRequest(`changes[${i}]: campo no admitido: ${k}`);
+      if (k !== "key" && k !== "value" && k !== "expectedVersion")
+        throw badRequest(`changes[${i}]: campo no admitido: ${k}`);
     }
     if (typeof it.key !== "string") throw badRequest(`changes[${i}].key debe ser texto`);
     if (!("value" in it)) throw badRequest(`changes[${i}].value es obligatorio`);

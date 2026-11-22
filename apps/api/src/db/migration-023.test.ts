@@ -35,12 +35,22 @@ describe("migración 023_system_settings_operations", () => {
   });
 
   it("claves con forma `dominio.nombre`; tipos y estados CERRADOS; running exige lease", async () => {
-    await expect(h.db("system_settings").insert({ key: "Mala Clave", value: "1" })).rejects.toMatchObject({ code: "23514" });
-    await expect(h.db("system_settings").insert({ key: "sinpunto", value: "1" })).rejects.toMatchObject({ code: "23514" });
+    await expect(h.db("system_settings").insert({ key: "Mala Clave", value: "1" })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await expect(h.db("system_settings").insert({ key: "sinpunto", value: "1" })).rejects.toMatchObject({
+      code: "23514",
+    });
     await h.db("system_settings").insert({ key: "ok.clave", value: "1" });
-    await expect(h.db("admin_operations").insert({ kind: "shell.exec", status: "pending" })).rejects.toMatchObject({ code: "23514" });
-    await expect(h.db("admin_operations").insert({ kind: "system.noop", status: "raro" })).rejects.toMatchObject({ code: "23514" });
-    await expect(h.db("admin_operations").insert({ kind: "system.noop", status: "running" })).rejects.toMatchObject({ code: "23514" });
+    await expect(h.db("admin_operations").insert({ kind: "shell.exec", status: "pending" })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await expect(h.db("admin_operations").insert({ kind: "system.noop", status: "raro" })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await expect(h.db("admin_operations").insert({ kind: "system.noop", status: "running" })).rejects.toMatchObject({
+      code: "23514",
+    });
     await h.db("system_settings").delete();
   });
 
@@ -48,7 +58,9 @@ describe("migración 023_system_settings_operations", () => {
     await h.db("admin_operations").insert({ kind: "system.noop", status: "done" });
     await h.db("admin_operations").insert({ kind: "system.noop", status: "cancelled" });
     await h.db("admin_operations").insert({ kind: "system.noop", status: "pending" });
-    await expect(h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" })).rejects.toMatchObject({ code: "23505" });
+    await expect(
+      h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" }),
+    ).rejects.toMatchObject({ code: "23505" });
     await h.db("admin_operations").delete();
   });
 

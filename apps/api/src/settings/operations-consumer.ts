@@ -35,7 +35,8 @@ const leaseSql = (db: Db, ms: number) => db.raw("now() + (? * interval '1 millis
 function assertKinds(kinds: readonly string[]): void {
   if (kinds.length === 0) throw new Error("el ejecutor debe declarar los tipos que consume");
   for (const k of kinds) {
-    if (!Object.prototype.hasOwnProperty.call(OPERATION_KINDS, k)) throw new Error(`tipo de operación desconocido: ${k}`);
+    if (!Object.prototype.hasOwnProperty.call(OPERATION_KINDS, k))
+      throw new Error(`tipo de operación desconocido: ${k}`);
   }
 }
 
@@ -84,10 +85,20 @@ function boundedResult(result: unknown): unknown {
 export async function completeOperation(db: Db, id: string, owner: string, result: unknown): Promise<boolean> {
   const rows = await db("admin_operations")
     .where({ id, status: "running", lease_owner: owner })
-    .update({ status: "done", result: JSON.stringify(boundedResult(result)), finished_at: db.fn.now(), lease_expires_at: null })
+    .update({
+      status: "done",
+      result: JSON.stringify(boundedResult(result)),
+      finished_at: db.fn.now(),
+      lease_expires_at: null,
+    })
     .returning(["kind"]);
   if (rows.length !== 1) return false;
-  await audit(db, { actorId: null, action: "admin.op.succeeded", target: `operation:${id}`, detail: { kind: rows[0].kind, executor: owner } });
+  await audit(db, {
+    actorId: null,
+    action: "admin.op.succeeded",
+    target: `operation:${id}`,
+    detail: { kind: rows[0].kind, executor: owner },
+  });
   return true;
 }
 
@@ -103,7 +114,12 @@ export async function failOperation(db: Db, id: string, owner: string, reason: s
     })
     .returning(["kind"]);
   if (rows.length !== 1) return false;
-  await audit(db, { actorId: null, action: "admin.op.failed", target: `operation:${id}`, detail: { kind: rows[0].kind, executor: owner } });
+  await audit(db, {
+    actorId: null,
+    action: "admin.op.failed",
+    target: `operation:${id}`,
+    detail: { kind: rows[0].kind, executor: owner },
+  });
   return true;
 }
 

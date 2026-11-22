@@ -25,8 +25,23 @@ const REGISTRY = createSettingsRegistry([
     env: "S9_TEST_WORKERS_MAX",
     description: "workers",
   },
-  { key: "test.flag", type: "boolean", default: false, consumer: "replay-service", apply: "restart", description: "flag" },
-  { key: "test.mode", type: "enum", options: ["a", "b"], default: "a", consumer: "api", apply: "hot", description: "modo" },
+  {
+    key: "test.flag",
+    type: "boolean",
+    default: false,
+    consumer: "replay-service",
+    apply: "restart",
+    description: "flag",
+  },
+  {
+    key: "test.mode",
+    type: "enum",
+    options: ["a", "b"],
+    default: "a",
+    consumer: "api",
+    apply: "hot",
+    description: "modo",
+  },
 ]);
 
 let h: TestDbHandle;
@@ -57,7 +72,10 @@ const get = (t?: string) => {
   return t ? r.set("Authorization", `Bearer ${t}`) : r;
 };
 const patch = (body: unknown, t: string = admin) =>
-  request(app).patch("/admin/settings").set("Authorization", `Bearer ${t}`).send(body as object);
+  request(app)
+    .patch("/admin/settings")
+    .set("Authorization", `Bearer ${t}`)
+    .send(body as object);
 const one = (key: string, value: unknown, expectedVersion = 0) => ({ changes: [{ key, value, expectedVersion }] });
 let auditFloor = 0;
 const auditRows = () =>
@@ -109,7 +127,12 @@ describe("ADM-1 · validación en servidor", () => {
       { changes: [{ key: "test.workers", value: 3 }] },
       { changes: [{ key: "test.workers", value: 3, expectedVersion: -1 }] },
       { changes: [{ key: "test.workers", value: 3, expectedVersion: 0, extra: 1 }] },
-      { changes: [{ key: "test.workers", value: 3, expectedVersion: 0 }, { key: "test.workers", value: 4, expectedVersion: 0 }] },
+      {
+        changes: [
+          { key: "test.workers", value: 3, expectedVersion: 0 },
+          { key: "test.workers", value: 4, expectedVersion: 0 },
+        ],
+      },
       { cambios: [] },
       [],
     ];
@@ -128,7 +151,10 @@ describe("ADM-1 · validación en servidor", () => {
     // El techo bajó después de guardar: el valor vigente se recorta al techo.
     env.S9_TEST_WORKERS_MAX = "3";
     const r = await get(admin);
-    expect(r.body.settings.find((s: { key: string }) => s.key === "test.workers")).toMatchObject({ value: 3, envCeiling: 3 });
+    expect(r.body.settings.find((s: { key: string }) => s.key === "test.workers")).toMatchObject({
+      value: 3,
+      envCeiling: 3,
+    });
   });
 
   it("ATOMICO: un cambio inválido en la lista aborta TODO (ni valores ni auditoría)", async () => {
@@ -187,7 +213,9 @@ describe("ADM-1 · auditoría y versiones", () => {
   it("AUDITORIA_MISMA_TRANSACCION: si la auditoría falla, el valor no queda guardado", async () => {
     await h.db.raw(`CREATE OR REPLACE FUNCTION adm1_block_audit() RETURNS trigger AS $$
       BEGIN IF NEW.action = 'settings.system.update' THEN RAISE EXCEPTION 'auditoria bloqueada'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`);
-    await h.db.raw(`CREATE TRIGGER adm1_block BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION adm1_block_audit()`);
+    await h.db.raw(
+      `CREATE TRIGGER adm1_block BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION adm1_block_audit()`,
+    );
     try {
       const r = await patch(one("test.workers", 5));
       expect(r.status).toBeGreaterThanOrEqual(500);
@@ -267,7 +295,11 @@ describe("ADM-1 · lector con sondeo (en caliente) y fail-closed", () => {
     expect(rd.get("test.workers")).toBe(9);
     // BD caída: dentro de la ventana se conserva; fuera, vuelve al defecto.
     const broken = new SystemSettingsReader(
-      new Proxy(h.db, { apply: () => { throw new Error("db down"); } }) as never,
+      new Proxy(h.db, {
+        apply: () => {
+          throw new Error("db down");
+        },
+      }) as never,
       REGISTRY,
       { refreshMs: 5_000, now: () => clock.t, env },
     );

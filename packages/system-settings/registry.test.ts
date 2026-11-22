@@ -58,14 +58,18 @@ describe("registro de ajustes: validación en servidor", () => {
   });
 
   it("TECHO_ENTORNO_INVALIDO: un techo ilegible o fuera de rango se ignora (no abre ni cierra nada)", () => {
-    for (const raw of ["", "abc", "2.5", "0", "99"]) expect(envCeiling(INT, { S9_TEST_COUNT_MAX: raw }), raw).toBeNull();
+    for (const raw of ["", "abc", "2.5", "0", "99"])
+      expect(envCeiling(INT, { S9_TEST_COUNT_MAX: raw }), raw).toBeNull();
   });
 });
 
 describe("registro de ajustes: valor efectivo", () => {
   it("sin fila: techo del entorno si lo hay y si no, el defecto", () => {
     expect(effectiveValue(INT, undefined, {})).toMatchObject({ value: 4, source: "default" });
-    expect(effectiveValue(INT, undefined, { S9_TEST_COUNT_MAX: "8" })).toMatchObject({ value: 8, source: "environment" });
+    expect(effectiveValue(INT, undefined, { S9_TEST_COUNT_MAX: "8" })).toMatchObject({
+      value: 8,
+      source: "environment",
+    });
   });
 
   it("fila válida manda; por encima del techo se RECORTA al techo", () => {

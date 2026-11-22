@@ -33,7 +33,14 @@ beforeAll(async () => {
   await seedDev(h.db);
   app = createApp({ db: h.db });
   // Segundo administrador (para lo irreversible).
-  const [u] = await h.db("users").insert({ email: "admin2@dev.arena.local", password_hash: await hashPassword(DEV_PASSWORD), display_name: "admin2" }).returning("id");
+  const [u] = await h
+    .db("users")
+    .insert({
+      email: "admin2@dev.arena.local",
+      password_hash: await hashPassword(DEV_PASSWORD),
+      display_name: "admin2",
+    })
+    .returning("id");
   await h.db("user_roles").insert({ user_id: u.id, role: "admin" });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   admin2 = await tokenFor(h.db, "admin2@dev.arena.local");
@@ -58,7 +65,10 @@ const audits = async (like = "admin.op.%") =>
   }[];
 
 const create = (body: unknown, t: string = admin) =>
-  request(app).post("/admin/operations").set("Authorization", `Bearer ${t}`).send(body as object);
+  request(app)
+    .post("/admin/operations")
+    .set("Authorization", `Bearer ${t}`)
+    .send(body as object);
 const confirm = (id: string, body: Record<string, unknown>, t: string = admin) =>
   request(app).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send(body);
 const destructive = { kind: "system.noop", params: { impactClass: "destructive" } };
@@ -67,7 +77,11 @@ const irreversible = { kind: "system.noop", params: { impactClass: "irreversible
 async function createAndTake(body: unknown, t: string = admin) {
   const r = await create(body, t);
   expect(r.status, JSON.stringify(r.body)).toBe(201);
-  return { id: r.body.operation.id as string, token: r.body.confirmToken as string, phrase: r.body.operation.confirmPhrase as string };
+  return {
+    id: r.body.operation.id as string,
+    token: r.body.confirmToken as string,
+    phrase: r.body.operation.confirmPhrase as string,
+  };
 }
 
 describe("ADM-1 · permisos de las órdenes", () => {
@@ -79,8 +93,16 @@ describe("ADM-1 · permisos de las órdenes", () => {
     expect(await audits()).toHaveLength(0);
     // ni leer, ni confirmar, ni cancelar
     const fake = "11111111-1111-4111-8111-111111111111";
-    for (const [m, p] of [["get", "/admin/operations"], ["get", `/admin/operations/${fake}`], ["post", `/admin/operations/${fake}/cancel`], ["post", `/admin/operations/${fake}/confirm`]] as const) {
-      const r = await (request(app) as never as Record<string, (u: string) => request.Test>)[m](p).set("Authorization", `Bearer ${moderator}`).send({});
+    for (const [m, p] of [
+      ["get", "/admin/operations"],
+      ["get", `/admin/operations/${fake}`],
+      ["post", `/admin/operations/${fake}/cancel`],
+      ["post", `/admin/operations/${fake}/confirm`],
+    ] as const) {
+      const r = await (request(app) as never as Record<string, (u: string) => request.Test>)
+        [m](p)
+        .set("Authorization", `Bearer ${moderator}`)
+        .send({});
       expect(r.status, `${m} ${p}`).toBe(403);
     }
   });
@@ -99,22 +121,30 @@ describe("ADM-1 · permisos de las órdenes", () => {
 describe("ADM-1 · tipos CERRADOS y sin parámetros de ruta ni de comando", () => {
   it("KIND_CERRADO: tipo desconocido, ruta o comando como tipo ⇒ 400 y nada insertado", async () => {
     for (const kind of ["backup.run", "rm -rf /", "../../etc/passwd", "__proto__", "constructor", "", 5, null]) {
-      expect((await create({ kind }) ).status, String(kind)).toBe(400);
+      expect((await create({ kind })).status, String(kind)).toBe(400);
     }
     expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
   });
 
   it("PARAMS_CERRADOS: ninguna cadena libre; parámetros ajenos o fuera del enumerado ⇒ 400", async () => {
-    for (const params of [{ path: "/etc" }, { cmd: "ls" }, { impactClass: "../x" }, { impactClass: "destructive; rm" }, { impactClass: 1 }, "ruta", ["x"]]) {
+    for (const params of [
+      { path: "/etc" },
+      { cmd: "ls" },
+      { impactClass: "../x" },
+      { impactClass: "destructive; rm" },
+      { impactClass: 1 },
+      "ruta",
+      ["x"],
+    ]) {
       expect((await create({ kind: "system.noop", params })).status, JSON.stringify(params)).toBe(400);
     }
     expect((await create({ kind: "system.noop", extra: 1 })).status).toBe(400);
   });
 
   it("KIND_CHECK_EN_BD: aunque alguien se salte la API, la BD rechaza un tipo fuera de la lista", async () => {
-    await expect(
-      h.db("admin_operations").insert({ kind: "shell.exec", status: "pending" }),
-    ).rejects.toMatchObject({ code: "23514" });
+    await expect(h.db("admin_operations").insert({ kind: "shell.exec", status: "pending" })).rejects.toMatchObject({
+      code: "23514",
+    });
   });
 
   it("UNA_ACTIVA_POR_TIPO: segunda orden activa del mismo tipo ⇒ 409; tras cancelar la primera, vuelve a poderse", async () => {
@@ -123,7 +153,9 @@ describe("ADM-1 · tipos CERRADOS y sin parámetros de ruta ni de comando", () =
     const second = await create({ kind: "system.noop" });
     expect(second.status).toBe(409);
     expect(second.body.error).toBe("operation_in_progress");
-    const c = await request(app).post(`/admin/operations/${first.body.operation.id}/cancel`).set("Authorization", `Bearer ${admin}`);
+    const c = await request(app)
+      .post(`/admin/operations/${first.body.operation.id}/cancel`)
+      .set("Authorization", `Bearer ${admin}`);
     expect(c.status).toBe(200);
     expect(c.body.status).toBe("cancelled");
     expect((await create({ kind: "system.noop" })).status).toBe(201);
@@ -134,7 +166,11 @@ describe("ADM-1 · confirmación en dos pasos", () => {
   it("IMPACTO_DEL_SERVIDOR: devuelve resumen calculado, frase literal y token; dryRun no crea orden", async () => {
     const r = await create({ ...destructive, dryRun: true });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ dryRun: true, impactClass: "destructive", confirmPhrase: "EJECUTAR system.noop destructive" });
+    expect(r.body).toMatchObject({
+      dryRun: true,
+      impactClass: "destructive",
+      confirmPhrase: "EJECUTAR system.noop destructive",
+    });
     expect(r.body.impact.summary).toMatch(/prueba/);
     expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
     expect((await audits()).map((x) => x.action)).toEqual(["admin.op.dry_run"]);
@@ -183,7 +219,9 @@ describe("ADM-1 · confirmación en dos pasos", () => {
 
   it("TOKEN_UN_SOLO_USO_CARRERA: dos confirmaciones SIMULTÁNEAS ⇒ exactamente una gana", async () => {
     const { id, token, phrase } = await createAndTake(destructive);
-    const rs = await Promise.all([1, 2, 3].map(() => confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD })));
+    const rs = await Promise.all(
+      [1, 2, 3].map(() => confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD })),
+    );
     expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
     expect(rs.filter((r) => r.status === 409)).toHaveLength(2);
     expect((await audits("admin.op.confirmed")).length).toBe(1);
@@ -191,7 +229,10 @@ describe("ADM-1 · confirmación en dos pasos", () => {
 
   it("TOKEN_CADUCADO: pasado el plazo ⇒ 409 confirmation_expired, estado expired y auditado", async () => {
     const { id, token, phrase } = await createAndTake(destructive);
-    await h.db("admin_operations").where({ id }).update({ confirm_expires_at: new Date(Date.now() - 1000) });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ confirm_expires_at: new Date(Date.now() - 1000) });
     const r = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD });
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("confirmation_expired");
@@ -204,7 +245,10 @@ describe("ADM-1 · confirmación en dos pasos", () => {
 
   it("CADUCADA_LIBERA_HUECO: una confirmación pendiente caducada no impide crear otra del mismo tipo", async () => {
     const first = await createAndTake(destructive);
-    await h.db("admin_operations").where({ id: first.id }).update({ confirm_expires_at: new Date(Date.now() - 1000) });
+    await h
+      .db("admin_operations")
+      .where({ id: first.id })
+      .update({ confirm_expires_at: new Date(Date.now() - 1000) });
     const next = await create(destructive);
     expect(next.status).toBe(201);
     expect((await h.db("admin_operations").where({ id: first.id }).first()).status).toBe("expired");
@@ -241,7 +285,9 @@ describe("ADM-1 · confirmación en dos pasos", () => {
     try {
       const { id, token, phrase } = await createAndTake(destructive);
       expect((await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD })).status).toBe(401);
-      expect((await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD, totp: "000000" })).status).toBe(401);
+      expect((await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD, totp: "000000" })).status).toBe(
+        401,
+      );
     } finally {
       await h.db("users").where({ email: DEV_USERS.admin }).update({ totp_secret: null });
     }
@@ -249,18 +295,24 @@ describe("ADM-1 · confirmación en dos pasos", () => {
 
   it("CANCELAR: awaiting/pending se pueden cancelar; una orden ya tomada por un ejecutor no", async () => {
     const a = await createAndTake(destructive);
-    expect((await request(app).post(`/admin/operations/${a.id}/cancel`).set("Authorization", `Bearer ${admin}`)).body.status).toBe("cancelled");
+    expect(
+      (await request(app).post(`/admin/operations/${a.id}/cancel`).set("Authorization", `Bearer ${admin}`)).body.status,
+    ).toBe("cancelled");
     // la confirmación de una cancelada falla
     expect((await confirm(a.id, { confirmToken: a.token, phrase: a.phrase, password: DEV_PASSWORD })).status).toBe(409);
     const p = await create({ kind: "system.noop" });
     await claimOperation(h.db, { kinds: ["system.noop"], owner: "exec-1", leaseMs: 60_000 });
-    const c = await request(app).post(`/admin/operations/${p.body.operation.id}/cancel`).set("Authorization", `Bearer ${admin}`);
+    const c = await request(app)
+      .post(`/admin/operations/${p.body.operation.id}/cancel`)
+      .set("Authorization", `Bearer ${admin}`);
     expect(c.status).toBe(409);
     expect(c.body.error).toBe("not_cancellable");
   });
 
   it("ID_MALFORMADO: un id que no es uuid ⇒ 404 (no 500)", async () => {
-    expect((await request(app).get("/admin/operations/no-es-uuid").set("Authorization", `Bearer ${admin}`)).status).toBe(404);
+    expect(
+      (await request(app).get("/admin/operations/no-es-uuid").set("Authorization", `Bearer ${admin}`)).status,
+    ).toBe(404);
   });
 });
 
@@ -273,18 +325,28 @@ describe("ADM-1 · segundo admin para lo irreversible", () => {
     expect(other.status, JSON.stringify(other.body)).toBe(200);
     const requester = await h.db("users").where({ email: DEV_USERS.admin }).first();
     const confirmer = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
-    expect(other.body).toMatchObject({ requestedBy: requester.id, confirmedBy: confirmer.id, requiresSecondAdmin: true });
+    expect(other.body).toMatchObject({
+      requestedBy: requester.id,
+      confirmedBy: confirmer.id,
+      requiresSecondAdmin: true,
+    });
   });
 
   it("SEGUNDO_ADMIN_AUSENTE: con un único admin la irreversible se rechaza (ruta de consola)", async () => {
-    await h.db("user_roles").where({ role: "admin", user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id }).delete();
+    await h
+      .db("user_roles")
+      .where({ role: "admin", user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id })
+      .delete();
     try {
       const r = await create(irreversible);
       expect(r.status).toBe(409);
       expect(r.body.error).toBe("second_admin_unavailable");
       expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
     } finally {
-      await h.db("user_roles").insert({ user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id, role: "admin" });
+      await h.db("user_roles").insert({
+        user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id,
+        role: "admin",
+      });
     }
   });
 });
@@ -303,7 +365,11 @@ describe("ADM-1 · ejecutor: lease, reintentos y rol de BD mínimo", () => {
     expect(await completeOperation(h.db, id, "exec-1", { ok: true })).toBe(true);
     const row = await h.db("admin_operations").where({ id }).first();
     expect(row).toMatchObject({ status: "done", result: { ok: true } });
-    expect((await audits()).map((x) => x.action)).toEqual(["admin.op.requested", "admin.op.started", "admin.op.succeeded"]);
+    expect((await audits()).map((x) => x.action)).toEqual([
+      "admin.op.requested",
+      "admin.op.started",
+      "admin.op.succeeded",
+    ]);
   });
 
   it("LEASE_AJENO: otro ejecutor no puede completar, fallar ni renovar una orden que no tiene", async () => {
@@ -318,27 +384,47 @@ describe("ADM-1 · ejecutor: lease, reintentos y rol de BD mínimo", () => {
 
   it("SOLO_SUS_TIPOS: un ejecutor sin el tipo no toma la orden; tipo desconocido lanza", async () => {
     await pendingOp();
-    await expect(claimOperation(h.db, { kinds: ["backup.run"], owner: "e", leaseMs: 1000 })).rejects.toThrow(/desconocido/);
+    await expect(claimOperation(h.db, { kinds: ["backup.run"], owner: "e", leaseMs: 1000 })).rejects.toThrow(
+      /desconocido/,
+    );
     await expect(claimOperation(h.db, { kinds: [], owner: "e", leaseMs: 1000 })).rejects.toThrow();
   });
 
   it("LEASE_CADUCADO: la orden vuelve a pending; tras maxAttempts pasa a failed", async () => {
     const id = await pendingOp();
     await claimOperation(h.db, { kinds: ["system.noop"], owner: "exec-1", leaseMs: 60_000 });
-    await h.db("admin_operations").where({ id }).update({ lease_expires_at: new Date(Date.now() - 1000) });
-    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 2 })).toEqual({ requeued: 1, failed: 0 });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ lease_expires_at: new Date(Date.now() - 1000) });
+    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 2 })).toEqual({
+      requeued: 1,
+      failed: 0,
+    });
     expect((await h.db("admin_operations").where({ id }).first()).status).toBe("pending");
     const again = await claimOperation(h.db, { kinds: ["system.noop"], owner: "exec-2", leaseMs: 60_000 });
     expect(again?.attempts).toBe(2);
-    await h.db("admin_operations").where({ id }).update({ lease_expires_at: new Date(Date.now() - 1000) });
-    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 2 })).toEqual({ requeued: 0, failed: 1 });
-    expect(await h.db("admin_operations").where({ id }).first()).toMatchObject({ status: "failed", result: { error: "lease_expired" } });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ lease_expires_at: new Date(Date.now() - 1000) });
+    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 2 })).toEqual({
+      requeued: 0,
+      failed: 1,
+    });
+    expect(await h.db("admin_operations").where({ id }).first()).toMatchObject({
+      status: "failed",
+      result: { error: "lease_expired" },
+    });
   });
 
   it("LEASE_VIGENTE_NO_SE_RECOGE: el reaper no toca una orden con lease vivo", async () => {
     const id = await pendingOp();
     await claimOperation(h.db, { kinds: ["system.noop"], owner: "exec-1", leaseMs: 60_000 });
-    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 3 })).toEqual({ requeued: 0, failed: 0 });
+    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 3 })).toEqual({
+      requeued: 0,
+      failed: 0,
+    });
     expect((await h.db("admin_operations").where({ id }).first()).status).toBe("running");
   });
 
@@ -352,9 +438,13 @@ describe("ADM-1 · ejecutor: lease, reintentos y rol de BD mínimo", () => {
 
   it("ROL_MINIMO: el ejecutor funciona con SELECT + UPDATE de columnas de estado + INSERT en audit_log, y NADA más", async () => {
     const id = await pendingOp();
-    await h.db.raw(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 's9_ops_exec') THEN CREATE ROLE s9_ops_exec NOLOGIN; END IF; END $$`);
+    await h.db.raw(
+      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 's9_ops_exec') THEN CREATE ROLE s9_ops_exec NOLOGIN; END IF; END $$`,
+    );
     await h.db.raw(`GRANT SELECT ON admin_operations TO s9_ops_exec`);
-    await h.db.raw(`GRANT UPDATE (status, result, lease_owner, lease_expires_at, attempts, started_at, finished_at) ON admin_operations TO s9_ops_exec`);
+    await h.db.raw(
+      `GRANT UPDATE (status, result, lease_owner, lease_expires_at, attempts, started_at, finished_at) ON admin_operations TO s9_ops_exec`,
+    );
     await h.db.raw(`GRANT INSERT ON audit_log TO s9_ops_exec`);
     await h.db.transaction(async (trx) => {
       await trx.raw(`SET LOCAL ROLE s9_ops_exec`);

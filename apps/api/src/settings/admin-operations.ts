@@ -26,7 +26,8 @@ import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.j
 export const CONFIRM_TTL_MS = 120_000;
 
 export type ImpactClass = "none" | "destructive" | "irreversible";
-export type OperationStatus = "awaiting_confirmation" | "pending" | "running" | "done" | "failed" | "expired" | "cancelled";
+export type OperationStatus =
+  "awaiting_confirmation" | "pending" | "running" | "done" | "failed" | "expired" | "cancelled";
 
 export interface Impact {
   /** Resumen legible calculado por el servidor. */
@@ -39,7 +40,8 @@ export interface OperationKindDef {
   /** Valida y normaliza los parámetros: sólo valores de un conjunto cerrado, UUID o enteros con rango. */
   parseParams(
     raw: unknown,
-  ): { ok: true; params: Record<string, unknown>; error?: undefined } | { ok: false; error: string; params?: undefined };
+  ):
+    { ok: true; params: Record<string, unknown>; error?: undefined } | { ok: false; error: string; params?: undefined };
   classify(params: Record<string, unknown>): ImpactClass;
   impact(db: Db, params: Record<string, unknown>): Promise<Impact>;
   /** Frase literal que se teclea para confirmar (la fija el servidor, no el cliente). */
@@ -66,7 +68,10 @@ const SYSTEM_NOOP: OperationKindDef = {
   },
   classify: (p) => p.impactClass as ImpactClass,
   async impact(db) {
-    const r = await db("admin_operations").whereIn("status", ["awaiting_confirmation", "pending", "running"]).count({ n: "*" }).first();
+    const r = await db("admin_operations")
+      .whereIn("status", ["awaiting_confirmation", "pending", "running"])
+      .count({ n: "*" })
+      .first();
     const active = Number((r as { n: string | number }).n);
     return { summary: "Operación de prueba: no modifica nada.", counts: { affected: 0, activeOperations: active } };
   },
@@ -147,12 +152,20 @@ export async function createOperation(
   ctx: Ctx,
   body: unknown,
 ): Promise<
-  | { dryRun: true; kind: string; impactClass: ImpactClass; impact: Impact; requiresSecondAdmin: boolean; confirmPhrase: string }
+  | {
+      dryRun: true;
+      kind: string;
+      impactClass: ImpactClass;
+      impact: Impact;
+      requiresSecondAdmin: boolean;
+      confirmPhrase: string;
+    }
   | { dryRun: false; operation: ReturnType<typeof operationView>; confirmToken: string | null }
 > {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("el cuerpo debe ser un objeto JSON");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["kind", "params", "dryRun"].includes(k)) throw badRequest(`campo no admitido: ${k}`);
+  for (const k of Object.keys(b))
+    if (!["kind", "params", "dryRun"].includes(k)) throw badRequest(`campo no admitido: ${k}`);
   if (b.dryRun !== undefined && typeof b.dryRun !== "boolean") throw badRequest("dryRun debe ser booleano");
   const def = kindDef(b.kind);
   const parsed = def.parseParams(b.params);
@@ -228,7 +241,10 @@ export async function createOperation(
     });
   } catch (e) {
     if ((e as { code?: string }).code === "23505") {
-      throw conflict("operation_in_progress", `Ya hay una operación ${def.kind} activa: espera a que termine o cancélala`);
+      throw conflict(
+        "operation_in_progress",
+        `Ya hay una operación ${def.kind} activa: espera a que termine o cancélala`,
+      );
     }
     throw e;
   }
@@ -243,7 +259,8 @@ export async function confirmOperation(
 ): Promise<ReturnType<typeof operationView>> {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("el cuerpo debe ser un objeto JSON");
   const b = body as Record<string, unknown>;
-  if (typeof b.confirmToken !== "string" || b.confirmToken.length === 0) throw badRequest("confirmToken es obligatorio");
+  if (typeof b.confirmToken !== "string" || b.confirmToken.length === 0)
+    throw badRequest("confirmToken es obligatorio");
   if (typeof b.phrase !== "string") throw badRequest("phrase es obligatoria");
   const confirmToken: string = b.confirmToken;
   const phrase: string = b.phrase;
@@ -255,10 +272,7 @@ export async function confirmOperation(
     if (row.status !== "awaiting_confirmation") {
       throw conflict("not_awaiting_confirmation", `La operación está en estado ${row.status}`, { status: row.status });
     }
-    const live = await t("admin_operations")
-      .where({ id })
-      .where("confirm_expires_at", ">", t.fn.now())
-      .first("id");
+    const live = await t("admin_operations").where({ id }).where("confirm_expires_at", ">", t.fn.now()).first("id");
     if (!live) {
       await t("admin_operations")
         .where({ id })
@@ -290,7 +304,8 @@ export async function confirmOperation(
         confirm_expires_at: null,
       })
       .returning("*");
-    if (!done) throw new ApiError(409, "confirmation_token_invalid", "El token de confirmación no es válido o ya se usó");
+    if (!done)
+      throw new ApiError(409, "confirmation_token_invalid", "El token de confirmación no es válido o ya se usó");
     await audit(t, {
       actorId: ctx.actorId,
       action: OP_AUDIT("confirmed"),
