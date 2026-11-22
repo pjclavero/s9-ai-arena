@@ -69,6 +69,8 @@ beforeAll(async () => {
   await h.db("bots").where({ id: privateForeign.botId }).update({ visibility: "private" });
   GUN = await engineTotals(EXAMPLE_LOADOUT);
   HEAVY = await engineTotals(ARCHETYPES.heavy as any);
+  // B4 · oráculo independiente: el coste esperado del artillero es un literal, no lo que devuelva la implementación.
+  expect(GUN.cost).toBe(900);
 }, 120_000);
 
 afterAll(async () => {

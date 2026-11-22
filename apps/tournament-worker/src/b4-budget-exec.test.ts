@@ -10,6 +10,7 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { makeRunBattleHandler, type BattleContext, type BattleExecution } from "./battle-runner.js";
 import { createBots, insertScheduledBattle, type TestBot } from "./testing/fixtures.js";
 import type { JobRow } from "./queue.js";
+import { MAX_MODULE_COST_FRACTION } from "../../../packages/game-rules/index.js";
 
 let h: TestDbHandle;
 let bots: TestBot[]; // loadout de ejemplo: 900 créditos con la munición embebida
@@ -123,5 +124,27 @@ describe("B4 · ejecución: presupuesto del torneo", () => {
     await run(t, bots[0], bots[1]);
     const after = await h.db("entries").where({ tournament_id: t }).orderBy("bot_id");
     expect(after).toEqual(before);
+  });
+
+  it("B4_EXEC_CAP · el worker aplica también el tope por pieza (aunque el total quepa)", async () => {
+    // Chasis pesado (280) + orugas + generador: 485 cr de total, así que sólo decide el tope por pieza.
+    const mini = {
+      catalog_version: "mvp@1",
+      chassis: "chassis.heavy@1",
+      modules: JSON.stringify([
+        { slot: "drive", moduleId: "movement.tracks@1" },
+        { slot: "power", moduleId: "power.generator@2" },
+      ]),
+    };
+    const cap = await createBots(h.db, 4, "b4xc");
+    for (const b of cap) await h.db("bot_loadouts").where({ bot_id: b.botId, revision: 1 }).update(mini);
+    let min = 485;
+    while (min * MAX_MODULE_COST_FRACTION < 280) min++;
+    const over = await tournamentWith(min - 1, cap[0], cap[1]);
+    const r1 = await run(over, cap[0], cap[1]);
+    expect(r1.log).toEqual([]);
+    const fits = await tournamentWith(min, cap[2], cap[3]);
+    const r2 = await run(fits, cap[2], cap[3]);
+    expect(r2.log).toEqual([r2.id]);
   });
 });

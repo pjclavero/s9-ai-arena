@@ -3,7 +3,7 @@
  * (b4-budget-cost.test.ts, loadout-cost.test.ts, b4-cost-editor.test.tsx). Muta el CÓDIGO DE
  * PRODUCCIÓN y exige ROJO-OK: cae la suite Y cae el test esperado (`kill`, etiqueta B4_…).
  * Mismo arnés que scripts/team-enrollment-mutants.mjs. En SERIE, en el laboratorio, con el
- * árbol commiteado. NO ejecutar en ia02.
+ * árbol commiteado. NO ejecutar fuera del laboratorio.
  *   node scripts/budget-ammo-mutants.mjs [--dry] [M1 ...]
  */
 import { spawnSync, execFileSync } from "node:child_process";
@@ -21,6 +21,7 @@ const BR = "apps/api/src/services/battle-rules.ts";
 const WR = "apps/tournament-worker/src/battle-runner.ts";
 const TAMPER = "apps/api/src/b4-budget-tamper.test.ts";
 const EXEC = "apps/tournament-worker/src/b4-budget-exec.test.ts";
+const R2 = "apps/api/src/b4-budget-round2.test.ts";
 
 const MUTANTS = [
   {
@@ -294,6 +295,54 @@ const MUTANTS = [
     edits: [{ file: VE, from: "  if (cap) parts.push(`${cap.message}`);\n", to: "" }],
     tests: [TAMPER],
     kill: "B4_CAP_MESSAGE",
+  },
+  // ---- Ronda 2 de la revisión de #322 (H1-H4, H9)
+  {
+    id: "MX2",
+    name: "el cierre lee la revisión ACTUAL de la versión, no la fijada en la inscripción",
+    edits: [
+      {
+        file: VE,
+        from: "      loadoutRevision: Number(e.loadout_revision),\n    })),\n    tournament.budget_credits",
+        to: "      loadoutRevision: undefined,\n    })),\n    tournament.budget_credits",
+      },
+    ],
+    tests: [R2],
+    kill: "B4_CLOSE_PINNED",
+  },
+  {
+    id: "MX3",
+    name: "tope por pieza con >= en los módulos que no son el chasis",
+    edits: [{ file: V, from: "if (a.moduleDef.costCredits > perModuleCap) {", to: "if (a.moduleDef.costCredits >= perModuleCap) {" }],
+    tests: [R2],
+    kill: "B4_CAP_EXACT_MODULE",
+  },
+  {
+    id: "MX6",
+    name: "el worker ignora module_cost_cap_exceeded (sólo el total)",
+    edits: [
+      {
+        file: WR,
+        from: "?.over) adminDq.push(p.bot_id);",
+        to: '?.violations.some((v) => v.code === "budget_exceeded")) adminDq.push(p.bot_id);',
+      },
+    ],
+    tests: [EXEC],
+    kill: "B4_EXEC_CAP",
+  },
+  {
+    id: "MX7",
+    name: "se mide con el catálogo fijo mvp@1 en vez del de la revisión",
+    edits: [{ file: VE, from: "const cv = String(row.catalog_version);", to: 'const cv = "mvp@1";' }],
+    tests: [R2],
+    kill: "B4_CATALOG_PINNED",
+  },
+  {
+    id: "MX9",
+    name: "el 409 no nombra al bot",
+    edits: [{ file: VE, from: "const n = names.get(canonicalUuid(b.botId));", to: "const n = undefined as string | undefined;" }],
+    tests: [R2],
+    kill: "B4_MSG_BOT_NAME",
   },
 ];
 

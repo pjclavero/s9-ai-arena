@@ -441,6 +441,9 @@ export async function evaluateTournamentBudget(
     const cv = String(row.catalog_version);
     if (!catalogs.has(cv)) catalogs.set(cv, await getCatalog(db, cv));
     const modules = parseModules(row.modules);
+    // H8 · una ref sin loadout resoluble (o con `modules` ilegible) no figura en el resultado: la elegibilidad
+    // (`evaluateVersionsEligibility`/`loadout_not_eligible`) ya la bloquea fallando cerrado, y en BD es
+    // inalcanzable (FK NOT NULL + RESTRICT sobre revisión y catálogo). No se duplica aquí.
     if (!Array.isArray(modules)) return;
     const catalog = catalogs.get(cv)!;
     const loadout = {
@@ -511,10 +514,26 @@ export async function assertWithinTournamentBudget(
     .filter((x): x is BudgetVerdict => !!x?.over);
   if (over.length === 0) return;
   const detail = !!viewer && (viewer.staff || viewer.userId !== null);
+  // H9 · el nombre del bot sólo se resuelve para quien ve el detalle (dueño o staff).
+  const names = new Map<string, string>();
+  if (detail) {
+    const rows = (await db("bots")
+      .whereIn(
+        "id",
+        over.map((b) => canonicalUuid(b.botId)),
+      )
+      .select("id", "name")) as { id: string; name: string }[];
+    for (const r of rows) names.set(canonicalUuid(String(r.id)), String(r.name));
+  }
+  const labelOf = (b: BudgetVerdict) => {
+    const n = names.get(canonicalUuid(b.botId));
+    return n ? `${n} (${b.botId}) v${b.version}` : `${b.botId} v${b.version}`;
+  };
   const items = over.map((b) =>
     detail
       ? {
           botId: b.botId,
+          ...(names.get(canonicalUuid(b.botId)) ? { botName: names.get(canonicalUuid(b.botId)) } : {}),
           version: b.version,
           costCredits: b.costCredits,
           budgetCredits: b.budgetCredits,
@@ -528,7 +547,7 @@ export async function assertWithinTournamentBudget(
     409,
     "bot_version_not_eligible",
     detail
-      ? budgetMessage(f, `${f.botId} v${f.version}`)
+      ? budgetMessage(f, labelOf(f))
       : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
     { reason: "exceeds_tournament_budget", budgetCredits: f.budgetCredits, overBudget: items },
   );
