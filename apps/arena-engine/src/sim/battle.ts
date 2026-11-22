@@ -12,6 +12,7 @@
 import {
   DECISION_EVERY_N_TICKS,
   emptyDict,
+  maxBattleTicks,
   OVERTIME_TECHNICAL_LIMIT_TICKS,
   RADIO_DELIVERY_DELAY_DECISIONS,
   respawnRearmPolicyOf,
@@ -24,6 +25,7 @@ import {
   DEFAULT_EVENT_WINDOW,
   DEFAULT_FRAME_WINDOW,
   MemoryReplaySink,
+  memoryLimitsFor,
   ReplayNotRetainedError,
   WindowLog,
   type FrameLog,
@@ -65,6 +67,9 @@ const MAX_MINES_PER_VEHICLE = 3;
  * alcanza, el mensaje se rechaza con evento, no se acumula.
  */
 const MAX_RADIO_QUEUE = 1024;
+
+/** Centinela interno de `finish()`: el sink falló; la batalla termina sin resultado deportivo. */
+const RECORDING_FAULT = "recording_fault:";
 
 export interface Participant {
   id: string;
@@ -225,10 +230,10 @@ export class Battle {
   private lastSnapshotTick = -1;
   private lastCheckpointTick = -1;
   get snapshots(): any[] {
-    return this.mem("snapshots").snapshots;
+    return this.mem("snapshots", true).snapshots;
   }
   get publicEvents(): any[] {
-    return this.mem("publicEvents").events;
+    return this.mem("publicEvents", true).events;
   }
   get stateHashes(): { tick: number; hash: string }[] {
     return this.mem("stateHashes").stateHashes;
@@ -240,22 +245,43 @@ export class Battle {
   get replayCommands(): { tick: number; vehicleId: string; command: any }[] {
     return this.mem("replayCommands").commands;
   }
-  private mem(what: string): MemoryReplaySink {
-    if (!this.memory) throw new ReplayNotRetainedError(what);
+  private mem(what: string, needsFrames = false): MemoryReplaySink {
+    if (!this.memory || (needsFrames && this.config.retainFrames === false)) throw new ReplayNotRetainedError(what);
     return this.memory;
+  }
+  /**
+   * Primer fallo del sink (tope de memoria, disco…). Ver el contrato en `replay-sink.ts`: el
+   * motor lo captura, deja de emitir y termina la batalla limpiamente al final del tick con
+   * `winner: null` y sin `endReason`. PR-5 lo mapea a `recording_limit` o `storage_unavailable`.
+   */
+  recordingFault: { cause: unknown; stream: string; tick: number } | null = null;
+  /** Todo acceso al sink pasa por aquí: un sink NUNCA hace fallar `step()`. */
+  private toSink(stream: string, fn: () => void): void {
+    if (this.recordingFault) return;
+    try {
+      fn();
+    } catch (cause) {
+      this.recordingFault = { cause, stream, tick: this.tick };
+    }
+  }
+  private recordCommand(rec: { tick: number; vehicleId: string; command: any }): void {
+    this.toSink("commands", () => this.sink.command(rec));
+  }
+  private recordHash(rec: { tick: number; hash: string }): void {
+    this.toSink("hashes", () => this.sink.hash(rec));
   }
   private recordPublicEvent(e: any): void {
     this.events.push(e);
-    this.sink.event(e);
+    this.toSink("events", () => this.sink.event(e));
   }
   private recordSnapshot(f: any): void {
     this.lastSnapshotTick = f.tick;
     this.frames.push(f);
-    this.sink.snapshot(f);
+    this.toSink("snapshots", () => this.sink.snapshot(f));
   }
   private recordCheckpoint(c: { tick: number; hash: string; components: any }): void {
     this.lastCheckpointTick = c.tick;
-    this.sink.checkpoint(c);
+    this.toSink("checkpoints", () => this.sink.checkpoint(c));
   }
   /**
    * N2 · Comandos "en vuelo" bajo latencia simulada: readyAtTick es el tick de
@@ -274,6 +300,13 @@ export class Battle {
       this.memory = null;
     } else {
       this.memory = new MemoryReplaySink({
+        limits: memoryLimitsFor({
+          maxTicks: maxBattleTicks(config.ruleset),
+          vehicles: config.participants.length,
+          snapshotEvery: config.snapshotEveryNTicks ?? 3,
+          hashEvery: config.hashEveryNTicks ?? config.ruleset.hashEveryNTicks ?? 30,
+          checkpointEvery: config.checkpointEveryNTicks ?? 300,
+        }),
         retainSnapshots: config.retainFrames !== false,
         retainEvents: config.retainFrames !== false,
       });
@@ -467,7 +500,7 @@ export class Battle {
           // desde el mismo RNG canónico y en el mismo punto de la secuencia, así
           // que reproduce el mismo tick de efecto sin necesidad de grabarlo aparte.
           if (this.config.recordReplay) {
-            this.sink.command({ tick: this.tick, vehicleId: v.id, command: cmd });
+            this.recordCommand({ tick: this.tick, vehicleId: v.id, command: cmd });
           }
 
           const latency = this.config.simulatedLatency;
@@ -682,7 +715,7 @@ export class Battle {
     const wantCkpt = ckptEvery > 0 && this.tick % ckptEvery === 0;
     if (wantHash || wantCkpt) {
       const bd = this.stateHashBreakdown();
-      if (wantHash) this.sink.hash({ tick: this.tick, hash: bd.hash });
+      if (wantHash) this.recordHash({ tick: this.tick, hash: bd.hash });
       if (wantCkpt) this.recordCheckpoint({ tick: this.tick, hash: bd.hash, components: bd.components });
     }
 
@@ -693,6 +726,11 @@ export class Battle {
     }
 
     // --- PASO 9 · Condición de fin
+    // Fallo del sink (tope/disco): termina limpiamente AL FINAL de este tick, no a mitad de un paso.
+    if (this.recordingFault) {
+      this.finish(RECORDING_FAULT);
+      return;
+    }
     const w = this.mode.winner({ ...ctx, kills: this.teamKills });
     if (w !== null) {
       this.finish(w);
@@ -1132,6 +1170,7 @@ export class Battle {
     if (this.lastSnapshotTick !== this.tick) this.recordSnapshot(this.internalFrame(this.poses()));
     // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
     const technical = winner === TECHNICAL_LIMIT;
+    const faulted = winner === RECORDING_FAULT;
     if (technical) {
       this.recordPublicEvent({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
     }
@@ -1142,7 +1181,7 @@ export class Battle {
     }
     this.result = {
       battleId: this.config.battleId,
-      winner: technical ? null : winner,
+      winner: technical || faulted ? null : winner,
       ...(technical ? { endReason: "technical_limit" as const } : {}),
       ticks: this.tick,
       score: { ...this.mode.score },

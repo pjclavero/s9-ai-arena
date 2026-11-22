@@ -10,13 +10,14 @@ import v8 from "node:v8";
 import vm from "node:vm";
 import { Battle, type BattleConfig } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, maxBattleTicks } from "../../../packages/game-rules/index.js";
 import { emptyArena, gunnerLoadout, mvpArena, scoutLoadout } from "../src/fixtures.js";
 import { CircleBot, ForwardBot, HunterBot } from "../src/stubs.js";
 import {
   MemoryReplaySink,
   ReplayNotRetainedError,
   ReplaySinkOverflowError,
+  memoryLimitsFor,
   WindowLog,
   type ReplaySink,
 } from "../src/sim/replay-sink.js";
@@ -81,6 +82,28 @@ describe("R1 WindowLog: ventana acotada con índices absolutos", () => {
     expect(small.base).toBe(0);
     expect([...small.window()]).toEqual([1]);
     expect(() => new WindowLog(0)).toThrow(RangeError);
+  });
+});
+
+describe("R1b WindowLog.onEvict", () => {
+  it("R1b avisa en orden de cada elemento expulsado con su índice absoluto, tolera callbacks rotos y se da de baja", () => {
+    const w = new WindowLog<string>(3);
+    const seen: [number, string][] = [];
+    const off = w.onEvict((i, x) => void seen.push([i, x]));
+    w.onEvict(() => {
+      throw new Error("consumidor roto");
+    });
+    for (const x of ["a", "b", "c"]) w.push(x);
+    expect(seen).toEqual([]);
+    for (const x of ["d", "e"]) w.push(x);
+    expect(seen).toEqual([
+      [0, "a"],
+      [1, "b"],
+    ]);
+    off();
+    w.push("f");
+    expect(seen.length).toBe(2);
+    expect([...w.window()]).toEqual(["d", "e", "f"]);
   });
 });
 
@@ -167,8 +190,9 @@ describe("R4 sink externo: las lecturas antiguas fallan alto", () => {
 describe("R5 retainFrames:false", () => {
   it("R5 el sink interno no retiene snapshots ni eventos, pero sí hashes, checkpoints y comandos; el directo conserva su ventana", () => {
     const { b } = run("seed-r5", 300, { retainFrames: false });
-    expect(b.snapshots.length).toBe(0);
-    expect(b.publicEvents.length).toBe(0);
+    // no retenido: lectura explícitamente fallida, no un [] silencioso
+    expect(() => b.snapshots).toThrow(ReplayNotRetainedError);
+    expect(() => b.publicEvents).toThrow(ReplayNotRetainedError);
     expect(b.stateHashes.length).toBeGreaterThan(5);
     expect(b.checkpoints.length).toBeGreaterThan(0);
     expect(b.replayCommands.length).toBeGreaterThan(50);
@@ -194,9 +218,91 @@ describe("R7 MemoryReplaySink acotado", () => {
     for (let i = 0; i < 3; i++) s.command({ tick: i, vehicleId: "v", command: {} });
     expect(() => s.command({ tick: 4, vehicleId: "v", command: {} })).toThrow(ReplaySinkOverflowError);
     expect(s.commands.length).toBe(3);
-    expect(() => run("seed-r7", 300, { replaySink: new MemoryReplaySink({ limits: { maxSnapshots: 5 } }) })).toThrow(
-      ReplaySinkOverflowError,
-    );
+  });
+
+  it("R7 los topes por defecto derivan de los ticks máximos, los vehículos y las cadencias reales (no son 200 000)", () => {
+    const l = memoryLimitsFor({ maxTicks: 45000, vehicles: 8, snapshotEvery: 3, hashEvery: 30, checkpointEvery: 300 });
+    expect(l.maxSnapshots).toBeGreaterThanOrEqual(15000);
+    expect(l.maxSnapshots).toBeLessThanOrEqual(17000);
+    expect(l.maxCommands).toBeGreaterThanOrEqual(360000);
+    expect(l.maxCommands).toBeLessThanOrEqual(400000);
+    expect(l.maxHashes).toBeLessThanOrEqual(1800);
+    expect(l.maxCheckpoints).toBeLessThanOrEqual(200);
+    // una batalla real recibe exactamente los topes que le corresponden y los cumple holgadamente
+    const b = new Battle(config("seed-r7", 600));
+    const lim = (b as any).memory.limits;
+    const snapEvery = 3;
+    expect(lim.maxSnapshots).toBeLessThan(Math.ceil((maxBattleTicks(b.config.ruleset) / snapEvery) * 1.1) + 5);
+    attach(b);
+    b.run(600);
+    expect(b.snapshots.length).toBeLessThanOrEqual(lim.maxSnapshots);
+    expect(b.replayCommands.length).toBeLessThanOrEqual(lim.maxCommands);
+    expect(b.stateHashes.length).toBeLessThanOrEqual(lim.maxHashes);
+    expect(b.checkpoints.length).toBeLessThanOrEqual(lim.maxCheckpoints);
+    expect(b.recordingFault).toBeNull();
+  });
+});
+
+describe("R7b fallo del sink: la batalla termina limpia, nunca a mitad de step()", () => {
+  function faulty(over: Partial<ReplaySink>) {
+    const base = new MemoryReplaySink();
+    const calls = { total: 0, afterFault: 0, faulted: false };
+    const wrap =
+      <K extends keyof ReplaySink>(k: K) =>
+      (x: any) => {
+        calls.total++;
+        if (calls.faulted) calls.afterFault++;
+        if (over[k]) {
+          try {
+            (over[k] as any)(x);
+          } catch (e) {
+            calls.faulted = true;
+            throw e;
+          }
+        }
+        (base[k] as any)(x);
+      };
+    const sink: ReplaySink = {
+      command: wrap("command"),
+      snapshot: wrap("snapshot"),
+      event: wrap("event"),
+      hash: wrap("hash"),
+      checkpoint: wrap("checkpoint"),
+    };
+    return { sink, base, calls };
+  }
+
+  it("R7b un ReplaySinkOverflowError a mitad de batalla no lanza, termina al final del tick con winner null y deja recordingFault", () => {
+    const ref = run("seed-r7b", 600);
+    const sink = new MemoryReplaySink({ limits: { maxSnapshots: 5 } });
+    const { b, result } = run("seed-r7b", 600, { replaySink: sink });
+    expect(b.isFinished()).toBe(true);
+    expect(result.winner).toBeNull();
+    expect(result.finalStateHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.ticks).toBeLessThan(ref.result.ticks);
+    expect(b.recordingFault).not.toBeNull();
+    expect(b.recordingFault!.stream).toBe("snapshots");
+    expect(b.recordingFault!.cause).toBeInstanceOf(ReplaySinkOverflowError);
+    expect(sink.snapshots.length).toBe(5);
+    // lo emitido antes del fallo coincide con la batalla sin fallo (el determinismo no se toca)
+    expect(sink.stateHashes).toEqual(ref.b.stateHashes.slice(0, sink.stateHashes.length));
+    // la batalla ya terminada no avanza ni emite más
+    const tick = b.tick;
+    b.step();
+    expect(b.tick).toBe(tick);
+  });
+
+  it("R7b cualquier excepción del sink (p. ej. disco) se captura igual y deja de llamarse al sink", () => {
+    const { sink, calls } = faulty({
+      command: () => {
+        throw Object.assign(new Error("ENOSPC simulado"), { code: "ENOSPC" });
+      },
+    });
+    const { b, result } = run("seed-r7b2", 600, { replaySink: sink });
+    expect(result.winner).toBeNull();
+    expect((b.recordingFault!.cause as any).code).toBe("ENOSPC");
+    expect(b.recordingFault!.stream).toBe("commands");
+    expect(calls.afterFault).toBe(0);
   });
 });
 

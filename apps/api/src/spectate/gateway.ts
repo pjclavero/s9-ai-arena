@@ -53,7 +53,15 @@ export function spectateProtocols(ticket: string): string[] {
 }
 
 /** Registro indexable con numeración absoluta: `WindowLog` del motor o un array. */
-export type LogView = { readonly length: number; readonly base?: number; get(i: number): any } | any[];
+export type LogView =
+  | {
+      readonly length: number;
+      readonly base?: number;
+      get(i: number): any;
+      /** Aviso síncrono de lo que sale de la ventana (WindowLog del motor). */
+      onEvict?(cb: (absIndex: number, item: any) => void): () => void;
+    }
+  | any[];
 const logBase = (l: LogView): number => (Array.isArray(l) ? 0 : (l.base ?? 0));
 const logAt = (l: LogView, i: number): any => (Array.isArray(l) ? l[i] : l.get(i));
 const snapshotsOf = (b: SpectatableBattle): LogView => b.frames ?? (b.snapshots as LogView);
@@ -130,6 +138,8 @@ interface Feed {
   /** Frames/eventos que el bombeo no llegó a leer antes de salir de la ventana. */
   droppedFrames: number;
   droppedEvents: number;
+  /** Bajas de las suscripciones `onEvict` de la ventana del motor. */
+  unsubscribe: (() => void)[];
   timer: ReturnType<typeof setInterval> | null;
   finished: boolean;
   /** Retardo anti-coaching del feed en ms (0 = directo sin retardo). */
@@ -289,18 +299,62 @@ export class SpectateGateway {
       sentEvents: eventsOf(battle).length,
       droppedFrames: 0,
       droppedEvents: 0,
+      unsubscribe: [],
       timer: null,
       finished: false,
       delayMs,
       audiences,
     };
+    // Un consumidor lento no puede alterar la numeración pública: lo que está a punto de
+    // salir de la ventana SIN haberse enviado se proyecta ahora (estado del proyector exacto,
+    // idéntico a una pasada completa) y se descarta del envío; se contabiliza y se registra.
+    const fl = snapshotsOf(battle);
+    if (!Array.isArray(fl) && fl.onEvict) {
+      feed.unsubscribe.push(fl.onEvict((idx, frame) => this.onEvicted(battleId, feed, "frames", idx, frame)));
+    }
+    const el = eventsOf(battle);
+    if (!Array.isArray(el) && el.onEvict) {
+      feed.unsubscribe.push(el.onEvict((idx, ev) => this.onEvicted(battleId, feed, "events", idx, ev)));
+    }
     feed.timer = setInterval(() => this.pump(battleId, feed), opts.pollIntervalMs ?? 33);
     this.feeds.set(battleId, feed);
+  }
+
+  /** Totales acumulados de frames y eventos que el directo no llegó a enviar (métrica/diagnóstico). */
+  dropStats(): { droppedFrames: number; droppedEvents: number } {
+    return { droppedFrames: this.totalDroppedFrames, droppedEvents: this.totalDroppedEvents };
+  }
+
+  private totalDroppedFrames = 0;
+  private totalDroppedEvents = 0;
+
+  private onEvicted(battleId: string, feed: Feed, kind: "frames" | "events", idx: number, item: any): void {
+    if (kind === "frames") {
+      if (idx < feed.sentSnapshots) return; // ya enviado
+      for (const af of feed.audiences.values()) {
+        af.lastSnapshot = af.projector.project(item).body; // sólo estado del proyector; no se emite
+      }
+      feed.sentSnapshots = idx + 1;
+      feed.droppedFrames++;
+      this.totalDroppedFrames++;
+    } else {
+      if (idx < feed.sentEvents) return;
+      for (const af of feed.audiences.values()) af.projector.projectEvent(item);
+      feed.sentEvents = idx + 1;
+      feed.droppedEvents++;
+      this.totalDroppedEvents++;
+    }
+    const n = kind === "frames" ? feed.droppedFrames : feed.droppedEvents;
+    // Log estructurado: el primero y luego cada 512 (sin inundar si el bucle sigue parado).
+    if (n === 1 || n % 512 === 0) {
+      console.warn(JSON.stringify({ level: "warn", msg: "spectate_dropped", battleId, kind, dropped: n }));
+    }
   }
 
   detachBattle(battleId: string): void {
     const feed = this.feeds.get(battleId);
     if (!feed) return;
+    for (const u of feed.unsubscribe) u();
     if (feed.timer) clearInterval(feed.timer);
     for (const af of feed.audiences.values())
       for (const c of af.clients) this.dropClient(af, c, 1001, "battle_detached");
@@ -504,6 +558,7 @@ export class SpectateGateway {
     // antiguo retenido y se contabiliza (nunca se bloquea ni crece la memoria del motor).
     if (feed.sentSnapshots < logBase(fl)) {
       feed.droppedFrames += logBase(fl) - feed.sentSnapshots;
+      this.totalDroppedFrames += logBase(fl) - feed.sentSnapshots;
       feed.sentSnapshots = logBase(fl);
     }
     while (feed.sentSnapshots < fl.length) {
@@ -530,6 +585,7 @@ export class SpectateGateway {
     const el = eventsOf(battle);
     if (feed.sentEvents < logBase(el)) {
       feed.droppedEvents += logBase(el) - feed.sentEvents;
+      this.totalDroppedEvents += logBase(el) - feed.sentEvents;
       feed.sentEvents = logBase(el);
     }
     while (feed.sentEvents < el.length) {

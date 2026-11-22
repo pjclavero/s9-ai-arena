@@ -3,8 +3,9 @@
  * (`frames`/`events` con índices absolutos) y se resincroniza si se queda por detrás.
  * Mutante G1/G2 en apps/arena-engine/scripts/replay-sink-mutants.mjs.
  */
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { SpectateGateway, type SpectatableBattle } from "./gateway.js";
+import { AudienceProjector, audienceKey } from "../../../../packages/projection/index.js";
 import { WindowLog } from "../../../arena-engine/src/sim/replay-sink.js";
 
 beforeAll(() => {
@@ -54,5 +55,53 @@ describe("G1 gateway con ventana de frames", () => {
     expect(feed.droppedEvents).toBe(5);
     expect(feed.sentSnapshots).toBe(20);
     expect(feed.sentEvents).toBe(8);
+  });
+});
+
+const pframe = (tick: number) => ({
+  tick,
+  vehicles: [],
+  projectiles: [{ id: `proj_${tick}`, position: { x: tick, y: 1 }, heading: 0 }],
+  score: {},
+  objectives: [],
+});
+
+describe("G3 saltar frames no altera la numeración pública ni el estado del proyector", () => {
+  it("G3 con la ventana desbordada, las ids públicas de todos los proyectiles coinciden con una pasada completa", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const gw = new SpectateGateway({ publicSpectateEnabled: true });
+      cleanups.push(() => gw.close());
+      const { battle, frames } = windowed(5, 5);
+      gw.attachBattle("b-num", battle, { pollIntervalMs: 200 });
+      const feed = (gw as any).feeds.get("b-num");
+      const TOTAL = 40;
+      // el bombeo no corre hasta pasados 200 ms: el motor da 40 vueltas a una ventana de 5
+      for (let t = 0; t < TOTAL; t++) frames.push(pframe(t));
+      await sleep(450);
+
+      const reference = new AudienceProjector({ battleId: "b-num", audience: audienceKey("public_live"), roster: [] });
+      for (let t = 0; t < TOTAL; t++) reference.project(pframe(t));
+
+      for (const view of ["public_live", "broadcast", "staff"] as const) {
+        const got = feed.audiences.get(view).projector;
+        const ref =
+          view === "public_live"
+            ? reference
+            : new AudienceProjector({ battleId: "b-num", audience: audienceKey(view), roster: [] });
+        if (view !== "public_live") for (let t = 0; t < TOTAL; t++) ref.project(pframe(t));
+        for (let t = 0; t < TOTAL; t++) {
+          expect(got.ids.toPublic(`proj_${t}`), `${view} proj_${t}`).toBe(ref.ids.toPublic(`proj_${t}`));
+        }
+      }
+      expect(feed.droppedFrames).toBe(TOTAL - 5);
+      expect(feed.sentSnapshots).toBe(TOTAL);
+      // métrica y log
+      expect(gw.dropStats().droppedFrames).toBe(TOTAL - 5);
+      expect(warn).toHaveBeenCalled();
+      expect(String(warn.mock.calls[0][0])).toContain("spectate_dropped");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

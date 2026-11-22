@@ -10,6 +10,22 @@
  *    sustituye la lectura por índice de `battle.snapshots` del directo (gateway).
  *
  * Nada de esto entra en el hash de estado: el determinismo no depende del sink.
+ *
+ * CONTRATO DE FALLO DEL SINK (lo aplica `Battle`, no el sink):
+ *  - Un método del sink PUEDE lanzar (tope de memoria `ReplaySinkOverflowError`, disco lleno
+ *    o EIO en un adaptador de PR-3, etc.). `Battle` captura la excepción dentro de `step()`,
+ *    deja de llamar al sink, guarda `battle.recordingFault = { cause, stream, tick }` y
+ *    termina la batalla de forma limpia AL FINAL de ese tick (nunca a mitad de un paso):
+ *    `winner: null`, hash final válido, sin lanzar. El motivo se identifica por
+ *    `battle.recordingFault` (no se amplía `BattleResult.endReason`: es contrato de
+ *    battle-result/v1 y lo decide PR-5, D-3).
+ *  - PR-5 mapea `recordingFault` a `recording_limit` (clase A: tope de la batalla) o a
+ *    `InfrastructureFailure("storage_unavailable")` (clase B: entorno) según `cause`.
+ *  - Si el fallo ocurre dentro de `finish()` (p. ej. el snapshot final), el resultado es el
+ *    normal pero `recordingFault` queda fijado: el replay está incompleto y quien lo cierra
+ *    debe tratarlo como tal.
+ *  - Los frames y eventos que se entregan al sink los comparte la ventana del directo: el sink
+ *    NO debe mutarlos.
  */
 
 export interface ReplayCommandRecord {
@@ -63,14 +79,39 @@ export interface MemoryReplaySinkLimits {
   maxHashes: number;
   maxCheckpoints: number;
 }
-/** Holgados para una batalla de 45 000 ticks x 8 vehículos, pero finitos. */
-export const DEFAULT_MEMORY_LIMITS: MemoryReplaySinkLimits = {
-  maxCommands: 2_000_000,
-  maxSnapshots: 200_000,
-  maxEvents: 200_000,
-  maxHashes: 200_000,
-  maxCheckpoints: 50_000,
-};
+/**
+ * Topes derivados de los parámetros REALES de la batalla (con 10 % de margen y unos
+ * registros de holgura para el snapshot y el checkpoint finales): lo que una batalla que
+ * respeta su límite de ticks puede producir como máximo. Una batalla de 45 000 ticks x 8
+ * vehículos con snapshot cada 3, hash cada 30 y checkpoint cada 300 da ≈ 396 000 comandos,
+ * 16 500 snapshots, 1 650 hashes y 165 checkpoints (no los 2 M / 200 k de antes).
+ */
+export function memoryLimitsFor(p: {
+  maxTicks: number;
+  vehicles: number;
+  snapshotEvery: number;
+  hashEvery: number;
+  checkpointEvery: number;
+}): MemoryReplaySinkLimits {
+  const ticks = Math.max(1, Math.ceil(p.maxTicks));
+  const per = (every: number) => (every > 0 ? Math.ceil((ticks / every) * 1.1) + 4 : 4);
+  return {
+    maxCommands: Math.ceil(ticks * Math.max(1, p.vehicles) * 1.1) + 16,
+    maxSnapshots: per(p.snapshotEvery),
+    // eventos públicos: bajas, minas, prórroga…; <= 1 por tick de media + holgura
+    maxEvents: ticks + 1024,
+    maxHashes: per(p.hashEvery),
+    maxCheckpoints: per(p.checkpointEvery),
+  };
+}
+/** Sin parámetros de batalla (uso suelto del sink): los de una batalla de 45 000 ticks x 8 vehículos. */
+export const DEFAULT_MEMORY_LIMITS: MemoryReplaySinkLimits = memoryLimitsFor({
+  maxTicks: 45_000,
+  vehicles: 8,
+  snapshotEvery: 3,
+  hashEvery: 30,
+  checkpointEvery: 300,
+});
 
 export class MemoryReplaySink implements ReplaySink {
   readonly commands: ReplayCommandRecord[] = [];
@@ -136,13 +177,36 @@ export class WindowLog<T> {
     this.buf = new Array(capacity);
   }
 
+  private evictCbs: ((absIndex: number, item: T) => void)[] = [];
+
+  /**
+   * Avisa SÍNCRONAMENTE de cada elemento que sale de la ventana (antes de perderse). Permite
+   * a un consumidor lento procesar lo que va a perder sin que el motor retenga memoria.
+   * Un fallo del callback no afecta al motor. Devuelve la función para darse de baja.
+   */
+  onEvict(cb: (absIndex: number, item: T) => void): () => void {
+    this.evictCbs.push(cb);
+    return () => {
+      this.evictCbs = this.evictCbs.filter((c) => c !== cb);
+    };
+  }
+
   push(x: T): void {
     if (this.count < this.capacity) {
       this.buf[(this.head + this.count) % this.capacity] = x;
       this.count++;
     } else {
+      const old = this.buf[this.head] as T;
+      const idx = this.pushed - this.count;
       this.buf[this.head] = x;
       this.head = (this.head + 1) % this.capacity;
+      for (const cb of this.evictCbs) {
+        try {
+          cb(idx, old);
+        } catch {
+          /* un consumidor roto no puede romper el motor */
+        }
+      }
     }
     this.pushed++;
   }
