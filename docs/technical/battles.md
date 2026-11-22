@@ -4,7 +4,7 @@
 
 Documento central del ciclo de batalla de S9 AI Arena: desde que alguien la pide hasta que se ve su replay. Cubre cada paso con su servicio, los datos que entran y salen, las tablas y estados reales de PostgreSQL y los errores posibles.
 
-Estado actual, en una línea: **hay UN solo camino de ejecución y ejecuta el código real de cada bot** (cierre funcional 2026-10, DEV-B). La API agenda; el `tournament-worker` reserva la batalla de forma atómica, lanza un contenedor por bot con su código sobre el runtime fijado, aloja el motor y el `ProtocolServer` y cierra la batalla **exactamente una vez**. El stub `HunterBot` ya no es seleccionable en producción. Verificado de punta a punta en un entorno aislado con Docker rootless ([Verificación](#verificación)). En producción **no está activado**: falta integrar el proveedor de artefactos de DEV-A ([TD-001](../roadmap/technical-debt.md#td-001)) y aplicar los cambios de compose; mientras tanto el worker **no reclama** `run_battle` (las batallas quedan `scheduled`) en vez de jugarlas con un stub.
+Estado actual, en una línea: **hay UN solo camino de ejecución y ejecuta el código real de cada bot** (cierre funcional 2026-10, DEV-B). La API agenda; el `tournament-worker` reserva la batalla de forma atómica, lanza un contenedor por bot con su código sobre el runtime fijado, aloja el motor y el `ProtocolServer` y cierra la batalla **exactamente una vez**. El stub `HunterBot` ya no es seleccionable en producción. Verificado de punta a punta en un entorno aislado con Docker rootless ([Verificación](#verificación)). Con el proxy de Docker instalado y `DOCKER_PROXY_URL` fijado, el worker reclama y juega `run_battle` con contenedores (CI: `functional-e2e / docker-e2e` y `container-proxy-e2e`; en la instalación del 19-nov, una batalla con replay válido, según los informes de migración). Sin `DOCKER_PROXY_URL` el worker **no reclama** `run_battle`: las batallas quedan `scheduled` en vez de jugarse con un stub.
 
 ## Índice
 
@@ -139,8 +139,10 @@ Puede leer la batalla:
 1. el staff;
 2. el dueño de un bot participante;
 3. un miembro del equipo de un bot participante no privado;
-4. cualquiera, con `S9_PUBLIC_REPLAYS_ENABLED`, si la batalla está `finished` y todos sus bots son públicos;
-5. cualquiera, con `S9_PUBLIC_SPECTATE_ENABLED`, si está `running` y todos sus bots son públicos.
+4. cualquiera, con el acceso público a replays activado, si la batalla está `finished` y todos sus bots son públicos;
+5. cualquiera, con el acceso público al espectador activado, si está `running` y todos sus bots son públicos.
+
+Los dos interruptores públicos los decide la fila `app_runtime_settings` (migración 021), que se cambia desde Administración o con `PATCH /admin/settings/public-access`. Las variables de entorno `S9_PUBLIC_REPLAYS_ENABLED` y `S9_PUBLIC_SPECTATE_ENABLED` sólo siembran la fila la primera vez que arranca la API sobre una base sin ella; después se ignoran. Si la base no responde, ambos valen «cerrado» (`apps/api/src/runtime-settings.ts`).
 
 Fuera de eso, `404 Batalla no encontrada`, idéntico al de un id inexistente. El listado filtra con la misma condición. Antes un anónimo listaba y leía batallas de bots privados (botId, versión, CPU, estadísticas y auditoría).
 

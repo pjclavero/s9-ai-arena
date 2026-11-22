@@ -174,7 +174,7 @@ Navegador: `mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479b…` (Chro
 
 ## Verificación
 
-Verificado contra la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
+Verificado contra la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`, octubre de 2026). Desde entonces `main` añadió pantallas (administración de streaming, ajustes de acceso público, inscripción de equipos en torneos, «Mi cuenta» en el PR #315 abierto) que este documento no recorre: manda `apps/web/src`.
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
