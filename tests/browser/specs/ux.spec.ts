@@ -84,7 +84,7 @@ test.describe("@fase1 UX y navegación", () => {
     expect(problems).toEqual([]);
   });
 
-  test("usuario semilla organizer entra y ve el panel", async ({ page }) => {
+  test("usuario semilla (moderator, staff de lectura) entra y ve el panel", async ({ page }) => {
     const email = process.env.S9_E2E_DEV_EMAIL ?? "";
     const password = process.env.S9_E2E_DEV_PASSWORD ?? "";
     expect(email, "faltan credenciales semilla del entorno efímero").not.toBe("");

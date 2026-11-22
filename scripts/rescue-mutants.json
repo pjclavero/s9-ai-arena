@@ -22,8 +22,8 @@
       "pr": 224,
       "test": "apps/api/src/eq6-cursor-mask-break.test.ts",
       "file": "apps/api/src/routes/bots.ts",
-      "from": "    const ownerId = queryUuid(req, \"ownerId\");\n    if (ownerId !== undefined) q = q.where({ owner_id: ownerId });\n",
-      "to": "    if (typeof req.query.ownerId === \"string\") q = q.where({ owner_id: req.query.ownerId });\n",
+      "from": "    const ownerId = queryUuid(req, \"ownerId\");\n",
+      "to": "    const ownerId = typeof req.query.ownerId === \"string\" ? req.query.ownerId : undefined;\n",
       "killedBy": [
         "EQ6 · #221 R2 · runCursorQuery no culpa al cursor de un error de filtro ownerId no-UUID: con y sin cursor válido, MISMA respuesta 400 (y nunca «cursor inválido»)"
       ],

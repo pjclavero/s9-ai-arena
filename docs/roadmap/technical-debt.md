@@ -37,7 +37,7 @@ Estados posibles:
 | [TD-003](#td-003) | Costura `rulesetId` web ↔ BD | P0 | Batallas | CERRADA |
 | [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | CERRADA (PR #158) |
 | [TD-005](#td-005) | Autorización de participantes | P0 | Seguridad | CERRADA (PR #152) |
-| [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | MEJORADA (producción en RC5.5; sin re-medir aquí) |
+| [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | MEJORADA (producción reinstalada el 19-nov-2026 con identidad de build; sin re-medir aquí) |
 | [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA |
 | [TD-008](#td-008) | Topología en el repo público | P0 | Seguridad | ABIERTA |
 | [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | CERRADA en `main` (PR #152); incluida en producción |
@@ -46,7 +46,7 @@ Estados posibles:
 | [TD-012](#td-012) | Autenticación incompleta | P1 | Seguridad | ABIERTA |
 | [TD-013](#td-013) | Carreras de doble envío e integridad | P1 | API | PARCIAL |
 | [TD-014](#td-014) | 301 a http en `/replays` | P1 | Gateway / web | CERRADA |
-| [TD-015](#td-015) | Torneos incompletos | P1 | Torneos | PARCIAL |
+| [TD-015](#td-015) | Torneos incompletos | P1 | Torneos | PARCIAL (la batalla `failed` ya no bloquea el cierre, #299) |
 | [TD-016](#td-016) | Loadout con efecto parcial | P1 | Motor / equipamiento | PARCIAL |
 | [TD-017](#td-017) | map-service sin uso | P2 | Arquitectura | PARCIAL |
 | [TD-018](#td-018) | Pruebas que no detectan regresiones | P3 | Pruebas | MEJORADA |
@@ -95,11 +95,11 @@ Estados posibles:
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en `main` (PR #167); migración de producción a cargo del operador |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
 | [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
-| [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
+| [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | MEJORADA (la clave ya no va en el argv; faltan retención, alerta y prueba real) |
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
-| [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA |
+| [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA (corrige el PR #316) |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
-| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (rechazado con motivo) |
+| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (fuera de V1: CTF y zona se aceptan con reglas clásicas y no se pueden jugar) |
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 | [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |
@@ -248,7 +248,7 @@ Estados posibles:
 <a id="td-006"></a>
 ## TD-006 — Runtime con versiones mezcladas y sin identidad de build
 
-- **Estado:** MEJORADA (producción en RC5.5; sin re-medir aquí)
+- **Estado:** MEJORADA (producción reinstalada el 19-nov-2026 con identidad de build; sin re-medir aquí)
 - **Auditoría 2026-11-02 (main `e3bf2fa`):** main tiene identidad de build (`/version` en `apps/api/src/server.ts:29`, ADR-016). La mezcla de commits que midió la auditoría de 2026-10-15 ya no describe producción: según el registro del operador, producción corre RC5.5 (`a1a6c4e`) tras varios despliegues completos. Este repositorio no puede comprobar el 12/12 de `/version` en producción; el cierre exige esa medición (`runtime-drift-scan`) y queda a cargo del operador.
 - **Prioridad:** P0 (auditoría P0-6)
 - **Área:** Runtime / despliegue
@@ -482,6 +482,7 @@ Estados posibles:
 ## TD-015 — Torneos: sin pool de mapas, cierre bloqueado por failed y guardas no cableadas
 
 - **Estado:** PARCIAL
+- **Actualización 2026-11-20 (main `80f4952`):** la batalla `failed` ya NO bloquea el cierre: la política definitiva (#299/#301, `apps/tournament-worker/src/results.ts`, `settleMatch`) cierra el match con todos los juegos terminales y el torneo llega siempre a `finished` (test `tournament-lifecycle-failed.test.ts`). El «Problema» y la «Evidencia» de abajo describen la medición original. Sigue abierto: `double_elimination` y `league` sin prueba de ciclo completo; el resto del registro de la política está en [TD-070](#td-070).
 - **Auditoría 2026-11-02 (main `e3bf2fa`):** Cambios desde la medición: `artifactGuard` ya está cableado en el worker (`apps/tournament-worker/src/main.ts:75,90,129`); el pool de mapas funciona en el scheduler (`scheduler.ts:108-134,168`) y la API (`routes/tournaments.ts:155,191`). Sigue pendiente: el cierre de match/torneo exige batallas `finished` (`results.ts:378,408`, una `failed` bloquea) y la web no ofrece selector de `mapPool` (`git grep mapPool -- apps/web/src` vacío).
 - **Prioridad:** P1 (auditoría P1-7)
 - **Área:** Torneos (`tournament-worker`, `web`)
@@ -1346,7 +1347,8 @@ Estados posibles:
 <a id="td-066"></a>
 ## TD-066 — Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar
 
-- **Estado:** ABIERTA
+- **Estado:** MEJORADA
+- **Actualización 2026-11-20 (main `80f4952`):** la clave RTMPS YA NO va en el argv: FFmpeg escribe FLV por el descriptor 3 y el relé RTMP del propio streamer la publica (`apps/streamer/src/ffmpeg.ts`, EQ5b, [ADR-023](../adr/ADR-023-streaming-rele-rtmp-y-credenciales-selladas.md)). La «Evidencia» y el «Problema» de abajo describen la medición original. Siguen abiertas la retención de MP4, la alerta sobre `streamer_up` y la prueba real contra YouTube.
 - **Prioridad:** P3
 - **Área:** Streaming / operación (`apps/streamer`)
 - **Detectado:** 2026-11-02, auditoría EQ5 y revisión de integración
@@ -1374,15 +1376,14 @@ Estados posibles:
 <a id="td-068"></a>
 ## TD-068 — `listBots` puede devolver páginas más cortas que `limit`
 
-- **Estado:** ABIERTA
+- **Estado:** ABIERTA hasta el merge del PR #316 (rama `fix/v1-bots-pagination`, V1, D-OP-6), que la corrige.
 - **Prioridad:** P3
-- **Área:** API (`apps/api/src/routes/bots.ts`)
+- **Área:** API (`apps/api/src/routes/bots.ts`, `apps/api/src/services/bots.ts`)
 - **Detectado:** 2026-11-02, revisión de integración
-- **Evidencia:** `bots.ts:205-223`: la consulta trae como máximo 200 filas (`.limit(200)`) y la visibilidad se filtra después en memoria con `canSeeBot`; la página se corta con `visible.slice(0, limit)`. Si entre las 200 filas hay pocas visibles para el solicitante, la página sale con menos de `limit` elementos aunque haya más bots visibles detrás.
-- **Problema:** el cliente no puede deducir el final de la lista por el tamaño de la página.
-- **Impacto:** bajo; afecta a listados con muchos bots privados ajenos.
-- **Solución prevista:** aplicar la visibilidad en SQL o seguir leyendo hasta completar la página.
-- **Condición de cierre:** un test con más de 200 bots ajenos privados intercalados devuelve páginas completas.
+- **Problema original:** la consulta traía 200 filas y la visibilidad se filtraba después en memoria con `canSeeBot`; con muchos bots privados ajenos la página salía corta o vacía, y sin `nextCursor`.
+- **Solución:** `listBots` filtra la visibilidad en SQL con `whereBotVisible` (`services/bots.ts`), que replica `canSeeBot` cláusula por cláusula (público; propios y staff = rango moderador o superior; `team` con `team_id` y miembro). El cursor es el del último elemento visible; coste O(limit) por petición; sin cifrado de cursores.
+- **Coherencia entre reglas:** `whereBotVisible` sigue a la ficha del bot (`canSeeBot`, staff = moderador). `whereBotIdentifiable` (`battle-access.ts`) sigue a los replays (`isReplayStaff`; moderador/admin tras #311). Pueden diferir por diseño; el test diferencial `v1b-bots-pagination` G5 compara el listado con `canSeeBot` para cada rol.
+- **Condición de cierre:** test con 2300 bots (casi todos privados ajenos) que devuelve páginas completas y el conjunto visible exacto: `apps/api/src/v1b-bots-pagination.test.ts`.
 
 <a id="td-069"></a>
 ## TD-069 — El comparador del desempate por enfrentamientos directos no es transitivo
@@ -1400,7 +1401,8 @@ Estados posibles:
 <a id="td-070"></a>
 ## TD-070 — CTF en torneos: bandos A/B frente a bases y banderas red/blue
 
-- **Estado:** ABIERTA (rechazado con motivo; no hay resultado erróneo)
+- **Estado:** ABIERTA (fuera de V1, decisión del operador D-OP-2)
+- **Actualización 2026-11-20 (main `80f4952`):** el rechazo sólo existe con `rules.preset`. Con reglas clásicas (lo que envía la web) `POST /tournaments` acepta CTF y control de zona, se inscriben bots y se cierran inscripciones; la única batalla falla al arrancar (`engine_start_failure`), el torneo termina sin campeón y consume reintentos de cola. Caracterización: `apps/tournament-worker/src/v1-tournament-ctf-zone.e2e.test.ts` (PR #317, abierto). Propuesta pendiente de decisión: rechazar ambos modos en `createTournament` (cambio de contrato) y quitarlos del selector web.
 - **Prioridad:** P3
 - **Área:** Torneos / reglas
 - **Detectado:** 2026-11-02, EQ2 (hallazgo preexistente)

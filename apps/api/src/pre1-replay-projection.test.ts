@@ -251,17 +251,19 @@ afterAll(async () => {
 // ------------------------------------------------------------- política esperada
 /** Quién LEE (TD-004 + VISIBILIDAD, sin cambios en PRE-1). */
 const READ: Record<"off" | "on", Record<BattleName, Actor[]>> = {
+  // #306 · el organizer lee SÓLO las batallas de los torneos que creó (aquí, `bcast`); en las
+  // sueltas con bots ajenos es un usuario más. moderator/admin leen todo.
   off: {
-    solo: ["A", "organizer", "moderator", "admin"],
-    pub: ["A", "C", "organizer", "moderator", "admin"],
+    solo: ["A", "moderator", "admin"],
+    pub: ["A", "C", "moderator", "admin"],
     bcast: ["A", "C", "organizer", "moderator", "admin"],
-    team: ["A", "C", "T", "organizer", "moderator", "admin"],
+    team: ["A", "C", "T", "moderator", "admin"],
   },
   on: {
-    solo: ["A", "organizer", "moderator", "admin"], // bot privado, sin torneo ⇒ no público
+    solo: ["A", "moderator", "admin"], // bot privado, sin torneo ⇒ no público
     pub: ACTORS,
     bcast: ACTORS, // torneo retransmitido: se MUESTRA (proyección), no se entrega el crudo
-    team: ["A", "C", "T", "organizer", "moderator", "admin"],
+    team: ["A", "C", "T", "moderator", "admin"],
   },
 };
 /** Quién recibe el CRUDO (PRE-1): moderator/admin y el dueño de TODOS los participantes. Igual con flag on/off. */

@@ -8,8 +8,11 @@
  * no queda otro camino desde fuera.
  *
  * Quién puede leer el replay de la batalla B (cualquiera de estas):
- *  1. STAFF: rol >= organizer (organizer, moderator, admin). Supervisan
- *     competiciones y juego limpio; necesitan ver cualquier partida.
+ *  1. STAFF: rol >= moderator (moderator, admin). Supervisan juego limpio y
+ *     ven cualquier partida.
+ *  1b. ORGANIZADOR (#306): rol >= organizer SÓLO en las batallas de los torneos que
+ *     ÉL creó (`tournaments.created_by`). El rol organizer es global, pero lo que
+ *     concede sobre datos ajenos no lo es: ni batallas de práctica, ni torneos de otros.
  *  2. PARTICIPANTE: dueño (`bots.owner_id`) de algún bot que participó en B.
  *  3. EQUIPO: miembro (`team_members`) del equipo (`bots.team_id`) de algún bot
  *     participante cuya visibilidad NO sea `private` (`team` o `public`). Mismo
@@ -47,8 +50,31 @@ type Knexish = Db;
 export const REPLAY_NOT_FOUND_MESSAGE = "Replay no encontrado";
 export const replayNotFound = () => notFound(REPLAY_NOT_FOUND_MESSAGE);
 
+/**
+ * STAFF de lectura: moderator o admin. #306: el organizer YA NO lo es (antes
+ * `>= organizer`); su alcance es el de `organizerManages*`, acotado a sus torneos.
+ */
 export function isReplayStaff(auth: Auth): boolean {
-  return (auth?.rank ?? 0) >= ROLE_RANK.organizer;
+  return (auth?.rank ?? 0) >= ROLE_RANK.moderator;
+}
+
+/** Rol organizer o superior CON sesión: sólo entonces tiene sentido «mis torneos». */
+function organizerUserId(auth: Auth): string | null {
+  return auth?.userId && (auth.rank ?? 0) >= ROLE_RANK.organizer ? auth.userId : null;
+}
+
+/**
+ * #306 · El solicitante es organizador (rol >= organizer) Y creó este torneo. Para los
+ * moderator/admin la respuesta es irrelevante (ya son staff). Fail-closed.
+ */
+export async function organizerCreatedTournament(db: Knexish, auth: Auth, tournamentId: unknown): Promise<boolean> {
+  const uid = organizerUserId(auth);
+  if (!uid || typeof tournamentId !== "string" || !tournamentId) return false;
+  const row = await db("tournaments")
+    .where({ id: tournamentId, created_by: uid })
+    .first("id")
+    .catch(() => null);
+  return !!row;
 }
 
 /**
@@ -61,27 +87,38 @@ export function whereReplayReadable(db: Knexish, q: any, auth: Auth, publicEnabl
   const userId = auth?.userId ?? null;
   return q.where((w: any) => {
     let any = false;
-    if (userId) {
+    const orgId = organizerUserId(auth);
+    if (orgId) {
+      // #306 · el organizador lee las batallas de SUS torneos (creados por él), en cualquier estado.
       any = true;
       w.whereExists(
-        db("participants")
-          .join("bots", "bots.id", "participants.bot_id")
-          .whereRaw("participants.battle_id = battles.id")
-          .where((p: any) =>
-            p
-              .where("bots.owner_id", userId)
-              .orWhere((t: any) =>
-                t
-                  .whereNot("bots.visibility", "private")
-                  .whereNotNull("bots.team_id")
-                  .whereExists(
-                    db("team_members")
-                      .whereRaw("team_members.team_id = bots.team_id")
-                      .where("team_members.user_id", userId),
-                  ),
-              ),
-          ),
+        db("tournaments").whereRaw("tournaments.id = battles.tournament_id").where("tournaments.created_by", orgId),
       );
+    }
+    if (userId) {
+      const own = (x: any) =>
+        x.whereExists(
+          db("participants")
+            .join("bots", "bots.id", "participants.bot_id")
+            .whereRaw("participants.battle_id = battles.id")
+            .where((p: any) =>
+              p
+                .where("bots.owner_id", userId)
+                .orWhere((t: any) =>
+                  t
+                    .whereNot("bots.visibility", "private")
+                    .whereNotNull("bots.team_id")
+                    .whereExists(
+                      db("team_members")
+                        .whereRaw("team_members.team_id = bots.team_id")
+                        .where("team_members.user_id", userId),
+                    ),
+                ),
+            ),
+        );
+      if (any) w.orWhere(own);
+      else w.where(own);
+      any = true;
     }
     if (publicEnabled) {
       const pub = (x: any) => wherePublicReplay(db, x);

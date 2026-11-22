@@ -1,17 +1,20 @@
 /** T7.2 · Contraseñas con Argon2id (E7.M fija el algoritmo). */
 import argon2 from "argon2";
 
+/** Política de contraseñas (registro, reset y cambio): longitud mínima. */
+export const MIN_PASSWORD_LENGTH = 12;
+
 export function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, { type: argon2.argon2id });
 }
 
-/** Política de contraseñas ÚNICA: registro, recuperación y alta del primer administrador. */
-export const PASSWORD_MIN_LENGTH = 12;
-
-/** Devuelve el motivo del rechazo, o `null` si la contraseña cumple la política. */
-export function passwordPolicyViolation(password: unknown): string | null {
-  if (typeof password !== "string" || password.length < PASSWORD_MIN_LENGTH) {
-    return `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`;
+/**
+ * Política de contraseñas ÚNICA (registro, recuperación, cambio y alta del primer administrador por CLI).
+ * Devuelve el motivo del rechazo, o `null` si la contraseña cumple. `sujeto` sólo cambia el texto.
+ */
+export function passwordPolicyViolation(password: unknown, sujeto = "La contraseña"): string | null {
+  if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
+    return `${sujeto} debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`;
   }
   return null;
 }
