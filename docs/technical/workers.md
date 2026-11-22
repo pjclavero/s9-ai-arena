@@ -66,7 +66,7 @@ Una batalla `failed` sigue impidiendo que el match o el torneo se cierren ([TD-0
 
 ### Concurrencia
 
-Lanza `computeConcurrency()` bucles, como mínimo 1: `min(cpus − 1, floor(RAM_MB / 2048))`. Cada
+Lanza tantos bucles como `TOURNAMENT_WORKER_CONCURRENCY` (entero de 1 a 16; cualquier otro valor impide arrancar el worker, `concurrencyFromEnv` en `worker.ts`) o, si está vacía, `computeConcurrency()` bucles, como mínimo 1: `min(cpus − 1, floor(RAM_MB / 2048))`. Cada
 bucle procesa un trabajo a la vez. Sin trabajo, espera `pollMs` (1 s) en `BLPOP` o en `sleep`.
 
 ### Clasificación de fallos de infraestructura de la batalla

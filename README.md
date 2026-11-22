@@ -5,13 +5,20 @@ equipa con módulos (chasis, armas, sensores, radio…) y lo enfrenta a otros en
 simulación 2D determinista. Las batallas se ven en directo o se repiten después como replay, y los
 torneos generan clasificaciones Elo.
 
-> **Estado actual (2026-10-18).** En **producción** (sin cambios desde la auditoría sobre
-> `27f70bb`) **no es funcional de extremo a extremo**: ningún bot de usuario llega a `published` y
-> las batallas las juega un bot de relleno. El **cierre funcional** (rama
-> `integration/functional-closure`, aún sin fusionar ni desplegar) resuelve ese recorrido y lo
-> demuestra en un entorno aislado con navegador real: bot propio → build en sandbox → batalla con
-> su código → resultado, estadísticas y replay.
-> Detalle: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
+> **Versión V1 0.5.0** (motor 0.5.0, contrato de API 0.25.0, migraciones 001–022). La lista de lo
+> que funciona está más abajo y cada línea dice con qué se comprobó. El estado detallado, separado en
+> implementado, integrado, probado, validado en laboratorio, desplegado y verificado en producción, está en
+> [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
+
+## ¿Qué quieres hacer?
+
+| Quiero… | Empieza aquí |
+|---|---|
+| **Jugar**: crear un bot, equiparlo, batallar y competir | [Guía del jugador](docs/user/index.md) y [primeros pasos](docs/user/getting-started.md) |
+| **Instalar** mi propia arena | [Instalación](docs/operations/installation.md), después [puesta en marcha](docs/operations/first-run.md) |
+| **Entender cómo está hecha** | [Visión general](docs/overview/index.md) y [documentación técnica](docs/technical/index.md) |
+| **Contribuir** | [Desarrollo](docs/development/index.md) y [AGENTS.md](AGENTS.md) |
+| Saber **qué entra en V1, qué no y qué falla** | [Roadmap de V1](docs/roadmap/v1-roadmap.md) |
 
 ## Qué es
 
@@ -30,19 +37,31 @@ plataforma ni a otros jugadores.
 
 Más contexto: [docs/overview/project.md](docs/overview/project.md).
 
-## Estado actual
+## Qué funciona en V1 0.5.0
 
-| Área | Estado |
-|---|---|
-| Motor de simulación (física, armas, sensores, modos, determinismo, replay) | **Funciona** |
-| Cuentas, login, roles | **Funciona**, con huecos (sin cambio de contraseña ni recuperación por correo) |
-| Bots: crear, versionar código, configurar loadout | **Funciona** |
-| Build y publicación de bots | **Bloqueado**: el sandbox de validación no está conectado ([TD-001](docs/roadmap/technical-debt.md#td-001)) |
-| Batallas | **Parcial**: la web falla al crearlas ([TD-003](docs/roadmap/technical-debt.md#td-003)) y se ejecutan con un bot de relleno ([TD-002](docs/roadmap/technical-debt.md#td-002)) |
-| Torneos y ranking Elo | **Parcial**: funcionan con el bot de relleno; la clasificación pública sale vacía ([TD-029](docs/roadmap/technical-debt.md#td-029)) |
-| Mapas | **Parcial**: importar, generar y publicar sí; el editor visual no guarda ([TD-010](docs/roadmap/technical-debt.md#td-010)) |
-| Visor en directo y reproductor de replays | **Roto en navegador** ([TD-009](docs/roadmap/technical-debt.md#td-009)) |
-| Operación (backup, restore, despliegue) | **Parcial**: el backup funciona; faltan alertas, snapshots y alineación de versiones ([TD-006](docs/roadmap/technical-debt.md#td-006), [TD-007](docs/roadmap/technical-debt.md#td-007)) |
+«CI» es la CI obligatoria de `main` (navegador real y contenedores reales en `functional-e2e`).
+«Laboratorio» es una prueba de ciclo completo con API, base de datos y motor reales, pero con bots
+simulados en proceso. Cada fila dice cuál de las dos pruebas tiene y si la de laboratorio está ya integrada en `main`.
+
+| Área | Estado | Cómo se sabe |
+|---|---|---|
+| Recorrido del jugador: cuenta, bot con código propio, build en sandbox, publicación, batalla con su código firmado, visor, estadísticas y replay | **Funciona** | CI (`golden-path.spec.ts`) |
+| Bots: versiones inmutables, clonado, diff; equipamiento con presupuesto, masa y energía; elegibilidad de versiones | **Funciona** | CI y tests de la API |
+| Batallas 1v1 y por equipos hasta 4 contra 4, con reglas oficiales y copia inmutable de las reglas | **Funciona** | CI (`team-battle-4v4.spec.ts`) |
+| Motor determinista (0.5.0) y replays verificables | **Funciona** | CI (`regression-battles`, replays de oro) |
+| Torneos todos contra todos, eliminación simple y suizo, y Team Deathmatch por equipos 2v2, 3v3 y 4v4 | **Existe en `main`**. CI: pruebas de ciclo de eliminación simple, de fallo y de inscripción de equipos y 4v4 con contenedores. **Validado en laboratorio (pendiente de integrar, PR #317)**: ciclo completo con clasificación, Elo y replays de los cuatro formatos | CI y laboratorio |
+| Mapas: importar, generar, editor visual, publicar | **Funciona** | CI |
+| Ranking Elo por modo y temporada | **Funciona** | tests de la API y laboratorio |
+| Copias de seguridad (restic), restauración y export/import portable de bots y equipos | **Funciona** | CI (`e2e-backup-sftp`, restauración) |
+| Espectador y replays públicos, emisión en directo (streamer) | **Existe, apagado por defecto**: lo decide un ajuste de la base de datos desde Administración. La emisión a YouTube real no está probada | tests; sin prueba en producción |
+
+Lo que **no** es V1, con su motivo y su versión objetivo, está en el
+[roadmap de V1](docs/roadmap/v1-roadmap.md). En particular:
+
+- **Captura de bandera y control de zona en torneos: fuera de V1 y no funcionales.** Las batallas
+  sueltas de esos modos las soporta el motor (pruebas de motor y de la API); los torneos que los usan se crean y no pueden jugarse.
+- Doble eliminación y liga existen en el calendario, pero no tienen prueba de ciclo completo.
+- No hay recuperación de contraseña por correo.
 
 Fuente única del estado: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
 Problemas visibles y su solución temporal: [docs/roadmap/known-issues.md](docs/roadmap/known-issues.md).
@@ -50,13 +69,13 @@ Problemas visibles y su solución temporal: [docs/roadmap/known-issues.md](docs/
 ## Funcionalidades principales
 
 - **Bots** con código propio (Python o JavaScript, SDK incluido) y versiones inmutables.
-- **Equipamiento** modular: 5 chasis y 31 módulos de catálogo, con presupuesto, masa y energía.
+- **Equipamiento** modular: un catálogo de 31 piezas (5 chasis y el resto módulos), con presupuesto, masa y energía.
 - **7 modos de juego** en el motor (deathmatch, por equipos, captura de bandera, control de zona y
   otros), de los que la plataforma expone 4 — ver [modos de juego](docs/user/game-modes.md).
 - **Mapas** validados, versionados y publicables, con generador procedural e importación Tiled.
-- **Torneos** con calendario, cuadro y rating Elo: liga, todos contra todos, eliminación simple y
-  doble, y suizo. Existe un sexto formato por equipos que todavía no se puede usar
-  ([TD-011](docs/roadmap/technical-debt.md#td-011)).
+- **Torneos** con calendario, cuadro y rating Elo: todos contra todos, eliminación simple, suizo y
+  torneos por equipos de Team Deathmatch (2v2, 3v3 y 4v4). Liga y doble eliminación se aceptan, pero
+  no están validados de punta a punta (ver el [roadmap](docs/roadmap/v1-roadmap.md)).
 - **Replays** comprimidos y verificables bit a bit.
 - **Aislamiento** del código de usuario en contenedores de sólo lectura, conectados únicamente a la
   red interna de la arena (sin DNS ni Internet), con límites de CPU, memoria y procesos, y firma
@@ -70,9 +89,8 @@ Navegador
    ▼
 gateway (nginx) ── único servicio con puertos publicados
    ├── /          → web (SPA React + Phaser)
-   ├── /api/v1/   → api (Express) ──────────────┐
-   ├── /ws/       → tournament-worker (WebSocket de espectador)
-   └── /replays/  → replay-service (ficheros en disco)
+   ├── /api/v1/   → api (Express; también sirve los replays, tras autorizar) ─┐
+   └── /ws/       → tournament-worker (WebSocket de espectador)
                                                  │
                          PostgreSQL ◄────────────┘  negocio + cola de trabajos (tabla jobs)
                              ▲
@@ -127,8 +145,8 @@ usuario crea la batalla en la web
   → visor en directo y reproductor en la web
 ```
 
-Hoy ese flujo se corta en varios puntos (build, ruleset, bot de relleno, visor). Paso a paso, con
-tablas, estados y errores: [docs/technical/battles.md](docs/technical/battles.md).
+Ese flujo lo recorre de punta a punta el test de navegador de la CI. Paso a paso, con tablas,
+estados y errores: [docs/technical/battles.md](docs/technical/battles.md).
 
 ## Inicio rápido
 
@@ -146,7 +164,9 @@ Guía completa de entorno: [docs/development/setup.md](docs/development/setup.md
 Instalar el stack completo con Docker: [docs/operations/installation.md](docs/operations/installation.md).
 
 > El `docker-compose.demo.yml` de la raíz es el prototipo v1 retirado y no debe usarse. El
-> despliegue oficial es `infrastructure/docker-compose.yml` con el perfil `production`.
+> despliegue oficial es `infrastructure/docker-compose.yml` con el perfil `production`; la guía
+> completa, incluidos los secretos y el proxy de Docker que necesita la ejecución de bots, es
+> [docs/operations/installation.md](docs/operations/installation.md).
 
 ## Documentación
 

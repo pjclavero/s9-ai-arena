@@ -1,10 +1,11 @@
 # Proxy de la API de Docker (host)
 
-> **Estado:** vigente, revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd` (octubre de 2026)). El proxy se instala en
+> **Estado:** vigente. Revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd`, octubre de 2026) y con la instalación nueva del 2026-11-19 (proxy instalado con `install` y `preflight` en verde, según los informes de migración). El proxy se instala en
 > el host como unidad systemd y es el único proceso con `/var/run/docker.sock`. RC2 cambia su
 > alcance de red (red dedicada `bot-control`) y su política (control de cliente, allowlist de
-> imágenes y propiedad de contenedores). La **ejecución real de bots sigue apagada** por defecto:
-> `DOCKER_PROXY_URL` vacío en `tournament-worker`/`arena-engine` (puerta del operador). Índice de
+> imágenes y propiedad de contenedores). La ejecución real de bots es una **puerta del operador**:
+> `DOCKER_PROXY_URL` viene vacío por defecto en `tournament-worker`/`arena-engine` y hay que fijarlo
+> tras instalar y validar el proxy (en una instalación operativa está fijado). Índice de
 > operación: [index.md](index.md) · Seguridad: [../technical/security.md](../technical/security.md).
 
 R-DEPLOY · R2 (R1.7 · ERR-SEC-02) · RC2. Este documento describe el **único proceso autorizado a
