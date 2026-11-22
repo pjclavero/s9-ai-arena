@@ -49,12 +49,16 @@ describe("streamer: límite de CPU y prioridad (D-OP-26)", () => {
   it("docker compose config resuelve cpus/cpu_shares/oom_score_adj del streamer", () => {
     let out: string;
     try {
-      out = execFileSync("docker", ["compose", "-f", COMPOSE_PATH, "--profile", "streaming", "config", "--format", "json"], {
-        encoding: "utf8",
-        env: { ...process.env, POSTGRES_PASSWORD: "x" },
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60_000,
-      });
+      out = execFileSync(
+        "docker",
+        ["compose", "-f", COMPOSE_PATH, "--profile", "streaming", "config", "--format", "json"],
+        {
+          encoding: "utf8",
+          env: { ...process.env, POSTGRES_PASSWORD: "x" },
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 60_000,
+        },
+      );
     } catch {
       return; // sin CLI de compose: lo cubre la comprobación estructural de arriba
     }
