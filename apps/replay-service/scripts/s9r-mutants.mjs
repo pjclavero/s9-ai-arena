@@ -155,7 +155,7 @@ export const MUTANTS = [
     id: "M-T7-buffer-unbounded",
     group: "T7",
     file: "writer.ts",
-    find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushFragment();`,
+    find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushInner();`,
     replace: `/* mutante */`,
   },
   {
@@ -169,7 +169,7 @@ export const MUTANTS = [
     id: "M-T8-buffer-unbounded",
     group: "T8",
     file: "writer.ts",
-    find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushFragment();`,
+    find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushInner();`,
     replace: `/* mutante */`,
   },
   {
