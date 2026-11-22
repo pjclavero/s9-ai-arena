@@ -14,13 +14,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const T_DB = "apps/api/src/db/create-admin.test.ts";
 const T_PW = "apps/api/src/db/password-input.test.ts";
+const T_PC = "apps/api/src/v1b-password-change.test.ts";
 const T_ENV = "infrastructure/tests/check-env.test.ts";
 
 const MUTANTES = [
   {
     id: "M1-politica-sin-minimo",
     fichero: "apps/api/src/auth/passwords.ts",
-    de: "password.length < PASSWORD_MIN_LENGTH",
+    de: "password.length < MIN_PASSWORD_LENGTH",
     a: "password.length < 1",
     test: T_DB,
     nombre: "aplica la política de contraseñas",
@@ -216,6 +217,14 @@ const MUTANTES = [
     a: 'e.code === "admin_exists" ? 1 : 1',
     test: T_DB,
     nombre: "email ya registrado: rc=3",
+  },
+  {
+    id: "X15-cambio-de-contrasena-sin-politica-unificada",
+    fichero: "apps/api/src/routes/auth.ts",
+    de: 'passwordPolicyViolation(newPassword, "La nueva contraseña");\n      if (violation)',
+    a: 'passwordPolicyViolation(newPassword, "La nueva contraseña");\n      if (false)',
+    test: T_PC,
+    nombre: "política: nueva",
   },
 ];
 
