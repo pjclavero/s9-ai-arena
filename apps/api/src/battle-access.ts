@@ -11,7 +11,7 @@
  * espectador público está activado.
  *
  * Quién puede leer la batalla B (cualquiera de estas):
- *  1-3. STAFF, PARTICIPANTE (dueño de un bot de B) o EQUIPO (bot no privado de
+ *  1-3. STAFF (moderator/admin; el ORGANIZER sólo en los torneos que creó, #306), PARTICIPANTE (dueño de un bot de B) o EQUIPO (bot no privado de
  *       B en un equipo del que eres miembro): igual que replay-access.ts, en
  *       cualquier estado (programada, en curso, terminada, fallida).
  *  4.   PÚBLICO con `S9_PUBLIC_REPLAYS_ENABLED`: B `finished` y mostrable en público.
@@ -24,14 +24,16 @@
  * Fuera de eso: 404 uniforme, idéntico al de un id inexistente.
  *
  * Los DIAGNÓSTICOS por bot (y la CPU) son un nivel más estricto: sólo el dueño
- * de ESE bot y el staff (`canSeeBotDiagnostics`). Un rival o un miembro del
+ * de ESE bot y el staff moderator/admin (`canSeeBotDiagnostics`; el organizer NO, #306). Un rival o un miembro del
  * equipo ve la batalla, no las tripas del bot ajeno.
  */
 import type { Request } from "express";
 import type { Db } from "./db/connection.js";
 import { notFound } from "./errors.js";
+import { ROLE_RANK } from "./openapi.js";
 import {
   isReplayStaff,
+  organizerCreatedTournament,
   tournamentAuthorizesBroadcast,
   wherePubliclyShowable,
   whereReplayReadable,
@@ -106,6 +108,11 @@ export async function hiddenBotIds(
 ): Promise<Set<string>> {
   const wanted = [...new Set(ids.filter((x): x is string => typeof x === "string" && x.length > 0))];
   if (wanted.length === 0 || isReplayStaff(auth)) return new Set();
+  // #306 · el organizador identifica a los inscritos en el cuadro de SUS torneos (visibility.md:
+  // «sí ve el nombre de tu bot en el cuadro del torneo»); en los de otros y en la clasificación
+  // de temporada se le trata como a cualquier usuario («Bot privado»).
+  if (ctx?.tournamentId !== undefined && (await organizerCreatedTournament(db, auth, ctx.tournamentId)))
+    return new Set();
   // VISIBILIDAD · en el contexto de un torneo con `broadcast` (BROADCAST_VISIBILITY) los
   // inscritos se identifican con su proyección de competición. MISMA cláusula que
   // `wherePubliclyShowable` (replay-access.ts). Fuera de ese contexto (clasificación de
@@ -147,6 +154,17 @@ export function whereBotIdentifiable(db: Db, q: any, auth: Auth): any {
   const userId = auth?.userId ?? null;
   return q.where((w: any) => {
     w.where("bots.visibility", "public");
+    if (userId && (auth?.rank ?? 0) >= ROLE_RANK.organizer) {
+      // #306 · el organizador identifica los bots que juegan en torneos que él creó (misma regla
+      // que `hiddenBotIds` con contexto de torneo y que la lectura de sus batallas).
+      w.orWhereExists(
+        db("participants")
+          .join("battles", "battles.id", "participants.battle_id")
+          .join("tournaments", "tournaments.id", "battles.tournament_id")
+          .whereRaw("participants.bot_id = bots.id")
+          .where("tournaments.created_by", userId),
+      );
+    }
     if (userId) {
       w.orWhere("bots.owner_id", userId).orWhere((t: any) =>
         t
