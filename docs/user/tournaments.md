@@ -6,7 +6,7 @@ Un torneo enfrenta a los bots inscritos según un **formato** (liga, eliminatori
 
 1. Un **organizador** crea el torneo con su formato y su modo. Nace con las **inscripciones abiertas**.
 2. El dueño de cada bot lo **inscribe** con una de sus versiones publicadas y elegibles (con su equipamiento).
-3. Al **cerrar las inscripciones**, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
+3. Para **cerrar las inscripciones** hacen falta **al menos 2 inscritos** (2 equipos, en un torneo por equipos); con menos, la web responde «Un torneo necesita al menos 2 inscritos para cerrar inscripciones» (o, en uno por equipos, que necesita al menos 2 equipos con bots) y no cierra. Al cerrarlas, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
 4. Cada batalla terminada actualiza el rating de sus bots. Al acabar el último enfrentamiento, el torneo termina.
 
 Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, en juego, terminado o cancelado. Cancelar un torneo **no borra lo ya jugado**: sus batallas oficiales terminadas siguen contando en el [ranking](rankings.md), salvo las que se hayan anulado. Un torneo en borrador no cuenta nada, e inscribirse no te hace aparecer en el ranking hasta que disputes un enfrentamiento.
@@ -36,7 +36,7 @@ En «Crear torneo»:
 |---|---|
 | **Nombre** | Hasta 64 caracteres. |
 | **Formato** | Los de la tabla de arriba. |
-| **Modo** | Los cuatro modos ([Modos de juego](game-modes.md)). |
+| **Modo** | En V1 los torneos se juegan en **Deathmatch** y **Deathmatch por equipos** (2 vs 2, 3 vs 3 y 4 vs 4). El formulario también ofrece *Captura la bandera* y *Control de zona*, pero **no los uses en torneos**: el torneo se crea y se queda sin batallas jugables ([Modos de juego](game-modes.md)). |
 | **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
 | **Tamaño** | Sólo en torneos **Por equipos** de **Deathmatch por equipos**: 2 vs 2, 3 vs 3 o 4 vs 4. Fija cuántos bots inscribe cada equipo. |
 | **Retransmisión pública** | Si se marca, las batallas del torneo se pueden ver y emitir en público con los datos de competición de cada bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. **No se puede cambiar después** ([Visibilidad](visibility.md)). |
@@ -98,7 +98,7 @@ El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el eq
 
 ## Cosas a tener en cuenta
 
-- Si una batalla de un torneo falla por un problema técnico, su enfrentamiento puede quedarse sin cerrar y el torneo sin terminar.
-- Una batalla de torneo de captura de bandera detenida por el límite técnico de la prórroga no tiene resultado deportivo ([Modos de juego](game-modes.md#captura-la-bandera)).
+- Si una batalla de un torneo falla por un problema técnico y agota sus reintentos, queda como «falló», **no puntúa ni mueve el rating**, y el torneo sigue y termina igualmente. En una eliminatoria avanza el mejor cabeza de serie; si era la final, el torneo termina sin campeón.
+- **Captura la bandera y Control de zona no están soportados en torneos** (no se anuncian como funcionales en V1): el modo se acepta al crear con reglas clásicas, pero la batalla falla al arrancar y el torneo termina sin campeón.
 
 Siguiente: [Ranking](rankings.md) · [Batallas](battles.md).

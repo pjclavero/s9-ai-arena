@@ -1,6 +1,6 @@
 # ADR-022 · Motor 0.4.0: reglas de batalla, desempates, CTF con prórroga y verificación de replays 0.3.0
 
-**Estado:** propuesto (2026-11-02, EQUIPO 2 · PR #201) · **Sustituye en parte a:** ADR-021 (la decisión «el motor sigue en 0.3.0», los criterios de desempate y el nombre `respawnsPerBot`) · **Ámbito:** `apps/arena-engine` (`engine-deps.json`, `engine-compat.ts`, `sim/modes.ts`, `sim/battle.ts`), `packages/game-rules` (`index.ts`, `battle-rules.ts`, `map-compat.ts`, `rules-doc.ts`), `apps/replay-service` (`store.ts`), `apps/api` (POST /battles, POST /tournaments, GET /maps, GET /rulesets, migración 015), `apps/tournament-worker` (`scheduler.ts`, `container-agents.ts`), `apps/web` (`BattleNewPage.tsx`, `BattleRulesPicker.tsx`)
+**Estado:** aceptado e implementado en `main` (PR #201; el motor vigente es 0.5.0 por ADR-024) (propuesto el 2026-11-02, EQUIPO 2 · PR #201) · **Sustituye en parte a:** ADR-021 (la decisión «el motor sigue en 0.3.0», los criterios de desempate y el nombre `respawnsPerBot`) · **Ámbito:** `apps/arena-engine` (`engine-deps.json`, `engine-compat.ts`, `sim/modes.ts`, `sim/battle.ts`), `packages/game-rules` (`index.ts`, `battle-rules.ts`, `map-compat.ts`, `rules-doc.ts`), `apps/replay-service` (`store.ts`), `apps/api` (POST /battles, POST /tournaments, GET /maps, GET /rulesets, migración 015), `apps/tournament-worker` (`scheduler.ts`, `container-agents.ts`), `apps/web` (`BattleNewPage.tsx`, `BattleRulesPicker.tsx`)
 
 ## Contexto
 

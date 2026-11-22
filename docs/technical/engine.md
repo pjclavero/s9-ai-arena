@@ -67,7 +67,7 @@ Constantes globales (`packages/game-rules/constants.ts`):
 | Vehículo | Cuerpo dinámico de Rapier, una **bola** de radio `radiusM` con masa total |
 | Muro | Collider fijo **cuboide** (caja); los polígonos llegan aproximados por su caja ([maps.md](maps.md#conversión-al-motor)) |
 | Destructible | Cuboide con vida; se elimina al llegar a 0 |
-| Proyectil | Lista propia; se mueve con *raycast* por tick, vive 90 ticks |
+| Proyectil | Lista propia; se mueve con *raycast* por tick; su vida en ticks sale de `rangeM` y de la velocidad del arma (`projectileLifetimeTicks`, ADR-024), no de una constante |
 | Mina | Lista propia; armado, activación por radio y caducidad |
 | Zona | Círculo `damage` (daño por segundo directo al chasis, sin blindaje) o `capture` (objetivo de modo) |
 | Base y bandera | Círculo y punto (CTF) |
@@ -190,9 +190,7 @@ El catálogo de candados está en el histórico `ENGINE_REGRESSION_LOCKS`; ver [
 
 ## Estado actual
 
-Revisado el 2026-11-02 contra `main` `e3bf2fa` (motor **0.4.0**, `apps/arena-engine/src/engine-deps.json`; reproduce también replays de 0.3.0).
-
-> **OLA 2 (`hardening/contracts`, sin desplegar):** el motor pasa a **0.5.0** en una sola subida ([ADR-024](../adr/ADR-024-motor-0-5-0-ola2.md)). Ya no reproduce replays de 0.3.0 (enmienda de ADR-022).
+Revisado el 2026-11-20 contra `main` `80f4952`: motor **0.5.0** (`apps/arena-engine/src/engine-deps.json`), integrado en `main` con la OLA 2 (#293, #294) en una sola subida ([ADR-024](../adr/ADR-024-motor-0-5-0-ola2.md)). El verificador es de versión única (`engine-compat.ts`): un replay de 0.4.0 o anterior da `engine_version_mismatch`; ya no se reproducen replays de 0.3.0 (enmienda de ADR-022).
 
 - **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos en el motor (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`, `last_man_standing`, `domination`, `juggernaut`; la plataforma ofrece los cuatro primeros), replays verificables y estadísticas por re-simulación. Desde la 0.4.0: prórroga, desempates por familia de modo y CTF con salvaguarda técnica ([ADR-022](../adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md)). En la plataforma, el `tournament-worker` ejecuta el motor en proceso con el código de cada bot en su contenedor (`apps/tournament-worker/src/container-agents.ts`); el camino HTTP `POST /run` del motor es un camino legado sin consumidor ([TD-039](../roadmap/technical-debt.md#td-039)).
 - **PARCIAL**: la radio se entrega sólo al propio equipo y dentro de `radio.rangeM` (`radioDeliverableTo`, `apps/arena-engine/src/sim/sensors.ts`; ver [equipment.md](equipment.md)); los campos del catálogo sin efecto se eliminaron o se implementaron en la OLA 2 ([equipment.md](equipment.md#campos-eliminados-en-la-ola-2-y-campos-sólo-de-validación), [TD-016](../roadmap/technical-debt.md#td-016)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.

@@ -7,6 +7,7 @@ Esta carpeta responde a cuatro preguntas, cada una en un documento distinto:
 | Pregunta | Documento | Para quién |
 |---|---|---|
 | ¿En qué estado está el proyecto hoy? | [current-status.md](current-status.md) | todo el mundo. Es la **fuente única de estado** |
+| ¿Qué entra en V1 0.5.0, qué queda para la OLA 2 o para después, y qué falla? | [v1-roadmap.md](v1-roadmap.md) | quien decide y quien planifica |
 | ¿Qué está mal y cómo se sabe? | [technical-debt.md](technical-debt.md) | quien desarrolla y quien prioriza. Ids `TD-XXX` estables |
 | ¿Qué notará el usuario o el operador? | [known-issues.md](known-issues.md) | soporte, operación y usuarios |
 | ¿Qué falta por construir? | [pending-features.md](pending-features.md) | quien planifica. Solo lo que no está hecho: parcial, pendiente o descartado |

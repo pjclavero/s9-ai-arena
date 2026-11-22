@@ -1,6 +1,6 @@
 # ADR-024 · Motor 0.5.0: una sola subida de versión para la OLA 2 (engine hardening)
 
-**Estado:** propuesto (2026-11-17, integración de la OLA 2 en `hardening/contracts`) · **Sustituye en la versión a:** ADR-022 (la regla «las semánticas nuevas usan una versión nueva» sigue vigente) · **Ámbito:** `apps/arena-engine/src/engine-deps.json`, `packages/game-rules/rules-doc.ts` (y `docs/user/rules.{md,json}` generados), ejemplos del protocolo y casos compartidos de los SDK.
+**Estado:** aceptado e implementado en `main` (PR #293 y #294; motor 0.5.0) (propuesto el 2026-11-17, integración de la OLA 2 en `hardening/contracts`) · **Sustituye en la versión a:** ADR-022 (la regla «las semánticas nuevas usan una versión nueva» sigue vigente) · **Ámbito:** `apps/arena-engine/src/engine-deps.json`, `packages/game-rules/rules-doc.ts` (y `docs/user/rules.{md,json}` generados), ejemplos del protocolo y casos compartidos de los SDK.
 
 ## Contexto
 

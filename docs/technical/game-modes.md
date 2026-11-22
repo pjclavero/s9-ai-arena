@@ -199,7 +199,7 @@ Con `?mode=X` devuelve los de ese modo y los agnósticos (`mode: null`).
 
 **Pendiente de B:** `createPracticeBattle` (`battles.ts`, área de B) todavía hace sus propias consultas y no comprueba ni el modo del ruleset ni el del mapa. La propuesta está en COORD y en el informe DEV-C.
 
-## Reglas de batalla: presets, personalizado y copia inmutable (ADR-021/022, motor 0.4.0)
+## Reglas de batalla: presets, personalizado y copia inmutable (ADR-021/022, motor 0.4.0 y vigente en el 0.5.0)
 
 - **Referencia de reglas y desempates:** [../user/rules.md](../user/rules.md) / `rules.json`, GENERADOS desde el registro (`scripts/generate-rules-doc.ts`; `packages/game-rules/rules-doc.test.ts` exige que estén al día).
 - **Modelo:** `packages/game-rules/battle-rules.ts` (`RulesParams` con `game`/`ctf`/`maxRespawns`, `RULES_PRESETS` congelados con clave `id@versión`, `TIEBREAK_RULES`, `RULES_LIMITS`, `resolveRulesRequest`, `engineRulesetFor`, `checkComposition`, `statsProfileOf`). Compatibilidad mapa↔modo en `packages/game-rules/map-compat.ts`.

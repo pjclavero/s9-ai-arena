@@ -61,7 +61,7 @@ y en [docs/technical/services.md](../technical/services.md).
 | `bot-manager` | Proceso de control: `/healthz` y readiness de la autoridad de lanzamiento | volúmenes de fuentes y caché | sin función de negocio activa |
 | `bot-build-worker` | Ejecuta el pipeline de build (análisis, firma) de los trabajos `bot_build` | PostgreSQL | FUNCIONA: ejecuta el bot en el sandbox de contenedor; sin `DOCKER_PROXY_URL`/`BUILD_SANDBOX_HOST` rechaza ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | `map-service` | Almacén de mapas **en memoria**, sólo lectura | volúmenes montados sin uso | **sin uso** ([TD-017](../roadmap/technical-debt.md#td-017)) |
-| `replay-service` | Guarda y sirve replays (índice y segmentos), re-verificación y retención | **sólo disco** (no tiene tabla) | FUNCIONA (lectura sin autenticación) |
+| `replay-service` | Guarda y sirve replays (índice y segmentos), re-verificación y retención | **sólo disco** (no tiene tabla) | FUNCIONA. Es un servicio interno, sin puertos publicados: el acceso de los usuarios pasa por la API, que autoriza antes de leer (`apps/api/src/replay-access.ts`) |
 | `queue` | Redis 7.4.9 (AOF, `noeviction`) | volumen | sólo canal de aviso, sin productor ([TD-026](../roadmap/technical-debt.md#td-026)) |
 | `postgres` | PostgreSQL 16.14 (fijado por digest) | volumen | FUNCIONA |
 | `backup` | cron: `pg_dump` + restic a SFTP; healthcheck sobre la última copia | repositorio restic remoto | FUNCIONA desde el 2026-10-15 ([TD-007](../roadmap/technical-debt.md#td-007)) |
@@ -70,8 +70,8 @@ y en [docs/technical/services.md](../technical/services.md).
 
 | Pieza | Dónde | Estado |
 |---|---|---|
-| `s9-docker-proxy` | **servicio systemd del host**, no un contenedor. Proxy de la API de Docker con allowlist (crear, arrancar, parar, inspeccionar) | instalado en el host; hoy nadie lo usa para batallas |
-| `streamer` | perfil `streaming` | no desplegado |
+| `s9-docker-proxy` | **servicio systemd del host**, no un contenedor. Proxy de la API de Docker con allowlist (crear, arrancar, parar, inspeccionar) | instalado en el host; lo usan el build y las batallas de bots cuando `DOCKER_PROXY_URL` está fijado (`bot-build-worker` y `tournament-worker`) |
+| `streamer` | perfil `streaming` | desplegado con la emisión desactivada en la instalación del 19-nov; sin emisión real |
 | `bot-runtime-template` | perfil `bots`: plantilla del contenedor efímero de un bot | no desplegado |
 | Observabilidad | perfil `observability` (Prometheus, Alertmanager, Grafana, Loki, Promtail, cAdvisor, exporters) | no desplegado |
 | v1 | `docker-compose.demo.yml` | legacy, no desplegado |
@@ -80,7 +80,7 @@ y en [docs/technical/services.md](../technical/services.md).
 
 | Dato | Dónde vive | Quién escribe |
 |---|---|---|
-| Usuarios, sesiones, roles, equipos, bots, versiones, loadouts, catálogo, rulesets, mapas, batallas, torneos, ratings, auditoría, trabajos | PostgreSQL (35 tablas, 11 migraciones) | `api`, `tournament-worker`, `bot-build-worker` |
+| Usuarios, sesiones, roles, equipos, bots, versiones, loadouts, catálogo, rulesets, mapas, batallas, torneos, ratings, auditoría, trabajos | PostgreSQL (41 tablas, 22 migraciones, a 2026-11-20) | `api`, `tournament-worker`, `bot-build-worker` |
 | Replays | volumen `arena_replays`; la BD sólo guarda `battles.replay_ref` | `tournament-worker` (disco directo) y `replay-service` (ingesta HTTP) |
 | Fuentes de bots y caché de build | volúmenes `arena_bot_sources` y `arena_build_cache` | pipeline de build |
 | Copias | repositorio restic remoto por SFTP | `backup` |
