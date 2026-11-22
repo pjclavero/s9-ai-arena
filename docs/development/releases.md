@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Qué se publica, con qué etiquetas y cómo se identifica una imagen. No hay versiones semánticas:
+Qué se publica, con qué etiquetas y cómo se identifica una imagen. No hay versiones semánticas (a 2026-11-20 el repositorio no tiene etiquetas Git, ni `LICENSE`, `SECURITY.md` o `CHANGELOG.md` en `main`; los dos últimos están en el PR #307; «0.5.0» es la versión del motor y el nombre de la release, no una versión de paquete):
 **una release es un commit de `main`** cuyas imágenes la CI publica en GHCR con
 `BUILD_COMMIT=<sha>` y la etiqueta `sha-<sha>`. Los runtimes de bots se publican aparte y se fijan
 por digest.

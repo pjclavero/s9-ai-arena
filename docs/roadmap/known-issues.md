@@ -5,7 +5,7 @@
 Síntomas **vigentes** que puede ver un **usuario** o un **operador**, con su causa resumida y la entrada de
 deuda que los sigue. La causa técnica completa está en [technical-debt.md](technical-debt.md).
 
-- Revisado el 2026-11-02 contra `main` (`e3bf2fa`). Producción corre RC5.5 (`a1a6c4e`); lo que sólo está en `main` se indica en la columna «Dónde».
+- Revisado el 2026-11-20 contra `main` (`80f4952`). Producción es la instalación nueva del 19-nov (`8f380eb`, motor 0.5.0, migraciones hasta la 022); lo que sólo está en `main` se indica en la columna «Dónde». Lo que corrigen los PR abiertos sigue listado aquí hasta que se mergee.
 - Los síntomas de la auditoría de octubre que ya están resueltos (build sin sandbox, `rulesetId desconocido`, replay en blanco, replays visibles para anónimos, etc.) se han archivado en [../history/status/known-issues-2026-10.md](../history/status/known-issues-2026-10.md); no se repiten aquí.
 - Las filas marcadas «sin re-comprobar» vienen de la auditoría original y ningún cambio posterior de `main` las cita.
 
@@ -21,8 +21,7 @@ deuda que los sigue. La causa técnica completa está en [technical-debt.md](tec
 | Síntoma | Causa resumida | Dónde | Deuda |
 |---|---|---|---|
 | No hay forma de recuperar la contraseña; en «Mi cuenta» no se puede activar el 2FA ni ver o cerrar sesiones | la API tiene las operaciones, pero la web no tiene pantallas y la recuperación descarta el token (no hay canal de entrega) | producción y `main` | [TD-012](technical-debt.md#td-012) |
-| Un torneo con una batalla fallida no termina | el cierre del match exige batallas `finished` | producción y `main` | [TD-015](technical-debt.md#td-015) |
-| «Crear torneo» de captura de bandera (CTF) con reglas se rechaza con un motivo | los bandos del torneo son A/B y los mapas CTF usan red/blue | `main` (reglas 0.4.0, aún sin desplegar) | [TD-070](technical-debt.md#td-070) |
+| Un torneo de captura de bandera o de control de zona se crea y no se puede jugar: la batalla falla y el torneo termina sin campeón (fuera de V1). Sólo el preset CTF se rechaza al crear | los bandos del torneo son A/B y los mapas CTF usan red/blue; el mapa por defecto no tiene zonas | `main` | [TD-070](technical-debt.md#td-070) |
 | El filtro «Abortada o con incidencia» de los replays no muestra las batallas detenidas por el límite técnico | el filtro no incluye `technical_limit` | `main` | [TD-071](technical-debt.md#td-071) |
 | Una página de «Mis bots» o de la lista de bots puede salir con menos elementos de los pedidos | la visibilidad se filtra después de leer 200 filas | producción y `main` | [TD-068](technical-debt.md#td-068) |
 | Un error de filtro al paginar se presenta como «cursor inválido» | el cursor se hace responsable de cualquier error de conversión | `main` | [TD-067](technical-debt.md#td-067) |
@@ -38,7 +37,7 @@ deuda que los sigue. La causa técnica completa está en [technical-debt.md](tec
 | `GET /api/healthz` responde 200 aunque la API esté caída | el gateway sirve la SPA y `/healthz` es estático | producción y `main` | [TD-020](technical-debt.md#td-020) |
 | La alerta de backup no avisa | el perfil `observability` no está desplegado; las alertas existen en la configuración | producción | [TD-007](technical-debt.md#td-007) |
 | `map-service` aparece `healthy` y no sirve mapas a nadie | servicio sin uso | producción y `main` | [TD-017](technical-debt.md#td-017) |
-| Streaming: la clave de emisión se ve con `ps` en el host; los MP4 no se borran; nadie avisa si el streamer cae | FFmpeg recibe la URL con la clave en el argv; sin retención ni alerta | `main` (perfil `streaming`, no desplegado) | [TD-066](technical-debt.md#td-066) |
+| Streaming: los MP4 del modo grabación no se borran; nadie avisa si el streamer cae; YouTube real sin probar | sin retención ni alerta. La clave ya no va en el argv (relé RTMP, ADR-023) | `main` (perfil `streaming`) | [TD-066](technical-debt.md#td-066) |
 | Los logins externos quedan con la misma IP | `TRUST_PROXY_HOPS` no cuenta el proxy externo (sin re-comprobar) | producción | [TD-012](technical-debt.md#td-012) |
 | El worker tarda hasta ~1 s en tomar trabajo | el aviso por Redis nunca se emite (`notify()` sin llamadas) | producción y `main` | [TD-026](technical-debt.md#td-026) |
 | Los contenedores `bot-bot_smoke*` y `s9-localreg` siguen en el host | restos de un smoke manual | producción | [TD-058](technical-debt.md#td-058) |
@@ -59,8 +58,8 @@ Diagnóstico y procedimientos: [docs/operations/diagnostics.md](../operations/di
 | Afirmación | Estado | Fuente |
 |---|---|---|
 | Recuperación sin canal de entrega; sin pantallas de 2FA ni sesiones | CODE_VERIFIED | `apps/api/src/routes/auth.ts:386-398`, `:440`; `git grep -nE "auth/(2fa|sessions|recover|reset)" -- apps/web/src` vacío |
-| Una batalla `failed` bloquea el cierre del match | CODE_VERIFIED | `apps/tournament-worker/src/results.ts:378`, `:408` |
-| CTF rechazado en torneos | CODE_VERIFIED | `apps/api/src/services/battle-rules.ts:353-361` |
+| Una batalla `failed` ya no bloquea el cierre del match (política #299) | CODE_VERIFIED (2026-11-20, `80f4952`) | `apps/tournament-worker/src/results.ts` (`settleMatch`); `tournament-lifecycle-failed.test.ts` |
+| CTF rechazado en torneos sólo con `rules.preset`; con reglas clásicas, CTF y zona se aceptan y no se pueden jugar | CODE_VERIFIED (2026-11-20) y LAB (PR #317) | `apps/api/src/services/battle-rules.ts`; `v1-tournament-ctf-zone.e2e.test.ts` |
 | Filtro `aborted` sin `technical_limit` | CODE_VERIFIED | `apps/api/src/services/replay-list.ts:222-226` |
 | `listBots`: 200 filas y visibilidad en memoria | CODE_VERIFIED | `apps/api/src/routes/bots.ts:205-223` |
 | `runCursorQuery` | CODE_VERIFIED | `apps/api/src/serialize.ts:168-175` |
@@ -68,4 +67,4 @@ Diagnóstico y procedimientos: [docs/operations/diagnostics.md](../operations/di
 | `/healthz` estático | CODE_VERIFIED | `apps/api/src/server.ts:28` |
 | Sin borrado de mapas | CODE_VERIFIED | `apps/api/openapi.yaml`: las operaciones `delete` son de sesiones, 2FA, equipos, bots de equipo y miembros; ninguna de mapas |
 | `notify()` sin llamadas | CODE_VERIFIED | `apps/tournament-worker/src/redis-signal.ts:207` |
-| Streaming: clave en argv | CODE_VERIFIED | `apps/streamer/src/ffmpeg.ts:115-118` |
+| Streaming: la clave ya no va en el argv (RETIRADA, octubre) | CODE_VERIFIED (2026-11-20) | `apps/streamer/src/ffmpeg.ts` (FLV por el descriptor 3, relé RTMP del propio streamer) |

@@ -72,7 +72,9 @@ describe("T7.5 conformidad con el contrato de E1", () => {
     // docs/ronda2/reportes/R3.7-panel.md y candidatas a entrar en el contrato 0.3.
     // listBotVersionBuilds: builds de una versión (B11) — sin esto el panel no
     // puede saber cómo terminó el pipeline tras recargar la página.
+    // changePassword: cambio de contraseña del usuario autenticado (V1-B).
     expect(extensions.sort()).toEqual([
+      "changePassword",
       "getSigningPublicKey",
       "getTournament",
       "listBotLoadouts",

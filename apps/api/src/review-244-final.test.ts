@@ -105,22 +105,17 @@ describe("RVF-2 · P3-6 · winnerBotName y el rol organizer", () => {
     expect(JSON.stringify(j)).not.toContain("BOT-SINTETICO");
   });
 
-  // DEFECTO VIGENTE (issue #306): la doc (docs/user/visibility.md) dice que la organización de torneos
-  // NO ve un bot privado, pero el rol `organizer` cuenta como «replay staff» y recibe el NOMBRE del
-  // ganador privado en un torneo SIN broadcast. Este test afirma la política DOCUMENTADA y por eso
-  // falla hoy: `it.fails` se pone ROJO cuando se corrija el código (entonces, quitar `.fails`); si en
-  // cambio se decide corregir la doc, hay que reescribirlo. No consolida el defecto como garantía.
-  it.fails(
-    "organizer NO debería recibir el nombre de un ganador privado en un torneo sin broadcast (#306)",
-    async () => {
-      const organizer = { userId: "u", sessionId: "s", roles: ["organizer"], rank: ROLE_RANK.organizer };
-      const hidden = await hiddenBotIds(privateBotDb(PRIV), organizer as never, [PRIV], {
-        tournamentId: "t-sin-broadcast",
-      });
-      const j = tournamentMatchToJson(match, hidden, false, names);
-      expect(hidden.has(PRIV)).toBe(true);
-      expect(j.winnerBotId).toBeNull();
-      expect(j).not.toHaveProperty("winnerBotName");
-    },
-  );
+  // #306 (CORREGIDO en V1-A): el rol `organizer` ya no es «replay staff» global. Un organizer que NO
+  // creó el torneo recibe «Bot privado» en un torneo SIN broadcast (política de docs/user/visibility.md);
+  // el creador del torneo sí ve el nombre (cubierto en v1-organizer-scope.test.ts, con BD real).
+  it("organizer NO debería recibir el nombre de un ganador privado en un torneo sin broadcast (#306)", async () => {
+    const organizer = { userId: "u", sessionId: "s", roles: ["organizer"], rank: ROLE_RANK.organizer };
+    const hidden = await hiddenBotIds(privateBotDb(PRIV), organizer as never, [PRIV], {
+      tournamentId: "t-sin-broadcast",
+    });
+    const j = tournamentMatchToJson(match, hidden, false, names);
+    expect(hidden.has(PRIV)).toBe(true);
+    expect(j.winnerBotId).toBeNull();
+    expect(j).not.toHaveProperty("winnerBotName");
+  });
 });
