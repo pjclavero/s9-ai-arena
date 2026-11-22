@@ -24,12 +24,17 @@ const MUTACIONES = {
   M1: {
     desc: "vuelve el corte fijo a 180 días (AUD2-03)",
     muere: "por defecto un replay de 250 días SÍ entra en el backup",
-    cambios: [['REPLAY_BACKUP_MAX_AGE_DAYS="${REPLAY_BACKUP_MAX_AGE_DAYS:-0}"', 'REPLAY_BACKUP_MAX_AGE_DAYS="${REPLAY_BACKUP_MAX_AGE_DAYS:-180}"']],
+    cambios: [
+      [
+        'REPLAY_BACKUP_MAX_AGE_DAYS="${REPLAY_BACKUP_MAX_AGE_DAYS:-0}"',
+        'REPLAY_BACKUP_MAX_AGE_DAYS="${REPLAY_BACKUP_MAX_AGE_DAYS:-180}"',
+      ],
+    ],
   },
   M2: {
     desc: "restic check vuelve a ser sólo de estructura (AUD2-02)",
     muere: "restic check se invoca con --read-data-subset=n/7",
-    cambios: [["  restic check ${args[@]+\"${args[@]}\"}", "  restic check"]],
+    cambios: [['  restic check ${args[@]+"${args[@]}"}', "  restic check"]],
   },
   M3: {
     desc: "el fallo de restic check se ignora",
@@ -69,7 +74,12 @@ const MUTACIONES = {
   M10: {
     desc: "la política N>0 deja de respetar official/ (lo recorta también)",
     muere: "REPLAY_BACKUP_MAX_AGE_DAYS NO se aplica dentro de official/",
-    cambios: [['\\( -path "$REPLAYS_DIR/official/*" -o -mtime "-$REPLAY_BACKUP_MAX_AGE_DAYS" \\)', '\\( -mtime "-$REPLAY_BACKUP_MAX_AGE_DAYS" \\)']],
+    cambios: [
+      [
+        '\\( -path "$REPLAYS_DIR/official/*" -o -mtime "-$REPLAY_BACKUP_MAX_AGE_DAYS" \\)',
+        '\\( -mtime "-$REPLAY_BACKUP_MAX_AGE_DAYS" \\)',
+      ],
+    ],
   },
   M11: {
     desc: "la fracción leída se declara 1 siempre (mentiría sobre «datos leídos»)",
@@ -94,7 +104,11 @@ const restaurar = () => {
     unlinkSync(RESPALDO);
   } catch {}
 };
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { restaurar(); process.exit(130); });
+for (const sig of ["SIGINT", "SIGTERM"])
+  process.on(sig, () => {
+    restaurar();
+    process.exit(130);
+  });
 
 let fallo = false;
 try {
@@ -107,7 +121,12 @@ try {
     for (const [id, m] of Object.entries(MUTACIONES)) {
       let s = original;
       for (const [de, a] of m.cambios) {
-        if (!s.includes(de)) { console.log(`${id}: NO SE PUDO APLICAR (${m.desc})`); fallo = true; s = null; break; }
+        if (!s.includes(de)) {
+          console.log(`${id}: NO SE PUDO APLICAR (${m.desc})`);
+          fallo = true;
+          s = null;
+          break;
+        }
         s = s.replace(de, a);
       }
       if (s === null) continue;

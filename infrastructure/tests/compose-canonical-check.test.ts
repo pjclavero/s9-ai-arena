@@ -513,7 +513,12 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     // V1-OPS (AUD2-02/03): el backup recibe tres variables nuevas que el contenedor vivo aún no
     // tiene (llegan al recrear el servicio): edad máxima de replays y lectura de datos de restic check.
     const envFalta = b.filter((x: any) => x.code === CODIGOS.ENV_FALTA).map((x: any) => String(x.detail));
-    const esperadas = ["RESTIC_HOSTNAME", "REPLAY_BACKUP_MAX_AGE_DAYS", "RESTIC_CHECK_MODE", "RESTIC_CHECK_SUBSET_PARTS"];
+    const esperadas = [
+      "RESTIC_HOSTNAME",
+      "REPLAY_BACKUP_MAX_AGE_DAYS",
+      "RESTIC_CHECK_MODE",
+      "RESTIC_CHECK_SUBSET_PARTS",
+    ];
     const todo = envFalta.join(" | ");
     for (const v of esperadas) expect(todo, v).toContain(v);
     expect(envFalta.length).toBe(esperadas.length);
