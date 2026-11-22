@@ -27,6 +27,13 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
+> **Cambio de comportamiento (concurrencia del tournament-worker):** con
+> `TOURNAMENT_WORKER_CONCURRENCY` vacío o ausente, el worker pasaba antes a cálculo
+> automático (`min(vCPU-1, RAM/2 GB)`, con la vista del host) y ahora ejecuta **1** batalla
+> simultánea. Los torneos serán más lentos pero estables. Para subirlo, fija un entero
+> 1..16 explícito tras medir, o `auto` (cgroup y tamaño de batalla). Ver
+> [concurrencia del worker](worker-concurrency.md).
+
 ## Principios
 
 1. **Nunca `latest`** ni `v0.0.0` (móvil): siempre `sha-<commit>`.

@@ -14,6 +14,7 @@ Worker de torneos (T9.1, cap. 8 + 9.4 + 19.2):
 - **Formatos y flujo de torneo (T9.2)**, **ratings (T9.3)** y **justicia
   competitiva (T9.4)**: ver `src/`.
 
-Ejecución de batallas: una batalla por hueco de worker; concurrencia derivada de
-CPU/RAM (`computeConcurrency`). Suspensiones/descalificaciones importadas del
+Ejecución de batallas: una batalla por hueco de worker; concurrencia 1 por defecto
+(`TOURNAMENT_WORKER_CONCURRENCY`: entero 1..16 o `auto`, que usa los límites del cgroup;
+ver `docs/operations/worker-concurrency.md`). Suspensiones/descalificaciones importadas del
 bot-manager REAL de E6.
