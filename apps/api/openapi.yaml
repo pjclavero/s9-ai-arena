@@ -128,7 +128,12 @@ info:
   # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
   # cierre, excludeTournamentEntry y la sustitución de versión (lo que bloquea el cierre siempre
   # se puede excluir); freeze condicional (una sola auditoría por versión).
-  version: 0.25.0
+  # 0.26.0 · ADM-1 (aditivo, admin): listSystemSettings/updateSystemSettings (GET/PATCH /admin/settings),
+  # createAdminOperation/listAdminOperations/getAdminOperation/confirmAdminOperation/cancelAdminOperation
+  # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
+  # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
+  # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
+  version: 0.26.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -2259,6 +2264,121 @@ paths:
         '200': { description: Guardado, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  # ------------------------------------------- ADM-1 · ajustes del sistema y órdenes (admin)
+  /admin/settings:
+    get:
+      tags: [admin]
+      operationId: listSystemSettings
+      summary: >-
+        ADM-1 · Ajustes funcionales del sistema (`system_settings`): cada clave del REGISTRO en código con
+        su valor vigente, origen (database|environment|default), versión, techo duro del entorno, servicio
+        consumidor y si el cambio `requiresRestart` del consumidor. Sin secretos.
+      x-min-role: admin
+      responses:
+        '200': { description: Ajustes, content: { application/json: { schema: { $ref: '#/components/schemas/SystemSettingsList' } } } }
+    patch:
+      tags: [admin]
+      operationId: updateSystemSettings
+      summary: >-
+        ADM-1 · Cambia ajustes del sistema, ATÓMICO (todo o nada): clave registrada, tipo estricto, rango y
+        techo del entorno (400); concurrencia optimista por `expectedVersion` (0 = sin valor guardado; 409
+        version_conflict). Una fila de `audit_log` por clave cambiada (`settings.system.update`, antes y
+        después) en la misma transacción. La respuesta lista en `pendingRestart` las claves cuyo consumidor
+        debe reiniciarse para verlas; el resto se aplica en caliente (sondeo ≤ 5 s).
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SystemSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { $ref: '#/components/schemas/SystemSettingsPatchResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/operations:
+    post:
+      tags: [admin]
+      operationId: createAdminOperation
+      summary: >-
+        ADM-1 · Crea una orden administrativa de un tipo CERRADO (`kind`), sin rutas ni comandos en `params`.
+        El servidor calcula el resumen de impacto. Si la acción es destructiva devuelve `awaiting_confirmation`,
+        la frase literal y un `confirmToken` de UN SOLO USO (2 min; sólo se entrega aquí). Sin impacto pasa
+        directa a `pending`. `dryRun:true` sólo devuelve el impacto (200, no crea orden). Las irreversibles
+        exigen un segundo admin (409 second_admin_unavailable si no lo hay). Una orden activa por tipo
+        (409 operation_in_progress). La API no ejecuta nada: la consume el servicio que posee el privilegio.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminOperationCreate' }
+      responses:
+        '200': { description: Simulación (dryRun), content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperationDryRun' } } } }
+        '201': { description: Orden creada, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperationCreated' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [admin]
+      operationId: listAdminOperations
+      summary: ADM-1 · Historial de órdenes administrativas (más recientes primero; `limit` ≤ 100). Nunca devuelve tokens.
+      x-min-role: admin
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        '200': { description: Órdenes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminOperation' } } } } }
+
+  /admin/operations/{id}:
+    get:
+      tags: [admin]
+      operationId: getAdminOperation
+      summary: ADM-1 · Estado de una orden administrativa (la frase de confirmación sólo mientras espera confirmación).
+      x-min-role: admin
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Orden, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/operations/{id}/confirm:
+    post:
+      tags: [admin]
+      operationId: confirmAdminOperation
+      summary: >-
+        ADM-1 · Confirma una orden en `awaiting_confirmation`: token de un solo uso (consumo atómico), frase
+        literal EXACTA y REAUTENTICACIÓN FUERTE (contraseña + TOTP si lo tiene; sin credenciales frescas, 401).
+        Las irreversibles las confirma un admin distinto del solicitante (403). Token caducado o ya usado:
+        409 confirmation_expired / confirmation_token_invalid. Pasa a `pending`.
+      x-min-role: admin
+      x-reauth: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminOperationConfirm' }
+      responses:
+        '200': { description: Confirmada, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperation' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/operations/{id}/cancel:
+    post:
+      tags: [admin]
+      operationId: cancelAdminOperation
+      summary: ADM-1 · Cancela una orden en `awaiting_confirmation` o `pending` (si ya la tomó un ejecutor, 409 not_cancellable).
+      x-min-role: admin
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Cancelada, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
     get:
@@ -3477,6 +3597,124 @@ components:
       properties:
         publicSpectateEnabled: { type: boolean }
         publicReplaysEnabled: { type: boolean }
+
+    # ADM-1 · ajustes del sistema y órdenes administrativas
+    SystemSettingValue:
+      description: 'Valor tipado: número, booleano o cadena de un enumerado (según `type` de la clave).'
+      oneOf: [{ type: number }, { type: boolean }, { type: string }]
+    SystemSetting:
+      type: object
+      properties:
+        key: { type: string }
+        type: { type: string, enum: [integer, number, boolean, enum] }
+        min: { type: number, nullable: true }
+        max: { type: number, nullable: true }
+        options: { type: array, nullable: true, items: { type: string } }
+        default: { $ref: '#/components/schemas/SystemSettingValue' }
+        consumer: { type: string, description: 'Servicio que lee la clave.' }
+        apply: { type: string, enum: [hot, restart] }
+        requiresRestart: { type: boolean }
+        description: { type: string }
+        envCeiling: { type: number, nullable: true, description: 'Techo duro del entorno vigente (el valor guardado no puede superarlo).' }
+        value: { $ref: '#/components/schemas/SystemSettingValue' }
+        source: { type: string, enum: [database, environment, default] }
+        version: { type: integer, description: 'Versión guardada (0 = sin fila); es el `expectedVersion` del próximo PATCH.' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        updatedBy: { type: string, format: uuid, nullable: true }
+    SystemSettingsList:
+      type: object
+      properties:
+        settings: { type: array, items: { $ref: '#/components/schemas/SystemSetting' } }
+    SystemSettingsPatch:
+      type: object
+      additionalProperties: false
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, value, expectedVersion]
+            properties:
+              key: { type: string }
+              value: { $ref: '#/components/schemas/SystemSettingValue' }
+              expectedVersion: { type: integer, minimum: 0 }
+    SystemSettingsPatchResult:
+      type: object
+      properties:
+        settings: { type: array, items: { $ref: '#/components/schemas/SystemSetting' } }
+        changed:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              before: { nullable: true }
+              after: { $ref: '#/components/schemas/SystemSettingValue' }
+              version: { type: integer }
+              requiresRestart: { type: boolean }
+        pendingRestart: { type: array, items: { type: string }, description: 'Claves cambiadas cuyo consumidor debe reiniciarse.' }
+    AdminOperationImpact:
+      type: object
+      properties:
+        summary: { type: string }
+        counts: { type: object, additionalProperties: { type: integer } }
+    AdminOperationCreate:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7).' }
+        params:
+          type: object
+          description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'
+        dryRun: { type: boolean }
+    AdminOperationConfirm:
+      type: object
+      additionalProperties: false
+      required: [confirmToken, phrase, password]
+      properties:
+        confirmToken: { type: string, x-private: true }
+        phrase: { type: string, description: 'Frase literal devuelta por el servidor al crear la orden.' }
+        password: { type: string, x-private: true }
+        totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta tiene 2FA.' }
+    AdminOperation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        params: { type: object }
+        status: { type: string, enum: [awaiting_confirmation, pending, running, done, failed, expired, cancelled] }
+        impact: { $ref: '#/components/schemas/AdminOperationImpact' }
+        confirmPhrase: { type: string, nullable: true }
+        requiresSecondAdmin: { type: boolean }
+        requestedBy: { type: string, format: uuid, nullable: true }
+        confirmedBy: { type: string, format: uuid, nullable: true }
+        result: { nullable: true }
+        attempts: { type: integer }
+        createdAt: { type: string, format: date-time }
+        confirmExpiresAt: { type: string, format: date-time, nullable: true }
+        confirmedAt: { type: string, format: date-time, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    AdminOperationCreated:
+      type: object
+      properties:
+        dryRun: { type: boolean, enum: [false] }
+        operation: { $ref: '#/components/schemas/AdminOperation' }
+        confirmToken: { type: string, nullable: true, x-private: true, description: 'Un solo uso; sólo se entrega aquí. Null si la orden no necesita confirmación.' }
+    AdminOperationDryRun:
+      type: object
+      properties:
+        dryRun: { type: boolean, enum: [true] }
+        kind: { type: string }
+        impactClass: { type: string, enum: [none, destructive, irreversible] }
+        impact: { $ref: '#/components/schemas/AdminOperationImpact' }
+        requiresSecondAdmin: { type: boolean }
+        confirmPhrase: { type: string }
 
     StreamingIngests:
       type: object

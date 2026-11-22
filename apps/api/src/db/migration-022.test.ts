@@ -34,7 +34,7 @@ afterAll(async () => {
 
 describe("migración 022_entries_team", () => {
   it("está aplicada, es la última y la columna es nullable", async () => {
-    expect(MIGRATIONS.at(-1)!.name).toBe(NAME);
+    expect(MIGRATIONS.map((m) => m.name)).toContain(NAME); // ADM-1: ya no es la última (023 la sigue)
     expect(await entryColumns()).toContain("team_id");
     const r = await h.db.raw(
       `SELECT is_nullable FROM information_schema.columns WHERE table_name = 'entries' AND column_name = 'team_id'`,

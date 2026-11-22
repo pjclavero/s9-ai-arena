@@ -110,6 +110,7 @@ describe("EQ4 · RBAC del apartado Administración = contrato del servidor", () 
       "#/audit",
       "#/roles",
       "#/streaming", // EQ5b
+      "#/settings", // ADM-1
     ]);
   });
 
@@ -142,6 +143,7 @@ describe("EQ4 · barra principal agrupada", () => {
       "Auditoría",
       "Roles y permisos",
       "Streaming", // EQ5b
+      "Ajustes", // ADM-1
     ]);
     expect(within(sub).getByRole("link", { name: "Auditoría" }).getAttribute("aria-current")).toBe("page");
   });

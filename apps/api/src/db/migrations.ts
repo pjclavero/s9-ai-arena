@@ -1142,6 +1142,65 @@ const m022_entries_team: Migration = {
   },
 };
 
+// ADM-1 · 023_system_settings_operations: base de la administración web.
+//  - `system_settings`: ajustes funcionales persistidos (clave → valor jsonb validado por el
+//    REGISTRO en código; `version` para concurrencia optimista). Sin secretos. No se siembra:
+//    sin fila vale el entorno o el valor por defecto del registro.
+//  - `admin_operations`: cola de órdenes administrativas. `kind` es una lista CERRADA (CHECK) y
+//    `params` sólo admite identificadores/enteros validados por el esquema de cada tipo (la
+//    API valida y el ejecutor vuelve a validar); NO hay rutas ni comandos. La API sólo inserta
+//    y confirma; la ejecuta el servicio que ya posee el privilegio, con su propio rol de BD
+//    (SELECT + UPDATE de status/result/lease…), por un `lease` con caducidad.
+//    Estados: awaiting_confirmation → pending → running → done|failed; expired|cancelled.
+//    El índice único parcial impone UNA orden activa por `kind` (anti-abuso).
+// Los tipos reales (ADM-4/6/7) AMPLÍAN el CHECK de `kind` en su propia migración.
+// Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED. Probada en `migration-023.test.ts`.
+const m023_system_settings_operations: Migration = {
+  name: "023_system_settings_operations",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE system_settings (
+        key        text PRIMARY KEY CHECK (key ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'),
+        value      jsonb NOT NULL,
+        version    integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE TABLE admin_operations (
+        id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind                text NOT NULL CHECK (kind IN ('system.noop')),
+        params              jsonb NOT NULL DEFAULT '{}'::jsonb,
+        status              text NOT NULL CHECK (status IN
+                              ('awaiting_confirmation','pending','running','done','failed','expired','cancelled')),
+        requested_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+        confirmed_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+        impact              jsonb NOT NULL DEFAULT '{}'::jsonb,
+        confirm_phrase      text,
+        confirm_token_hash  text,
+        confirm_expires_at  timestamptz,
+        requires_second_admin boolean NOT NULL DEFAULT false,
+        result              jsonb,
+        lease_owner         text,
+        lease_expires_at    timestamptz,
+        attempts            integer NOT NULL DEFAULT 0,
+        created_at          timestamptz NOT NULL DEFAULT now(),
+        confirmed_at        timestamptz,
+        started_at          timestamptz,
+        finished_at         timestamptz,
+        CHECK (status <> 'running' OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+      );
+      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
+        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running');
+      CREATE INDEX admin_operations_claim_idx ON admin_operations (status, kind, created_at);
+    `);
+  },
+  // Vuelta atrás: se pierden los ajustes guardados (vuelve el entorno/defecto) y el historial de órdenes
+  // (su rastro de auditoría queda en audit_log).
+  async down(db) {
+    await db.raw(`DROP TABLE admin_operations; DROP TABLE system_settings;`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1165,6 +1224,7 @@ export const MIGRATIONS: Migration[] = [
   m020_streaming_ingests,
   m021_runtime_settings,
   m022_entries_team,
+  m023_system_settings_operations,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1239,6 +1299,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "021_runtime_settings",
   // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
   "022_entries_team",
+  // ADM-1 · tablas propias sin dependencias posteriores.
+  "023_system_settings_operations",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
