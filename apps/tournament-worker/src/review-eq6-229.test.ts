@@ -179,7 +179,10 @@ async function seasonTableMain(db: Knex, seasonId: string, mode: string): Promis
   const h2h = new Map<string, number>();
   for (const { id } of tournaments as { id: string }[]) {
     const { rows, headToHead } = await leagueTableDetailed(db, id, false);
-    for (const r of rows.values()) {
+    for (const raw of rows.values()) {
+      // D-OP-24 · réplica LITERAL de main antes del cambio: el bye contaba como 3 puntos y 1 victoria.
+      // `leagueTableDetailed` ya no lo suma; se reconstruye aquí para que esta referencia histórica no cambie.
+      const r = { ...raw, points: raw.points + 3 * raw.byes, wins: raw.wins + raw.byes };
       const acc = total.get(r.id);
       if (!acc) total.set(r.id, { ...r });
       else {
