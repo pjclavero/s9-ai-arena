@@ -73,7 +73,7 @@ describe("G1 gateway con ventana de frames", () => {
   });
 });
 
-const pframe = (tick: number) => ({
+const pframe = (tick: number): any => ({
   tick,
   vehicles: [],
   projectiles: [{ id: `proj_${tick}`, position: { x: tick, y: 1 }, heading: 0 }],
