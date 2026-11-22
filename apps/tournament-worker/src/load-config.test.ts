@@ -16,12 +16,12 @@ import { buildLoadConfig, executorLoadOptions, workerLoadOptions } from "./load-
 import { computeConcurrency } from "./worker.js";
 
 describe("buildLoadConfig / workerLoadOptions / executorLoadOptions", () => {
-  it("sin variables: concurrencia automática (no se pasa nada) e intervalo 2000 (M-E1)", () => {
+  it("sin variables: concurrencia 1 (defecto seguro, se pasa explícita) e intervalo 2000 (M-E1)", () => {
     const cfg = buildLoadConfig({});
     expect(cfg.concurrency).toBeUndefined();
-    expect(cfg.effectiveConcurrency).toBe(computeConcurrency());
+    expect(cfg.effectiveConcurrency).toBe(1);
+    expect(workerLoadOptions(cfg)).toEqual({ concurrency: 1 });
     expect(cfg.cpuSampleMs).toBe(2000);
-    expect(workerLoadOptions(cfg)).toEqual({});
     expect(executorLoadOptions(cfg)).toEqual({ cpuSampleMs: 2000 });
   });
 
@@ -30,6 +30,13 @@ describe("buildLoadConfig / workerLoadOptions / executorLoadOptions", () => {
     expect(cfg).toEqual({ concurrency: 2, effectiveConcurrency: 2, cpuSampleMs: 3000 });
     expect(workerLoadOptions(cfg)).toEqual({ concurrency: 2 });
     expect(executorLoadOptions(cfg)).toEqual({ cpuSampleMs: 3000 });
+  });
+
+  it("`auto` calcula con computeConcurrency (cgroup + batalla) y llega al worker", () => {
+    const cfg = buildLoadConfig({ TOURNAMENT_WORKER_CONCURRENCY: "auto" });
+    expect(cfg.concurrency).toBe("auto");
+    expect(cfg.effectiveConcurrency).toBe(computeConcurrency());
+    expect(workerLoadOptions(cfg)).toEqual({ concurrency: computeConcurrency() });
   });
 
   it("un valor inválido LANZA (el worker no arranca; no se degrada al defecto)", () => {
