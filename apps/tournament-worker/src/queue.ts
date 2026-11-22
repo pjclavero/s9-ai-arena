@@ -81,6 +81,11 @@ export interface ClaimOptions {
   /** Un `running` más viejo que esto se considera huérfano (worker muerto). */
   lockTimeoutMs?: number;
   now?: Date;
+  /**
+   * V1-P0 (H1) · se invoca con los trabajos que ESTE claim ha aparcado (`needs_review`) para que el
+   * llamador cierre su torneo (`onExhausted`) de inmediato, sin esperar al rescate periódico.
+   */
+  onParked?: (parked: JobRow[]) => Promise<void> | void;
 }
 
 /**
@@ -98,7 +103,8 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
   // mismo límite está además en el WHERE del claim, de modo que ni una carrera lo deja reclamable.
   const rows = await db.raw(
     `
-    ${PARK_EXHAUSTED_CTES}
+    ${PARK_EXHAUSTED_CTES},
+    claimed AS (
     UPDATE jobs SET
       status = 'running',
       locked_by = :workerId,
@@ -122,10 +128,22 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
       FOR UPDATE SKIP LOCKED
     )
     RETURNING *
+    )
+    SELECT 'claimed' AS _src, c.* FROM claimed c
+    UNION ALL
+    SELECT 'parked' AS _src, p.* FROM parked p
     `,
     { workerId: opts.workerId, now, kinds, staleBefore, parkMsg: PARK_MESSAGE, parkReason: EXHAUSTED_ORPHAN_REASON },
   );
-  const job = (rows.rows?.[0] as JobRow | undefined) ?? null;
+  const all = (rows.rows ?? []) as (JobRow & { _src?: string })[];
+  const strip = ({ _src, ...j }: JobRow & { _src?: string }): JobRow => (void _src, j as JobRow);
+  const parked = all.filter((r) => r._src === "parked").map(strip);
+  const job = all.filter((r) => r._src !== "parked").map(strip)[0] ?? null;
+  // H1/H2 · los aparcados por ESTE claim se cuentan y se notifican (cierre inmediato del torneo).
+  if (parked.length) {
+    workerMetrics.inc("jobs_parked_total", parked.length);
+    await opts.onParked?.(parked);
+  }
   if (job && job.attempts > 1) workerMetrics.inc("job_retries_total");
   return job;
 }

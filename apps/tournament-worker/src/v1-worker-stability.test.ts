@@ -142,6 +142,38 @@ describe("V1-P0 · reintentos agotados ⇒ terminal (claimJob respeta max_attemp
     expect(JSON.stringify(audit[0].detail)).toMatch(/agotados/);
   });
 
+  it("H2 · el claim que aparca cuenta jobs_parked_total y notifica onParked con el trabajo aparcado", async () => {
+    const { battleId, jobId } = await newBattleWithJob(1);
+    await dieMidBattle(battleId);
+    const seen: string[] = [];
+    const third = await claimJob(h.db, {
+      workerId: "w-h2",
+      kinds: ["run_battle"],
+      lockTimeoutMs: 1000,
+      now: new Date(),
+      onParked: (p) => void seen.push(...p.map((j) => j.id)),
+    });
+    expect(third).toBeNull();
+    expect(seen).toEqual([jobId]);
+    expect(workerMetrics.counter("jobs_parked_total")).toBe(1);
+  });
+
+  it("H1 · el worker invoca onExhausted de inmediato para lo que aparca su claim (sin esperar al rescate)", async () => {
+    const { battleId, jobId } = await newBattleWithJob(1);
+    await dieMidBattle(battleId);
+    const exhausted: string[] = [];
+    const w = new TournamentWorker({
+      db: h.db,
+      workerId: "w-h1",
+      handlers: { run_battle: makeRunBattleHandler({ executor: async (c) => okExecution(c.battle.id) }) },
+      onExhausted: async (job) => void exhausted.push(job.id),
+      lockTimeoutMs: 1000,
+    });
+    await w.runOnce(new Date());
+    expect(exhausted).toEqual([jobId]);
+    expect((await battleOf(battleId)).status).toBe("failed");
+  });
+
   it("es idempotente: repetir el claim/aparcado no duplica ni cambia nada", async () => {
     const { battleId, jobId } = await newBattleWithJob(1);
     await dieMidBattle(battleId);

@@ -171,6 +171,11 @@ export class TournamentWorker {
       kinds: this.kinds,
       lockTimeoutMs: this.config.lockTimeoutMs,
       now,
+      // V1-P0 (H1) · los trabajos que este claim aparca cierran su torneo YA (onExhausted).
+      onParked: async (parked) => {
+        for (const p of parked)
+          await this.config.onExhausted?.(p, { db, workerId: this.workerId }).catch(() => undefined);
+      },
     });
     if (!job) return false;
 
