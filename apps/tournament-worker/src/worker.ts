@@ -12,7 +12,7 @@
  *  - cualquier otro error (bug) → needs_review directo (solo se reintenta infraestructura).
  */
 import { randomUUID } from "node:crypto";
-import { cpus, totalmem } from "node:os";
+import { AUTO_CONCURRENCY, DEFAULT_CONCURRENCY, computeAutoConcurrency, effectiveResources } from "./concurrency.js";
 import type { Knex } from "knex";
 import {
   claimJob,
@@ -38,7 +38,7 @@ export interface WorkerConfig {
   handlers: Partial<Record<JobKind, JobHandler>>;
   workerId?: string;
   kinds?: JobKind[];
-  /** Huecos de ejecución simultánea (9.4). Por defecto, derivado de CPU/RAM. */
+  /** Huecos de ejecución simultánea (9.4). Por defecto 1 (`DEFAULT_CONCURRENCY`). */
   concurrency?: number;
   lockTimeoutMs?: number;
   pollMs?: number;
@@ -69,13 +69,16 @@ export interface WorkerConfig {
 }
 
 /**
- * 9.4: una batalla por worker; concurrencia según CPU/RAM configurada.
- * Reserva un núcleo para el motor/SO y presupuesta ~2 GB por batalla.
+ * Cálculo automático (sólo con `TOURNAMENT_WORKER_CONCURRENCY=auto`): recursos EFECTIVOS
+ * del cgroup y tamaño de batalla (4v4 = 8 bots). Ver `concurrency.ts`. El defecto del
+ * worker NO es éste: es `DEFAULT_CONCURRENCY` (1).
  */
-export function computeConcurrency(env: { cpuCount?: number; memMb?: number } = {}): number {
-  const cpuCount = env.cpuCount ?? cpus().length;
-  const memMb = env.memMb ?? Math.floor(totalmem() / (1024 * 1024));
-  return Math.max(1, Math.min(cpuCount - 1, Math.floor(memMb / 2048)));
+export function computeConcurrency(env: { cpuCount?: number; memGiB?: number; botsPerBattle?: number } = {}): number {
+  const efectivos = effectiveResources();
+  return computeAutoConcurrency(
+    { cpus: env.cpuCount ?? efectivos.cpus, memGiB: env.memGiB ?? efectivos.memGiB },
+    env.botsPerBattle,
+  );
 }
 
 /** Variable de entorno del número de batallas simultáneas por worker. */
@@ -85,15 +88,16 @@ export const MAX_CONFIGURED_CONCURRENCY = 16;
 
 /**
  * Lee `TOURNAMENT_WORKER_CONCURRENCY`: ausente o vacía ⇒ `undefined` (el worker usa
- * `computeConcurrency`). Presente ⇒ entero decimal en [1, MAX_CONFIGURED_CONCURRENCY];
+ * `DEFAULT_CONCURRENCY` = 1); `auto` ⇒ `"auto"` (cálculo por cgroup). Presente ⇒ entero decimal en [1, MAX_CONFIGURED_CONCURRENCY];
  * cualquier otra cosa es un ERROR (no se sustituye en silencio: el worker no arranca).
  */
-export function concurrencyFromEnv(env: Record<string, string | undefined>): number | undefined {
+export function concurrencyFromEnv(env: Record<string, string | undefined>): number | "auto" | undefined {
   const raw = env[CONCURRENCY_ENV]?.trim();
   if (raw === undefined || raw === "") return undefined;
+  if (raw.toLowerCase() === AUTO_CONCURRENCY) return AUTO_CONCURRENCY;
   if (!/^[0-9]+$/.test(raw)) {
     throw new Error(
-      `${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY}`,
+      `${CONCURRENCY_ENV} inválida (${JSON.stringify(raw)}): entero entre 1 y ${MAX_CONFIGURED_CONCURRENCY} o "auto"`,
     );
   }
   const n = Number(raw);
@@ -213,7 +217,7 @@ export class TournamentWorker {
   start(): void {
     if (this.running) return;
     this.running = true;
-    const slots = this.config.concurrency ?? computeConcurrency();
+    const slots = this.config.concurrency ?? DEFAULT_CONCURRENCY;
     for (let i = 0; i < slots; i++) this.loops.push(this.loop());
   }
 

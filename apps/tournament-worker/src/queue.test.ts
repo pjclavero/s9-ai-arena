@@ -73,10 +73,12 @@ describe("T9.1 · clasificación de fallos (19.2, E9.M)", () => {
     expect(classifyFailure("worker_died")).toBe("infrastructure");
   });
 
-  it("la concurrencia se deriva de CPU/RAM configuradas (9.4)", () => {
-    expect(computeConcurrency({ cpuCount: 8, memMb: 8192 })).toBe(4); // limita la RAM
-    expect(computeConcurrency({ cpuCount: 4, memMb: 32768 })).toBe(3); // limita la CPU (n-1)
-    expect(computeConcurrency({ cpuCount: 1, memMb: 1024 })).toBe(1); // mínimo 1
+  it("la concurrencia automática se deriva de CPU/RAM efectivas y del tamaño de batalla (9.4, B1)", () => {
+    // 1v1 (2 bots): (8-0,5)/1 = 7 por CPU; 16/1 = 16 por RAM
+    expect(computeConcurrency({ cpuCount: 8, memGiB: 16, botsPerBattle: 2 })).toBe(7);
+    // 4v4 (8 bots, por defecto): 4 CPU ⇒ 0 por CPU ⇒ mínimo 1
+    expect(computeConcurrency({ cpuCount: 4, memGiB: 32 })).toBe(1);
+    expect(computeConcurrency({ cpuCount: 1, memGiB: 1 })).toBe(1); // mínimo 1
   });
 });
 
