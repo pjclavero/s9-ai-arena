@@ -61,7 +61,8 @@ export function encodePreamble(kind: Kind, algo: Algo): Buffer {
 }
 
 export function decodePreamble(b: Buffer): { kind: Kind; algo: Algo } {
-  if (b.length < PREAMBLE_LEN || !b.subarray(0, 4).equals(MAGIC)) throw new CorruptReplayError("bad_magic", "magic S9RP ausente");
+  if (b.length < PREAMBLE_LEN || !b.subarray(0, 4).equals(MAGIC))
+    throw new CorruptReplayError("bad_magic", "magic S9RP ausente");
   if (b[4] !== MAJOR) throw new UnsupportedFormatError("unsupported_format", `versión mayor ${b[4]} no soportada`);
   const kind = String.fromCharCode(b[5]);
   if (kind !== "R" && kind !== "V") throw new CorruptReplayError("bad_kind", "kind desconocido");
@@ -104,9 +105,17 @@ export function decodeFooter(b: Buffer): Footer {
   }
   const flags = b.readUInt32LE(4);
   if ((flags & FLAG_COMPLETE) === 0) throw new IncompleteReplayError("not_complete", "pie sin bit complete: parcial");
-  if ((flags & ~(FLAG_COMPLETE | FLAG_TRUNCATED)) !== 0) throw new CorruptReplayError("bad_flags", "flags desconocidos");
-  if (!b.subarray(52, 64).equals(Buffer.alloc(12))) throw new CorruptReplayError("bad_reserved", "reservado del pie distinto de 0");
+  if ((flags & ~(FLAG_COMPLETE | FLAG_TRUNCATED)) !== 0)
+    throw new CorruptReplayError("bad_flags", "flags desconocidos");
+  if (!b.subarray(52, 64).equals(Buffer.alloc(12)))
+    throw new CorruptReplayError("bad_reserved", "reservado del pie distinto de 0");
   const off = b.readBigUInt64LE(8);
-  if (off > BigInt(Number.MAX_SAFE_INTEGER)) throw new CorruptReplayError("bad_footer_geometry", "indexOffset fuera de rango");
-  return { flags, indexOffset: Number(off), indexLen: b.readUInt32LE(16), indexSha256: Buffer.from(b.subarray(20, 52)) };
+  if (off > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new CorruptReplayError("bad_footer_geometry", "indexOffset fuera de rango");
+  return {
+    flags,
+    indexOffset: Number(off),
+    indexLen: b.readUInt32LE(16),
+    indexSha256: Buffer.from(b.subarray(20, 52)),
+  };
 }

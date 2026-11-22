@@ -17,7 +17,14 @@ import {
   type IndexDoc,
   type Kind,
 } from "./format.js";
-import { CorruptReplayError, IncompleteReplayError, S9rError, StorageError, toStorageError, UnsupportedFormatError } from "./errors.js";
+import {
+  CorruptReplayError,
+  IncompleteReplayError,
+  S9rError,
+  StorageError,
+  toStorageError,
+  UnsupportedFormatError,
+} from "./errors.js";
 import { nodeFs, type S9rFile, type S9rFs } from "./io.js";
 
 export interface OpenOptions {
@@ -65,29 +72,41 @@ export class S9rReader {
 
   private static async parse(file: S9rFile, opts: OpenOptions): Promise<S9rReader> {
     const size = await file.size();
-    if (size < PREAMBLE_LEN + FRAME_HEADER_LEN + FOOTER_LEN) throw new IncompleteReplayError("too_short", "fichero demasiado corto: parcial");
+    if (size < PREAMBLE_LEN + FRAME_HEADER_LEN + FOOTER_LEN)
+      throw new IncompleteReplayError("too_short", "fichero demasiado corto: parcial");
     const footer = decodeFooter(await readExact(file, size - FOOTER_LEN, FOOTER_LEN));
     if (footer.indexOffset + footer.indexLen + FOOTER_LEN !== size || footer.indexLen < FRAME_HEADER_LEN) {
       throw new CorruptReplayError("bad_footer_geometry", "el índice no cuadra con el tamaño del fichero");
     }
     const { kind, algo } = decodePreamble(await readExact(file, 0, PREAMBLE_LEN));
     const indexFrame = await readExact(file, footer.indexOffset, footer.indexLen);
-    if (!sha256(indexFrame).equals(footer.indexSha256)) throw new CorruptReplayError("index_sha_mismatch", "sha256 del índice distinto del pie");
+    if (!sha256(indexFrame).equals(footer.indexSha256))
+      throw new CorruptReplayError("index_sha_mismatch", "sha256 del índice distinto del pie");
     const index = JSON.parse((await decodeFrame(indexFrame, FT.index, algo)).toString("utf8")) as IndexDoc;
-    if (index.formatVersion !== 1) throw new UnsupportedFormatError("unsupported_format", `formatVersion ${index.formatVersion}`);
-    if (index.kind !== kind || index.algo !== algo) throw new CorruptReplayError("index_preamble_mismatch", "índice y preámbulo discrepan");
-    if (((footer.flags & FLAG_TRUNCATED) !== 0) !== index.truncated) throw new CorruptReplayError("flags_index_mismatch", "flags del pie e índice discrepan");
+    if (index.formatVersion !== 1)
+      throw new UnsupportedFormatError("unsupported_format", `formatVersion ${index.formatVersion}`);
+    if (index.kind !== kind || index.algo !== algo)
+      throw new CorruptReplayError("index_preamble_mismatch", "índice y preámbulo discrepan");
+    if (((footer.flags & FLAG_TRUNCATED) !== 0) !== index.truncated)
+      throw new CorruptReplayError("flags_index_mismatch", "flags del pie e índice discrepan");
     // Geometría: cabecera, fragmentos contiguos, índice justo detrás.
     let expect = PREAMBLE_LEN + index.headerFrameLen;
     for (const f of index.fragments) {
-      if (f.offset !== expect || f.frameLen < FRAME_HEADER_LEN) throw new CorruptReplayError("bad_geometry", "fragmentos no contiguos");
+      if (f.offset !== expect || f.frameLen < FRAME_HEADER_LEN)
+        throw new CorruptReplayError("bad_geometry", "fragmentos no contiguos");
       expect += f.frameLen;
     }
-    if (expect !== footer.indexOffset) throw new CorruptReplayError("bad_geometry", "hueco entre el último fragmento y el índice");
+    if (expect !== footer.indexOffset)
+      throw new CorruptReplayError("bad_geometry", "hueco entre el último fragmento y el índice");
     const headerFrame = await readExact(file, PREAMBLE_LEN, index.headerFrameLen);
     const header = JSON.parse((await decodeFrame(headerFrame, FT.header, algo)).toString("utf8"));
     // La cadena ata la cabecera (battleId, semilla, versiones) a todos los fragmentos.
-    if (computeChain(headerFrame, index.fragments.map((f) => f.sha256)) !== index.chain) {
+    if (
+      computeChain(
+        headerFrame,
+        index.fragments.map((f) => f.sha256),
+      ) !== index.chain
+    ) {
       throw new CorruptReplayError("chain_mismatch", "la cadena de integridad no corresponde a esta cabecera");
     }
     if (opts.expectBattleId !== undefined && header.battleId !== opts.expectBattleId) {
@@ -109,12 +128,15 @@ export class S9rReader {
     this.fragmentReads++;
     const frame = await readExact(this.file, entry.offset, entry.frameLen);
     const h = decodeFrameHeader(frame);
-    if (h.type !== entry.type || h.len + FRAME_HEADER_LEN !== entry.frameLen) throw new CorruptReplayError("frame_header_mismatch", `frame ${i}: cabecera distinta del índice`);
+    if (h.type !== entry.type || h.len + FRAME_HEADER_LEN !== entry.frameLen)
+      throw new CorruptReplayError("frame_header_mismatch", `frame ${i}: cabecera distinta del índice`);
     const payload = frame.subarray(FRAME_HEADER_LEN);
     if (crc32(payload) !== h.crc) throw new CorruptReplayError("crc_mismatch", `frame ${i}: crc32 incorrecto`);
-    if (sha256(payload).toString("hex") !== entry.sha256) throw new CorruptReplayError("sha_mismatch", `frame ${i}: sha256 distinto del índice`);
+    if (sha256(payload).toString("hex") !== entry.sha256)
+      throw new CorruptReplayError("sha_mismatch", `frame ${i}: sha256 distinto del índice`);
     const raw = await decompress(this.algo, payload, MAX_FRAME_BYTES);
-    if (raw.length !== entry.rawLen) throw new CorruptReplayError("raw_len_mismatch", `frame ${i}: longitud descomprimida distinta del índice`);
+    if (raw.length !== entry.rawLen)
+      throw new CorruptReplayError("raw_len_mismatch", `frame ${i}: longitud descomprimida distinta del índice`);
     return raw;
   }
 
@@ -158,7 +180,8 @@ export class S9rReader {
 }
 
 export async function readExact(file: S9rFile, position: number, length: number): Promise<Buffer> {
-  if (length < 0 || length > MAX_FRAME_BYTES + FRAME_HEADER_LEN) throw new CorruptReplayError("bad_length", `longitud ${length} fuera de rango`);
+  if (length < 0 || length > MAX_FRAME_BYTES + FRAME_HEADER_LEN)
+    throw new CorruptReplayError("bad_length", `longitud ${length} fuera de rango`);
   const buf = Buffer.alloc(length);
   let got = 0;
   while (got < length) {
@@ -177,9 +200,11 @@ export async function readExact(file: S9rFile, position: number, length: number)
 /** Valida crc de un frame completo (cabecera+payload) y devuelve el payload descomprimido. */
 export async function decodeFrame(frame: Buffer, expectType: number, algo: Algo): Promise<Buffer> {
   const h = decodeFrameHeader(frame);
-  if (h.type !== expectType || h.len + FRAME_HEADER_LEN !== frame.length) throw new CorruptReplayError("frame_header_mismatch", `frame tipo ${expectType} mal formado`);
+  if (h.type !== expectType || h.len + FRAME_HEADER_LEN !== frame.length)
+    throw new CorruptReplayError("frame_header_mismatch", `frame tipo ${expectType} mal formado`);
   const payload = frame.subarray(FRAME_HEADER_LEN);
-  if (crc32(payload) !== h.crc) throw new CorruptReplayError("crc_mismatch", `frame tipo ${expectType}: crc32 incorrecto`);
+  if (crc32(payload) !== h.crc)
+    throw new CorruptReplayError("crc_mismatch", `frame tipo ${expectType}: crc32 incorrecto`);
   return decompress(algo, payload, MAX_FRAME_BYTES);
 }
 

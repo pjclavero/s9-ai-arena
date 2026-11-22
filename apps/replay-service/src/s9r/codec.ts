@@ -22,7 +22,8 @@ export function algoAvailable(algo: Algo): boolean {
 }
 
 function need(algo: Algo): void {
-  if (!algoAvailable(algo)) throw new UnsupportedFormatError("unsupported_algo", `algoritmo ${algo} no disponible en este runtime`);
+  if (!algoAvailable(algo))
+    throw new UnsupportedFormatError("unsupported_algo", `algoritmo ${algo} no disponible en este runtime`);
 }
 
 /** Compresión asíncrona (fuera del event loop: pool de zlib). */
@@ -36,8 +37,16 @@ export async function compress(algo: Algo, raw: Buffer): Promise<Buffer> {
 export async function decompress(algo: Algo, comp: Buffer, maxOutput: number): Promise<Buffer> {
   need(algo);
   try {
-    if (algo === "zstd") return await (promisify(z.zstdDecompress!) as (b: Buffer, o: object) => Promise<Buffer>)(comp, { maxOutputLength: maxOutput });
-    return await (promisify(zlib.gunzip as unknown as (b: Buffer, o: object, cb: Cb) => void) as (b: Buffer, o: object) => Promise<Buffer>)(comp, { maxOutputLength: maxOutput });
+    if (algo === "zstd")
+      return await (promisify(z.zstdDecompress!) as (b: Buffer, o: object) => Promise<Buffer>)(comp, {
+        maxOutputLength: maxOutput,
+      });
+    return await (
+      promisify(zlib.gunzip as unknown as (b: Buffer, o: object, cb: Cb) => void) as (
+        b: Buffer,
+        o: object,
+      ) => Promise<Buffer>
+    )(comp, { maxOutputLength: maxOutput });
   } catch (e) {
     throw new CorruptReplayError("decompress_failed", `descompresión fallida: ${(e as Error).message}`, { cause: e });
   }

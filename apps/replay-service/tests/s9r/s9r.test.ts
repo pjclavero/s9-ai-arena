@@ -41,12 +41,26 @@ const p = (name: string) => join(dir, `${++seq}-${name}`);
 /** Registros sintéticos deterministas (LCG): 8 vehículos por tick. */
 function rec(t: number, v: number, tag = ""): string {
   const x = (Math.imul(t * 8 + v, 1103515245) + 12345) >>> 0;
-  return JSON.stringify({ k: "c", t, b: tag, v: `veh${v}`, c: { thr: (x % 2001) / 1000 - 1, turn: ((x >>> 8) % 2001) / 1000 - 1, fire: (x >>> 16) % 7 === 0 } });
+  return JSON.stringify({
+    k: "c",
+    t,
+    b: tag,
+    v: `veh${v}`,
+    c: { thr: (x % 2001) / 1000 - 1, turn: ((x >>> 8) % 2001) / 1000 - 1, fire: (x >>> 16) % 7 === 0 },
+  });
 }
 
 async function build(
   path: string,
-  o: { battleId?: string; ticks?: number; algo?: Algo; fragmentBytes?: number; maxBytes?: number; result?: boolean; fs?: S9rFs } = {},
+  o: {
+    battleId?: string;
+    ticks?: number;
+    algo?: Algo;
+    fragmentBytes?: number;
+    maxBytes?: number;
+    result?: boolean;
+    fs?: S9rFs;
+  } = {},
 ) {
   const w = await S9rWriter.create(path, {
     kind: "R",
@@ -65,7 +79,9 @@ async function build(
         await w.append(l, t);
       }
     }
-    const summary = await w.close(o.result === false ? {} : { result: { winner: "team-a", ticks: o.ticks ?? 60, finalStateHash: "ab".repeat(32) } });
+    const summary = await w.close(
+      o.result === false ? {} : { result: { winner: "team-a", ticks: o.ticks ?? 60, finalStateHash: "ab".repeat(32) } },
+    );
     return { w, summary, lines };
   } catch (e) {
     await w.abort();
@@ -213,7 +229,9 @@ describe("T3 fragmento o cuerpo de otra batalla", () => {
   it("T3 expectBattleId distinto de la cabecera se rechaza", async () => {
     const f = p("exp.s9r");
     await build(f);
-    await expect(S9rReader.open(f, { expectBattleId: "battle-ZZZZ" })).rejects.toMatchObject({ code: "battle_mismatch" });
+    await expect(S9rReader.open(f, { expectBattleId: "battle-ZZZZ" })).rejects.toMatchObject({
+      code: "battle_mismatch",
+    });
   });
 });
 
@@ -234,7 +252,12 @@ describe("T4 fichero sin pie es parcial", () => {
   });
   it("T4 un escritor sin cerrar deja un parcial: no abre, pero scanPartial cuenta los fragmentos intactos", async () => {
     const f = p("open.s9r.part");
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "x" }, maxBytes: 1 << 20, fragmentBytes: 300 });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "x" },
+      maxBytes: 1 << 20,
+      fragmentBytes: 300,
+    });
     for (let t = 0; t < 40; t++) await w.append(rec(t, 0), t);
     await expect(S9rReader.open(f)).rejects.toBeInstanceOf(IncompleteReplayError);
     const s = await scanPartial(f);
@@ -266,11 +289,19 @@ describe("T5 tope de bytes", () => {
     const ok = await build(p("edge-ok.s9r"), { ticks: 40, fragmentBytes: 400, result: false, maxBytes: dataEnd });
     expect(ok.summary.fragments).toBe(ref.summary.fragments);
     // Un byte menos: el ÚLTIMO fragmento (no el primero) lanza el error de límite.
-    await expect(build(p("edge-ko.s9r"), { ticks: 40, fragmentBytes: 400, result: false, maxBytes: dataEnd - 1 })).rejects.toBeInstanceOf(ReplayLimitExceededError);
+    await expect(
+      build(p("edge-ko.s9r"), { ticks: 40, fragmentBytes: 400, result: false, maxBytes: dataEnd - 1 }),
+    ).rejects.toBeInstanceOf(ReplayLimitExceededError);
   });
   it("T5 tras el límite el escritor sigue utilizable: cierra como truncado, dentro del margen y verificable", async () => {
     const f = p("trunc-limit.s9r");
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "x" }, maxBytes: 1200, emergencyBytes: 2048, fragmentBytes: 300 });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "x" },
+      maxBytes: 1200,
+      emergencyBytes: 2048,
+      fragmentBytes: 300,
+    });
     let hit: unknown;
     let lastGood = -1;
     for (let t = 0; t < 500 && !hit; t++) {
@@ -337,7 +368,13 @@ describe("T6 errores de disco tipados", () => {
   }
   it("T6 ENOSPC en un fragmento intermedio -> StorageFullError, escritor envenenado y búfer vacío", async () => {
     const f = p("enospc.s9r");
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "x" }, maxBytes: 1 << 20, fragmentBytes: 300, fs: faulty("write", 4, "ENOSPC") });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "x" },
+      maxBytes: 1 << 20,
+      fragmentBytes: 300,
+      fs: faulty("write", 4, "ENOSPC"),
+    });
     let err: unknown;
     let t = 0;
     for (; t < 400 && !err; t++) {
@@ -359,7 +396,13 @@ describe("T6 errores de disco tipados", () => {
   });
   it("T6 EIO en el fsync de cierre -> StorageIoError (distinto de disco lleno) y sin pie publicable", async () => {
     const f = p("eio.s9r");
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "x" }, maxBytes: 1 << 20, fragmentBytes: 300, fs: faulty("sync", 1, "EIO") });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "x" },
+      maxBytes: 1 << 20,
+      fragmentBytes: 300,
+      fs: faulty("sync", 1, "EIO"),
+    });
     for (let t = 0; t < 10; t++) await w.append(rec(t, 0), t);
     const e = await w.close().catch((x) => x);
     expect(e).toBeInstanceOf(StorageIoError);
@@ -369,8 +412,13 @@ describe("T6 errores de disco tipados", () => {
     expect(existsSync(f)).toBe(false);
   });
   it("T6 ENOSPC al crear el parcial se tipa igual", async () => {
-    const fs2: S9rFs = { ...nodeFs, create: async () => Promise.reject(Object.assign(new Error("x"), { code: "ENOSPC" })) };
-    await expect(S9rWriter.create(p("c.s9r"), { kind: "R", header: {}, maxBytes: 1 << 20, fs: fs2 })).rejects.toBeInstanceOf(StorageFullError);
+    const fs2: S9rFs = {
+      ...nodeFs,
+      create: async () => Promise.reject(Object.assign(new Error("x"), { code: "ENOSPC" })),
+    };
+    await expect(
+      S9rWriter.create(p("c.s9r"), { kind: "R", header: {}, maxBytes: 1 << 20, fs: fs2 }),
+    ).rejects.toBeInstanceOf(StorageFullError);
   });
   it("T6 fallo en el rename de publicación: no queda publicado y el parcial se conserva", async () => {
     const part = p("pub.s9r.part");
@@ -385,7 +433,13 @@ describe("T6 errores de disco tipados", () => {
 describe("T7 búfer acotado", () => {
   it("T7 el búfer nunca supera fragmentBytes + un registro; los registros inválidos se rechazan", async () => {
     const f = p("buf.s9r");
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "x" }, maxBytes: 64 << 20, fragmentBytes: 4096, maxRecordBytes: 256 });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "x" },
+      maxBytes: 64 << 20,
+      fragmentBytes: 4096,
+      maxRecordBytes: 256,
+    });
     for (let t = 0; t < 5000; t++) await w.append(rec(t, 0), t);
     expect(w.peakBufferBytes).toBeLessThan(4096 + 256);
     await expect(w.append("x".repeat(300), 1)).rejects.toBeInstanceOf(InvalidRecordError);
@@ -404,7 +458,12 @@ describe("T8 memoria acotada con 45 000 ticks", () => {
     gc();
     const base = process.memoryUsage().heapUsed;
     let peak = 0;
-    const w = await S9rWriter.create(f, { kind: "R", header: { battleId: "big" }, maxBytes: 512 * MiB, fragmentBytes: 256 * 1024 });
+    const w = await S9rWriter.create(f, {
+      kind: "R",
+      header: { battleId: "big" },
+      maxBytes: 512 * MiB,
+      fragmentBytes: 256 * 1024,
+    });
     for (let t = 0; t < 45000; t++) {
       for (let v = 0; v < 8; v++) await w.append(rec(t, v), t);
       if (t % 1000 === 999) {
@@ -474,7 +533,9 @@ describe("T9 publicación atómica", () => {
     await build(vp);
     const rf = p("c.s9r");
     const vf = p("c.s9v");
-    await expect(publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 })).rejects.toBeInstanceOf(StorageIoError);
+    await expect(
+      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 }),
+    ).rejects.toBeInstanceOf(StorageIoError);
     expect(order).toEqual(["V", "R"]);
     expect(existsSync(rf)).toBe(false);
   });

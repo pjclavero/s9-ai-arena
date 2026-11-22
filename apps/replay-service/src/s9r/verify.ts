@@ -33,7 +33,10 @@ export interface VerifyResult {
   truncated?: boolean;
 }
 
-export async function verifyFile(path: string, opts: { fs?: S9rFs; expectSha256?: string; expectBattleId?: string } = {}): Promise<VerifyResult> {
+export async function verifyFile(
+  path: string,
+  opts: { fs?: S9rFs; expectSha256?: string; expectBattleId?: string } = {},
+): Promise<VerifyResult> {
   const fs = opts.fs ?? nodeFs;
   let reader: S9rReader | undefined;
   let bytes = 0;
@@ -53,15 +56,22 @@ export async function verifyFile(path: string, opts: { fs?: S9rFs; expectSha256?
       const walk = async (type: number, expectSha: string | null, expectLen: number | null, rawLen: number | null) => {
         const hdr = await readExact(file, pos, FRAME_HEADER_LEN);
         const fh = decodeFrameHeader(hdr);
-        if (fh.type !== type) throw new CorruptReplayError("frame_type_mismatch", `frame en ${pos}: tipo ${fh.type}, esperado ${type}`);
+        if (fh.type !== type)
+          throw new CorruptReplayError("frame_type_mismatch", `frame en ${pos}: tipo ${fh.type}, esperado ${type}`);
         if (fh.len > MAX_FRAME_BYTES || (expectLen !== null && fh.len + FRAME_HEADER_LEN !== expectLen)) {
           throw new CorruptReplayError("frame_len_mismatch", `frame en ${pos}: longitud ${fh.len} no esperada`);
         }
         const payload = await readExact(file, pos + FRAME_HEADER_LEN, fh.len);
-        if (crc32(payload) !== fh.crc) throw new CorruptReplayError("crc_mismatch", `frame en ${pos}: crc32 incorrecto`);
-        if (expectSha !== null && sha256(payload).toString("hex") !== expectSha) throw new CorruptReplayError("sha_mismatch", `frame en ${pos}: sha256 distinto del índice`);
+        if (crc32(payload) !== fh.crc)
+          throw new CorruptReplayError("crc_mismatch", `frame en ${pos}: crc32 incorrecto`);
+        if (expectSha !== null && sha256(payload).toString("hex") !== expectSha)
+          throw new CorruptReplayError("sha_mismatch", `frame en ${pos}: sha256 distinto del índice`);
         const raw = await decompress(reader!.algo, payload, MAX_FRAME_BYTES);
-        if (rawLen !== null && raw.length !== rawLen) throw new CorruptReplayError("raw_len_mismatch", `frame en ${pos}: longitud descomprimida distinta del índice`);
+        if (rawLen !== null && raw.length !== rawLen)
+          throw new CorruptReplayError(
+            "raw_len_mismatch",
+            `frame en ${pos}: longitud descomprimida distinta del índice`,
+          );
         h.update(hdr);
         h.update(payload);
         pos += FRAME_HEADER_LEN + fh.len;
@@ -76,8 +86,16 @@ export async function verifyFile(path: string, opts: { fs?: S9rFs; expectSha256?
       decodeFooter(tail.subarray(tail.length - FOOTER_LEN));
       h.update(tail);
       const sha = h.digest("hex");
-      if (opts.expectSha256 !== undefined && sha !== opts.expectSha256) throw new CorruptReplayError("file_sha_mismatch", "sha256 del fichero distinto del esperado");
-      return { ok: true, bytes, sha256: sha, fragments: index.fragments.filter((f) => f.type === FT.data).length, records: index.records, truncated: index.truncated };
+      if (opts.expectSha256 !== undefined && sha !== opts.expectSha256)
+        throw new CorruptReplayError("file_sha_mismatch", "sha256 del fichero distinto del esperado");
+      return {
+        ok: true,
+        bytes,
+        sha256: sha,
+        fragments: index.fragments.filter((f) => f.type === FT.data).length,
+        records: index.records,
+        truncated: index.truncated,
+      };
     } finally {
       await file.close().catch(() => undefined);
     }
@@ -93,7 +111,10 @@ export async function verifyFile(path: string, opts: { fs?: S9rFs; expectSha256?
  * Recorrido forense de un PARCIAL (sin índice ni pie): cuenta los frames cuyo crc cuadra.
  * Sirve para diagnóstico; jamás para publicar.
  */
-export async function scanPartial(path: string, opts: { fs?: S9rFs } = {}): Promise<{ frames: number; dataFragments: number; validBytes: number; clean: boolean }> {
+export async function scanPartial(
+  path: string,
+  opts: { fs?: S9rFs } = {},
+): Promise<{ frames: number; dataFragments: number; validBytes: number; clean: boolean }> {
   const fs = opts.fs ?? nodeFs;
   const file = await fs.openRead(path);
   try {

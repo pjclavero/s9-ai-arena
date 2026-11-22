@@ -11,7 +11,8 @@ import { nodeFs, type S9rFs } from "./io.js";
 
 export async function publishPartial(partialPath: string, finalPath: string, opts: { fs?: S9rFs } = {}): Promise<void> {
   const fs = opts.fs ?? nodeFs;
-  if (await fs.exists(finalPath)) throw new WriterStateError("final_exists", "el destino ya existe: no se sobrescribe un replay publicado");
+  if (await fs.exists(finalPath))
+    throw new WriterStateError("final_exists", "el destino ya existe: no se sobrescribe un replay publicado");
   try {
     await fs.rename(partialPath, finalPath);
   } catch (e) {

@@ -29,7 +29,13 @@ import {
   type IndexDoc,
   type Kind,
 } from "./format.js";
-import { InvalidRecordError, ReplayLimitExceededError, StorageError, WriterStateError, toStorageError } from "./errors.js";
+import {
+  InvalidRecordError,
+  ReplayLimitExceededError,
+  StorageError,
+  WriterStateError,
+  toStorageError,
+} from "./errors.js";
 import { nodeFs, type S9rFile, type S9rFs } from "./io.js";
 
 export interface WriterOptions {
@@ -101,7 +107,8 @@ export class S9rWriter {
     const comp = await compress(o.algo, Buffer.from(JSON.stringify(opts.header)));
     const frame = Buffer.concat([encodeFrameHeader(FT.header, comp.length, crc32(comp)), comp]);
     const pre = encodePreamble(o.kind, o.algo);
-    if (PREAMBLE_LEN + frame.length > o.maxBytes) throw new ReplayLimitExceededError(o.maxBytes, PREAMBLE_LEN + frame.length);
+    if (PREAMBLE_LEN + frame.length > o.maxBytes)
+      throw new ReplayLimitExceededError(o.maxBytes, PREAMBLE_LEN + frame.length);
     let file: S9rFile;
     try {
       file = await fs.create(path);
@@ -151,9 +158,11 @@ export class S9rWriter {
   async append(record: string | object, tick: number): Promise<void> {
     this.assertOpen();
     const line = typeof record === "string" ? record : JSON.stringify(record);
-    if (line.includes("\n")) throw new InvalidRecordError("record_has_newline", "un registro no puede contener saltos de línea");
+    if (line.includes("\n"))
+      throw new InvalidRecordError("record_has_newline", "un registro no puede contener saltos de línea");
     const bytes = Buffer.byteLength(line) + 1;
-    if (bytes > this.o.maxRecordBytes) throw new InvalidRecordError("record_too_large", `registro de ${bytes} B > ${this.o.maxRecordBytes}`);
+    if (bytes > this.o.maxRecordBytes)
+      throw new InvalidRecordError("record_too_large", `registro de ${bytes} B > ${this.o.maxRecordBytes}`);
     this.lines.push(line);
     this.bufBytes += bytes;
     this.bufRecords++;
@@ -230,7 +239,12 @@ export class S9rWriter {
   private async finish(opts: { result?: Record<string, unknown>; truncated?: boolean }): Promise<WriteSummary> {
     const hardLimit = this.o.maxBytes + this.o.emergencyBytes;
     if (opts.result && !this.resultWritten) {
-      await this.writeFrame(FT.result, Buffer.from(JSON.stringify(opts.result)), { firstTick: null, lastTick: null, records: 0 }, hardLimit);
+      await this.writeFrame(
+        FT.result,
+        Buffer.from(JSON.stringify(opts.result)),
+        { firstTick: null, lastTick: null, records: 0 },
+        hardLimit,
+      );
       this.resultWritten = true;
     }
     const doc: IndexDoc = {
