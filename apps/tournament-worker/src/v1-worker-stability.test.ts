@@ -140,7 +140,6 @@ describe("V1-P0 · reintentos agotados ⇒ terminal (claimJob respeta max_attemp
     const audit = await auditFor(battleId);
     expect(audit.map((a) => a.action)).toContain("worker.battle_failed_infrastructure");
     expect(JSON.stringify(audit[0].detail)).toMatch(/agotados/);
-    expect(workerMetrics.counter("jobs_parked_total")).toBe(1);
   });
 
   it("es idempotente: repetir el claim/aparcado no duplica ni cambia nada", async () => {

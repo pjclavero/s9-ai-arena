@@ -19,7 +19,6 @@ import {
   completeJob,
   failJobInfrastructure,
   failJobUnclassified,
-  parkExhaustedStaleJobs,
   JOB_KINDS,
   type JobKind,
   type JobRow,
@@ -167,16 +166,6 @@ export class TournamentWorker {
    */
   async runOnce(now?: Date): Promise<boolean> {
     const { db } = this.config;
-    // V1-P0 · antes de reclamar: los huérfanos con intentos agotados se aparcan (needs_review) y se
-    // cierra su torneo vía onExhausted; claimJob ya no puede devolverlos.
-    const ctx0: HandlerContext = { db, workerId: this.workerId };
-    for (const parked of await parkExhaustedStaleJobs(db, {
-      kinds: this.kinds,
-      lockTimeoutMs: this.config.lockTimeoutMs,
-      now,
-    })) {
-      await this.config.onExhausted?.(parked, ctx0).catch(() => undefined);
-    }
     const job = await claimJob(db, {
       workerId: this.workerId,
       kinds: this.kinds,

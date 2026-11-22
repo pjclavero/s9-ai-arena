@@ -39,3 +39,20 @@ bot-manager REAL de E6.
   `s9_worker_jobs_needs_review`, `s9_worker_battles_lease_expired`. Alertas `Worker*` en
   `infrastructure/observability/prometheus/alerts.yml` (promtool: `alerts-worker.test.yml`).
 
+### Preparado para administrar desde la web (D-OP-31)
+
+Sin cambiar el alcance de V1-P0, las piezas quedan reutilizables por futuras rutas admin:
+
+- **Transiciones terminales y recuperación** (funciones únicas, sin duplicar lógica): `parkExhaustedStaleJobs`
+  (SQL único compartido con `claimJob`), `failBattleInfrastructure` (cierre terminal de una batalla con
+  rastro en `audit_log`), `sweepExpiredBattles` (reencolar una vez o terminal), `markBattleForReview`.
+  Una ruta admin de «cancelar» o «reintentar» debe llamarlas, no reescribir los UPDATE.
+- **Configuración**: hoy `lockTimeoutMs`, `defaultMaxAttempts`, `everyMs` y `maxAttempts` (de `enqueueJob`) son
+  PARÁMETROS de esas funciones con el valor por defecto en código/env (`TOURNAMENT_WORKER_CONCURRENCY`). NO hay
+  aún capa de configuración persistida ni recarga en caliente de la concurrencia: es el siguiente paso (leer los
+  ajustes de runtime persistidos, como ya hace `runtime-settings-wiring.ts` con el espectador público) y se
+  deja documentado, no implementado, para no agrandar este PR.
+- **Métricas**: además de `GET :8086/metrics` (Prometheus), `GET :8086/metrics.json` devuelve el mismo
+  `snapshot()` para que un endpoint interno/admin de la API lo consulte y la web lo muestre. El endpoint de la
+  API NO está en este PR.
+

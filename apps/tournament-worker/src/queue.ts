@@ -93,12 +93,12 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
   const now = opts.now ?? new Date();
   const kinds = opts.kinds ?? JOB_KINDS;
   const staleBefore = new Date(now.getTime() - lockTimeoutMs);
-  // V1-P0 · un `running` huérfano que YA agotó `max_attempts` NO se re-reclama: pasa a
-  // `needs_review` (y su batalla a `failed`) antes de elegir trabajo. El mismo límite está
-  // además en el WHERE del claim, de modo que ni una carrera lo deja reclamable.
-  await parkExhaustedStaleJobs(db, { kinds, lockTimeoutMs, now });
+  // V1-P0 · un `running` huérfano que YA agotó `max_attempts` NO se re-reclama: en la MISMA sentencia
+  // (PARK_EXHAUSTED_CTES) pasa a `needs_review` y su batalla a `failed` antes de elegir trabajo. El
+  // mismo límite está además en el WHERE del claim, de modo que ni una carrera lo deja reclamable.
   const rows = await db.raw(
     `
+    ${PARK_EXHAUSTED_CTES}
     UPDATE jobs SET
       status = 'running',
       locked_by = :workerId,
@@ -123,7 +123,7 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
     )
     RETURNING *
     `,
-    { workerId: opts.workerId, now, kinds, staleBefore },
+    { workerId: opts.workerId, now, kinds, staleBefore, parkMsg: PARK_MESSAGE, parkReason: EXHAUSTED_ORPHAN_REASON },
   );
   const job = (rows.rows?.[0] as JobRow | undefined) ?? null;
   if (job && job.attempts > 1) workerMetrics.inc("job_retries_total");
@@ -171,11 +171,72 @@ export async function failBattleInfrastructure(
   return true;
 }
 
+const PARK_MESSAGE = `[worker_died] ${EXHAUSTED_ORPHAN_REASON}`;
+
 /**
- * Barrido de la cola: los trabajos `running` con el lock vencido que YA agotaron `max_attempts`
- * pasan a `needs_review`; si son `run_battle`, su batalla pasa a `failed` (infraestructura) con
- * el motivo explícito. Todo en UNA transacción e idempotente (una segunda pasada no encuentra nada).
- * Devuelve los trabajos aparcados (con su fila ya actualizada) para que el llamador cierre el torneo.
+ * Fragmento SQL ÚNICO (compartido por `claimJob` y `parkExhaustedStaleJobs`, sin lógica duplicada):
+ * los trabajos `running` con el lock vencido que YA agotaron `max_attempts` pasan a `needs_review`;
+ * si son `run_battle`, su batalla (sin dueño vivo) pasa a `failed`/infraestructura; y ambos dejan
+ * rastro en `audit_log`. Una sola sentencia ⇒ atómico, idempotente (la 2.ª pasada no encuentra
+ * nada) y sin transacción explícita (los tests con una BD simulada siguen contando UN claim).
+ * Binds: kinds, staleBefore, now, parkMsg, parkReason.
+ */
+const PARK_EXHAUSTED_CTES = `
+  WITH parked AS (
+    UPDATE jobs SET
+      status = 'needs_review',
+      locked_by = NULL,
+      locked_at = NULL,
+      last_error = :parkMsg,
+      error_class = 'infrastructure',
+      updated_at = :now
+    WHERE id IN (
+      SELECT id FROM jobs
+      WHERE kind = ANY(:kinds)
+        AND status = 'running'
+        AND locked_at < :staleBefore
+        AND attempts >= max_attempts
+      ORDER BY created_at, id
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *
+  ),
+  failed_battles AS (
+    UPDATE battles b SET
+      status = 'failed',
+      failure_kind = 'infrastructure',
+      claimed_by = NULL,
+      lease_expires_at = NULL
+    FROM parked p
+    WHERE p.kind = 'run_battle'
+      AND (p.payload->>'battleId') ~ '^[0-9a-fA-F-]{36}$'
+      AND b.id = CAST(p.payload->>'battleId' AS uuid)
+      AND (
+        b.status = 'scheduled'
+        OR (b.status = 'running' AND (b.lease_expires_at IS NULL OR b.lease_expires_at < now()))
+      )
+    RETURNING b.id, b.run_attempts
+  ),
+  audit_jobs AS (
+    INSERT INTO audit_log (action, target, detail)
+    SELECT 'worker.job_exhausted', 'job:' || p.id,
+           jsonb_build_object('kind', p.kind, 'attempts', p.attempts, 'maxAttempts', p.max_attempts,
+                              'reason', CAST(:parkReason AS text))
+    FROM parked p
+  ),
+  audit_battles AS (
+    INSERT INTO audit_log (action, target, detail)
+    SELECT 'worker.battle_failed_infrastructure', 'battle:' || f.id,
+           jsonb_build_object('reason', CAST(:parkReason AS text), 'failureKind', 'infrastructure',
+                              'runAttempts', f.run_attempts)
+    FROM failed_battles f
+  )
+`;
+
+/**
+ * Barrido de la cola: aparca los huérfanos con intentos agotados (ver PARK_EXHAUSTED_CTES).
+ * Reutilizable por rutas admin de reintento/cancelación y por el barrido periódico. Devuelve los
+ * trabajos aparcados (con su fila ya actualizada) para que el llamador cierre el torneo.
  */
 export async function parkExhaustedStaleJobs(
   db: Knex,
@@ -183,47 +244,14 @@ export async function parkExhaustedStaleJobs(
 ): Promise<JobRow[]> {
   const now = opts.now ?? new Date();
   const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? 60_000));
-  const kinds = opts.kinds ?? JOB_KINDS;
-  const parked = await db.transaction(async (trx) => {
-    const res = await trx.raw(
-      `
-      UPDATE jobs SET
-        status = 'needs_review',
-        locked_by = NULL,
-        locked_at = NULL,
-        last_error = :msg,
-        error_class = 'infrastructure',
-        updated_at = :now
-      WHERE id IN (
-        SELECT id FROM jobs
-        WHERE kind = ANY(:kinds)
-          AND status = 'running'
-          AND locked_at < :staleBefore
-          AND attempts >= max_attempts
-        ORDER BY created_at, id
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING *
-      `,
-      { kinds, staleBefore, now, msg: `[worker_died] ${EXHAUSTED_ORPHAN_REASON}` },
-    );
-    const jobs = res.rows as JobRow[];
-    for (const j of jobs) {
-      const battleId = j.kind === "run_battle" ? String((j.payload as Record<string, unknown>)?.battleId ?? "") : "";
-      await trx("audit_log").insert({
-        action: "worker.job_exhausted",
-        target: `job:${j.id}`,
-        detail: JSON.stringify({
-          kind: j.kind,
-          attempts: j.attempts,
-          maxAttempts: j.max_attempts,
-          battleId: battleId || null,
-        }),
-      });
-      if (battleId) await failBattleInfrastructure(trx, battleId, EXHAUSTED_ORPHAN_REASON);
-    }
-    return jobs;
+  const res = await db.raw(`${PARK_EXHAUSTED_CTES} SELECT * FROM parked`, {
+    kinds: opts.kinds ?? JOB_KINDS,
+    staleBefore,
+    now,
+    parkMsg: PARK_MESSAGE,
+    parkReason: EXHAUSTED_ORPHAN_REASON,
   });
+  const parked = res.rows as JobRow[];
   if (parked.length) workerMetrics.inc("jobs_parked_total", parked.length);
   return parked;
 }

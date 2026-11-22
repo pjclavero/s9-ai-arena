@@ -62,6 +62,19 @@ export class WorkerMetrics {
     this.gauges.clear();
   }
 
+  /** Mismos valores en JSON (D-OP-31): para un endpoint interno/admin de la API que los muestre en la web. */
+  snapshot(): Record<string, number> {
+    const mem = process.memoryUsage();
+    const out: Record<string, number> = {
+      heap_used_bytes: mem.heapUsed,
+      heap_limit_bytes: getHeapStatistics().heap_size_limit,
+      rss_bytes: mem.rss,
+    };
+    for (const k of Object.keys(COUNTERS) as WorkerCounter[]) out[k] = this.counter(k);
+    for (const [k, v] of this.gauges) out[k] = v;
+    return out;
+  }
+
   render(): string {
     const out: string[] = [];
     const mem = process.memoryUsage();
@@ -104,6 +117,11 @@ export function workerMetricsEnabled(env: NodeJS.ProcessEnv = process.env): bool
 /** Sirve `GET /metrics`. Devuelve el servidor (para cerrarlo). */
 export function startMetricsServer(port: number, metrics: WorkerMetrics = workerMetrics): Server {
   const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/metrics.json") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(metrics.snapshot()));
+      return;
+    }
     if (req.method === "GET" && req.url === "/metrics") {
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
       res.end(metrics.render());
