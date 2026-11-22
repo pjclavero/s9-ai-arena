@@ -132,7 +132,7 @@ Sin merge no hay V1 con estas piezas. Ninguna está en `main` hoy.
 | DEF-5 | `listBots` devuelve páginas más cortas que `limit` y el cursor podía exponer ids privados | P3 | `apps/api/src/routes/bots.ts` | TD-068, PR #316 |
 | DEF-6 | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | `apps/api/src/services/replay-list.ts` | TD-071 |
 | DEF-7 | `nightly` en rojo; `smoke.sh` comprueba rutas que no existen | P2 | `.github/workflows/nightly.yml`, `infrastructure/scripts/smoke.sh` | TD-019, TD-020, PR #314 |
-| DEF-8 | La tabla por equipos cuenta el bye como victoria y la clasificación de temporada no | pregunta de producto | `apps/tournament-worker/src/results.ts` | PR #317 (documentado como contrato) |
+| DEF-8 | La tabla por equipos contaba el bye como victoria y la clasificación de temporada no | RESUELTO por decisión D-OP-24 (el bye no puntúa, va en su columna `byes`) | `apps/tournament-worker/src/results.ts` | PR #328 |
 | DEF-9 | La emisión a YouTube sale con imagen blanca aunque el streamer publica | P2 | issue abierta | [#256](https://github.com/pjclavero/s9-ai-arena/issues/256) |
 | DEF-10 | La API revela por la respuesta si un bot existe (`enterTournament` 400 frente a 403) | P3 | issue abierta | #247 |
 

@@ -49,7 +49,8 @@ export function VdeTip(props: { testId?: string }) {
       modo (un enfrentamiento puede tener varias batallas); un enfrentamiento sin ganador cuenta como empate, y una
       serie que sigue en juego cuenta con lo ya disputado (si va igualada, como empate). No cuentan las prácticas, las
       batallas revertidas ni las detenidas por límite técnico, y un bye (pasar ronda sin rival) no suma en esta
-      clasificación: no es victoria, derrota ni empate, no cuenta como partida disputada y no da Elo. Inscribirse no te hace aparecer.
+      clasificación: no es victoria, derrota ni empate, no cuenta como partida disputada y no da Elo. Inscribirse no te
+      hace aparecer.
     </InfoTip>
   );
 }
