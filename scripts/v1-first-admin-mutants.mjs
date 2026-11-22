@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const T_DB = "apps/api/src/db/create-admin.test.ts";
 const T_PW = "apps/api/src/db/password-input.test.ts";
 const T_PC = "apps/api/src/v1b-password-change.test.ts";
+const T_AUTH = "apps/api/src/auth.test.ts";
 const T_ENV = "infrastructure/tests/check-env.test.ts";
 
 const MUTANTES = [
@@ -225,6 +226,14 @@ const MUTANTES = [
     a: 'passwordPolicyViolation(newPassword, "La nueva contraseña");\n      if (false)',
     test: T_PC,
     nombre: "política: nueva",
+  },
+  {
+    id: "X16-reset-sin-politica",
+    fichero: "apps/api/src/routes/auth.ts",
+    de: "passwordPolicyViolation(newPassword) !== null",
+    a: "false",
+    test: T_AUTH,
+    nombre: "reset con newPassword de 11 caracteres",
   },
 ];
 

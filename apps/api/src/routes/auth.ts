@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
+import { MIN_PASSWORD_LENGTH, hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -475,7 +475,7 @@ export function authRoutes(deps: AuthDeps): Router {
     async (req, res) => {
       const { token, newPassword } = req.body ?? {};
       if (typeof token !== "string" || passwordPolicyViolation(newPassword) !== null) {
-        throw badRequest("token y newPassword (≥12) obligatorios");
+        throw badRequest(`token y newPassword (≥${MIN_PASSWORD_LENGTH}) obligatorios`);
       }
       const reset = await db("password_resets")
         .where({ token_hash: hashToken(token) })
