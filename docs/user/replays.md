@@ -10,7 +10,7 @@ Puedes ver el replay de una batalla (lista y reproductor) si:
 - eres **miembro del equipo** de un bot participante y ese bot no es privado (visibilidad «equipo» o «pública»);
 - tienes rol de **moderador o administrador** (ven todos los replays);
 - tienes rol de **organizador** y la batalla es de un **torneo que creaste tú**: de los torneos de otros organizadores y de las batallas de práctica no ves nada que no veas ya como usuario normal;
-- o la plataforma tiene activado el **acceso público a replays** (un ajuste de administración, no una variable de entorno; ver [Administración](administration.md)) y **todos** los bots de la batalla son públicos, o la batalla es de un torneo con **retransmisión pública** ([Visibilidad](visibility.md)). Activarlo no hace públicas las demás batallas en las que participa algún bot privado o de equipo. En un replay público de un bot privado se ven su nombre, su equipo, sus acciones en el campo y sus estadísticas deportivas; nunca su código ni su ficha.
+- o la plataforma tiene activado el **acceso público a replays** (un ajuste de administración, no una variable de entorno; ver [Administración](administration.md#acceso-público)) y **todos** los bots de la batalla son públicos, o la batalla es de un torneo con **retransmisión pública** ([Visibilidad](visibility.md)). Activarlo no hace públicas las demás batallas en las que participa algún bot privado o de equipo. En un replay público de un bot privado se ven su nombre, su equipo, sus acciones en el campo y sus estadísticas deportivas; nunca su código ni su ficha.
 
 ### Qué ves: la proyección de competición
 
