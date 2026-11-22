@@ -9,7 +9,7 @@
  * equipo y el staff; fuera de la batalla, un bot privado ajeno se proyecta como
  * «Bot privado» sin id.
  *
- * Actores: anónimo · ajeno (B) · dueño del bot privado (A) · staff (organizer).
+ * Actores: anónimo · ajeno (B) · dueño del bot privado (A) · staff (moderator; #306: el organizer sin torneo propio es un usuario más).
  * Se prueba con las capabilities públicas ENCENDIDAS (el caso más abierto).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -101,7 +101,7 @@ beforeAll(async () => {
   tok.anon = undefined;
   tok.B = B.token;
   tok.A = A.token;
-  tok.staff = await tokenFor(h.db, DEV_USERS.organizer);
+  tok.staff = await tokenFor(h.db, DEV_USERS.moderator); // #306 · staff = moderator (el organizer ya no lo es)
 
   BOT.priv = await newBot(A.id, "private", PRIV_NAME);
   BOT.pub1 = await newBot(C.id, "public", "AUDIT-UXF-publico-1");
