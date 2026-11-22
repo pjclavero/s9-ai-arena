@@ -75,6 +75,9 @@ export async function enqueueJob(
   return rows.length > 0 ? (rows[0].id as string) : null;
 }
 
+/** Lock vencido por defecto: ÚNICO valor para el claim, el aparcado y el barrido de huérfanos (R329-10). */
+export const DEFAULT_LOCK_TIMEOUT_MS = 60_000;
+
 export interface ClaimOptions {
   workerId: string;
   kinds?: JobKind[];
@@ -94,7 +97,7 @@ export interface ClaimOptions {
  * fila son imposibles (el segundo la salta o ve el nuevo estado `running`).
  */
 export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | null> {
-  const lockTimeoutMs = opts.lockTimeoutMs ?? 60_000;
+  const lockTimeoutMs = opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const now = opts.now ?? new Date();
   const kinds = opts.kinds ?? JOB_KINDS;
   const staleBefore = new Date(now.getTime() - lockTimeoutMs);
@@ -142,7 +145,19 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
   // H1/H2 · los aparcados por ESTE claim se cuentan y se notifican (cierre inmediato del torneo).
   if (parked.length) {
     workerMetrics.inc("jobs_parked_total", parked.length);
-    await opts.onParked?.(parked);
+    try {
+      await opts.onParked?.(parked);
+    } catch (err) {
+      // Un callback que falla NO puede perder el trabajo YA reclamado en este mismo claim (R329-05).
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "tournament-worker",
+          msg: "on_parked_error",
+          err: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
   if (job && job.attempts > 1) workerMetrics.inc("job_retries_total");
   return job;
@@ -227,8 +242,9 @@ const PARK_EXHAUSTED_CTES = `
       lease_expires_at = NULL
     FROM parked p
     WHERE p.kind = 'run_battle'
-      AND (p.payload->>'battleId') ~ '^[0-9a-fA-F-]{36}$'
-      AND b.id = CAST(p.payload->>'battleId' AS uuid)
+      -- Comparacion como TEXTO, sin CAST a uuid no hay orden de evaluacion que pueda hacer fallar la
+      -- sentencia entera por un payload mal formado (R329-04).
+      AND CAST(b.id AS text) = (p.payload->>'battleId')
       AND (
         b.status = 'scheduled'
         OR (b.status = 'running' AND (b.lease_expires_at IS NULL OR b.lease_expires_at < now()))
@@ -261,7 +277,7 @@ export async function parkExhaustedStaleJobs(
   opts: { kinds?: JobKind[]; lockTimeoutMs?: number; now?: Date } = {},
 ): Promise<JobRow[]> {
   const now = opts.now ?? new Date();
-  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? 60_000));
+  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS));
   const res = await db.raw(`${PARK_EXHAUSTED_CTES} SELECT * FROM parked`, {
     kinds: opts.kinds ?? JOB_KINDS,
     staleBefore,

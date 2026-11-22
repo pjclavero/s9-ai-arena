@@ -17,6 +17,7 @@ import { claimJob, enqueueJob, parkExhaustedStaleJobs, type JobRow } from "./que
 import { TournamentWorker } from "./worker.js";
 import {
   claimBattle,
+  renewBattleLease,
   makeRunBattleHandler,
   markBattleForReview,
   type BattleContext,
@@ -219,7 +220,7 @@ describe("V1-P0 · reintentos agotados ⇒ terminal (claimJob respeta max_attemp
 });
 
 describe("V1-P0 · lease vencido ⇒ se recupera o pasa a terminal (barrido de huérfanos)", () => {
-  it("quedan intentos: se reencola UNA vez (batalla scheduled + trabajo queued) y una 2.ª pasada no hace nada", async () => {
+  it("quedan intentos: se reencola, batalla scheduled y trabajo queued, y una 2.ª pasada no hace nada", async () => {
     const { battleId, jobId } = await newBattleWithJob(3);
     await dieMidBattle(battleId);
     const r1 = await sweepExpiredBattles(h.db, { lockTimeoutMs: 1000 });
@@ -345,14 +346,37 @@ describe("V1-P0 · ejecuciones duplicadas imposibles", () => {
     expect(log.get(battleId)).toBe(1);
   });
 
-  it("el titular antiguo pierde la reserva al reencolar el barrido (no puede finalizar)", async () => {
+  it("el titular antiguo pierde la reserva al reencolar el barrido: ya no puede renovar el lease ni finalizar", async () => {
+    // CONTROL POSITIVO: sin barrido, el titular real SÍ renueva (el test puede ponerse rojo).
+    const ctl = await newBattleWithJob(3);
+    expect(await claimBattle(h.db, ctl.battleId, "ctl-owner", 45_000)).not.toBeNull();
+    expect(await renewBattleLease(h.db, ctl.battleId, "ctl-owner", 45_000)).toBe(true);
+
     const { battleId } = await newBattleWithJob(3);
-    await dieMidBattle(battleId, "slow-owner");
+    const dead = await dieMidBattle(battleId, "slow-owner");
+    const oldOwner = `slow-owner:${dead.id}:${dead.attempts}`; // el token REAL que escribió claimBattle
+    expect((await battleOf(battleId)).claimed_by).toBe(oldOwner);
     await sweepExpiredBattles(h.db, { lockTimeoutMs: 1000 });
-    const battle = await battleOf(battleId);
-    expect(battle.claimed_by).toBeNull(); // renewBattleLease(owner viejo) ⇒ 0 filas ⇒ aborta
-    const stale = await h.db("battles").where({ id: battleId, status: "running", claimed_by: "slow-owner:x:1" });
-    expect(stale).toHaveLength(0);
+    expect(await renewBattleLease(h.db, battleId, oldOwner, 45_000)).toBe(false);
+    // Tras la reentrega, el titular NUEVO la tiene y el viejo sigue sin poder tocarla.
+    const claimed = await claimBattle(h.db, battleId, "new-owner", 45_000);
+    expect(claimed?.claimed_by).toBe("new-owner");
+    expect(await renewBattleLease(h.db, battleId, oldOwner, 45_000)).toBe(false);
+    expect(await renewBattleLease(h.db, battleId, "new-owner", 45_000)).toBe(true);
+  });
+
+  it("claim y barrido en paralelo sobre huérfanos agotados no se abrazan (mismo orden de bloqueo jobs a battles)", async () => {
+    for (let i = 0; i < 6; i++) {
+      const { battleId, jobId } = await newBattleWithJob(1);
+      await dieMidBattle(battleId, `dead-par-${i}`);
+      const res = await Promise.allSettled([
+        claimJob(h.db, { workerId: "w-par", kinds: ["run_battle"], lockTimeoutMs: 1000, now: new Date() }),
+        sweepExpiredBattles(h.db, { lockTimeoutMs: 1000 }),
+      ]);
+      expect(res.map((r) => (r.status === "rejected" ? String(r.reason) : "ok"))).toEqual(["ok", "ok"]);
+      expect((await battleOf(battleId)).status).toBe("failed");
+      expect((await jobOf(jobId)).status).toBe("needs_review");
+    }
   });
 });
 

@@ -78,21 +78,26 @@ tests:
         alertname: WorkerJobRetries
         exp_alerts: []
 
-  # ── WorkerJobsNeedReview ─────────────────────────────────────────────────
+  # ── WorkerJobsNeedReview (por incremento: los históricos no disparan) ───────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_jobs_needs_review{job="tournament-worker"}'
+        values: "0x20 2x100"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerJobsNeedReview
+        exp_alerts:
+          - exp_labels: { severity: warning, job: tournament-worker }
+            exp_annotations:
+              summary: "Han aumentado los trabajos del worker en needs_review (últimos 30 min)"
   - interval: 15s
     input_series:
       - series: 's9_worker_jobs_needs_review{job="tournament-worker"}'
         values: "2x120"
     alert_rule_test:
-      - eval_time: 5m
-        alertname: WorkerJobsNeedReview
-        exp_alerts: []
       - eval_time: 15m
         alertname: WorkerJobsNeedReview
-        exp_alerts:
-          - exp_labels: { severity: warning }
-            exp_annotations:
-              summary: "Hay 2 trabajos del worker en needs_review"
+        exp_alerts: []
   - interval: 15s
     input_series:
       - series: 's9_worker_jobs_needs_review{job="tournament-worker"}'

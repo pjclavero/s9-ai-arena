@@ -173,8 +173,22 @@ export class TournamentWorker {
       now,
       // V1-P0 (H1) · los trabajos que este claim aparca cierran su torneo YA (onExhausted).
       onParked: async (parked) => {
-        for (const p of parked)
-          await this.config.onExhausted?.(p, { db, workerId: this.workerId }).catch(() => undefined);
+        for (const p of parked) {
+          try {
+            await this.config.onExhausted?.(p, { db, workerId: this.workerId });
+          } catch (err) {
+            // El trabajo ya está en needs_review; si el cierre del torneo falla lo recoge el rescate (5 min), pero queda traza.
+            console.error(
+              JSON.stringify({
+                level: "error",
+                service: "tournament-worker",
+                msg: "on_exhausted_error",
+                jobId: p.id,
+                err: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }
+        }
       },
     });
     if (!job) return false;

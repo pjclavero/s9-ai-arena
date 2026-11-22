@@ -115,7 +115,11 @@ export function workerMetricsEnabled(env: NodeJS.ProcessEnv = process.env): bool
 }
 
 /** Sirve `GET /metrics`. Devuelve el servidor (para cerrarlo). */
-export function startMetricsServer(port: number, metrics: WorkerMetrics = workerMetrics): Server {
+export function startMetricsServer(
+  port: number,
+  metrics: WorkerMetrics = workerMetrics,
+  onError: (err: Error) => void = () => undefined,
+): Server {
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/metrics.json") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -129,6 +133,8 @@ export function startMetricsServer(port: number, metrics: WorkerMetrics = worker
     }
     res.writeHead(404).end();
   });
+  // EADDRINUSE o similar: se informa y el worker sigue (las métricas son opcionales; R329-09).
+  server.on("error", onError);
   server.listen(port);
   server.unref();
   return server;

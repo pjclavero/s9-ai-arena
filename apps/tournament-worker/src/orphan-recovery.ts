@@ -7,7 +7,8 @@
  * (ver `claimJob`). Este barrido, periódico y al arrancar, cierra el hueco:
  *
  *  - Lease vencido, trabajo con lock FRESCO ⇒ hay un titular vivo: no se toca (saltada).
- *  - Lease vencido y quedan intentos ⇒ se REENCOLA UNA vez: batalla → `scheduled`, trabajo → `queued`.
+ *  - Lease vencido y quedan intentos ⇒ se REENCOLA (una entrega más): batalla → `scheduled`, trabajo →
+ *    `queued`. Cada reentrega gasta un intento, así que como mucho hay `max_attempts - 1` reentregas.
  *  - Lease vencido y intentos agotados (o el trabajo ya es terminal/inexistente tras agotarse) ⇒
  *    TERMINAL: batalla → `failed` (`failure_kind=infrastructure`), trabajo → `needs_review`,
  *    con motivo explícito en `audit_log`. Nunca se inventa un resultado deportivo.
@@ -19,7 +20,7 @@
  * no pisan la misma fila. Idempotente: una segunda pasada no encuentra nada.
  */
 import type { Knex } from "knex";
-import { failBattleInfrastructure, type JobRow } from "./queue.js";
+import { DEFAULT_LOCK_TIMEOUT_MS, failBattleInfrastructure, type JobRow } from "./queue.js";
 import { workerMetrics } from "./worker-metrics.js";
 
 export interface SweepReport {
@@ -39,7 +40,7 @@ export interface SweepOptions {
 
 export const ORPHAN_EXHAUSTED_REASON =
   "lease vencido con los intentos agotados: batalla huerfana cerrada por el barrido";
-export const ORPHAN_REQUEUED_REASON = "lease vencido: batalla huerfana reencolada una vez por el barrido";
+export const ORPHAN_REQUEUED_REASON = "lease vencido: batalla huerfana reencolada por el barrido (una entrega mas)";
 
 interface ExpiredBattle {
   id: string;
@@ -49,7 +50,7 @@ interface ExpiredBattle {
 
 export async function sweepExpiredBattles(db: Knex, opts: SweepOptions = {}): Promise<SweepReport> {
   const now = opts.now ?? new Date();
-  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? 60_000));
+  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS));
   const report: SweepReport = { requeued: [], failed: [], skipped: [] };
 
   const candidates = (
@@ -63,6 +64,13 @@ export async function sweepExpiredBattles(db: Knex, opts: SweepOptions = {}): Pr
 
   for (const { id } of candidates) {
     await db.transaction(async (trx) => {
+      // ORDEN DE BLOQUEO ÚNICO `jobs` → `battles` (R329-01): es el mismo que el aparcado de `claimJob`
+      // (CTE `parked` bloquea jobs y luego actualiza battles). Con el orden inverso, un claim y un
+      // barrido simultáneos sobre la misma batalla agotada se abrazaban (deadlock 40P01).
+      const job = (await trx("jobs")
+        .where({ dedupe_key: `run_battle:${id}` })
+        .forUpdate()
+        .first()) as JobRow | undefined;
       // Se vuelve a leer BAJO BLOQUEO: otro barrido/claim pudo cambiarla entre la lista y aquí.
       const row = (
         await trx.raw(
@@ -73,11 +81,6 @@ export async function sweepExpiredBattles(db: Knex, opts: SweepOptions = {}): Pr
         )
       ).rows[0] as ExpiredBattle | undefined;
       if (!row) return;
-
-      const job = (await trx("jobs")
-        .where({ dedupe_key: `run_battle:${id}` })
-        .forUpdate()
-        .first()) as JobRow | undefined;
       if (job && job.status === "running" && job.locked_at && new Date(job.locked_at) >= staleBefore) {
         report.skipped.push(id);
         return;

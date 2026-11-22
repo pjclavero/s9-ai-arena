@@ -26,7 +26,7 @@ bot-manager REAL de E6.
   en una transacción idempotente, con rastro en `audit_log` (`worker.job_exhausted`,
   `worker.battle_failed_infrastructure`). Código: `queue.ts` (`parkExhaustedStaleJobs`).
 - **Barrido de huérfanos** (`orphan-recovery.ts`, al arrancar y cada 60 s): batalla `running` con el lease
-  vencido ⇒ con intentos, se reencola UNA vez (`scheduled` + job `queued`); sin intentos, terminal. Si el
+  vencido ⇒ con intentos, se reencola (`scheduled` + job `queued`; cada reentrega gasta un intento, como mucho `max_attempts - 1`); sin intentos, terminal. Si el
   lock del trabajo sigue fresco, no se toca (titular posiblemente vivo). Sin resultados deportivos inventados.
 - **Contenedores**: el reaper retira también los de una batalla `running` con el lease vencido y, al arrancar
   el worker y antes de reclamar nada, los de cualquier batalla que no esté `running` con lease vigente.
@@ -45,7 +45,7 @@ Sin cambiar el alcance de V1-P0, las piezas quedan reutilizables por futuras rut
 
 - **Transiciones terminales y recuperación** (funciones únicas, sin duplicar lógica): `parkExhaustedStaleJobs`
   (SQL único compartido con `claimJob`), `failBattleInfrastructure` (cierre terminal de una batalla con
-  rastro en `audit_log`), `sweepExpiredBattles` (reencolar una vez o terminal), `markBattleForReview`.
+  rastro en `audit_log`), `sweepExpiredBattles` (reencolar o terminal), `markBattleForReview`.
   Una ruta admin de «cancelar» o «reintentar» debe llamarlas, no reescribir los UPDATE.
 - **Configuración**: hoy `lockTimeoutMs`, `defaultMaxAttempts`, `everyMs` y `maxAttempts` (de `enqueueJob`) son
   PARÁMETROS de esas funciones con el valor por defecto en código/env (`TOURNAMENT_WORKER_CONCURRENCY`). NO hay

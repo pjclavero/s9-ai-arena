@@ -15,7 +15,7 @@ import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { startWorkerRuntimeSettings } from "./runtime-settings-wiring.js";
 import { makeRunBattleHandler } from "./battle-runner.js";
-import { onBattleJobExhausted, startTournamentRescue } from "./battle-failure.js";
+import { onBattleJobExhausted, settleOrphanFailed, startTournamentRescue } from "./battle-failure.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
 import { startupTimeoutsFromEnv } from "../../bot-manager/src/startup-clock.js";
@@ -33,7 +33,7 @@ import { defaultBattleResources } from "./battle-resources.js";
 import { reapAtStartup, startReaper } from "./battle-reaper.js";
 import { startOrphanSweeper } from "./orphan-recovery.js";
 import { startMetricsServer, workerMetricsEnabled } from "./worker-metrics.js";
-import { settleFailedBattle } from "./results.js";
+import { DEFAULT_LOCK_TIMEOUT_MS } from "./queue.js";
 import { LABEL_BATTLE_ID, LABEL_ROLE, ROLE_BATTLE_BOT } from "../../bot-manager/src/container-runner.js";
 
 // ADR-016 · el worker NO expone HTTP (su señal de vida es un fichero), así que
@@ -153,6 +153,8 @@ if (process.env.REDIS_URL) {
 
 const worker = new TournamentWorker({
   db,
+  // El MISMO lock vencido para el claim y para el barrido de huérfanos (R329-10).
+  lockTimeoutMs: DEFAULT_LOCK_TIMEOUT_MS,
   ...workerLoadOptions(loadConfig),
   handlers: {
     ...(executor
@@ -218,23 +220,28 @@ const stopRescue = startTournamentRescue(db, (touched, err) => {
   else if (touched.length) log("tournament_rescue", { tournaments: touched });
 });
 let stopReaper: (() => void) | undefined;
-// V1-P0 · barrido de batallas huérfanas (`running` con el lease vencido): reencola una vez o cierra
+// V1-P0 · barrido de batallas huérfanas (`running` con el lease vencido): reencola (si quedan intentos) o cierra
 // como terminal (`failed`/infraestructura). Una pasada ahora y otra cada 60 s.
 const stopSweeper = startOrphanSweeper({
   db,
   everyMs: 60_000,
+  lockTimeoutMs: DEFAULT_LOCK_TIMEOUT_MS,
   onReport: (r, err) => {
     if (err) log("orphan_sweep_error", { err: String(err) });
     else if (r.requeued.length || r.failed.length || r.skipped.length)
       log("orphan_sweep", { requeued: r.requeued, failed: r.failed, skipped: r.skipped });
   },
-  onBattleFailed: (battleId) => settleFailedBattle(db, battleId).then(() => undefined),
+  onBattleFailed: settleOrphanFailed(db),
 });
 // V1-P0 · métricas (heap/RSS, reintentos, aparcados, huérfanas): sólo con S9_METRICS_ENABLED.
 if (workerMetricsEnabled()) {
   const metricsPort = Number(process.env.WORKER_METRICS_PORT ?? 8086);
-  startMetricsServer(metricsPort);
-  log("worker_metrics", { port: metricsPort });
+  if (Number.isInteger(metricsPort) && metricsPort > 0 && metricsPort < 65536) {
+    startMetricsServer(metricsPort, undefined, (err) => log("worker_metrics_error", { err: String(err) }));
+    log("worker_metrics", { port: metricsPort });
+  } else {
+    log("worker_metrics_error", { err: `WORKER_METRICS_PORT invalido: ${process.env.WORKER_METRICS_PORT}` });
+  }
 }
 if (proxyRunner) {
   const runner = proxyRunner;

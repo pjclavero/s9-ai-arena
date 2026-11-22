@@ -187,13 +187,13 @@ groups:
         annotations:
           summary: "El worker reintenta trabajos en bucle (más de 3 reintentos en 15 min)"
 
-      # Trabajos en revisión manual: cada uno es una batalla cerrada como infraestructura.
+      # Trabajos NUEVOS en revisión manual (el gauge cuenta todos los needs_review, también los
+      # históricos): alerta por INCREMENTO en 30 min, no por el valor absoluto (R329-07).
       - alert: WorkerJobsNeedReview
-        expr: max(s9_worker_jobs_needs_review) > 0
-        for: 10m
+        expr: delta(s9_worker_jobs_needs_review[30m]) > 0
         labels: { severity: warning }
         annotations:
-          summary: "Hay {{ $value }} trabajos del worker en needs_review"
+          summary: "Han aumentado los trabajos del worker en needs_review (últimos 30 min)"
 
       # Batallas `running` con el lease vencido que el barrido no resuelve en 5 min.
       - alert: WorkerBattlesLeaseExpired

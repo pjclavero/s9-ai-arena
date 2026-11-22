@@ -62,7 +62,7 @@ Reglas de `infrastructure/observability/prometheus/alerts.yml`:
 | `BackupMetricsMissing` | la métrica del backup no existe (no se está recogiendo) |
 | `WorkerHeapNearLimit`, `WorkerRssHigh` | el heap del tournament-worker supera el 85 % de su tope, o su RSS 900 MiB (límite del contenedor: 1 GiB), 5 min (requiere `S9_METRICS_ENABLED`) |
 | `WorkerJobRetries` | más de 3 trabajos del worker reclamados por segunda vez en 15 min |
-| `WorkerJobsNeedReview` | hay trabajos del worker en `needs_review` durante 10 min |
+| `WorkerJobsNeedReview` | aumenta el número de trabajos del worker en `needs_review` (últimos 30 min; los históricos no disparan) |
 | `WorkerBattlesLeaseExpired` | batallas `running` con el lease vencido que el barrido no recupera en 5 min |
 | `WorkerMetricsDown` | el worker exportaba métricas y dejó de hacerlo (caído o reiniciándose) |
 
