@@ -58,8 +58,8 @@ const MUTACIONES = {
     f: YML,
     desc: "permisos de escritura amplios (contents: write)",
     muere: "permisos mínimos",
-    de: "      issues: write",
-    a: "      issues: write\n      contents: write",
+    de: "      contents: read\n      issues: write",
+    a: "      contents: write\n      issues: write",
   },
   M7: {
     f: YML,

@@ -56,7 +56,9 @@ describe("nightly-alert.sh", () => {
   it("fallo sin issue abierto: crea el issue (y la etiqueta)", () => {
     const r = run({ RESULT: "failure" });
     expect(r.code).toBe(0);
-    expect(calls().some((c) => c.startsWith("issue create --title Nightly en rojo --label nightly-fallido"))).toBe(true);
+    expect(calls().some((c) => c.startsWith("issue create --title Nightly en rojo --label nightly-fallido"))).toBe(
+      true,
+    );
     expect(calls().some((c) => c.startsWith("label create nightly-fallido"))).toBe(true);
   });
 
