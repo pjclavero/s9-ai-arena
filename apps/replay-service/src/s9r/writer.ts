@@ -19,6 +19,7 @@ import {
   FLAG_COMPLETE,
   FLAG_TRUNCATED,
   FT,
+  MAX_RAW_FRAGMENT_BYTES,
   encodeFooter,
   encodeFrameHeader,
   encodePreamble,
@@ -50,6 +51,8 @@ export interface WriterOptions {
   maxRecordBytes?: number;
   /** Margen extra sólo para resultado, índice y pie al cerrar. Por defecto 64 KiB. */
   emergencyBytes?: number;
+  /** Bytes de registros pendientes en la cola interna si el llamador no espera `append`. Defecto 4 x fragmentBytes. */
+  maxQueuedBytes?: number;
   algo?: Algo;
   fs?: S9rFs;
 }
@@ -80,6 +83,11 @@ export class S9rWriter {
   private totalRecords = 0;
   private totalRaw = 0;
   private resultWritten = false;
+  /** Cola interna: las operaciones se ejecutan de una en una y en orden de llamada. */
+  private tail: Promise<unknown> = Promise.resolve();
+  private queuedBytes = 0;
+  /** Se activó el tope de bytes: faltan registros, sólo se puede cerrar con `closeTruncated`. */
+  private limitHit = false;
   /** Pico observado del búfer sin comprimir (para métricas y tests). */
   peakBufferBytes = 0;
 
@@ -96,14 +104,20 @@ export class S9rWriter {
 
   static async create(path: string, opts: WriterOptions): Promise<S9rWriter> {
     const fs = opts.fs ?? nodeFs;
+    const fragmentBytes = opts.fragmentBytes ?? 1024 * 1024;
     const o = {
       kind: opts.kind,
       maxBytes: opts.maxBytes,
-      fragmentBytes: opts.fragmentBytes ?? 1024 * 1024,
+      fragmentBytes,
       maxRecordBytes: opts.maxRecordBytes ?? 256 * 1024,
       emergencyBytes: opts.emergencyBytes ?? 64 * 1024,
+      maxQueuedBytes: opts.maxQueuedBytes ?? 4 * fragmentBytes,
       algo: opts.algo ?? PREFERRED_ALGO,
     };
+    // Un fragmento sin comprimir nunca supera esto: el lector lo usa como tope de descompresión.
+    if (o.fragmentBytes + o.maxRecordBytes > MAX_RAW_FRAGMENT_BYTES) {
+      throw new RangeError(`fragmentBytes + maxRecordBytes debe ser <= ${MAX_RAW_FRAGMENT_BYTES}`);
+    }
     const comp = await compress(o.algo, Buffer.from(JSON.stringify(opts.header)));
     const frame = Buffer.concat([encodeFrameHeader(FT.header, comp.length, crc32(comp)), comp]);
     const pre = encodePreamble(o.kind, o.algo);
@@ -155,9 +169,32 @@ export class S9rWriter {
   }
 
   /** Añade un registro (una línea JSON ya serializada o un objeto). Con contrapresión. */
-  async append(record: string | object, tick: number): Promise<void> {
-    this.assertOpen();
+  append(record: string | object, tick: number): Promise<void> {
     const line = typeof record === "string" ? record : JSON.stringify(record);
+    // Cota de memoria aunque el llamador no espere cada append: la cola no crece sin límite.
+    const bytes = Buffer.byteLength(line) + 1;
+    if (this.queuedBytes + bytes > this.o.maxQueuedBytes) {
+      return Promise.reject(
+        new WriterStateError("backpressure", `cola interna llena (${this.queuedBytes} B): espera cada append`),
+      );
+    }
+    this.queuedBytes += bytes;
+    return this.enqueue(async () => {
+      this.queuedBytes -= bytes;
+      await this.appendInner(line, tick);
+    });
+  }
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(fn);
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async appendInner(line: string, tick: number): Promise<void> {
+    this.assertOpen();
+    if (!Number.isSafeInteger(tick)) throw new InvalidRecordError("bad_tick", `tick no entero: ${String(tick)}`);
+    this.assertNotLimited();
     if (line.includes("\n"))
       throw new InvalidRecordError("record_has_newline", "un registro no puede contener saltos de línea");
     const bytes = Buffer.byteLength(line) + 1;
@@ -169,12 +206,17 @@ export class S9rWriter {
     if (this.firstTick === null) this.firstTick = tick;
     this.lastTick = tick;
     if (this.bufBytes > this.peakBufferBytes) this.peakBufferBytes = this.bufBytes;
-    if (this.bufBytes >= this.o.fragmentBytes) await this.flushFragment();
+    if (this.bufBytes >= this.o.fragmentBytes) await this.flushInner();
   }
 
   /** Cierra el fragmento en curso (útil para alinear fronteras con checkpoints). */
-  async flushFragment(): Promise<void> {
+  flushFragment(): Promise<void> {
+    return this.enqueue(() => this.flushInner());
+  }
+
+  private async flushInner(): Promise<void> {
     this.assertOpen();
+    this.assertNotLimited();
     if (this.bufRecords === 0) return;
     const raw = Buffer.from(this.lines.join("\n") + "\n");
     const meta = { firstTick: this.firstTick, lastTick: this.lastTick, records: this.bufRecords };
@@ -197,7 +239,10 @@ export class S9rWriter {
     const comp = await this.guard("compress", () => compress(this.o.algo, raw));
     const frameLen = FRAME_HEADER_LEN + comp.length;
     // Tope comprobado en CADA fragmento, antes de escribir.
-    if (this.offset + frameLen > limit) throw new ReplayLimitExceededError(limit, this.offset + frameLen);
+    if (this.offset + frameLen > limit) {
+      this.limitHit = true;
+      throw new ReplayLimitExceededError(limit, this.offset + frameLen);
+    }
     const frameStart = this.offset;
     await this.rawWrite(Buffer.concat([encodeFrameHeader(type, comp.length, crc32(comp)), comp]), "write_fragment");
     const sha = sha256(comp);
@@ -221,19 +266,34 @@ export class S9rWriter {
    * Si el volcado del último fragmento excede el tope, lanza `ReplayLimitExceededError`
    * y el escritor sigue abierto: el llamador decide (p. ej. `closeTruncated`).
    */
-  async close(opts: { result?: Record<string, unknown>; truncated?: boolean } = {}): Promise<WriteSummary> {
-    this.assertOpen();
-    await this.flushFragment();
-    return this.finish(opts);
+  close(opts: { result?: Record<string, unknown>; truncated?: boolean } = {}): Promise<WriteSummary> {
+    return this.enqueue(async () => {
+      this.assertOpen();
+      // Tras un límite de bytes faltan registros: cerrar como «completo» sería mentir.
+      this.assertNotLimited();
+      await this.flushInner();
+      return this.finish(opts);
+    });
+  }
+
+  private assertNotLimited(): void {
+    if (this.limitHit) {
+      throw new WriterStateError(
+        "limit_hit",
+        "se superó el tope de bytes y se perdieron registros: sólo se puede cerrar con closeTruncated()",
+      );
+    }
   }
 
   /** Cierra como truncado descartando el búfer pendiente (tras un límite de clase A). */
-  async closeTruncated(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
-    this.assertOpen();
-    this.lines = [];
-    this.bufBytes = 0;
-    this.bufRecords = 0;
-    return this.finish({ ...opts, truncated: true });
+  closeTruncated(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
+    return this.enqueue(async () => {
+      this.assertOpen();
+      this.lines = [];
+      this.bufBytes = 0;
+      this.bufRecords = 0;
+      return this.finish({ ...opts, truncated: true });
+    });
   }
 
   private async finish(opts: { result?: Record<string, unknown>; truncated?: boolean }): Promise<WriteSummary> {
@@ -261,6 +321,7 @@ export class S9rWriter {
     const comp = await this.guard("compress", () => compress(this.o.algo, Buffer.from(JSON.stringify(doc))));
     const indexFrame = Buffer.concat([encodeFrameHeader(FT.index, comp.length, crc32(comp)), comp]);
     if (this.offset + indexFrame.length + FOOTER_LEN > hardLimit) {
+      this.limitHit = true;
       throw new ReplayLimitExceededError(hardLimit, this.offset + indexFrame.length + FOOTER_LEN);
     }
     const indexOffset = this.offset;

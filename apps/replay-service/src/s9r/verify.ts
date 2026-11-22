@@ -13,6 +13,7 @@ import {
   FRAME_HEADER_LEN,
   FT,
   MAX_FRAME_BYTES,
+  MAX_META_BYTES,
   PREAMBLE_LEN,
   decodeFooter,
   decodeFrameHeader,
@@ -35,14 +36,14 @@ export interface VerifyResult {
 
 export async function verifyFile(
   path: string,
-  opts: { fs?: S9rFs; expectSha256?: string; expectBattleId?: string } = {},
+  opts: { fs?: S9rFs; expectSha256?: string; expectBattleId?: string; maxRawBytes?: number } = {},
 ): Promise<VerifyResult> {
   const fs = opts.fs ?? nodeFs;
   let reader: S9rReader | undefined;
   let bytes = 0;
   try {
     // 1) Estructura (pie, índice, cadena, geometría) con el mismo código que el lector.
-    reader = await S9rReader.open(path, { fs, expectBattleId: opts.expectBattleId });
+    reader = await S9rReader.open(path, { fs, expectBattleId: opts.expectBattleId, maxRawBytes: opts.maxRawBytes });
     bytes = reader.size;
     const index: IndexDoc = reader.index;
     // 2) Pasada secuencial: crc y sha de cada frame; sha256 del fichero entero.
@@ -53,7 +54,13 @@ export async function verifyFile(
       decodePreamble(pre);
       h.update(pre);
       let pos = PREAMBLE_LEN;
-      const walk = async (type: number, expectSha: string | null, expectLen: number | null, rawLen: number | null) => {
+      const walk = async (
+        type: number,
+        expectSha: string | null,
+        expectLen: number | null,
+        rawLen: number | null,
+        records: number | null,
+      ) => {
         const hdr = await readExact(file, pos, FRAME_HEADER_LEN);
         const fh = decodeFrameHeader(hdr);
         if (fh.type !== type)
@@ -66,20 +73,26 @@ export async function verifyFile(
           throw new CorruptReplayError("crc_mismatch", `frame en ${pos}: crc32 incorrecto`);
         if (expectSha !== null && sha256(payload).toString("hex") !== expectSha)
           throw new CorruptReplayError("sha_mismatch", `frame en ${pos}: sha256 distinto del índice`);
-        const raw = await decompress(reader!.algo, payload, MAX_FRAME_BYTES);
+        const raw = await decompress(reader!.algo, payload, rawLen ?? MAX_META_BYTES);
         if (rawLen !== null && raw.length !== rawLen)
           throw new CorruptReplayError(
             "raw_len_mismatch",
             `frame en ${pos}: longitud descomprimida distinta del índice`,
           );
+        if (records !== null) {
+          let nl = 0;
+          for (const b of raw) if (b === 10) nl++;
+          if (nl !== records || raw[raw.length - 1] !== 10)
+            throw new CorruptReplayError("records_mismatch", `frame en ${pos}: líneas distintas de las del índice`);
+        }
         h.update(hdr);
         h.update(payload);
         pos += FRAME_HEADER_LEN + fh.len;
       };
-      await walk(FT.header, null, index.headerFrameLen, null);
+      await walk(FT.header, null, index.headerFrameLen, null, null);
       for (const f of index.fragments) {
         if (pos !== f.offset) throw new CorruptReplayError("bad_geometry", "desplazamiento de fragmento incoherente");
-        await walk(f.type, f.sha256, f.frameLen, f.rawLen);
+        await walk(f.type, f.sha256, f.frameLen, f.rawLen, f.type === FT.data ? f.records : null);
       }
       // índice (ya validado por el lector) y pie, para completar el sha del fichero
       const tail = await readExact(file, pos, bytes - pos);
@@ -101,6 +114,14 @@ export async function verifyFile(
     }
   } catch (e) {
     if (e instanceof S9rError) return { ok: false, error: e, bytes };
+    // Última red: una excepción de lenguaje sobre contenido hostil es corrupción, no infraestructura.
+    if (e instanceof TypeError || e instanceof SyntaxError || e instanceof RangeError) {
+      return {
+        ok: false,
+        error: new CorruptReplayError("malformed", `fichero mal formado: ${e.message}`, { cause: e }),
+        bytes,
+      };
+    }
     throw e;
   } finally {
     await reader?.close().catch(() => undefined);

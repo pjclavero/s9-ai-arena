@@ -16,6 +16,8 @@ export interface S9rFs {
   create(path: string): Promise<S9rFile>;
   openRead(path: string): Promise<S9rFile>;
   rename(from: string, to: string): Promise<void>;
+  /** Enlace duro: falla con EEXIST si el destino existe (publicación sin sobrescribir). */
+  link(from: string, to: string): Promise<void>;
   unlink(path: string): Promise<void>;
   /** fsync del directorio que contiene `path`. */
   syncDir(dir: string): Promise<void>;
@@ -28,6 +30,7 @@ function wrap(fh: import("node:fs").promises.FileHandle): S9rFile {
       let off = 0;
       while (off < buf.length) {
         const { bytesWritten } = await fh.write(buf, off, buf.length - off, null);
+        if (bytesWritten === 0) throw Object.assign(new Error("write devolvió 0 bytes"), { code: "EIO" });
         off += bytesWritten;
       }
     },
@@ -42,9 +45,11 @@ function wrap(fh: import("node:fs").promises.FileHandle): S9rFile {
 }
 
 export const nodeFs: S9rFs = {
-  create: async (p) => wrap(await fsp.open(p, "wx")),
+  // 0640: legible por el grupo del servicio, nunca por «otros» ni ejecutable.
+  create: async (p) => wrap(await fsp.open(p, "wx", 0o640)),
   openRead: async (p) => wrap(await fsp.open(p, "r")),
   rename: (a, b) => fsp.rename(a, b),
+  link: (a, b) => fsp.link(a, b),
   unlink: (p) => fsp.unlink(p),
   async syncDir(dir) {
     const fh = await fsp.open(dir, "r");

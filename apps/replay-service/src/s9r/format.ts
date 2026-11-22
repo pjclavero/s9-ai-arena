@@ -25,8 +25,12 @@ export const FLAG_COMPLETE = 1;
 export const FLAG_TRUNCATED = 2;
 export const FT = { header: 1, data: 2, result: 3, index: 9 } as const;
 export type Kind = "R" | "V";
-/** Tope duro de un frame (comprimido y descomprimido) al leer. */
-export const MAX_FRAME_BYTES = 64 * 1024 * 1024;
+/** Tope duro de un frame COMPRIMIDO al leer. */
+export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/** Tope de un fragmento SIN comprimir (el escritor lo respeta; el lector lo usa contra bombas). */
+export const MAX_RAW_FRAGMENT_BYTES = 8 * 1024 * 1024;
+/** Tope descomprimido de cabecera e índice. */
+export const MAX_META_BYTES = 8 * 1024 * 1024;
 
 export interface FragmentEntry {
   type: number;

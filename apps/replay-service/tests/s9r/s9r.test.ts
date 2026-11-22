@@ -339,7 +339,7 @@ describe("T5 tope de bytes", () => {
 });
 
 describe("T6 errores de disco tipados", () => {
-  function faulty(failOp: "write" | "sync" | "rename", nth: number, code: string): S9rFs {
+  function faulty(failOp: "write" | "sync" | "link", nth: number, code: string): S9rFs {
     let n = 0;
     const hit = () => {
       if (++n >= nth) throw Object.assign(new Error(`${code} simulado`), { code });
@@ -360,9 +360,9 @@ describe("T6 errores de disco tipados", () => {
           },
         };
       },
-      rename: async (a, b) => {
-        if (failOp === "rename") hit();
-        return nodeFs.rename(a, b);
+      link: async (a, b) => {
+        if (failOp === "link") hit();
+        return nodeFs.link(a, b);
       },
     };
   }
@@ -420,11 +420,11 @@ describe("T6 errores de disco tipados", () => {
       S9rWriter.create(p("c.s9r"), { kind: "R", header: {}, maxBytes: 1 << 20, fs: fs2 }),
     ).rejects.toBeInstanceOf(StorageFullError);
   });
-  it("T6 fallo en el rename de publicación: no queda publicado y el parcial se conserva", async () => {
+  it("T6 fallo en el link de publicación: no queda publicado y el parcial se conserva", async () => {
     const part = p("pub.s9r.part");
     const fin = p("pub.s9r");
     await build(part);
-    await expect(publishPartial(part, fin, { fs: faulty("rename", 1, "EIO") })).rejects.toBeInstanceOf(StorageIoError);
+    await expect(publishPartial(part, fin, { fs: faulty("link", 1, "EIO") })).rejects.toBeInstanceOf(StorageIoError);
     expect(existsSync(fin)).toBe(false);
     expect(existsSync(part)).toBe(true);
   });
@@ -521,10 +521,10 @@ describe("T9 publicación atómica", () => {
     const order: string[] = [];
     const fs2: S9rFs = {
       ...nodeFs,
-      rename: async (a, b) => {
+      link: async (a, b) => {
         order.push(b.endsWith(".s9v") ? "V" : "R");
         if (b.endsWith(".s9r")) throw Object.assign(new Error("boom"), { code: "EIO" });
-        return nodeFs.rename(a, b);
+        return nodeFs.link(a, b);
       },
     };
     const rp = p("c.s9r.part");

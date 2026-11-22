@@ -9,6 +9,8 @@ import {
   FT,
   FLAG_TRUNCATED,
   MAX_FRAME_BYTES,
+  MAX_META_BYTES,
+  MAX_RAW_FRAGMENT_BYTES,
   PREAMBLE_LEN,
   decodeFooter,
   decodeFrameHeader,
@@ -17,20 +19,16 @@ import {
   type IndexDoc,
   type Kind,
 } from "./format.js";
-import {
-  CorruptReplayError,
-  IncompleteReplayError,
-  S9rError,
-  StorageError,
-  toStorageError,
-  UnsupportedFormatError,
-} from "./errors.js";
+import { CorruptReplayError, IncompleteReplayError, S9rError, StorageError, toStorageError } from "./errors.js";
 import { nodeFs, type S9rFile, type S9rFs } from "./io.js";
+import { parseJson, validateHeader, validateIndex } from "./validate.js";
 
 export interface OpenOptions {
   fs?: S9rFs;
   /** Si se indica, la cabecera debe llevar este battleId. */
   expectBattleId?: string;
+  /** Tope de bytes SIN comprimir por fragmento al leer (defecto 8 MiB). Protege de bombas de descompresión. */
+  maxRawBytes?: number;
 }
 
 /** Calcula la cadena de integridad a partir de la cabecera y los sha de los fragmentos. */
@@ -52,6 +50,7 @@ export class S9rReader {
     readonly index: IndexDoc,
     readonly header: Record<string, unknown>,
     readonly truncated: boolean,
+    private readonly maxRawBytes: number,
   ) {}
 
   static async open(path: string, opts: OpenOptions = {}): Promise<S9rReader> {
@@ -82,9 +81,8 @@ export class S9rReader {
     const indexFrame = await readExact(file, footer.indexOffset, footer.indexLen);
     if (!sha256(indexFrame).equals(footer.indexSha256))
       throw new CorruptReplayError("index_sha_mismatch", "sha256 del índice distinto del pie");
-    const index = JSON.parse((await decodeFrame(indexFrame, FT.index, algo)).toString("utf8")) as IndexDoc;
-    if (index.formatVersion !== 1)
-      throw new UnsupportedFormatError("unsupported_format", `formatVersion ${index.formatVersion}`);
+    const maxRaw = opts.maxRawBytes ?? MAX_RAW_FRAGMENT_BYTES;
+    const index = validateIndex(parseJson(await decodeFrame(indexFrame, FT.index, algo), "índice"), maxRaw);
     if (index.kind !== kind || index.algo !== algo)
       throw new CorruptReplayError("index_preamble_mismatch", "índice y preámbulo discrepan");
     if (((footer.flags & FLAG_TRUNCATED) !== 0) !== index.truncated)
@@ -99,7 +97,7 @@ export class S9rReader {
     if (expect !== footer.indexOffset)
       throw new CorruptReplayError("bad_geometry", "hueco entre el último fragmento y el índice");
     const headerFrame = await readExact(file, PREAMBLE_LEN, index.headerFrameLen);
-    const header = JSON.parse((await decodeFrame(headerFrame, FT.header, algo)).toString("utf8"));
+    const header = validateHeader(parseJson(await decodeFrame(headerFrame, FT.header, algo), "cabecera"));
     // La cadena ata la cabecera (battleId, semilla, versiones) a todos los fragmentos.
     if (
       computeChain(
@@ -112,7 +110,7 @@ export class S9rReader {
     if (opts.expectBattleId !== undefined && header.battleId !== opts.expectBattleId) {
       throw new CorruptReplayError("battle_mismatch", "la cabecera pertenece a otra batalla");
     }
-    return new S9rReader(file, size, kind, algo, index, header, index.truncated);
+    return new S9rReader(file, size, kind, algo, index, header, index.truncated, maxRaw);
   }
 
   get dataFragments(): { i: number; entry: FragmentEntry }[] {
@@ -134,7 +132,8 @@ export class S9rReader {
     if (crc32(payload) !== h.crc) throw new CorruptReplayError("crc_mismatch", `frame ${i}: crc32 incorrecto`);
     if (sha256(payload).toString("hex") !== entry.sha256)
       throw new CorruptReplayError("sha_mismatch", `frame ${i}: sha256 distinto del índice`);
-    const raw = await decompress(this.algo, payload, MAX_FRAME_BYTES);
+    // El tope es lo que el índice declara (ya acotado por maxRawBytes): una bomba falla aquí.
+    const raw = await decompress(this.algo, payload, entry.rawLen);
     if (raw.length !== entry.rawLen)
       throw new CorruptReplayError("raw_len_mismatch", `frame ${i}: longitud descomprimida distinta del índice`);
     return raw;
@@ -143,7 +142,10 @@ export class S9rReader {
   /** Líneas de un fragmento de datos. */
   async readRecords(i: number): Promise<string[]> {
     const raw = (await this.readFragment(i)).toString("utf8");
-    return raw.split("\n").slice(0, -1);
+    const lines = raw.split("\n").slice(0, -1);
+    if (lines.length !== this.index.fragments[i].records)
+      throw new CorruptReplayError("records_mismatch", `fragmento ${i}: líneas distintas de las del índice`);
+    return lines;
   }
 
   /** Resultado (frame 3), o null si no se escribió. */
@@ -205,7 +207,7 @@ export async function decodeFrame(frame: Buffer, expectType: number, algo: Algo)
   const payload = frame.subarray(FRAME_HEADER_LEN);
   if (crc32(payload) !== h.crc)
     throw new CorruptReplayError("crc_mismatch", `frame tipo ${expectType}: crc32 incorrecto`);
-  return decompress(algo, payload, MAX_FRAME_BYTES);
+  return decompress(algo, payload, MAX_META_BYTES);
 }
 
 export { S9rError, StorageError };

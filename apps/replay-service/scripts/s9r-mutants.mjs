@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const src = (f) => join(root, "apps/replay-service/src/s9r", f);
 const TEST = "apps/replay-service/tests/s9r/s9r.test.ts";
+const HARD = "apps/replay-service/tests/s9r/s9r-hardening.test.ts";
 
 export const MUTANTS = [
   {
@@ -189,8 +190,8 @@ export const MUTANTS = [
     id: "M-T9-overwrites-published",
     group: "T9",
     file: "publish.ts",
-    find: `if (await fs.exists(finalPath))`,
-    replace: `if (false)`,
+    find: `await fs.link(partialPath, finalPath);`,
+    replace: `await fs.rename(partialPath, finalPath);`,
   },
   {
     id: "M-T9-recipe-before-view",
@@ -199,10 +200,165 @@ export const MUTANTS = [
     find: `  if (pair.view) await publishPartial(pair.view.partial, pair.view.final, opts);\n  await publishPartial(pair.recipe.partial, pair.recipe.final, opts);`,
     replace: `  await publishPartial(pair.recipe.partial, pair.recipe.final, opts);\n  if (pair.view) await publishPartial(pair.view.partial, pair.view.final, opts);`,
   },
+  {
+    id: "M-T10-no-serialization",
+    group: "T10",
+    file: "writer.ts",
+    find: "const run = this.tail.then(fn);",
+    replace: "const run = fn();",
+  },
+  {
+    id: "M-T10-no-backpressure",
+    group: "T10",
+    file: "writer.ts",
+    find: "if (this.queuedBytes + bytes > this.o.maxQueuedBytes) {",
+    replace: "if (false) {",
+  },
+  {
+    id: "M-T10-bad-tick-accepted",
+    group: "T10",
+    file: "writer.ts",
+    find: "if (!Number.isSafeInteger(tick))",
+    replace: "if (false)",
+  },
+  {
+    id: "M-T11-close-after-limit",
+    group: "T11",
+    file: "writer.ts",
+    find: "if (this.limitHit) {",
+    replace: "if (false) {",
+  },
+  {
+    id: "M-T11-limit-not-flagged",
+    group: "T11",
+    file: "writer.ts",
+    find: "this.limitHit = true;\n      throw new ReplayLimitExceededError(limit, this.offset + frameLen);",
+    replace: "throw new ReplayLimitExceededError(limit, this.offset + frameLen);",
+  },
+  {
+    id: "M-T12-index-object-unchecked",
+    group: "T12",
+    file: "validate.ts",
+    find: 'if (typeof x !== "object" || x === null || Array.isArray(x)) return bad("no es un objeto");',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T12-json-unwrapped",
+    group: "T12",
+    file: "validate.ts",
+    find: 'throw new CorruptReplayError("bad_json", `${what}: JSON inv\u00e1lido`, { cause: e });',
+    replace: "throw e;",
+  },
+  {
+    id: "M-T12-header-unchecked",
+    group: "T12",
+    file: "validate.ts",
+    find: 'throw new CorruptReplayError("bad_header", "la cabecera no es un objeto JSON");',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T12-records-sum-unchecked",
+    group: "T12",
+    file: "validate.ts",
+    find: 'if (records !== d.records) return bad("records no suma los fragmentos");',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T12-fragment-type-unchecked",
+    group: "T12",
+    file: "validate.ts",
+    find: 'if (e.type !== FT.data && e.type !== FT.result) return bad("type de fragmento");',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T12-fragments-array-unchecked",
+    group: "T12",
+    file: "validate.ts",
+    find: 'if (!Array.isArray(d.fragments)) return bad("fragments");',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T12-verify-lines-unchecked",
+    group: "T12",
+    file: "verify.ts",
+    find: "if (nl !== records || raw[raw.length - 1] !== 10)",
+    replace: "if (false)",
+  },
+  {
+    id: "M-T12-read-lines-unchecked",
+    group: "T12",
+    file: "reader.ts",
+    find: "if (lines.length !== this.index.fragments[i].records)",
+    replace: "if (false)",
+  },
+  {
+    id: "M-T13-bomb-reader",
+    group: "T13",
+    file: "reader.ts",
+    find: "decompress(this.algo, payload, entry.rawLen)",
+    replace: "decompress(this.algo, payload, 8 * 1024 * 1024)",
+  },
+  {
+    id: "M-T13-bomb-verify",
+    group: "T13",
+    file: "verify.ts",
+    find: "rawLen ?? MAX_META_BYTES",
+    replace: "8 * 1024 * 1024",
+  },
+  {
+    id: "M-T13-rawlen-cap-unchecked",
+    group: "T13",
+    file: "validate.ts",
+    find: " || e.rawLen > maxRawBytes",
+    replace: "",
+  },
+  {
+    id: "M-T13-writer-config-unchecked",
+    group: "T13",
+    file: "writer.ts",
+    find: "if (o.fragmentBytes + o.maxRecordBytes > MAX_RAW_FRAGMENT_BYTES) {",
+    replace: "if (false) {",
+  },
+  {
+    id: "M-T14-mode-666",
+    group: "T14",
+    file: "io.ts",
+    find: "0o640",
+    replace: "0o666",
+  },
+  {
+    id: "M-T14-no-fsync",
+    group: "T14",
+    file: "writer.ts",
+    find: 'await this.guard("fsync", () => this.file.sync());',
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T14-no-syncdir-partial",
+    group: "T14",
+    file: "publish.ts",
+    find: "if (dirname(partialPath) !== dirname(finalPath)) await fs.syncDir(dirname(partialPath));",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T14-no-syncdir-final",
+    group: "T14",
+    file: "publish.ts",
+    find: "await fs.syncDir(dirname(finalPath));",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T15-publish-overwrites",
+    group: "T15",
+    file: "publish.ts",
+    find: "await fs.link(partialPath, finalPath);",
+    replace: "await fs.rename(partialPath, finalPath);",
+  },
 ];
 
 function run(group) {
-  const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", TEST, "-t", `${group} `, "--maxWorkers=1"], {
+  const test = /^T1[0-9]$/.test(group) ? HARD : TEST;
+  const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", test, "-t", `${group} `, "--maxWorkers=1"], {
     cwd: root,
     encoding: "utf8",
   });
