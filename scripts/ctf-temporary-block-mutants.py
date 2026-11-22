@@ -23,6 +23,7 @@ WEB_T = "apps/web/tests/ctf-temporary-block.test.tsx"
 PRACTICE = "apps/api/src/ctf-practice.ts"
 BATTLES = "apps/api/src/routes/battles.ts"
 NEWPAGE = "apps/web/src/pages/BattleNewPage.tsx"
+RULES_CHECK = "apps/api/src/routes/battle-rules.ts"
 PICKER = "apps/web/src/pages/BattleRulesPicker.tsx"
 
 # (id, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
@@ -37,6 +38,8 @@ MUTANTS = [
      'defineOperation(router, "getBattle", async (req, res) => {\n',
      'defineOperation(router, "getBattle", async (req, res) => {\n    if (!ctfPracticeEnabledFromEnv()) { const b0 = await db("battles").where({ id: pathParam(req, "battleId") }).first(); if (b0?.mode === CTF_MODE) throw notFound(); }\n',
      API_T, "una CTF fallida sigue visible"),
+    ("M8", RULES_CHECK, "if (mode === CTF_MODE && !ctfPracticeEnabledFromEnv()) {", "if (false) {", API_T,
+     "responde 400 mode_disabled como la creación"),
     ("M5", NEWPAGE, "const offered = (r.modes ?? []).filter((x) => !off.has(x));", "const offered = r.modes ?? [];", WEB_T,
      "el selector de modo no ofrece capture_the_flag"),
     ("M6", PICKER, "p.format === format && !blocked(p.game)", "p.format === format", WEB_T,

@@ -107,6 +107,18 @@ describe("POST /battles · CTF bloqueado", () => {
   });
 });
 
+describe("POST /battles/rules-check · CTF bloqueado", () => {
+  it("responde 400 mode_disabled como la creación (y 200 con el interruptor activado)", async () => {
+    const check = () => request(app).post("/battles/rules-check").set("Authorization", `Bearer ${tok}`);
+    const r = await check().send(ctf({ preset: "ctf", teamSize: 2 }));
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expect(r.body.error).toBe("mode_disabled");
+    process.env[ENV] = "1";
+    const ok = await check().send(ctf({ preset: "ctf", teamSize: 2 }));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+});
+
 describe("GET /rulesets · disabledModes", () => {
   it("declara CTF bloqueado con motivo y lo conserva en modes", async () => {
     const r = await request(app).get("/rulesets");

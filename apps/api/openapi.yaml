@@ -1599,7 +1599,7 @@ paths:
                   rules: { $ref: '#/components/schemas/BattleRules' }
                   composition: { type: object, nullable: true, additionalProperties: true }
                   errors: { type: array, items: { type: object, additionalProperties: true } }
-        '400': { description: Contenido o participantes inválidos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: 'Contenido o participantes inválidos. V1 · mode_disabled (capture_the_flag bloqueado temporalmente, igual que createPracticeBattle; se reactiva con S9_CTF_PRACTICE_ENABLED=1).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: bot_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: bot_not_published · ruleset_mode_mismatch · map_mode_unsupported · map_team_mismatch · loadout_unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
