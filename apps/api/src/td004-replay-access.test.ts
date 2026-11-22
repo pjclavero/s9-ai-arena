@@ -9,7 +9,7 @@
  *
  * Actores: anónimo · dueño de un bot participante (A) · ajeno (B) · miembro del
  * equipo de un bot `team` (T) · miembro del equipo de un bot `private` (Tp) ·
- * developer sin relación · organizer/moderator/admin (staff).
+ * developer sin relación · organizer (usuario más, #306) · moderator/admin (staff).
  * Batallas: bPriv (bot privado de A + uno público) · bTeam (bot `team` del
  * equipo de T) · bPrivTeam (bot `private` con equipo de Tp) · bPub (sólo bots
  * públicos).
@@ -186,15 +186,15 @@ function pathFor(battleId: string, res: (typeof RESOURCES)[number]): string {
 /** Política esperada (docs/technical/replays.md), independiente del código. */
 const EXPECT: Record<"off" | "on", Record<string, Partial<Record<Actor, boolean>>>> = {
   off: {
-    priv: { A: true, C: true, organizer: true, moderator: true, admin: true }, // C: dueño de pub1, que participa
-    team: { T: true, C: true, organizer: true, moderator: true, admin: true },
-    privTeam: { C: true, organizer: true, moderator: true, admin: true },
-    pub: { C: true, organizer: true, moderator: true, admin: true },
+    priv: { A: true, C: true, moderator: true, admin: true }, // C: dueño de pub1, que participa
+    team: { T: true, C: true, moderator: true, admin: true },
+    privTeam: { C: true, moderator: true, admin: true },
+    pub: { C: true, moderator: true, admin: true },
   },
   on: {
-    priv: { A: true, C: true, organizer: true, moderator: true, admin: true }, // C: dueño de pub1, que participa
-    team: { T: true, C: true, organizer: true, moderator: true, admin: true },
-    privTeam: { C: true, organizer: true, moderator: true, admin: true },
+    priv: { A: true, C: true, moderator: true, admin: true }, // C: dueño de pub1, que participa
+    team: { T: true, C: true, moderator: true, admin: true },
+    privTeam: { C: true, moderator: true, admin: true },
     // Público: cualquiera, anónimos incluidos.
     pub: {
       anon: true,
@@ -300,7 +300,9 @@ describe("TD-004 · listado GET /replays (sustituye al inventario anónimo del r
     expect(await seen(off, "B")).toEqual([]);
     expect((await seen(off, "T")).sort()).toEqual([B.team].sort());
     expect(await seen(off, "Tp")).toEqual([]);
-    expect((await seen(off, "organizer")).sort()).toEqual([...mine].sort());
+    // #306 · el organizer sin torneos propios es un usuario más: ni práctica ni torneos ajenos.
+    expect(await seen(off, "organizer")).toEqual([]);
+    expect((await seen(off, "moderator")).sort()).toEqual([...mine].sort());
     // Con la capability: se añade SÓLO la batalla con todos los bots públicos.
     expect((await seen(on, "B")).sort()).toEqual([B.pub].sort());
     expect((await seen(on, "A")).sort()).toEqual([B.priv, B.pub].sort());

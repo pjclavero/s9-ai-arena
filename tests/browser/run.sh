@@ -240,7 +240,7 @@ log "entorno listo en $BASE · bots anunciados en $ADVERTISE"
 {
   echo "S9_E2E_BASE=$BASE"
   echo "S9_E2E_OUT=/out"
-  echo "S9_E2E_DEV_EMAIL=organizer@dev.arena.local"
+  echo "S9_E2E_DEV_EMAIL=moderator@dev.arena.local" # #306: el staff de lectura es moderator; el organizer sólo lee SUS torneos
   # contraseña de la semilla de desarrollo (BD efímera); por fichero, no en argv
   echo "S9_E2E_DEV_PASSWORD=$(grep -oP 'DEV_PASSWORD = "\K[^"]+' apps/api/src/db/seeds/dev.ts)"
 } >"$STATE/pw.env"

@@ -43,7 +43,7 @@ La moderación y la administración de la plataforma pueden ver cualquier bot y 
 - En un torneo con retransmisión pública, sus batallas se pueden ver en directo, en replay, en el cuadro y en la emisión. De cada bot se muestra **sólo lo de la competición**: nombre, versión, equipo o bando, vehículo y equipamiento en el campo, vida, marcador, resultado y estadísticas deportivas. Esto vale también para los bots privados y de equipo.
 - **Nunca** se muestra: el código, el nombre de sus ficheros, tus datos de cuenta (correo, nombre de usuario), el diagnóstico ni la CPU de tu bot, ni el historial de tus revisiones de equipamiento.
 - La ficha de un bot privado sigue sin existir para los demás aunque el bot salga en una emisión. Su código sigue privado.
-- En un torneo **sin** retransmisión pública, y en las batallas de práctica, una batalla en la que participa un bot privado o de equipo sólo la ven sus participantes, su equipo y la organización.
+- En un torneo **sin** retransmisión pública, y en las batallas de práctica, una batalla en la que participa un bot privado o de equipo sólo la ven sus participantes, su equipo, la moderación y la administración, y quien organiza **ese** torneo (el organizador que lo creó). En las batallas de práctica y en los torneos de otro organizador, un organizador es un usuario más.
 
 Al inscribir un bot privado en un torneo con retransmisión pública verás: «Este bot es privado. Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.»
 
@@ -57,6 +57,6 @@ La autorización para mostrar en público a un bot privado la da **el torneo**, 
 - **El equipamiento se ve en el replay.** Un replay público muestra el vehículo y el equipamiento con que jugó cada bot, igual que la emisión. No muestra el historial de cambios de equipamiento de tu ficha.
 - **El cuadro de un torneo con retransmisión pública muestra el nombre** del ganador de cada partido. En un torneo sin retransmisión, un ganador privado que no puedes ver sale como «Bot privado».
 - **Si pasas a privado un bot mientras se emite una batalla de práctica**, la batalla deja de verse en público al momento, pero la emisión no se para sola: la detiene la administración de Streaming. En un torneo con retransmisión pública, cambiar la visibilidad no afecta a la emisión.
-- **La organización de torneos no ve la ficha ni el código de tu bot privado.** Quien organiza un torneo decide si se retransmite, pero no ve tu ficha ni tu código; sólo la moderación y la administración pueden verlos. Sí ve el **nombre** de tu bot en los replays y en el cuadro del torneo, aunque el torneo no se retransmita.
+- **La organización de torneos no ve la ficha ni el código de tu bot privado.** Quien organiza un torneo decide si se retransmite, pero no ve tu ficha ni tu código; sólo la moderación y la administración pueden verlos. Sí ve el **nombre** de tu bot en los replays y en el cuadro **de su torneo** (el que él creó), aunque el torneo no se retransmita. En los torneos de otros organizadores, en las batallas de práctica y en la clasificación de temporada, un bot privado ajeno le sale como «Bot privado». Tampoco ve nunca el diagnóstico ni la CPU de tu bot: son de su dueño, la moderación y la administración.
 
 Siguiente: [Bots](bots.md) · [Torneos](tournaments.md) · [Replays](replays.md).
