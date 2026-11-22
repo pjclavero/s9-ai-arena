@@ -44,6 +44,8 @@ export interface AppConfig {
   loginGuard?: LoginGuardLike;
   /** R2.4: inyectable en tests (límite bajo) — por defecto 60 refresh/min por IP. */
   refreshLimiter?: RateLimiterLike;
+  /** V1-B · guard del cambio de contraseña (por defecto SharedFailedLoginGuard, 5 fallos). */
+  passwordChangeGuard?: LoginGuardLike;
   /**
    * Cliente del pipeline de builds. Por defecto (R2.5 · ERR-SEC-12), el ENCOLADOR
    * real: submitBotVersion persiste el trabajo en la tabla `jobs` y responde 202;
@@ -169,6 +171,7 @@ export function createApp(cfg: AppConfig): express.Express {
       // R2.4 (ERR-SEC-08): el refresh emite credenciales → rate-limit propio por IP.
       refreshLimiter:
         cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
+      passwordChangeGuard: cfg.passwordChangeGuard,
     }),
   );
   app.use(userRoutes(cfg.db));

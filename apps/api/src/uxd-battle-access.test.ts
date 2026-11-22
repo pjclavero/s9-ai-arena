@@ -9,7 +9,7 @@
  * cualquier sesión obtenía ticket de espectador: todo esto estaba en ROJO.
  *
  * Actores: anónimo · dueño del bot privado (A) · ajeno (B) · dueño del bot
- * público rival (C) · organizer/admin (staff).
+ * público rival (C) · organizer sin torneos propios · moderator/admin (staff).
  * Batallas: priv (bot privado de A vs público de C) · pub (dos públicos de C) ·
  * live (en curso, sólo públicos) · sched (programada, bot privado de A).
  */
@@ -110,6 +110,7 @@ beforeAll(async () => {
   tok.B = Bu.token;
   tok.C = C.token;
   tok.organizer = await tokenFor(h.db, DEV_USERS.organizer);
+  tok.moderator = await tokenFor(h.db, DEV_USERS.moderator);
   tok.admin = await tokenFor(h.db, DEV_USERS.admin);
 
   BOT.privA = await newBot(A.id, "private", "AUDIT-UXD-privado");
@@ -172,8 +173,9 @@ afterAll(async () => {
   await h?.stop();
 });
 
-type Actor = "anon" | "A" | "B" | "C" | "organizer" | "admin";
-const ACTORS: Actor[] = ["anon", "A", "B", "C", "organizer", "admin"];
+type Actor = "anon" | "A" | "B" | "C" | "organizer" | "moderator" | "admin";
+// #306 · `organizer` (sin torneos propios) ya NO es staff: un usuario más, 404 en lo ajeno. El staff es moderator/admin.
+const ACTORS: Actor[] = ["anon", "A", "B", "C", "organizer", "moderator", "admin"];
 
 function call(app: Express, actor: Actor, method: "get" | "post", path: string) {
   const r = method === "get" ? request(app).get(path) : request(app).post(path);
@@ -183,18 +185,18 @@ function call(app: Express, actor: Actor, method: "get" | "post", path: string) 
 /** Política esperada: quién LEE cada batalla (resto: 404 uniforme). */
 const READERS: Record<"closed" | "open", Record<string, Actor[]>> = {
   closed: {
-    priv: ["A", "C", "organizer", "admin"],
-    pub: ["C", "organizer", "admin"],
-    live: ["C", "organizer", "admin"],
-    liveMixed: ["A", "C", "organizer", "admin"],
-    sched: ["A", "C", "organizer", "admin"],
+    priv: ["A", "C", "moderator", "admin"],
+    pub: ["C", "moderator", "admin"],
+    live: ["C", "moderator", "admin"],
+    liveMixed: ["A", "C", "moderator", "admin"],
+    sched: ["A", "C", "moderator", "admin"],
   },
   open: {
-    priv: ["A", "C", "organizer", "admin"], // un bot privado mantiene privada la batalla
+    priv: ["A", "C", "moderator", "admin"], // un bot privado mantiene privada la batalla
     pub: ACTORS, // terminada, sólo públicos, replays públicos
     live: ACTORS, // en curso, sólo públicos, directo público
-    liveMixed: ["A", "C", "organizer", "admin"],
-    sched: ["A", "C", "organizer", "admin"],
+    liveMixed: ["A", "C", "moderator", "admin"],
+    sched: ["A", "C", "moderator", "admin"],
   },
 };
 
@@ -258,7 +260,7 @@ describe("G-08 · una sola política de lectura para todas las vistas de una bat
     expect((await call(open, "anon", "post", `/battles/${B.live}/spectate-ticket`)).status).toBe(201);
     expect((await call(closed, "anon", "post", `/battles/${B.live}/spectate-ticket`)).status).toBe(404);
     expect((await call(closed, "A", "post", `/battles/${B.liveMixed}/spectate-ticket`)).status).toBe(201);
-    expect((await call(closed, "organizer", "post", `/battles/${B.liveMixed}/spectate-ticket`)).status).toBe(201);
+    expect((await call(closed, "moderator", "post", `/battles/${B.liveMixed}/spectate-ticket`)).status).toBe(201);
   });
 
   it("/run de una batalla ajena: 404 (no se revela ni se toca); el dueño sí puede", async () => {
@@ -313,7 +315,7 @@ describe("UX-06 · diagnóstico por bot: sólo el dueño de ESE bot y el staff",
   });
 
   it("staff ve todos los diagnósticos; un lector público no ve ninguno", async () => {
-    const s = await call(closed, "organizer", "get", `/battles/${B.priv}/stats`);
+    const s = await call(closed, "moderator", "get", `/battles/${B.priv}/stats`);
     expect(Object.keys(s.body.diagnostics).sort()).toEqual([BOT.privA, BOT.pub1].sort());
     const anon = await call(open, "anon", "get", `/battles/${B.pub}/stats`);
     expect(anon.status).toBe(200);
