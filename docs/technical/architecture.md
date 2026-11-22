@@ -43,7 +43,7 @@ verificado en `27f70bb` (octubre de 2026).
 
 - **Servicios HTTP** (Express 5): `api` :8080, `arena-engine` :8081, `map-service` :8082, `replay-service` :8083, `bot-manager` :8084. `web` sirve estáticos con nginx en :3000.
 - **Workers sin HTTP:** `tournament-worker` y `bot-build-worker`. Su vida se señala con un fichero de latido, `/tmp/heartbeat`, que el healthcheck exige con menos de 120 s de antigüedad. El tournament-worker abre además un **servidor WebSocket** en `SPECTATE_PORT` (8081 dentro de su contenedor) para el espectador.
-- **Concurrencia del tournament-worker:** `computeConcurrency()` usa `min(cpus − 1, RAM/2 GB)` bucles, cada uno con una batalla a la vez (`apps/tournament-worker/src/worker.ts:71-80`).
+- **Concurrencia del tournament-worker:** por defecto **1** bucle (una batalla a la vez; `DEFAULT_CONCURRENCY`). `TOURNAMENT_WORKER_CONCURRENCY` admite un entero 1..16 o `auto`, que calcula con los límites del cgroup y el tamaño de batalla (`apps/tournament-worker/src/concurrency.ts`; ver [concurrencia del worker](../operations/worker-concurrency.md)).
 - **La simulación** de las batallas del sistema ocurre **dentro del proceso del tournament-worker** (`makeEngineExecutor`), no en `arena-engine`.
 - **Servicio del host:** `s9-docker-proxy` (systemd), que escucha por defecto en loopback, puerto 2375, y habla con `docker.sock` aplicando una allowlist.
 
