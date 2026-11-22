@@ -17,10 +17,25 @@ afterEach(() => {
 });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function windowed(frameCap: number, eventCap: number) {
+/** `plain`: vistas sin `onEvict` (otro tipo de log): ejercita la ruta de resincronización del bombeo. */
+function windowed(frameCap: number, eventCap: number, plain = false) {
   const frames = new WindowLog<any>(frameCap);
   const events = new WindowLog<any>(eventCap);
-  const battle: SpectatableBattle = { frames, events, isFinished: () => false, getResult: () => null };
+  const view = (w: WindowLog<any>) => ({
+    get length() {
+      return w.length;
+    },
+    get base() {
+      return w.base;
+    },
+    get: (i: number) => w.get(i),
+  });
+  const battle: SpectatableBattle = {
+    frames: plain ? view(frames) : frames,
+    events: plain ? view(events) : events,
+    isFinished: () => false,
+    getResult: () => null,
+  };
   return { battle, frames, events };
 }
 const frame = (tick: number) => ({ tick, vehicles: [], projectiles: [], score: {}, objectives: [] });
@@ -41,10 +56,10 @@ describe("G1 gateway con ventana de frames", () => {
     expect(feed.droppedFrames).toBe(0);
   });
 
-  it("G2 un bombeo que se queda por detrás de la ventana se resincroniza y cuenta lo perdido (frames y eventos)", async () => {
+  it("G2 (log sin onEvict) un bombeo que se queda por detrás de la ventana se resincroniza y cuenta lo perdido (frames y eventos)", async () => {
     const gw = new SpectateGateway({ publicSpectateEnabled: true });
     cleanups.push(() => gw.close());
-    const { battle, frames, events } = windowed(5, 3);
+    const { battle, frames, events } = windowed(5, 3, true);
     gw.attachBattle("b-lag", battle, { pollIntervalMs: 200 });
     const feed = (gw as any).feeds.get("b-lag");
     // el motor produce 20 frames y 8 eventos antes del siguiente sondeo

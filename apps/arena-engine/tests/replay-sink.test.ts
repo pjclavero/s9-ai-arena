@@ -193,6 +193,9 @@ describe("R5 retainFrames:false", () => {
     // no retenido: lectura explícitamente fallida, no un [] silencioso
     expect(() => b.snapshots).toThrow(ReplayNotRetainedError);
     expect(() => b.publicEvents).toThrow(ReplayNotRetainedError);
+    // y el sink interno de verdad no los retiene (memoria)
+    expect((b as any).memory.snapshots.length).toBe(0);
+    expect((b as any).memory.events.length).toBe(0);
     expect(b.stateHashes.length).toBeGreaterThan(5);
     expect(b.checkpoints.length).toBeGreaterThan(0);
     expect(b.replayCommands.length).toBeGreaterThan(50);
@@ -218,6 +221,11 @@ describe("R7 MemoryReplaySink acotado", () => {
     for (let i = 0; i < 3; i++) s.command({ tick: i, vehicleId: "v", command: {} });
     expect(() => s.command({ tick: 4, vehicleId: "v", command: {} })).toThrow(ReplaySinkOverflowError);
     expect(s.commands.length).toBe(3);
+    const t = new MemoryReplaySink({ limits: { maxSnapshots: 2 } });
+    t.snapshot({ tick: 0 });
+    t.snapshot({ tick: 1 });
+    expect(() => t.snapshot({ tick: 2 })).toThrow(ReplaySinkOverflowError);
+    expect(t.snapshots.length).toBe(2);
   });
 
   it("R7 los topes por defecto derivan de los ticks máximos, los vehículos y las cadencias reales (no son 200 000)", () => {
