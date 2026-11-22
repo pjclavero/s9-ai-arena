@@ -83,19 +83,23 @@ export class MemoryReplaySink implements ReplaySink {
   private readonly keepSnapshots: boolean;
   private readonly keepEvents: boolean;
 
-  constructor(opts: { limits?: Partial<MemoryReplaySinkLimits>; retainSnapshots?: boolean; retainEvents?: boolean } = {}) {
+  constructor(
+    opts: { limits?: Partial<MemoryReplaySinkLimits>; retainSnapshots?: boolean; retainEvents?: boolean } = {},
+  ) {
     this.limits = { ...DEFAULT_MEMORY_LIMITS, ...opts.limits };
     this.keepSnapshots = opts.retainSnapshots !== false;
     this.keepEvents = opts.retainEvents !== false;
   }
 
   command(rec: ReplayCommandRecord): void {
-    if (this.commands.length >= this.limits.maxCommands) throw new ReplaySinkOverflowError("commands", this.limits.maxCommands);
+    if (this.commands.length >= this.limits.maxCommands)
+      throw new ReplaySinkOverflowError("commands", this.limits.maxCommands);
     this.commands.push(rec);
   }
   snapshot(frame: any): void {
     if (!this.keepSnapshots) return;
-    if (this.snapshots.length >= this.limits.maxSnapshots) throw new ReplaySinkOverflowError("snapshots", this.limits.maxSnapshots);
+    if (this.snapshots.length >= this.limits.maxSnapshots)
+      throw new ReplaySinkOverflowError("snapshots", this.limits.maxSnapshots);
     this.snapshots.push(frame);
   }
   event(ev: any): void {
@@ -104,11 +108,13 @@ export class MemoryReplaySink implements ReplaySink {
     this.events.push(ev);
   }
   hash(rec: ReplayHashRecord): void {
-    if (this.stateHashes.length >= this.limits.maxHashes) throw new ReplaySinkOverflowError("hashes", this.limits.maxHashes);
+    if (this.stateHashes.length >= this.limits.maxHashes)
+      throw new ReplaySinkOverflowError("hashes", this.limits.maxHashes);
     this.stateHashes.push(rec);
   }
   checkpoint(rec: ReplayCheckpointRecord): void {
-    if (this.checkpoints.length >= this.limits.maxCheckpoints) throw new ReplaySinkOverflowError("checkpoints", this.limits.maxCheckpoints);
+    if (this.checkpoints.length >= this.limits.maxCheckpoints)
+      throw new ReplaySinkOverflowError("checkpoints", this.limits.maxCheckpoints);
     this.checkpoints.push(rec);
   }
 }
@@ -125,7 +131,8 @@ export class WindowLog<T> {
   private pushed = 0;
 
   constructor(readonly capacity: number) {
-    if (!Number.isInteger(capacity) || capacity < 1) throw new RangeError("WindowLog: capacity debe ser un entero >= 1");
+    if (!Number.isInteger(capacity) || capacity < 1)
+      throw new RangeError("WindowLog: capacity debe ser un entero >= 1");
     this.buf = new Array(capacity);
   }
 

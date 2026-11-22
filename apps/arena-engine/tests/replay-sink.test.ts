@@ -25,7 +25,13 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-function config(seed: string, ticks: number, extra: Partial<BattleConfig> = {}, vehicles = 4, score = 9999): BattleConfig {
+function config(
+  seed: string,
+  ticks: number,
+  extra: Partial<BattleConfig> = {},
+  vehicles = 4,
+  score = 9999,
+): BattleConfig {
   const participants = [];
   for (let i = 0; i < vehicles; i++) {
     participants.push({
@@ -83,7 +89,12 @@ describe("R2 determinismo con y sin sink", () => {
     const ref = run("seed-r2", 600);
     expect(ref.b.stateHashes.length).toBeGreaterThan(5);
     const ext = new MemoryReplaySink();
-    const variants: Partial<BattleConfig>[] = [{ replaySink: ext }, { retainFrames: false }, { frameWindow: 1 }, { frameWindow: 100000 }];
+    const variants: Partial<BattleConfig>[] = [
+      { replaySink: ext },
+      { retainFrames: false },
+      { frameWindow: 1 },
+      { frameWindow: 100000 },
+    ];
     for (const v of variants) {
       const r = run("seed-r2", 600, v);
       expect(r.result.finalStateHash).toBe(ref.result.finalStateHash);
@@ -104,7 +115,12 @@ describe("R2 determinismo con y sin sink", () => {
 function killingBattle(extra: Partial<BattleConfig> = {}): Battle {
   const parts = [];
   for (let i = 0; i < 4; i++) {
-    parts.push({ id: `veh_${i + 1}`, botId: `b${i + 1}`, team: i % 2 === 0 ? "red" : "blue", spec: i % 3 === 2 ? scoutLoadout() : gunnerLoadout() });
+    parts.push({
+      id: `veh_${i + 1}`,
+      botId: `b${i + 1}`,
+      team: i % 2 === 0 ? "red" : "blue",
+      spec: i % 3 === 2 ? scoutLoadout() : gunnerLoadout(),
+    });
   }
   const b = new Battle({
     battleId: "sink_kill",
@@ -178,7 +194,9 @@ describe("R7 MemoryReplaySink acotado", () => {
     for (let i = 0; i < 3; i++) s.command({ tick: i, vehicleId: "v", command: {} });
     expect(() => s.command({ tick: 4, vehicleId: "v", command: {} })).toThrow(ReplaySinkOverflowError);
     expect(s.commands.length).toBe(3);
-    expect(() => run("seed-r7", 300, { replaySink: new MemoryReplaySink({ limits: { maxSnapshots: 5 } }) })).toThrow(ReplaySinkOverflowError);
+    expect(() => run("seed-r7", 300, { replaySink: new MemoryReplaySink({ limits: { maxSnapshots: 5 } }) })).toThrow(
+      ReplaySinkOverflowError,
+    );
   });
 });
 

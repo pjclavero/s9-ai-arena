@@ -273,7 +273,10 @@ export class Battle {
       this.sink = config.replaySink;
       this.memory = null;
     } else {
-      this.memory = new MemoryReplaySink({ retainSnapshots: config.retainFrames !== false, retainEvents: config.retainFrames !== false });
+      this.memory = new MemoryReplaySink({
+        retainSnapshots: config.retainFrames !== false,
+        retainEvents: config.retainFrames !== false,
+      });
       this.sink = this.memory;
     }
     this.rng = new RngStreams(config.seed);
