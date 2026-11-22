@@ -16,9 +16,9 @@ const services: Record<string, any> = doc.services;
 const CRITICOS = ["api", "postgres", "tournament-worker", "gateway"];
 
 describe("streamer: límite de CPU y prioridad (D-OP-26)", () => {
-  it("el techo de CPU es 2 (no la VM entera) y conserva memoria y pids", () => {
+  it("el techo de CPU es 3 (no la VM entera) y conserva memoria y pids", () => {
     const l = services.streamer.deploy.resources.limits;
-    expect(Number(l.cpus)).toBe(2);
+    expect(Number(l.cpus)).toBe(3);
     expect(l.memory).toBe("4G");
     expect(l.pids).toBe(512);
   });
@@ -65,6 +65,6 @@ describe("streamer: límite de CPU y prioridad (D-OP-26)", () => {
     const s = JSON.parse(out).services.streamer;
     expect(Number(s.cpu_shares)).toBe(128);
     expect(Number(s.oom_score_adj)).toBe(500);
-    expect(Number(s.deploy.resources.limits.cpus)).toBe(2);
+    expect(Number(s.deploy.resources.limits.cpus)).toBe(3);
   });
 });

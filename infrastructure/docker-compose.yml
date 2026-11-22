@@ -818,15 +818,15 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: { cpus: "2.0", memory: 4G, pids: 512 }
+        limits: { cpus: "3.0", memory: 4G, pids: 512 }
     # V1 · D-OP-26 · PRIORIDAD FRENTE A LOS SERVICIOS CRÍTICOS. El streamer llegó a
     # consumir entre el 80 % y el 340 % de una VM de 4 vCPU (con cpus=4 el techo era la
     # VM entera) y en esa situación competía con api, postgres, tournament-worker y
     # gateway. Tres mecanismos, todos nativos de Compose/Docker y verificables con
     # `docker inspect` (ver docs/operations/streaming.md § Límites de CPU y prioridad):
-    #  - limits.cpus 2.0 ⇒ cuota CFS (NanoCpus): TECHO duro, también sin contención.
+    #  - limits.cpus 3.0 ⇒ cuota CFS (NanoCpus): TECHO duro, también sin contención.
     #  - cpu_shares 128 ⇒ cpu.weight relativo (los demás servicios van con el 1024 por
-    #    defecto): bajo contención el streamer recibe 1/8 de lo que recibe un crítico.
+    #    defecto): bajo contención el streamer recibe ~1/5 de lo que recibe un crítico (ver docs).
     #    Sólo actúa cuando hay competencia; sin ella no le quita nada.
     #  - oom_score_adj 500 ⇒ si el HOST se queda sin memoria, el kernel sacrifica antes
     #    al streamer (reintentable) que a postgres o a la api. No toca mem_limit.

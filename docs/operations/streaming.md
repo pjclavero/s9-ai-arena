@@ -51,7 +51,7 @@ pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
 - [Operación](#operación)
 - [Errores estables](#errores-estables)
 - [Recursos medidos](#recursos-medidos)
-- [Límites de CPU y prioridad del streamer (V1, D-OP-26)](#límites-de-cpu-y-prioridad-del-streamer-v1-d-op-26)
+- [Límites de CPU y prioridad del streamer (V1, D-OP-26 / D-OP-29)](#límites-de-cpu-y-prioridad-del-streamer-v1-d-op-26--d-op-29)
 - [Secretos: custodia, rotación, backup y restore](#secretos-custodia-rotación-backup-y-restore)
 - [Despliegue del perfil `streaming` (plan, NO ejecutado)](#despliegue-del-perfil-streaming-plan-no-ejecutado)
 - [Rollback del perfil `streaming`](#rollback-del-perfil-streaming)
@@ -638,70 +638,149 @@ incertidumbre son:
 medidos en el host antes de desplegar. Si no se cumple, `CPU_ACCEPTABLE` y `MEMORY_ACCEPTABLE` se
 consideran no demostrados en producción, y hay que usar 720p o reservar CPU.
 
-## Límites de CPU y prioridad del streamer (V1, D-OP-26)
+## Límites de CPU y prioridad del streamer (V1, D-OP-26 / D-OP-29)
 
 **Motivo.** En producción el streamer consumía entre el 80 % y el 340 % de CPU en una VM de 4 vCPU
 con `cpus: 4` (el techo era la VM entera, así que competía en igualdad con api, postgres,
 tournament-worker y gateway). Con la emisión a YouTube entró además en reintentos: en 24 h, 39
-reintentos, 27 cortes de ingesta y 17 SIGKILL.
+reintentos, 27 cortes de ingesta y 17 SIGKILL. D-OP-29: el host de producción pasa a 6 vCPU para emitir
+1080p30 de forma estable mientras siguen las batallas; el límite del streamer es por tanto **3 CPU**.
 
 **Configuración** (sólo el servicio `streamer` de `infrastructure/docker-compose.yml`):
 
 | Ajuste | Valor | Por qué |
 |---|---|---|
-| `deploy.resources.limits.cpus` | `2.0` (antes `4.0`) | Techo duro (cuota CFS). Actúa siempre, haya o no contención. |
-| `cpu_shares` | `128` | Peso relativo (el resto de servicios usa el 1024 por defecto): bajo contención el streamer recibe 1/8 de lo que recibe un servicio crítico. Sin contención no le quita nada. |
-| `oom_score_adj` | `500` | Si el host se queda sin memoria, el kernel sacrifica antes al streamer (reintentable) que a postgres o a la api. No cambia `memory: 4G`. |
+| `deploy.resources.limits.cpus` | `3.0` (antes `4.0`) | Techo duro (cuota CFS). Actúa siempre. Cubre la demanda medida de 1080p30 (~2,2-2,6 CPU medias, picos ~3) y deja al menos 3 de 6 vCPU a los demás. |
+| `cpu_shares` | `128` | Peso relativo; sólo actúa bajo contención (ver abajo). |
+| `oom_score_adj` | `500` | Ante OOM del host, el kernel sacrifica antes al streamer. No cambia `memory: 4G`. |
 
-Descartados, con motivo:
+Descartados: `blkio_config.weight` (el streamer apenas escribe a disco, sólo en modo `record`, y el
+peso sólo vale con BFQ) y `nice` en el entrypoint (dentro de su cgroup sólo reordena Chromium frente a
+ffmpeg, no frente a otros contenedores, y obliga a reconstruir la imagen). Los valores por defecto del
+encoder (x264 `veryfast`, `zerolatency`, 30 fps, 1080p, 4500k) **no se han tocado**.
 
-- **`blkio_config.weight`:** el streamer apenas escribe a disco (sólo en modo `record`) y el peso
-  sólo tiene efecto con el planificador BFQ; no aporta nada verificable.
-- **`nice` en el entrypoint:** el contenedor tiene su propia cgroup, así que `nice` sólo reordena
-  Chromium frente a ffmpeg dentro del contenedor, no frente a otros servicios; y obligaría a
-  reconstruir la imagen. El mecanismo correcto entre contenedores es `cpu_shares`.
+### Qué hace realmente `cpu_shares: 128` (cgroup v2)
 
-Los valores por defecto del encoder (x264 `veryfast`, `-tune zerolatency`, 30 fps, 1080p, 4500k) **no
-se han tocado**.
+Con cgroup v2 Docker/runc traduce `cpu_shares` a `cpu.weight` (rango 1-10000, por defecto 100). Valor
+**observado** en el laboratorio (Docker 29, 2026-11-22): `cpu_shares=128` da `cpu.weight=21`, frente al
+100 de un contenedor sin `cpu_shares` (1024). La conversión depende de la versión de runc, así que se
+mide y no se supone: la proporción efectiva es **21 : 100, es decir, el streamer recibe ~17 % de la CPU
+en disputa frente a un servicio crítico (~1/5), no 1/8**.
 
-**Efecto esperado (evaluación, NO medido con la emisión real).** La medición de «Recursos medidos» dio
-**≈ 2,2-2,6 CPU de media y picos de ~3** en 1080p30, es decir, el techo de 2 CPU queda **por debajo
-de la demanda sostenida de 1080p30**. Orden probable de degradación con menos CPU:
+- El peso sólo reparte la CPU **cuando hay más hilos ejecutables que CPU** entre cgroups hermanas (los
+  contenedores cuelgan del mismo padre). Con CPU libre, el streamer usa lo que necesite hasta su cuota.
+  No es una reserva: no garantiza nada a nadie, sólo da prioridad relativa.
+- Con 3 CPU de cuota, el streamer sólo notará el peso si el host entero está saturado (las 6 vCPU
+  ocupadas). Entonces cede ante api, postgres, worker y gateway (peso 100 cada uno) y es el primero en
+  perder frames: es el comportamiento buscado.
+- La cuota (`cpus`) y el peso son independientes: la cuota limita aunque no haya contención y puede
+  estrangular (CFS, periodo de 100 ms) ráfagas de Chromium y ffmpeg durante decenas de ms.
 
-1. `x11grab` no llega a tiempo a algún fotograma: suben `drop_frames` y `stream_dropped_frames_total`
-   (ya era ≈ 0,6-0,8 % con CPU compartida; la alerta `StreamerDroppedFramesHigh` salta por encima
-   del 5 %). Es la primera señal.
-2. El vídeo pierde fluidez; x264 `veryfast` con `zerolatency` no acumula latencia (no hay
-   look-ahead ni B-frames), pero la cuota CFS provoca estrangulamientos de decenas de ms.
-3. Si ffmpeg no entrega el FLV al ritmo del reloj, el relé RTMPS acumula buffer y YouTube puede cortar
-   la ingesta: se traduce en reintentos del supervisor. Cada reintento relanza Chromium (arranque
-   ≈ 250 % de CPU durante unos segundos), lo que con 2 CPU tarda más y puede acercarse al plazo de
-   `RENDER_READY_TIMEOUT_MS` (30 s).
+**Cómo medirlo en el laboratorio** (cuando esté disponible; con `nice -n 19 ionice -c3`, una sola
+ejecución pesada y PRODGUARD_OK antes):
 
-Por eso el límite es seguro para los servicios críticos, pero **puede empeorar la emisión de
-1080p30**. Mitigaciones que ya existen sin cambiar defaults: elegir el preset **720p** (menos coste
-de codificación, aunque Chromium sigue componiendo a 1920×1080) o bajar el bitrate desde la
-configuración avanzada de Administración → Streaming; los fps admitidos son 30 y 60 (no usar 60 con
-este límite). Propuesta, no implementada y sin evidencia que la respalde: exponer el preset de x264
-(`ultrafast`/`superfast`) como variable de entorno. Antes de cambiarlo hay que medirlo.
+1. Provocar contención en una sola CPU: dos contenedores `alpine` con `--cpuset-cpus=0`, uno con
+   `--cpu-shares=128` y otro con `--cpu-shares=1024`, cada uno con un hilo de `sha256sum /dev/zero`
+   durante 30 s (con `--cpus=1 --memory=256m`).
+2. Leer `usage_usec` de `cpu.stat` de cada cgroup al principio y al final. Esperado: reparto ≈ 17 % / 83 %
+   (21 : 100).
+3. Control: ambos con 1024 (≈ 50 / 50) y uno solo (100 % de la CPU, sin efecto del peso).
+4. Anotar `cpu.weight` de cada contenedor para confirmar la conversión de la versión de runc en uso.
 
-**Cómo verificarla** (en el host, sólo lectura):
+## Memoria y `oom_score_adj: 500`
+
+- Consumo medido (ver «Recursos medidos»): RSS de **0,45 a 0,8 GiB** con Chromium, ffmpeg, Xvfb y Node
+  (la memoria de la cgroup incluye `/dev/shm`, con `shm_size: 256m`). El `mem_limit` de 4 GiB está
+  5-9 veces por encima: un OOM de la cgroup es muy improbable salvo fuga en una emisión larga (la
+  ventana medida, 12 min, no la descarta).
+- Si la cgroup del streamer llegara a 4 GiB, el kernel mata un proceso **dentro** del contenedor
+  (normalmente el mayor: un renderer de Chromium o ffmpeg). `tini` sigue siendo PID 1, el supervisor
+  detecta la muerte y reintenta; no se cae el resto del host.
+- `oom_score_adj` sólo importa si es el **host** el que se queda sin RAM. Con 500 los procesos del
+  streamer puntúan más que los críticos (0 por defecto en Docker) y se eligen primero, de modo que no se
+  sacrifica postgres ni la api. El valor lo heredan los hijos (Chromium, ffmpeg). Ni este ajuste ni
+  `mem_limit` sustituyen a tener RAM libre.
+- La RAM total del host de producción y su swap no se han consultado aquí (sólo lectura y fuera de
+  alcance). Hay una incidencia abierta de memoria y swap del host (#185): el criterio de despliegue de
+  «Recursos medidos» (al menos 1 GiB libre sin swap, medido en el host antes de emitir) sigue vigente y
+  debe comprobarse tras la ampliación.
+
+## Efecto esperado y mitigaciones
+
+Con 3 CPU el streamer cubre la demanda medida de 1080p30, pero con poco margen en los picos (~3 CPU).
+Si faltara CPU, el orden de degradación es: 1) `x11grab` pierde frames (`drop_frames`,
+`stream_dropped_frames_total`; la alerta `StreamerDroppedFramesHigh` salta por encima del 5 %);
+2) estrangulamiento CFS y pérdida de fluidez (x264 `zerolatency` no acumula latencia propia); 3) ffmpeg
+no sigue el reloj, el relé RTMPS acumula buffer y YouTube puede cortar la ingesta, lo que dispara
+reintentos; cada reintento relanza Chromium (~250 % de CPU unos segundos) y puede acercarse a
+`RENDER_READY_TIMEOUT_MS` (30 s). Mitigaciones sin cambiar defaults: preset 720p o menor bitrate
+(Administración → Streaming); no usar 60 fps. **Si 3 CPU no bastan, primero se presentan las
+mediciones** del plan siguiente: no se sube el techo ni se toca el encoder sin ellas.
+
+## Plan de medición tras la ampliación a 6 vCPU (NO ejecutado)
+
+Lo ejecuta el coordinador, con autorización del operador, después del reinicio por la ampliación y del
+despliegue de este límite. Reglas: sin YouTube real hasta la fase C; una fase a la vez; abortar y avisar
+si aparece PRESSURE o `lockups15m > 0`.
+
+**Fase 0 · Precondiciones (sólo lectura).** `nproc` = 6; RAM y swap libres (al menos 1 GiB libre, sin
+paginar); `docker inspect` del streamer con `NanoCpus=3000000000 CpuShares=128 OomScoreAdj=500
+Memory=4294967296 Pids=512`; `cpu.max` = `300000 100000`; `cpu.weight` anotado; todos los servicios
+healthy.
+
+**Fase A · Línea base sin streamer.** 10 min de `docker stats --no-stream` cada 10 s de api, postgres,
+tournament-worker, gateway y del host (`/proc/pressure/cpu`, `vmstat 5`), con batallas normales. Registrar
+p50/p95 de CPU por servicio, latencia p95 de la API (`/healthz` y una lectura típica) y duración mediana
+de batalla. Es el patrón contra el que se comparan B y C.
+
+**Fase B · Streamer solo, 1080p30, modo `record` (sin red).** 15 min con una batalla controlada (misma
+semilla y emparejamiento; 4v4 con proyectiles como caso más caro). Medir cada 10 s: CPU del contenedor
+(% de un núcleo), `nr_throttled` y `throttled_usec` de `cpu.stat`, memoria de la cgroup y `/dev/shm`,
+número de procesos y, por la API de control, `stream_frames_total`, `stream_dropped_frames_total` y fps
+real. Salida: CPU media/p95/máx, % de frames perdidos e intervalos estrangulados.
+
+**Fase C · Emisión 1080p30 + batalla controlada simultánea.** Primero a un destino local o no listado,
+30 min; después, con visto bueno, YouTube. Medir:
+
+- **Frames perdidos:** `stream_dropped_frames_total / stream_frames_total` por minuto (umbral < 1 %; la
+  alerta salta al 5 %).
+- **Estabilidad de ffmpeg:** reinicios de ffmpeg y de Chromium, «reintento de emisión» en logs, cortes de
+  ingesta y SIGKILL (referencia de 24 h: 39 reintentos, 27 cortes, 17 SIGKILL; esperado 0).
+- **CPU y memoria:** las de B, más `nr_throttled / nr_periods` (preocupa por encima del 5 % de periodos
+  estrangulados), `memory.events` (`oom`, `oom_kill`) y memoria del host.
+- **Latencia:** retardo extremo a extremo (reloj visible en `/broadcast` frente al visor del destino) y
+  tiempo desde la orden de inicio hasta publicar (referencia 1,9 s en caliente).
+- **Servicios críticos:** repetir las métricas de la fase A durante C. Aceptación: CPU p95 y latencia p95
+  de la API no empeoran más de un 10 % respecto a A, duración de batalla dentro de ±10 %, 0 lockups y PSI
+  de CPU `some avg10` < 10 %.
+
+**Fase D · Contención forzada (opcional).** Sólo si C va limpia: subir la concurrencia del worker 5 min
+para saturar las 6 vCPU y comprobar que, con `cpu.weight` 21 frente a 100, el streamer es quien cede
+(más `drop_frames`) y los críticos no se degradan.
+
+**Criterios.** Aprobado: C sin cortes de ingesta, < 1 % de frames perdidos, throttling < 5 % y críticos
+sin degradación. Si no se cumple, se presentan las mediciones A-D al operador antes de tocar nada
+(opciones: `cpus: 4.0` conservando `cpu_shares` y `oom_score_adj`, preset 720p o ajustar x264).
+
+## Verificación y reversión del límite
+
+Verificación en producción (sólo lectura):
 
 ```bash
 docker inspect <contenedor-streamer> --format \
   'NanoCpus={{.HostConfig.NanoCpus}} CpuShares={{.HostConfig.CpuShares}} OomScoreAdj={{.HostConfig.OomScoreAdj}} Memory={{.HostConfig.Memory}} Pids={{.HostConfig.PidsLimit}}'
-# esperado: NanoCpus=2000000000 CpuShares=128 OomScoreAdj=500 Memory=4294967296 Pids=512
+# esperado: NanoCpus=3000000000 CpuShares=128 OomScoreAdj=500 Memory=4294967296 Pids=512
 ```
 
-Observación en marcha: `docker stats --no-stream` debe mostrar el streamer por debajo de 200 % de
-CPU y `docker compose ... logs streamer` no debe acumular «reintento de emisión». En el repo lo cubre
-`infrastructure/tests/streamer-limits.test.ts`. El cambio sólo se aplica al **recrear** el contenedor
-(`docker compose --profile streaming up -d streamer`); no se despliega con este PR.
+En el repo lo cubre `infrastructure/tests/streamer-limits.test.ts`. El cambio sólo se aplica al
+**recrear** el contenedor (`docker compose --profile streaming up -d streamer`); este PR no despliega.
 
-**Cómo revertirla.** En el servicio `streamer`: poner `cpus: "4.0"` y borrar `cpu_shares` y
-`oom_score_adj` (o `git revert` del commit de este cambio), y recrear el contenedor. Si el síntoma es
-sólo la fluidez, es preferible subir a `cpus: "3.0"` conservando `cpu_shares` y `oom_score_adj`, que es
-lo que protege a los servicios críticos.
+**Reversión.**
+
+- Total: en el servicio `streamer`, poner `cpus: "4.0"` y borrar `cpu_shares` y `oom_score_adj` (o
+  `git revert` del commit), y recrear el contenedor.
+- Parcial, si sólo falta CPU: subir `cpus` a `"4.0"` conservando `cpu_shares` y `oom_score_adj`, que es lo
+  que protege a los servicios críticos.
 
 ## Secretos: custodia, rotación, backup y restore
 
