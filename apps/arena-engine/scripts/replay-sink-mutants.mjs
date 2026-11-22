@@ -34,7 +34,7 @@ export const MUTANTS = [
   { id: "M-R8-engine-retains-frames", test: ENGINE, group: "R8", file: BATTLE, find: "this.frames.push(f);", replace: "this.frames.push(f); ((this as any).__keep ??= []).push(JSON.stringify(f), JSON.stringify(f));" },
   { id: "M-G1-attach-from-zero", test: GATEWAY, group: "G1", file: GW, find: "for (let i = logBase(fl); i < fl.length; i++)", replace: "for (let i = 0; i < fl.length; i++)" },
   { id: "M-G2-no-resync-frames", test: GATEWAY, group: "G2", file: GW, find: "feed.sentSnapshots = logBase(fl);", replace: "/* mutante */" },
-  { id: "M-G2-no-resync-events", test: GATEWAY, group: "G2", file: GW, find: "feed.sentEvents = logBase(el);", replace: "/* mutante */" },
+  { id: "M-G2-events-drop-not-counted", test: GATEWAY, group: "G2", file: GW, find: "feed.droppedEvents += logBase(el) - feed.sentEvents;", replace: "/* mutante */" },
 ];
 
 function run(m) {
