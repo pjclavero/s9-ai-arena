@@ -1,0 +1,220 @@
+# Presupuesto de recursos del stack (D-OP-32: recursos fijos, sin ampliar hardware).
+#
+# Fuente de verdad VERSIONADA de los límites de cada servicio y del escenario de
+# pico simultáneo. La comprueba infrastructure/tests/resource-budget.test.ts contra
+# infrastructure/docker-compose.yml: si cambias un límite del compose, cambia aquí
+# también (y justifica el valor en docs/operations/resource-budget.md).
+#
+# Unidades: CPU en núcleos (cpus), memoria en MiB. `measured` = observado en el
+# stack real; `estimated` = estimación razonada, pendiente de medir en el
+# laboratorio con el script del plan de medición (docs/operations/resource-budget.md).
+
+version: 1
+
+# Límites físicos NO ampliables (D-OP-32).
+host:
+  vcpus: 6
+  # 6,84 GB (decimal) = 6523 MiB. Se usa la cifra más estricta; el kernel de la VM
+  # declara ~6778 MiB visibles, la diferencia es margen, no presupuesto.
+  ram_mib: 6523
+
+# Reserva para el sistema operativo, el demonio de Docker y la caché de páginas.
+# Medida: el uso del host fuera de los contenedores ronda 0,5 GiB (kernel, dockerd,
+# containerd, systemd, agente del hipervisor); se reserva el doble para picos de
+# dockerd (creación de contenedores de bot) y una caché de páginas mínima.
+reserve:
+  cpus: 0.5
+  ram_mib: 1024
+
+# Contenedor de bot: el techo lo fija el código del bot-manager (DEFAULT_LIMITS en
+# apps/bot-manager/src/container-runner.ts); el test lo cruza con ese valor.
+bot:
+  cpus: 0.5
+  mem_mib: 256
+  # CPU media por bot que se usa para planificar el escenario. Medido en producción
+  # (participants.cpu_ms / duración, 170 bots en 70 batallas con contenedores): mediana
+  # 0,010 · p90 0,014 · máx 0,021 núcleos (cota inferior; bots de ejemplo). Se planifica
+  # con 0,05 (2,4× el máximo medido). El techo duro sigue siendo `cpus`.
+  cpu_planning: 0.05
+
+# Motor de batalla (corre dentro del tournament-worker): coste por batalla EXTRA.
+battle:
+  # RSS adicional del motor por batalla simultánea más allá de la primera (medido:
+  # 4v4 ≈ 232 MiB de RSS máx. del proceso del motor, doc B1/#320).
+  worker_extra_ram_mib: 250
+  # CPU del motor + protocolo por batalla. El motor está paceado a 34 ms/tick: medido
+  # sin pacing 1063 ms de CPU por 3000 ticks 4v4 ⇒ ~1 % de un núcleo en tiempo real;
+  # se planifica con 0,15 (incluye WebSocket y serialización).
+  cpu_planning: 0.15
+
+# Escenario de pico simultáneo que DEBE caber: emisión 1080p30 + 1 batalla de cada
+# tipo declarado en `concurrency.while_streaming` + 1 build de bot + el resto de
+# servicios de producción.
+scenario:
+  name: streaming-1080p30-mas-batallas
+  # Un build de bot a la vez lanza como mucho 1 contenedor de sandbox con los límites
+  # por defecto del bot (el bot-build-worker no los multiplica).
+  build_sandboxes: 1
+  streaming: true
+
+# Concurrencia máxima segura del worker por tipo de batalla (batallas simultáneas).
+# El test exige: declarada ≤ máximo que cabe en el modelo (techos de bot en RAM; CPU
+# esperada) y ≥ 1. Valores deliberadamente por debajo del cálculo hasta medir con
+# contenedores reales (plan de medición).
+concurrency:
+  while_streaming: { 1v1: 2, 2v2: 1, 3v3: 1, 4v4: 1 }
+  without_streaming: { 1v1: 3, 2v2: 2, 3v3: 1, 4v4: 1 }
+  # Bots por batalla de cada tipo.
+  bots: { 1v1: 2, 2v2: 4, 3v3: 6, 4v4: 8 }
+
+# Sobreasignación tolerada (suma de techos / capacidad). Es un cable trampa: sube si
+# alguien añade límites sin pensar en el conjunto. Antes de este presupuesto: RAM 2,63×,
+# CPU 4,7×.
+overcommit:
+  max_ram_ratio: 1.35
+  max_cpu_ratio: 3.5
+
+# Servicios con límites. `ram_expected_mib`: pico esperado en el escenario (lo que se
+# suma en el test); `ram_peak_measured_mib`: máximo observado desde el arranque del
+# contenedor (memory.peak del cgroup, VM de producción, 2026-11-22), si lo hay;
+# `cpu_expected`: núcleos esperados en el escenario. `limit` = lo que declara el compose.
+services:
+  gateway:
+    limit: { cpus: 0.5, mem_mib: 128 }
+    running: true
+    ram_idle_mib: 6
+    ram_peak_measured_mib: 18
+    ram_expected_mib: 32
+    cpu_expected: 0.05
+    basis: measured
+  web:
+    limit: { cpus: 0.5, mem_mib: 256 }
+    running: true
+    ram_idle_mib: 8
+    ram_peak_measured_mib: 25
+    ram_expected_mib: 32
+    cpu_expected: 0.02
+    basis: measured
+  api:
+    limit: { cpus: 2.0, mem_mib: 768 }
+    running: true
+    ram_idle_mib: 101
+    ram_peak_measured_mib: 207
+    ram_expected_mib: 300
+    cpu_expected: 0.2
+    basis: measured
+  arena-engine:
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: true
+    ram_idle_mib: 81
+    ram_peak_measured_mib: 123
+    ram_expected_mib: 128
+    cpu_expected: 0.05
+    basis: measured
+  tournament-worker:
+    # Con 1 batalla 4v4 en curso (idle 92 + motor 232 + búferes de replay). Incidente de
+    # CTF: 401 MiB con 2 CTF 4v4 antes del tope de heap. Límite y heap: PR #329.
+    limit: { cpus: 2.0, mem_mib: 1024 }
+    running: true
+    ram_idle_mib: 92
+    ram_peak_measured_mib: 130
+    ram_expected_mib: 600
+    cpu_expected: 0.05
+    basis: estimated
+  bot-manager:
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: true
+    ram_idle_mib: 69
+    ram_peak_measured_mib: 104
+    ram_expected_mib: 128
+    cpu_expected: 0.05
+    basis: measured
+  bot-build-worker:
+    limit: { cpus: 1.0, mem_mib: 1024 }
+    running: true
+    ram_idle_mib: 84
+    ram_peak_measured_mib: 136
+    ram_expected_mib: 256
+    cpu_expected: 0.15
+    basis: estimated
+  map-service:
+    limit: { cpus: 0.5, mem_mib: 256 }
+    running: true
+    ram_idle_mib: 70
+    ram_peak_measured_mib: 95
+    ram_expected_mib: 128
+    cpu_expected: 0.02
+    basis: measured
+  replay-service:
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: true
+    ram_idle_mib: 77
+    ram_peak_measured_mib: 103
+    ram_expected_mib: 192
+    cpu_expected: 0.05
+    basis: estimated
+  queue:
+    # Redis con maxmemory 256 MiB; el resto es sobrecarga y copia al reescribir el AOF.
+    limit: { cpus: 0.5, mem_mib: 384 }
+    running: true
+    ram_idle_mib: 11
+    ram_peak_measured_mib: 30
+    ram_expected_mib: 48
+    cpu_expected: 0.05
+    basis: measured
+  postgres:
+    limit: { cpus: 2.0, mem_mib: 1024 }
+    running: true
+    ram_idle_mib: 47
+    ram_peak_measured_mib: 77
+    ram_expected_mib: 256
+    cpu_expected: 0.2
+    basis: estimated
+  backup:
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: true
+    ram_idle_mib: 23
+    ram_peak_measured_mib: 81
+    ram_expected_mib: 128
+    cpu_expected: 0.15
+    basis: measured
+  streamer:
+    # 1080p30 medido en producción (kvm64, sin AVX2): 2,2-2,6 núcleos medios, picos ~3;
+    # RSS 0,45-0,8 GiB en 12 min. Con AVX2 debería bajar: PENDIENTE DE MEDIR (lab).
+    limit: { cpus: 3.0, mem_mib: 1536 }
+    running: true
+    streaming: true
+    ram_idle_mib: 39
+    ram_peak_measured_mib: 820
+    ram_expected_mib: 820
+    cpu_expected: 2.6
+    basis: measured
+  # --- Declarados en el compose pero fuera del escenario de producción actual. ---
+  bot-runtime-template:
+    # Plantilla del perfil `bots` (no se arranca): los bots reales usan `bot`.
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: false
+  prometheus:
+    limit: { cpus: 1.0, mem_mib: 1024 }
+    running: false
+  alertmanager:
+    limit: { cpus: 0.25, mem_mib: 128 }
+    running: false
+  grafana:
+    limit: { cpus: 1.0, mem_mib: 512 }
+    running: false
+  loki:
+    limit: { cpus: 1.0, mem_mib: 1024 }
+    running: false
+  promtail:
+    limit: { cpus: 0.5, mem_mib: 256 }
+    running: false
+  cadvisor:
+    limit: { cpus: 0.5, mem_mib: 512 }
+    running: false
+  node-exporter:
+    limit: { cpus: 0.25, mem_mib: 128 }
+    running: false
+  postgres-exporter:
+    limit: { cpus: 0.25, mem_mib: 128 }
+    running: false

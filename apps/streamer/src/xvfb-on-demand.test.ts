@@ -200,3 +200,66 @@ describe("OLA2-MF · Xvfb y procesos de emisión a demanda", () => {
     await tick(80);
   });
 });
+
+// D-OP-32 · ausencia de procesos abandonados al reiniciar, reintentar o parar la emisión.
+// Reutiliza el harness de arriba (procesos falsos, sin Chromium/FFmpeg/Xvfb reales); la
+// prueba con procesos REALES de STOP está en streamer-real.test.ts (NO_ORPHAN_PROCESS).
+describe("D-OP-32 · reinicio, reintentos y paradas repetidas no dejan Chromium ni ffmpeg huérfanos", () => {
+  const liveStream = (h: ReturnType<typeof harness>) => ({
+    chromium: h.alive("chromium"),
+    ffmpeg: h.alive("ffmpeg"),
+  });
+
+  it("SR-1: reiniciar la emisión (start sobre una emisión en marcha) termina Chromium y ffmpeg anteriores", async () => {
+    const h = harness();
+    h.sup.start();
+    await tick();
+    const first = h.spawned.filter((p) => p.cmd === "chromium" || p.cmd === "ffmpeg");
+    expect(first).toHaveLength(2);
+    h.sup.start(); // reinicio: nueva sesión sobre la misma instancia
+    await tick(80);
+    expect(
+      first.every((p) => !p.alive),
+      "los procesos de la emisión anterior siguen vivos",
+    ).toBe(true);
+    expect(liveStream(h)).toEqual({ chromium: 1, ffmpeg: 1 });
+    h.sup.stop();
+    await tick(80);
+    expect(liveStream(h)).toEqual({ chromium: 0, ffmpeg: 0 });
+    expect(h.sup.streamChildren).toEqual({ chromium: 0, ffmpeg: 0, relay: 0, xvfb: 0, terminating: 0 });
+  });
+
+  it("SR-2: 6 ciclos start/stop seguidos acaban con 0 procesos de emisión vivos y sin ficheros del display", async () => {
+    const h = harness();
+    for (let i = 0; i < 6; i++) {
+      h.sup.start();
+      await tick(40);
+      h.sup.stop();
+      await tick(60);
+    }
+    expect(h.spawned.length).toBeGreaterThanOrEqual(6); // al menos el Xvfb de cada ciclo
+    expect(h.spawned.filter((p) => p.alive)).toEqual([]);
+    expect(h.sup.streamChildren).toEqual({ chromium: 0, ffmpeg: 0, relay: 0, xvfb: 0, terminating: 0 });
+    expect([...h.files].filter((f) => f.includes("-lock"))).toEqual([]);
+  });
+
+  it("SR-3: caídas repetidas de ffmpeg (reintentos) no acumulan Chromium: nunca más de uno vivo y 0 tras parar", async () => {
+    const h = harness();
+    h.sup.start();
+    await tick();
+    let maxChromium = 0;
+    for (let i = 0; i < 4; i++) {
+      for (const p of h.spawned.filter((x) => x.cmd === "ffmpeg" && x.alive)) {
+        p.exitCode = 1;
+        p.emit("exit", 1);
+      }
+      await tick(40);
+      maxChromium = Math.max(maxChromium, h.alive("chromium"));
+    }
+    expect(maxChromium).toBeLessThanOrEqual(1);
+    h.sup.stop();
+    await tick(100);
+    expect(liveStream(h)).toEqual({ chromium: 0, ffmpeg: 0 });
+    expect(h.alive("Xvfb")).toBe(0);
+  });
+});

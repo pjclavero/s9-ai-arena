@@ -7,7 +7,13 @@
  * TERM, dos batallas concurrentes— se comprueba que de ESA batalla no queda nada:
  * ni contenedores (vivos o parados), ni recursos registrados, ni timers.
  */
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { connect } from "node:net";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir as osTmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse } from "yaml";
 import { loadRuleset, maxBattleTicks } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
@@ -48,6 +54,8 @@ interface LedgerEntry {
 /** Runner que lleva la cuenta de qué contenedores EXISTEN y cuáles corren, por battleId. */
 class LedgerRunner implements ContainerRunner {
   readonly ledger: LedgerEntry[] = [];
+  /** D-OP-32 · especificaciones con las que se lanzó cada contenedor (límites, red, montajes). */
+  readonly specs: SandboxSpec[] = [];
   readonly inner: FakeBootstrapRunner;
   constructor(
     per: (i: number) => FakeBootstrapBehaviour,
@@ -72,6 +80,7 @@ class LedgerRunner implements ContainerRunner {
       stops: [],
     };
     this.ledger.push(e);
+    this.specs.push(spec);
     let h: ContainerHandle;
     try {
       h = await this.inner.launch(spec);
@@ -132,11 +141,12 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-function provider(opts: { planThrowsAt?: number; hosts?: SandboxHost[] } = {}): BotLaunchProvider {
+function provider(opts: { planThrowsAt?: number; hosts?: SandboxHost[]; ports?: number[] } = {}): BotLaunchProvider {
   return {
     async openBattle() {
       const host = await SandboxHost.start({ advertiseHost: "127.0.0.1", bindHost: "127.0.0.1", port: 0 });
       opts.hosts?.push(host);
+      opts.ports?.push(host.port);
       let n = 0;
       return {
         wss: host.wss,
@@ -184,7 +194,7 @@ function setup(
   per: (i: number) => FakeBootstrapBehaviour = () => ({}),
   extra?: (i: number) => { ignoreTerm?: boolean; stopThrows?: boolean; noRemove?: boolean },
   p: BotLaunchProvider = provider(),
-  more: { graceMs?: number; guardFactor?: number } = {},
+  more: { graceMs?: number; guardFactor?: number; timeouts?: typeof T } = {},
 ) {
   const runner = new LedgerRunner(per, extra);
   runners.push(runner);
@@ -195,7 +205,7 @@ function setup(
     network: "arena",
     engineHost: "127.0.0.1",
     tickIntervalMs: 5,
-    timeouts: T,
+    timeouts: more.timeouts ?? T,
     resources,
     termGraceS: 1,
     ...(more.graceMs !== undefined ? { graceMs: more.graceMs } : {}),
@@ -379,5 +389,164 @@ describe("OLA2-MF · teardown tras cada final", () => {
     await resources.cleanupBattleResources("mf-c2", "FINISHED");
     expect(runner.existing("mf-c2")).toEqual([]);
     expect(resources.totalPending()).toBe(0);
+  }, 60_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D-OP-32 · LIBERACIÓN DE RECURSOS EN 4v4 (8 bots): tras una batalla terminada con
+// éxito, con fallo o interrumpida no queda NINGÚN contenedor de bot, recurso
+// registrado, puerto del host de la batalla abierto ni fichero temporal del worker, y
+// cada bot se lanzó con los techos del presupuesto (infrastructure/resource-budget.yaml),
+// en la red compartida y SIN volúmenes ni montajes por batalla (por eso no hay redes ni
+// volúmenes que borrar: el test lo exige sobre la especificación real de cada lanzamiento).
+// Reutiliza LedgerRunner, provider(), setup() y expectNothingLeft() de arriba.
+// ─────────────────────────────────────────────────────────────────────────────
+// Plazos holgados: 8 bots por WebSocket en una máquina compartida; el test no debe depender del reloj.
+const T_4V4 = { sandboxStartupMs: 20_000, botExecutionMs: 15_000 };
+
+const BOTS_4V4 = Array.from({ length: 8 }, (_, i) => ({
+  botId: `00000000-0000-4000-8000-00000000000${i + 1}`,
+  version: 1,
+  vehicleId: `veh_${i + 1}`,
+  team: i < 4 ? "red" : "blue",
+}));
+
+async function input4v4(battleId: string, ticks: number, signal?: AbortSignal): Promise<AgentDriverInput> {
+  const catalog = loadCatalog();
+  const ruleset = loadRuleset("tdm_mvp@1", { timeLimitTicks: ticks });
+  const participants: Participant[] = BOTS_4V4.map((b, i) => ({
+    id: b.vehicleId,
+    botId: `bot_p${i}`,
+    team: b.team,
+    spec: resolveVehicle(ARCHETYPES.gunner, catalog),
+  }));
+  const engine = await Battle.create({
+    battleId,
+    seed: "rr",
+    ruleset,
+    map: emptyArena(),
+    participants,
+    recordReplay: true,
+  });
+  return { battleId, engine, vehicles: BOTS_4V4, ruleset, catalogVersion: CATALOG_VERSION, signal, owner: "w:job:1" };
+}
+
+/** ¿Sigue alguien escuchando en ese puerto? (ECONNREFUSED ⇒ cerrado). */
+function portIsClosed(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect({ host: "127.0.0.1", port });
+    s.once("connect", () => {
+      s.destroy();
+      resolve(false);
+    });
+    s.once("error", () => resolve(true));
+  });
+}
+
+/** Interrumpe cuando los 8 contenedores YA se lanzaron (la batalla está en curso, no en el arranque). */
+function abortWhenAllLaunched(s: ReturnType<typeof setup>, ac: AbortController) {
+  const t = setInterval(() => {
+    if (s.runner.ledger.length >= 8) {
+      clearInterval(t);
+      setTimeout(() => ac.abort(new BattleAbort("MANUAL_ABORT", "test")), 300);
+    }
+  }, 20);
+}
+
+describe("D-OP-32 · 4v4 (8 bots): nada abandonado tras éxito, fallo o interrupción", () => {
+  let tmp: string;
+  let prevTmp: string | undefined;
+  beforeAll(() => {
+    // TMPDIR propio: cualquier fichero temporal que cree el worker en la batalla cae aquí.
+    prevTmp = process.env.TMPDIR;
+    tmp = mkdtempSync(join(osTmpdir(), "rr-worker-tmp-"));
+    process.env.TMPDIR = tmp;
+  });
+  afterAll(() => {
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const budget = parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "infrastructure", "resource-budget.yaml"),
+      "utf8",
+    ),
+  );
+
+  async function expectReleased(s: ReturnType<typeof setup>, ports: number[], battleId: string) {
+    // ANTES de repetir el teardown por la orquestación: la capa de agentes debe haber limpiado por sí
+    // sola (si no, el teardown idempotente de abajo taparía una fuga de la propia capa).
+    expect(s.runner.existing(battleId), "contenedores de la batalla sin limpiar por la capa de agentes").toEqual([]);
+    expect(s.resources.pending(battleId), "recursos de la batalla sin liberar").toEqual([]);
+    expect(
+      s.runner.ledger.filter((e) => e.running),
+      "contenedores de bot VIVOS",
+    ).toEqual([]);
+    expect(ports.length).toBe(1);
+    expect(await portIsClosed(ports[0]), "puerto del host de la batalla abierto").toBe(true);
+    expect(readdirSync(tmp), "ficheros temporales del worker").toEqual([]);
+    await expectNothingLeft(s, battleId); // y repetir el teardown (idempotente) sigue dejando 0 y limpio
+  }
+
+  function expectSpecsWithinBudget(s: ReturnType<typeof setup>) {
+    expect(s.runner.specs).toHaveLength(8);
+    for (const spec of s.runner.specs) {
+      expect(spec.limits.cpus).toBeLessThanOrEqual(budget.bot.cpus);
+      expect(spec.limits.memoryBytes).toBeLessThanOrEqual(budget.bot.mem_mib * 1024 * 1024);
+      expect(spec.network).toBe("arena"); // red compartida: no se crea ni se borra una por batalla
+      // Sin volúmenes ni montajes por batalla (el artefacto va por la red; /tmp es tmpfs del contenedor).
+      for (const k of ["binds", "volumes", "mounts", "bindMounts", "volumesFrom"]) expect(spec).not.toHaveProperty(k);
+    }
+  }
+
+  it("RR-1: éxito → 8 bots lanzados con los techos del presupuesto y no queda nada", async () => {
+    const ports: number[] = [];
+    const s = setup(() => ({}), undefined, provider({ ports }), { timeouts: T_4V4 });
+    const out = await s.agents.run(await input4v4("rr-ok", 60));
+    expect(out.result.ticks).toBeGreaterThan(0);
+    expectSpecsWithinBudget(s);
+    await expectReleased(s, ports, "rr-ok");
+  }, 60_000);
+
+  it("RR-2: fallo (un bot se cae tras el READY) → bot_crash y no queda nada, ni los otros 7 bots", async () => {
+    const ports: number[] = [];
+    const s = setup((i) => (i === 5 ? { crashAfterReady: true } : {}), undefined, provider({ ports }), {
+      timeouts: T_4V4,
+    });
+    const err = await s.agents.run(await input4v4("rr-crash", 3000)).catch((e) => e);
+    expect(err).toBeInstanceOf(SportingFailure);
+    expect(err.code).toBe("bot_crash");
+    expectSpecsWithinBudget(s);
+    await expectReleased(s, ports, "rr-crash");
+  }, 60_000);
+
+  it("RR-3: interrumpida (MANUAL_ABORT a mitad) → aborta y no queda nada", async () => {
+    const ports: number[] = [];
+    const s = setup(() => ({ idle: true }), undefined, provider({ ports }), { timeouts: T_4V4 });
+    const ac = new AbortController();
+    const run = s.agents.run(await input4v4("rr-abort", 3000, ac.signal));
+    abortWhenAllLaunched(s, ac);
+    const err = await run.catch((e) => e);
+    expect(err).toBeInstanceOf(BattleAbort);
+    expectSpecsWithinBudget(s);
+    await expectReleased(s, ports, "rr-abort");
+  }, 60_000);
+
+  it("RR-4: un bot que IGNORA TERM en una 4v4 recibe KILL y no queda vivo ninguno de los 8", async () => {
+    const ports: number[] = [];
+    const s = setup(
+      () => ({ idle: true }),
+      (i) => ({ ignoreTerm: i === 3 }),
+      provider({ ports }),
+      { timeouts: T_4V4 },
+    );
+    const ac = new AbortController();
+    const run = s.agents.run(await input4v4("rr-kill", 3000, ac.signal));
+    abortWhenAllLaunched(s, ac);
+    await run.catch(() => undefined);
+    expect(s.runner.ledger[3].stops).toContain(0); // KILL inmediato (t=0) tras no atender TERM
+    await expectReleased(s, ports, "rr-kill");
   }, 60_000);
 });
