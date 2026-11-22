@@ -147,7 +147,7 @@ El esquema es condicional por `sensorType` (OLA 2): `fovRad` y `rays` sólo se a
 - el cooldown se divide por `perf` (con mínimo 0.25);
 - la dispersión sale del RNG del motor;
 - la torreta gira a `turretRateRads × perf` hacia el objetivo, donde `turretRateRads` (y `turretArcRad`) son de la **montura de la ranura del chasis** (`slots[].mount`, leída con `Vehicle.mountOf(slot)`), no del arma: dos armas en la misma ranura giran igual (OLA2-MB, D-B2);
-- el proyectil vive **90 ticks** e impacta por *raycast*;
+- el proyectil vive `rangeM · TICK_HZ / projectileSpeedMs` ticks (una sola regla; ver `weapon.rangeM` más abajo) e impacta por *raycast*;
 - con radio de explosión, el daño cae linealmente con la distancia y la explosión no atraviesa muros;
 - sin fuego amigo, el proyectil atraviesa a los aliados.
 
@@ -289,7 +289,7 @@ Verificado contra `27f70bb`; las filas del loadout real, contra `integration/ux-
 | Energía: suma, generación × perf, pasivo | CODE_VERIFIED | `vehicle.ts:213-247` |
 | Sensores: radar con LOS, error e IFF; lidar; proximidad; acústico | CODE_VERIFIED | `apps/arena-engine/src/sim/sensors.ts:91-187` |
 | Rechazos de disparo, daño y cooldown del arma | CODE_VERIFIED | `apps/arena-engine/src/sim/combat.ts:130-200` |
-| Proyectil de 90 ticks; el `rangeM` del arma no se lee | CODE_VERIFIED | `combat.ts:198`; búsqueda de `rangeM` (sólo `sensors.ts`) |
+| Proyectil de 90 ticks; el `rangeM` del arma no se lee | RETIRADA (octubre; sustituida el 2026-11-20) | desde la OLA 2 la vida sale de `rangeM` y la velocidad: `apps/arena-engine/src/sim/combat.ts` (`projectileLifetimeOf`) |
 | Daño D6: suelo 10 %, 70/30, sorteo por masa | CODE_VERIFIED | `combat.ts:75-120`; `packages/game-rules/constants.ts:40-42` |
 | Estados de módulo y rendimientos | CODE_VERIFIED | `packages/game-rules/constants.ts:47-66`; `packages/game-rules/index.ts:42-49` |
 | Minas: máximo 3, `detectable` fijo | CODE_VERIFIED | `apps/arena-engine/src/sim/battle.ts:37,536-560`; `combat.ts:209-260` |

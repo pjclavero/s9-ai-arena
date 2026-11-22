@@ -27,6 +27,13 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
+> **Cambio de comportamiento (concurrencia del tournament-worker):** con
+> `TOURNAMENT_WORKER_CONCURRENCY` vacío o ausente, el worker pasaba antes a cálculo
+> automático (`min(vCPU-1, RAM/2 GB)`, con la vista del host) y ahora ejecuta **1** batalla
+> simultánea. Los torneos serán más lentos pero estables. Para subirlo, fija un entero
+> 1..16 explícito tras medir, o `auto` (cgroup y tamaño de batalla). Ver
+> [concurrencia del worker](worker-concurrency.md).
+
 ## Principios
 
 1. **Nunca `latest`** ni `v0.0.0` (móvil): siempre `sha-<commit>`.
@@ -342,9 +349,10 @@ Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la úl
 entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
 atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
 donde esté. Sólo admite una **lista cerrada** (`NAMED_ROLLBACK_ALLOWED` en
-`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`
-y `019_visibility_broadcast`, las que sólo tocan sus propias tablas o columnas; la 019 además
-reescribe la función compartida `s9_bot_version_guard`, ver su vuelta atrás); cualquier otra, `001_identity` incluida, se rechaza
+`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`,
+`019_visibility_broadcast`, `020_streaming_ingests`, `021_runtime_settings` y `022_entries_team`, las que sólo tocan
+sus propias tablas o columnas; la 019 además reescribe la función compartida `s9_bot_version_guard`,
+ver su vuelta atrás); cualquier otra, `001_identity` incluida, se rechaza
 sin tocar la BD (#241, R4-2). `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
@@ -449,6 +457,17 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     reescribir `s9_bot_version_guard`**: revertirla por nombre pisaría el guardián más nuevo. Quien
     añada esa migración debe quitarla de la lista (y de la aserción de
     `apps/api/src/streamer-real.test.ts`) y dejar aquí `rollback:1` en orden como única vía.
+
+- **Ingestas de streaming (migración 020, `020_streaming_ingests`):**
+  - **Migración 020:** crea `streaming_ingests` (una fila por plataforma, URL `rtmps://` principal y de respaldo) y añade `streaming_credentials.sealed_backup`. No toca filas existentes; sin fila, la API usa las ingestas por defecto del catálogo. Probada en `apps/api/src/db/migration-020.test.ts`.
+  - **Vuelta atrás** (`rollback:name 020_streaming_ingests`): se pierden sólo las ingestas editadas y el sobre de respaldo; la clave principal sellada sigue valiendo. Parar antes la emisión desde la web.
+- **Ajustes de runtime del acceso público (migración 021, `021_runtime_settings`):**
+  - **Migración 021:** crea `app_runtime_settings` (una sola fila, `id = 1`). **La migración no crea la fila**: la crea la primera API que arranca con los valores de `S9_PUBLIC_SPECTATE_ENABLED` y `S9_PUBLIC_REPLAYS_ENABLED` de su entorno, así que desplegar no cambia el comportamiento. Desde ese momento manda la fila (Administración o `PATCH /admin/settings/public-access`) y el entorno se ignora. Probada en `apps/api/src/db/migration-021.test.ts`.
+  - **Vuelta atrás** (`rollback:name 021_runtime_settings`): se pierde lo guardado. Con la tabla ausente, el proceso arranca con ambos flags **cerrados** (nunca con el entorno) hasta que la tabla vuelva.
+- **Equipos completos en torneos (migración 022, `022_entries_team`):**
+  - **Migración 022:** añade `entries.team_id` (nullable, sin rellenar: las inscripciones anteriores siguen deduciendo el equipo de `bots.team_id`) y crea `team_entry_consents` (autorizaciones de los dueños de bots). Probada en `apps/api/src/db/migration-022.test.ts`.
+  - **Vuelta atrás** (`rollback:name 022_entries_team`): se pierde a qué equipo se inscribió cada entrada (vuelve a deducirse del bot) y las autorizaciones de los dueños.
+- **Orden de aplicación:** las migraciones 016 a 022 se aplican en ese orden con `migrate`; ninguna reescribe filas. Para una instalación nueva basta `bootstrap` (migraciones y contenido base, sin usuarios; [installation.md](installation.md)).
 
 ## Errores / limitaciones
 
