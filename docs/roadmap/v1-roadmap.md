@@ -29,6 +29,23 @@ Base: `main` en `80f4952` (2026-11-20). Referencias de PR e issues: `https://git
 
 > **Fuente y vigencia:** decisiones del operador y reportes de agentes del 22-11-2026; el estado por PR se debe volver a contrastar con GitHub antes de actuar. Esta sección es el **tablero de trabajo del cierre**, no una afirmación de que sus tareas estén integradas, desplegadas o verificadas. Las tablas históricas inferiores describen principalmente la revisión del 20-11 y deben reconciliarse al terminar los PR.
 
+### Decisión de alcance: cerrar primero lo existente (22-11-2026)
+
+**Mandato del operador: congelación funcional para V1.** Antes de ampliar nada, terminar lo que ya existe y conseguir que funcione de manera fiable con el hardware disponible. **Después de publicar y verificar V1**, retomar mejoras a medio implementar y nuevas funcionalidades; a continuación acometer la optimización general de consumos con mediciones. No añadir nuevos frentes que retrasen la salida.
+
+**Límites físicos no ampliables en este ciclo:** hipervisor Proxmox con 28 CPU lógicas/núcleos reportados y 32 GB RAM; VM108 con 6 vCPU tipo `host` y **6,84 GB RAM**. No planear compras ni ampliaciones. El sistema debe operar dentro de esos límites, incluyendo emisión YouTube 1080p30 y batallas simultáneas dentro de la concurrencia realmente validada.
+
+**Orden de ejecución obligatorio:**
+
+1. **Cerrar V1 con el producto actual:** corregir defectos que impiden funcionar (worker/CTF, replays que agotan RAM, datos privados, backup/restore, flujo de cuentas, estabilidad del streaming), terminar los PR ya abiertos que formen parte del alcance de salida y verificar que la administración ordinaria necesaria es operable desde la web. Los mínimos técnicos indispensables para estabilidad y espacio (almacenamiento incremental, cuotas, limpieza, exportación/borrado comprometidos) **sí forman parte de cerrar lo existente**, no son una ampliación del producto.
+2. **Validar y publicar V1:** pruebas reales y completas del alcance anunciado, reinicios, streaming simultáneo 1080p30, recuperación, limpieza de residuos de pruebas, documentación; despliegue con autorización explícita. Modos y formatos no validados se **ocultan y rechazan en web/API** y se documentan como excluidos, en vez de prometer que funcionan.
+3. **Después de V1:** finalizar características parcialmente desarrolladas o aplazadas (incluidos extras visuales, formatos nuevos, Broadcast Manager, matchmaking, SDK adicionales, nuevas piezas y sensores), sólo tras priorización.
+4. **Optimización general posterior:** perfilado global, reducción sistemática de CPU/RAM/disco y mejora de rendimiento. **Excepción:** fugas, OOM, residuos, falta de limpieza, cuotas, límites de recursos y consumos que bloqueen el uso fiable **deben corregirse ahora** como estabilidad de V1.
+
+**Disciplina de recursos para pruebas y runtime:** una prueba pesada cada vez cuando corresponda, límites de memoria/CPU/duración, procesos y contenedores liberados siempre al salir (también por error), limpiar temporales y navegadores, medir consumo antes/durante/después y no confundir swap ocupada con presión activa. No bloquear globalmente por una cifra aislada sin diagnóstico. No borrar datos persistentes ni operar sobre producción sin permiso.
+
+**Seguimiento:** todo requisito nuevo se clasifica como (a) imprescindible para que funcione V1 o (b) mejora posterior; el coordinador no abre PR de nuevas prestaciones V1 sin demostrar que bloquean el contrato de salida. La lista de 12 áreas más abajo es **inventario de aceptación**, no una orden de construir funciones adicionales que no sean necesarias para operar la V1 existente.
+
 ### Criterio de lanzamiento
 
 - **V1 0.5.0 no se declara cerrada** hasta que los bloques obligatorios de abajo estén probados de punta a punta, documentados, integrados en `main`, desplegados en una ventana autorizada y verificados en VM108.
