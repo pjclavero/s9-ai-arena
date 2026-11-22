@@ -313,7 +313,13 @@ const MUTANTS = [
   {
     id: "MX3",
     name: "tope por pieza con >= en los módulos que no son el chasis",
-    edits: [{ file: V, from: "if (a.moduleDef.costCredits > perModuleCap) {", to: "if (a.moduleDef.costCredits >= perModuleCap) {" }],
+    edits: [
+      {
+        file: V,
+        from: "if (a.moduleDef.costCredits > perModuleCap) {",
+        to: "if (a.moduleDef.costCredits >= perModuleCap) {",
+      },
+    ],
     tests: [R2],
     kill: "B4_CAP_EXACT_MODULE",
   },
@@ -340,7 +346,13 @@ const MUTANTS = [
   {
     id: "MX9",
     name: "el 409 no nombra al bot",
-    edits: [{ file: VE, from: "const n = names.get(canonicalUuid(b.botId));", to: "const n = undefined as string | undefined;" }],
+    edits: [
+      {
+        file: VE,
+        from: "const n = names.get(canonicalUuid(b.botId));",
+        to: "const n = undefined as string | undefined;",
+      },
+    ],
     tests: [R2],
     kill: "B4_MSG_BOT_NAME",
   },

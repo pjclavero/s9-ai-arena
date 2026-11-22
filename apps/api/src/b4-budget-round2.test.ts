@@ -54,7 +54,10 @@ const SCOUT = {
 };
 
 async function mkBot(loadout: object): Promise<string> {
-  const [bot] = await h.db("bots").insert({ name: `b4r2-${++seq}`, owner_id: userId, visibility: "private" }).returning("*");
+  const [bot] = await h
+    .db("bots")
+    .insert({ name: `b4r2-${++seq}`, owner_id: userId, visibility: "private" })
+    .returning("*");
   await createLoadoutRevision(h.db, bot.id, loadout as never, SUMMARY);
   await h.db("bot_versions").insert({
     bot_id: bot.id,

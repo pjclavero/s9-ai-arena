@@ -546,9 +546,7 @@ export async function assertWithinTournamentBudget(
   throw new ApiError(
     409,
     "bot_version_not_eligible",
-    detail
-      ? budgetMessage(f, labelOf(f))
-      : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
+    detail ? budgetMessage(f, labelOf(f)) : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
     { reason: "exceeds_tournament_budget", budgetCredits: f.budgetCredits, overBudget: items },
   );
 }
