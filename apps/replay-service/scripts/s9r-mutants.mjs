@@ -35,7 +35,7 @@ export const MUTANTS = [
   { id: "M-T6-enospc-not-typed", group: "T6", file: "errors.ts", find: `c === "ENOSPC" || c === "EDQUOT"`, replace: `c === "EDQUOT"` },
   { id: "M-T6-eio-not-typed", group: "T6", file: "errors.ts", find: `if (c === "EIO")`, replace: `if (false)` },
   { id: "M-T6-writer-not-poisoned", group: "T6", file: "writer.ts", find: `this.state = "failed";\n      this.failure = err;`, replace: `this.failure = err;` },
-  { id: "M-T6-buffer-kept-after-failure", group: "T6", file: "writer.ts", find: `this.lines = [];\n      this.bufBytes = 0;\n      throw err;`, replace: `throw err;` },
+  { id: "M-T6-failed-writer-keeps-accepting", group: "T6", file: "writer.ts", find: `if (this.state === "failed") throw this.failure!;`, replace: `/* mutante */` },
   { id: "M-T7-buffer-unbounded", group: "T7", file: "writer.ts", find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushFragment();`, replace: `/* mutante */` },
   { id: "M-T7-newline-accepted", group: "T7", file: "writer.ts", find: `if (line.includes("\\n"))`, replace: `if (false)` },
   { id: "M-T8-buffer-unbounded", group: "T8", file: "writer.ts", find: `if (this.bufBytes >= this.o.fragmentBytes) await this.flushFragment();`, replace: `/* mutante */` },
