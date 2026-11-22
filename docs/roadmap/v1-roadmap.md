@@ -113,6 +113,7 @@ Sin merge no hay V1 con estas piezas. Ninguna está en `main` hoy.
 | Campeón del torneo en la API (`championBotId` / `championTeamId`) | `champion_bot_id` sólo en base de datos y nulo en equipos | observación V1C-D02 |
 | Fases visuales R16.4–R16.8 (sonido, texturas, niebla y sombreado, shaders, CDN) | R16.1–R16.3 hechas | `docs/roadmap/pending-features.md` |
 | Catálogo de armas y útiles (comando `utility`) | El catálogo no trae piezas de utilidad | `equipment-catalog.md`, #233 |
+| **Sensores y detección de objetivos de escenario (CTF)** | **Mejora futura; pendiente de contraste con el motor.** Auditar si radar, lidar y proximidad pueden percibir banderas caídas y reconocer a portadores; hoy `observation.objectives` sólo publica la posición de una bandera en su base, no la posición de las transportadas o caídas. Diseñar percepción por alcance, campo de visión, obstáculos y daño, identificación diferenciada de mera detección, comunicación por radio y última posición conocida gestionada por el bot; preservar información oculta, compatibilidad de observaciones/SDK, determinismo y replays. Añadir pruebas para bandera visible, oculta, caída y transportada. **No bloquea V1 ni implica implementación inmediata.** | `docs/user/bots/sensores.md`, `docs/user/bots/objetivos.md`, `docs/user/bots/observaciones.md` |
 | Administración web de backup, restore, readiness y drift | Sólo por CLI | TD-023 |
 | SDK .NET y SDK Java | Sólo `README.md` | `sdks/dotnet`, `sdks/java` |
 | WebRTC para espectadores | Descartado | [ADR-R14](../adr/ADR-R14-webrtc.md) |
