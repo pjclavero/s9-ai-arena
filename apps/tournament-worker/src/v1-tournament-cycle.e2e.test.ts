@@ -611,6 +611,8 @@ describe("V1-C · criterios de orden de la tabla", () => {
       draws: 0,
       scoreDiff,
       seed,
+      byes: 0,
+      technical: 0,
     });
     // R tiene la mejor diferencia pero menos puntos; P y Q empatan a puntos y los separa la diferencia;
     // S empata con Q en puntos y diferencia y sólo lo separa la semilla.
