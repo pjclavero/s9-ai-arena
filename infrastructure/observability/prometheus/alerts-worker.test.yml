@@ -66,7 +66,7 @@ tests:
       - eval_time: 3m
         alertname: WorkerJobRetries
         exp_alerts:
-          - exp_labels: { severity: warning }
+          - exp_labels: { severity: warning, job: tournament-worker }
             exp_annotations:
               summary: "El worker reintenta trabajos en bucle (más de 3 reintentos en 15 min)"
   - interval: 15s
