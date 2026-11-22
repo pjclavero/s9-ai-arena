@@ -39,7 +39,10 @@ function run(cmd, args, { cwd, timeout, env }) {
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const spec = JSON.parse(readFileSync(join(ROOT, "scripts", "rescue-mutants.json"), "utf8"));
+// V1-B · MUTANTS_SPEC permite apuntar a otro fichero de mutantes con el mismo formato (relativo a la raíz).
+const spec = JSON.parse(
+  readFileSync(join(ROOT, process.env.MUTANTS_SPEC ?? join("scripts", "rescue-mutants.json")), "utf8"),
+);
 const [, , id, phase = "base", arg] = process.argv;
 
 if (id === "list") {

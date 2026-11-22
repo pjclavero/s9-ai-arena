@@ -12,7 +12,7 @@ import { REPLAY_ID, go, login, shot, watchProblems } from "./helpers.js";
 
 /**
  * PRC (TD-004) · El replay del golden es de bots PRIVADOS: sólo lo leen sus
- * participantes y el staff. Aquí se entra como el usuario semilla `organizer`
+ * participantes y el staff. Aquí se entra como el usuario semilla `moderator` (#306: el organizer ya no es staff global)
  * (staff) por la UI real; el anónimo y el ajeno reciben 404.
  */
 async function loginStaff(page: Page) {
