@@ -44,7 +44,7 @@ Junto a cada ranura y a cada propiedad, el editor muestra una insignia:
 | **PARTIAL · efecto parcial** | Sólo cuenta para validar el loadout (coste, tamaño, carga máxima, límites por vehículo). |
 | **FUTURE · sin efecto en batalla** | Ningún código lo usa todavía: no cambia nada. |
 
-Al elegir una pieza, «Efecto real de cada propiedad» lista sus datos con su insignia. El catálogo declara datos que **todavía no hacen nada** (el alcance del arma, el alcance de la radio, el terreno, las utilidades): la [lista actualizada](equipment-catalog.md#datos-que-no-cambian-la-batalla) está al final del catálogo.
+Al elegir una pieza, «Efecto real de cada propiedad» lista sus datos con su insignia. El alcance del arma y el de la radio **sí cuentan** (el proyectil sólo llega hasta su alcance y la radio sólo se oye dentro del suyo). El catálogo declara datos que **todavía no hacen nada** (las utilidades): la [lista actualizada](equipment-catalog.md#datos-que-no-cambian-la-batalla) está al final del catálogo.
 
 ## Presupuesto, peso y energía
 

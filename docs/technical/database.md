@@ -3,8 +3,8 @@
 ## Resumen
 
 PostgreSQL 16.14 es la base de datos de negocio **y** la cola de trabajos. El esquema se define en
-código, con 16 migraciones (`001`–`016`) en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
-tablas (33 de negocio más las 2 de control de Knex). **No hay tabla de replays**: los replays viven
+código, con 22 migraciones (`001`–`022`) en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 41
+tablas (39 de negocio más las 2 de control de Knex; cifra de `main` el 2026-11-20 y coincide con las 41 tablas comparadas en la restauración real del 19-nov). **No hay tabla de replays**: los replays viven
 en disco. Todo está verificado en `27f70bb` (octubre de 2026). Este documento no contiene secretos.
 
 ## Índice
@@ -38,6 +38,12 @@ en disco. Todo está verificado en `27f70bb` (octubre de 2026). Este documento n
 | `014_battle_diagnostics` | `participants.diagnostics` (JSON de diagnóstico por bot) |
 | `015_bot_retired` | `bots.retired_at` (retirar un bot de la lista principal; no borra nada) |
 | `016_battle_rules` | `battles.rules` y `tournaments.rules` (copia inmutable de las reglas; nullable, sin relleno de filas históricas) |
+| `017_streaming_admin` | `streaming_settings` (una fila), `streaming_credentials` (claves selladas) y `streaming_sessions` |
+| `018_battle_reverted` | `battles.reverted_at` (marca de reversión; la clasificación sólo cuenta batallas no revertidas) |
+| `019_visibility_broadcast` | `tournaments.broadcast` (autoriza la retransmisión pública) y reescritura de `s9_bot_version_guard()` (enmienda a D9) |
+| `020_streaming_ingests` | `streaming_ingests` (ingestas RTMPS por plataforma) y `streaming_credentials.sealed_backup` |
+| `021_runtime_settings` | `app_runtime_settings` (una fila: espectador y replays públicos; la crea la primera API que arranca) |
+| `022_entries_team` | `entries.team_id` e índice parcial; `team_entry_consents` (autorizaciones de los dueños para inscribir un equipo) |
 
 ## Cómo se aplican
 
@@ -141,8 +147,8 @@ rol `postgres`**, así que cualquier comando que use `-U postgres` falla. Las co
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| 16 migraciones y sus tablas (012–016 añadidas el 2026-11-02) | CODE_VERIFIED (`e3bf2fa`) | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
-| 11 migraciones aplicadas y 35 tablas en producción | RUNTIME_VERIFIED (en la auditoría del 2026-10-15; hoy hay 16 migraciones en `main`, sin re-medir en producción) | `knex_migrations` y `\dt` (sólo lectura) |
+| 22 migraciones y sus tablas (017–022 añadidas el 2026-11-20; 39 `CREATE TABLE` en `migrations.ts`) | CODE_VERIFIED (`80f4952`) | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
+| 11 migraciones aplicadas y 35 tablas en producción | RUNTIME_VERIFIED (en la auditoría del 2026-10-15; hoy hay 22 migraciones en `main`; la instalación nueva del 19-nov llegó a la 022 con 41 tablas, informe de migración MIG6/MIG16) | `knex_migrations` y `\dt` (sólo lectura) |
 | Comandos del CLI | CODE_VERIFIED | `apps/api/src/db/cli.ts:2-69` |
 | Contenido de `bootstrap` | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:75-95` |
 | Escritores y lectores | CODE_VERIFIED | análisis de `db("<tabla>")…insert/update` y SQL crudo en `apps/*/src` (sin tests) |

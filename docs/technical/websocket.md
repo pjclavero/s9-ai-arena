@@ -50,7 +50,7 @@ worker: attachBattle(battleId, Battle) al empezar · bombeo cada 33 ms · detach
 `getSpectateTicket` (`routes/battles.ts:445-482`):
 
 - **Rol**: `visitor`, `security: []`.
-- **Anónimo**: si `S9_PUBLIC_SPECTATE_ENABLED` está apagada (por defecto), un anónimo recibe **404** (Carril J). Con sesión siempre se emite.
+- **Anónimo**: si el ajuste de runtime «espectador público» está apagado (por defecto; `S9_PUBLIC_SPECTATE_ENABLED` sólo da el valor inicial), un anónimo recibe **404** (Carril J). Con sesión siempre se emite.
 - **Respuesta 201**: `{ticket, wsUrl: "<SPECTATE_WS_URL>/<battleId>", expiresAt}`.
 - **Claims**: `{battleId, jti, debug, anon}`. `debug` es verdadero si el rol es ≥ `moderator`; la API lo firma y el cliente no se lo puede conceder.
 - **Validez**: TTL de 60 s y un solo uso (por `jti`).
@@ -106,7 +106,7 @@ Los valores concretos están en [configuration.md](../operations/configuration.m
 | Variable | Servicio | Efecto |
 |---|---|---|
 | `SPECTATE_WS_URL` | API | Base del `wsUrl`; `wss://` obligatorio en producción. El compose no la entrega hoy ([TD-030](../roadmap/technical-debt.md#td-030)) y el valor por defecto `ws://localhost:8081/spectate` no sirve a un navegador: propuesta (para B/REVIEW) un valor relativo `/ws/spectate`, que el cliente ya admite |
-| `S9_PUBLIC_SPECTATE_ENABLED` | API y worker | Espectador anónimo (apagado por defecto). Son dos controles independientes |
+| `S9_PUBLIC_SPECTATE_ENABLED` | API (sólo siembra) | Valor inicial del espectador anónimo. Manda la fila `app_runtime_settings` (Administración o `PATCH /admin/settings/public-access`); el worker la lee de la base y refresca cada 5 s. Apagado por defecto y cerrado si la base no responde |
 | `SPECTATE_PORT` | worker | Puerto del gateway |
 | `JWT_SECRET_FILE` (o `SPECTATE_TICKET_SECRET_FILE`) | API (firma) y worker (verificación) | La clave del ticket se deriva por HKDF del mismo secreto: ambos montan `jwt_secret`. Lo exige `apps/api/src/spectate/ticket-secret-compose.test.ts` ([TD-028](../roadmap/technical-debt.md#td-028)) |
 

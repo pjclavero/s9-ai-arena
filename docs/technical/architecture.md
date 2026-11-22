@@ -79,9 +79,8 @@ Consecuencias:
 - **Secretos:** siempre por fichero (Docker secrets, `*_FILE`), nunca en claro en el entorno. Se resuelven con la precedencia archivo > variable y fallan cerrado (`apps/api/src/auth/tokens.ts:46-60`). El modo `ARENA_DEV_INSECURE_SECRETS=1` existe sólo para desarrollo y tests.
 - **Flags de capacidad, apagadas por defecto:**
   - `S9_ENABLE_REAL_BATTLE_RUNS`
-  - `S9_PUBLIC_SPECTATE_ENABLED`
-  - `S9_PUBLIC_REPLAYS_ENABLED`
   - `S9_METRICS_ENABLED`
+- **Acceso público (espectador y replays):** lo decide la fila `app_runtime_settings`, no el entorno. `S9_PUBLIC_SPECTATE_ENABLED` y `S9_PUBLIC_REPLAYS_ENABLED` sólo siembran la fila en el primer arranque de la API; después se ignoran, y si la base no responde ambos valen «cerrado» (`apps/api/src/runtime-settings.ts`).
 - **Versiones de imagen:** `TAG` común, con overrides por servicio (`*_TAG`). `backup` usa `BACKUP_TAG`, sin heredar `TAG`, a propósito.
 - Variables por servicio: [services.md](services.md). Operación: [docs/operations/configuration.md](../operations/configuration.md).
 
