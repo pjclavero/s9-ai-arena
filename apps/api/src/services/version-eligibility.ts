@@ -513,27 +513,28 @@ export async function assertWithinTournamentBudget(
     .map((r) => verdicts.get(eligibilityKey(r.botId, r.version)))
     .filter((x): x is BudgetVerdict => !!x?.over);
   if (over.length === 0) return;
-  const detail = !!viewer && (viewer.staff || viewer.userId !== null);
-  // H9 · el nombre del bot sólo se resuelve para quien ve el detalle (dueño o staff).
-  const names = new Map<string, string>();
-  if (detail) {
-    const rows = (await db("bots")
-      .whereIn(
-        "id",
-        over.map((b) => canonicalUuid(b.botId)),
-      )
-      .select("id", "name")) as { id: string; name: string }[];
-    for (const r of rows) names.set(canonicalUuid(String(r.id)), String(r.name));
-  }
+  // R2-1 / H9 · EQUIPMENT_PRIVATE: el mismo filtro por DUEÑO que `assertVersionsEligible`. Sólo el dueño
+  // del bot (o el staff) ve el nombre, el coste y la pieza que rompe el tope; cualquier otro, aunque esté
+  // autenticado, recibe el veredicto genérico (sin nombre, coste ni reglas).
+  const botRows = (await db("bots")
+    .whereIn("id", [...new Set(over.map((b) => canonicalUuid(b.botId)))])
+    .select("id", "name", "owner_id")) as { id: string; name: string; owner_id: string }[];
+  const botById = new Map(botRows.map((r) => [canonicalUuid(String(r.id)), r]));
+  const detailFor = (botId: string) => {
+    if (!viewer) return false;
+    if (viewer.staff) return true;
+    const owner = botById.get(canonicalUuid(botId))?.owner_id;
+    return viewer.userId !== null && owner !== undefined && String(owner) === viewer.userId;
+  };
   const labelOf = (b: BudgetVerdict) => {
-    const n = names.get(canonicalUuid(b.botId));
+    const n = botById.get(canonicalUuid(b.botId))?.name;
     return n ? `${n} (${b.botId}) v${b.version}` : `${b.botId} v${b.version}`;
   };
   const items = over.map((b) =>
-    detail
+    detailFor(b.botId)
       ? {
           botId: b.botId,
-          ...(names.get(canonicalUuid(b.botId)) ? { botName: names.get(canonicalUuid(b.botId)) } : {}),
+          ...(botById.get(canonicalUuid(b.botId)) ? { botName: botById.get(canonicalUuid(b.botId))!.name } : {}),
           version: b.version,
           costCredits: b.costCredits,
           budgetCredits: b.budgetCredits,
@@ -546,7 +547,7 @@ export async function assertWithinTournamentBudget(
   throw new ApiError(
     409,
     "bot_version_not_eligible",
-    detail ? budgetMessage(f, labelOf(f)) : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
+    detailFor(f.botId) ? budgetMessage(f, labelOf(f)) : `${f.botId} v${f.version}: supera el presupuesto del torneo.`,
     { reason: "exceeds_tournament_budget", budgetCredits: f.budgetCredits, overBudget: items },
   );
 }

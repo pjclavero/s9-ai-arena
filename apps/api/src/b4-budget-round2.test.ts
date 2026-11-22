@@ -164,6 +164,32 @@ describe("B4 · H9 · el 409 nombra al bot sólo a su dueño", () => {
       message: expect.not.stringContaining(name),
     });
   });
+
+  it("B4_MSG_BOT_NAME · un usuario autenticado que NO es el dueño ve sólo el veredicto genérico (R2-1)", async () => {
+    const bot = await mkBot(GUNNER);
+    const name = (await h.db("bots").where({ id: bot }).first()).name as string;
+    const [other] = await h
+      .db("users")
+      .insert({ email: `b4r2-other-${++seq}@test.local`, password_hash: "x", display_name: "otro" })
+      .returning("id");
+    const err = await assertWithinTournamentBudget(h.db, [{ botId: bot, version: 1 }], 600, {
+      userId: String(other.id),
+      staff: false,
+    }).then(
+      () => null,
+      (e) => e as { message: string; details?: unknown },
+    );
+    expect(err).not.toBeNull();
+    const dump = `${err!.message} ${JSON.stringify({ ...err })}`;
+    expect(dump).not.toContain(name);
+    expect(dump).not.toContain("costCredits");
+    expect(dump).not.toContain("module_cost_cap_exceeded");
+    expect(dump).not.toContain("chassis.medium");
+    // el staff sí lo ve
+    await expect(
+      assertWithinTournamentBudget(h.db, [{ botId: bot, version: 1 }], 600, { userId: String(other.id), staff: true }),
+    ).rejects.toMatchObject({ message: expect.stringContaining(name) });
+  });
 });
 
 describe("B4 · H4 · se mide con el catálogo de la revisión", () => {

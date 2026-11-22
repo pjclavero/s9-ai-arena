@@ -349,8 +349,21 @@ const MUTANTS = [
     edits: [
       {
         file: VE,
-        from: "const n = names.get(canonicalUuid(b.botId));",
+        from: "const n = botById.get(canonicalUuid(b.botId))?.name;",
         to: "const n = undefined as string | undefined;",
+      },
+    ],
+    tests: [R2],
+    kill: "B4_MSG_BOT_NAME",
+  },
+  {
+    id: "MX8",
+    name: "cualquier usuario autenticado cuenta como dueño (se filtra nombre y coste de bots ajenos)",
+    edits: [
+      {
+        file: VE,
+        from: "return viewer.userId !== null && owner !== undefined && String(owner) === viewer.userId;",
+        to: "return viewer.userId !== null;",
       },
     ],
     tests: [R2],
