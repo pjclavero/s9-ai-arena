@@ -20,6 +20,15 @@ import {
   type Ruleset,
 } from "../../../../packages/game-rules/index.js";
 import { RngStreams } from "../rng.js";
+import {
+  DEFAULT_EVENT_WINDOW,
+  DEFAULT_FRAME_WINDOW,
+  MemoryReplaySink,
+  ReplayNotRetainedError,
+  WindowLog,
+  type FrameLog,
+  type ReplaySink,
+} from "./replay-sink.js";
 import { computeStateHash, type StateHashBreakdown } from "./state-hash.js";
 import deps from "../engine-deps.json" with { type: "json" };
 import { canDeployMine, canFire, deployMine, explosionFalloff, fire, type Mine, type Projectile } from "./combat.js";
@@ -77,6 +86,15 @@ export interface BattleConfig {
   /** OLA2-MD · cada cuántos ticks se graba un checkpoint con el desglose por componentes (defecto 300). */
   checkpointEveryNTicks?: number;
   recordReplay?: boolean;
+  /**
+   * V1 REPLAYS · sink externo al que el motor emite comandos, snapshots, eventos, hashes y
+   * checkpoints. Ausente = `MemoryReplaySink` acotado interno (comportamiento anterior).
+   */
+  replaySink?: ReplaySink;
+  /** `false` = el sink interno no retiene snapshots ni eventos (verify/estadísticas). Defecto true. */
+  retainFrames?: boolean;
+  /** Ventana (frames) del directo. Defecto 512. */
+  frameWindow?: number;
   /**
    * N2 · Latencia simulada (DETERMINISTA, off por defecto). Cuando está presente, el
    * comando aceptado en un ciclo de decisión no surte efecto en ESE ciclo: se retrasa
@@ -188,17 +206,57 @@ export class Battle {
 
   /** Eventos por bot (niebla de guerra: cada uno solo ve lo suyo) + eventos públicos. */
   private pendingEvents = new Map<string, any[]>();
-  publicEvents: any[] = [];
   /**
    * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
    * desempate `kills`). SÍ entra en el hash (componente `mode`, state-hash v2).
    */
   private teamKills: Record<string, number> = emptyDict<number>();
-  snapshots: any[] = [];
-  stateHashes: { tick: number; hash: string }[] = [];
+  /**
+   * V1 REPLAYS · PR-1 · el replay NO vive en el motor: se emite a `sink`. Por defecto el
+   * sink es un `MemoryReplaySink` con topes (compatibilidad de lectura: `snapshots`,
+   * `publicEvents`, `stateHashes`, `checkpoints`, `replayCommands`). Con `config.replaySink`
+   * externo esas lecturas lanzan `ReplayNotRetainedError`. El directo lee de las
+   * ventanas acotadas `frames` y `events` (índices absolutos), siempre disponibles.
+   */
+  private sink: ReplaySink;
+  private memory: MemoryReplaySink | null;
+  readonly frames: FrameLog;
+  readonly events: WindowLog<any>;
+  private lastSnapshotTick = -1;
+  private lastCheckpointTick = -1;
+  get snapshots(): any[] {
+    return this.mem("snapshots").snapshots;
+  }
+  get publicEvents(): any[] {
+    return this.mem("publicEvents").events;
+  }
+  get stateHashes(): { tick: number; hash: string }[] {
+    return this.mem("stateHashes").stateHashes;
+  }
   /** OLA2-MD · checkpoints del replay v2: hash + desglose por componentes (incluye el final). */
-  checkpoints: { tick: number; hash: string; components: StateHashBreakdown["components"] }[] = [];
-  replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
+  get checkpoints(): { tick: number; hash: string; components: StateHashBreakdown["components"] }[] {
+    return this.mem("checkpoints").checkpoints as any;
+  }
+  get replayCommands(): { tick: number; vehicleId: string; command: any }[] {
+    return this.mem("replayCommands").commands;
+  }
+  private mem(what: string): MemoryReplaySink {
+    if (!this.memory) throw new ReplayNotRetainedError(what);
+    return this.memory;
+  }
+  private recordPublicEvent(e: any): void {
+    this.events.push(e);
+    this.sink.event(e);
+  }
+  private recordSnapshot(f: any): void {
+    this.lastSnapshotTick = f.tick;
+    this.frames.push(f);
+    this.sink.snapshot(f);
+  }
+  private recordCheckpoint(c: { tick: number; hash: string; components: any }): void {
+    this.lastCheckpointTick = c.tick;
+    this.sink.checkpoint(c);
+  }
   /**
    * N2 · Comandos "en vuelo" bajo latencia simulada: readyAtTick es el tick de
    * decisión en el que deben incorporarse al mapa `commands` del step(). Vacía
@@ -209,6 +267,15 @@ export class Battle {
 
   constructor(config: BattleConfig) {
     this.config = config;
+    this.frames = new WindowLog<any>(config.frameWindow ?? DEFAULT_FRAME_WINDOW);
+    this.events = new WindowLog<any>(DEFAULT_EVENT_WINDOW);
+    if (config.replaySink) {
+      this.sink = config.replaySink;
+      this.memory = null;
+    } else {
+      this.memory = new MemoryReplaySink({ retainSnapshots: config.retainFrames !== false, retainEvents: config.retainFrames !== false });
+      this.sink = this.memory;
+    }
     this.rng = new RngStreams(config.seed);
     this.physics = new PhysicsWorld();
     const teams = [...new Set(config.participants.map((p) => p.team))].sort();
@@ -298,7 +365,7 @@ export class Battle {
     if (toVehicle) {
       this.pendingEvents.get(toVehicle)?.push(e);
     } else {
-      this.publicEvents.push(e);
+      this.recordPublicEvent(e);
       // Los eventos públicos (marcador, bandera) los reciben todos: son públicos por definición.
       for (const v of this.vehicles) this.pendingEvents.get(v.id)?.push(e);
     }
@@ -397,7 +464,7 @@ export class Battle {
           // desde el mismo RNG canónico y en el mismo punto de la secuencia, así
           // que reproduce el mismo tick de efecto sin necesidad de grabarlo aparte.
           if (this.config.recordReplay) {
-            this.replayCommands.push({ tick: this.tick, vehicleId: v.id, command: cmd });
+            this.sink.command({ tick: this.tick, vehicleId: v.id, command: cmd });
           }
 
           const latency = this.config.simulatedLatency;
@@ -602,7 +669,7 @@ export class Battle {
     // --- PASO 8 · Snapshots y hash de estado
     const snapEvery = this.config.snapshotEveryNTicks ?? 3;
     if (this.tick % snapEvery === 0) {
-      this.snapshots.push(this.internalFrame(posesAfter));
+      this.recordSnapshot(this.internalFrame(posesAfter));
     }
     // Cadencia del hash: config > ruleset > 30. Va en el ruleset (ERR-ENG-04) para que
     // viaje en la cabecera del replay y una auditoría con hash por tick sea reproducible.
@@ -612,8 +679,8 @@ export class Battle {
     const wantCkpt = ckptEvery > 0 && this.tick % ckptEvery === 0;
     if (wantHash || wantCkpt) {
       const bd = this.stateHashBreakdown();
-      if (wantHash) this.stateHashes.push({ tick: this.tick, hash: bd.hash });
-      if (wantCkpt) this.checkpoints.push({ tick: this.tick, hash: bd.hash, components: bd.components });
+      if (wantHash) this.sink.hash({ tick: this.tick, hash: bd.hash });
+      if (wantCkpt) this.recordCheckpoint({ tick: this.tick, hash: bd.hash, components: bd.components });
     }
 
     // Purga de radio ya entregada. Solo si hay algo: filter() sobre una cola vacía
@@ -631,7 +698,7 @@ export class Battle {
     // Motor 0.4.0 (ADR-022) · la prórroga empieza en este tick: evento PÚBLICO (replay
     // y espectador; no va a los bots, el esquema EVENT de arena/1 no lo declara).
     if (this.config.ruleset.overtime && this.mode.overtimeSince === this.tick) {
-      this.publicEvents.push({
+      this.recordPublicEvent({
         tick: this.tick,
         kind: "overtime_started",
         score: { ...this.mode.score },
@@ -972,7 +1039,7 @@ export class Battle {
   private noteElimination(v: Vehicle): void {
     if (!respawnLimited(this.config.ruleset)) return;
     if (!eliminatedByDeath(v, this.config.ruleset)) return;
-    this.publicEvents.push({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
+    this.recordPublicEvent({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
   }
 
   // ------------------------------------------------------ frame interno y hash
@@ -1059,18 +1126,16 @@ export class Battle {
     // al golpe decisivo y su marcador no coincidía con el resultado (destapado al
     // cambiar las trayectorias con el perímetro de UX-07). Los snapshots no entran en
     // el hash de estado: no altera el determinismo.
-    const last = this.snapshots[this.snapshots.length - 1];
-    if (!last || last.tick !== this.tick) this.snapshots.push(this.internalFrame(this.poses()));
+    if (this.lastSnapshotTick !== this.tick) this.recordSnapshot(this.internalFrame(this.poses()));
     // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
     const technical = winner === TECHNICAL_LIMIT;
     if (technical) {
-      this.publicEvents.push({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
+      this.recordPublicEvent({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
     }
     // OLA2-MD · checkpoint FINAL garantizado (desglose por componentes del estado final).
     const finalHash = this.stateHashBreakdown();
-    const lastCkpt = this.checkpoints[this.checkpoints.length - 1];
-    if (!lastCkpt || lastCkpt.tick !== this.tick) {
-      this.checkpoints.push({ tick: this.tick, hash: finalHash.hash, components: finalHash.components });
+    if (this.lastCheckpointTick !== this.tick) {
+      this.recordCheckpoint({ tick: this.tick, hash: finalHash.hash, components: finalHash.components });
     }
     this.result = {
       battleId: this.config.battleId,

@@ -52,12 +52,25 @@ export function spectateProtocols(ticket: string): string[] {
   return [SPECTATE_SUBPROTOCOL, TICKET_SUBPROTOCOL_PREFIX + ticket];
 }
 
+/** Registro indexable con numeración absoluta: `WindowLog` del motor o un array. */
+export type LogView = { readonly length: number; readonly base?: number; get(i: number): any } | any[];
+const logBase = (l: LogView): number => (Array.isArray(l) ? 0 : (l.base ?? 0));
+const logAt = (l: LogView, i: number): any => (Array.isArray(l) ? l[i] : l.get(i));
+const snapshotsOf = (b: SpectatableBattle): LogView => b.frames ?? (b.snapshots as LogView);
+const eventsOf = (b: SpectatableBattle): LogView => b.events ?? (b.publicEvents as LogView);
+
 /** Lo que el gateway necesita de una batalla de E2. Estructural: no importa la clase. */
 export interface SpectatableBattle {
-  /** Frames INTERNOS acumulados (el motor los añade cada snapshotEveryNTicks). Nunca salen tal cual. */
-  snapshots: any[];
+  /**
+   * Frames INTERNOS (el motor los añade cada snapshotEveryNTicks). Nunca salen tal cual.
+   * V1 REPLAYS · el motor expone `frames`: ventana ACOTADA con índices absolutos
+   * (`base`, `length`, `get(i)`). `snapshots` (array completo) sólo lo usan dobles de test.
+   */
+  frames?: LogView;
+  snapshots?: any[];
   /** Eventos «públicos por definición» del motor, con ids INTERNOS: se proyectan por audiencia. */
-  publicEvents: any[];
+  events?: LogView;
+  publicEvents?: any[];
   isFinished(): boolean;
   getResult(): unknown | null;
 }
@@ -114,6 +127,9 @@ interface Feed {
   opts: AttachOptions;
   sentSnapshots: number;
   sentEvents: number;
+  /** Frames/eventos que el bombeo no llegó a leer antes de salir de la ventana. */
+  droppedFrames: number;
+  droppedEvents: number;
   timer: ReturnType<typeof setInterval> | null;
   finished: boolean;
   /** Retardo anti-coaching del feed en ms (0 = directo sin retardo). */
@@ -240,7 +256,8 @@ export class SpectateGateway {
       // Lo que ya existía al registrar la batalla se proyecta EN ORDEN (la numeración
       // pública es por primera visibilidad desde el tick 0).
       let lastSnapshot: unknown | null = null;
-      for (const f of battle.snapshots) lastSnapshot = projector.project(f).body;
+      const fl = snapshotsOf(battle);
+      for (let i = logBase(fl); i < fl.length; i++) lastSnapshot = projector.project(logAt(fl, i)).body;
       const meta: Record<string, unknown> = {};
       for (const k of META_KEYS) if (rawMeta[k] !== undefined) meta[k] = rawMeta[k];
       meta.roster = projector.projectRoster(roster);
@@ -268,8 +285,10 @@ export class SpectateGateway {
     const feed: Feed = {
       battle,
       opts,
-      sentSnapshots: battle.snapshots.length, // el init entrega el último; el stream sigue desde aquí
-      sentEvents: battle.publicEvents.length,
+      sentSnapshots: snapshotsOf(battle).length, // el init entrega el último; el stream sigue desde aquí
+      sentEvents: eventsOf(battle).length,
+      droppedFrames: 0,
+      droppedEvents: 0,
       timer: null,
       finished: false,
       delayMs,
@@ -480,8 +499,15 @@ export class SpectateGateway {
    */
   private pump(battleId: string, feed: Feed): void {
     const { battle } = feed;
-    while (feed.sentSnapshots < battle.snapshots.length) {
-      const frame = battle.snapshots[feed.sentSnapshots++];
+    const fl = snapshotsOf(battle);
+    // Ventana acotada: si el bombeo se quedó por detrás de `base`, se resincroniza al más
+    // antiguo retenido y se contabiliza (nunca se bloquea ni crece la memoria del motor).
+    if (feed.sentSnapshots < logBase(fl)) {
+      feed.droppedFrames += logBase(fl) - feed.sentSnapshots;
+      feed.sentSnapshots = logBase(fl);
+    }
+    while (feed.sentSnapshots < fl.length) {
+      const frame = logAt(fl, feed.sentSnapshots++);
       const now = Date.now();
       for (const af of feed.audiences.values()) {
         const projected = af.projector.project(frame);
@@ -501,8 +527,13 @@ export class SpectateGateway {
         this.broadcast(feed, staff, { type: "debug", tick: frame.tick, layers: feed.opts.debugLayers() }, true);
       }
     }
-    while (feed.sentEvents < battle.publicEvents.length) {
-      const ev = battle.publicEvents[feed.sentEvents++];
+    const el = eventsOf(battle);
+    if (feed.sentEvents < logBase(el)) {
+      feed.droppedEvents += logBase(el) - feed.sentEvents;
+      feed.sentEvents = logBase(el);
+    }
+    while (feed.sentEvents < el.length) {
+      const ev = logAt(el, feed.sentEvents++);
       for (const af of feed.audiences.values()) {
         const projected = af.projector.projectEvent(ev);
         if (projected) this.broadcast(feed, af, { type: "event", event: projected });
