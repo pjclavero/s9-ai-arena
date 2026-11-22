@@ -21,6 +21,7 @@
  *    manual). Las derrotas deportivas terminan el trabajo en `done`.
  */
 import type { Knex } from "knex";
+import { workerMetrics } from "./worker-metrics.js";
 import { classifyFailure, hasOwnRetryPolicy, retryPolicyFor, type FailureCode } from "./errors.js";
 
 export type JobKind = "generate_schedule" | "run_battle" | "process_result" | "update_standings" | "tournament_dry_run";
@@ -92,6 +93,10 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
   const now = opts.now ?? new Date();
   const kinds = opts.kinds ?? JOB_KINDS;
   const staleBefore = new Date(now.getTime() - lockTimeoutMs);
+  // V1-P0 · un `running` huérfano que YA agotó `max_attempts` NO se re-reclama: pasa a
+  // `needs_review` (y su batalla a `failed`) antes de elegir trabajo. El mismo límite está
+  // además en el WHERE del claim, de modo que ni una carrera lo deja reclamable.
+  await parkExhaustedStaleJobs(db, { kinds, lockTimeoutMs, now });
   const rows = await db.raw(
     `
     UPDATE jobs SET
@@ -110,7 +115,7 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
         AND run_after <= GREATEST(CAST(:now AS timestamptz), now())
         AND (
           status = 'queued'
-          OR (status = 'running' AND locked_at < :staleBefore)
+          OR (status = 'running' AND locked_at < :staleBefore AND attempts < max_attempts)
         )
       ORDER BY created_at, id
       LIMIT 1
@@ -120,7 +125,107 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
     `,
     { workerId: opts.workerId, now, kinds, staleBefore },
   );
-  return (rows.rows?.[0] as JobRow | undefined) ?? null;
+  const job = (rows.rows?.[0] as JobRow | undefined) ?? null;
+  if (job && job.attempts > 1) workerMetrics.inc("job_retries_total");
+  return job;
+}
+
+/** Motivo que queda en `jobs.last_error` / `audit_log` cuando se agotan los intentos de un huérfano. */
+export const EXHAUSTED_ORPHAN_REASON = "intentos agotados con el lease vencido (worker caído o reiniciado en bucle)";
+
+/**
+ * Marca la batalla como `failed` por infraestructura SI sigue siendo una batalla sin dueño vivo
+ * (`scheduled`, o `running` con el lease vencido o ausente). Idempotente: sobre una batalla ya
+ * terminada, o con lease vivo de otro titular, no escribe nada. Devuelve true si la cerró.
+ * Escribe un `audit_log` (sólo inserción) con el motivo; NO inventa resultado deportivo.
+ */
+export async function failBattleInfrastructure(
+  trx: Knex | Knex.Transaction,
+  battleId: string,
+  reason: string,
+  action = "worker.battle_failed_infrastructure",
+): Promise<boolean> {
+  const res = await trx.raw(
+    `
+    UPDATE battles SET
+      status = 'failed',
+      failure_kind = 'infrastructure',
+      claimed_by = NULL,
+      lease_expires_at = NULL
+    WHERE id = :battleId
+      AND (
+        status = 'scheduled'
+        OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
+      )
+    RETURNING id, run_attempts
+    `,
+    { battleId },
+  );
+  const row = res.rows?.[0] as { id: string; run_attempts: number } | undefined;
+  if (!row) return false;
+  await trx("audit_log").insert({
+    action,
+    target: `battle:${battleId}`,
+    detail: JSON.stringify({ reason, failureKind: "infrastructure", runAttempts: row.run_attempts }),
+  });
+  return true;
+}
+
+/**
+ * Barrido de la cola: los trabajos `running` con el lock vencido que YA agotaron `max_attempts`
+ * pasan a `needs_review`; si son `run_battle`, su batalla pasa a `failed` (infraestructura) con
+ * el motivo explícito. Todo en UNA transacción e idempotente (una segunda pasada no encuentra nada).
+ * Devuelve los trabajos aparcados (con su fila ya actualizada) para que el llamador cierre el torneo.
+ */
+export async function parkExhaustedStaleJobs(
+  db: Knex,
+  opts: { kinds?: JobKind[]; lockTimeoutMs?: number; now?: Date } = {},
+): Promise<JobRow[]> {
+  const now = opts.now ?? new Date();
+  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? 60_000));
+  const kinds = opts.kinds ?? JOB_KINDS;
+  const parked = await db.transaction(async (trx) => {
+    const res = await trx.raw(
+      `
+      UPDATE jobs SET
+        status = 'needs_review',
+        locked_by = NULL,
+        locked_at = NULL,
+        last_error = :msg,
+        error_class = 'infrastructure',
+        updated_at = :now
+      WHERE id IN (
+        SELECT id FROM jobs
+        WHERE kind = ANY(:kinds)
+          AND status = 'running'
+          AND locked_at < :staleBefore
+          AND attempts >= max_attempts
+        ORDER BY created_at, id
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+      `,
+      { kinds, staleBefore, now, msg: `[worker_died] ${EXHAUSTED_ORPHAN_REASON}` },
+    );
+    const jobs = res.rows as JobRow[];
+    for (const j of jobs) {
+      const battleId = j.kind === "run_battle" ? String((j.payload as Record<string, unknown>)?.battleId ?? "") : "";
+      await trx("audit_log").insert({
+        action: "worker.job_exhausted",
+        target: `job:${j.id}`,
+        detail: JSON.stringify({
+          kind: j.kind,
+          attempts: j.attempts,
+          maxAttempts: j.max_attempts,
+          battleId: battleId || null,
+        }),
+      });
+      if (battleId) await failBattleInfrastructure(trx, battleId, EXHAUSTED_ORPHAN_REASON);
+    }
+    return jobs;
+  });
+  if (parked.length) workerMetrics.inc("jobs_parked_total", parked.length);
+  return parked;
 }
 
 /** El trabajo terminó bien (o con derrota deportiva ya registrada en la batalla). */

@@ -262,6 +262,9 @@ jobs:
             --entrypoint promtool prom/prometheus:v2.53.0 check rules /p/alerts.yml
           docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" \
             --entrypoint promtool prom/prometheus:v2.53.0 test rules /p/alerts-streamer.test.yml
+          # V1-P0 · alertas del tournament-worker (heap/RSS, reintentos, needs_review, lease vencido).
+          docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" \
+            --entrypoint promtool prom/prometheus:v2.53.0 test rules /p/alerts-worker.test.yml
 
   # ── Etapa 4: batallas deterministas de regresión (suites de E2) ────────────
   regression-battles:

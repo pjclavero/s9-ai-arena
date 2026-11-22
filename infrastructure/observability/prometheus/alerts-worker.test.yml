@@ -1,0 +1,155 @@
+# V1-P0 · Pruebas de las alertas del tournament-worker con promtool (Prometheus real):
+#   docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" --entrypoint promtool \
+#     prom/prometheus:v2.53.0 test rules /p/alerts-worker.test.yml
+# Cada alerta: un caso que DISPARA y uno que NO (valor sano, o ausencia de métricas).
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  # ── WorkerHeapNearLimit ──────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_heap_used_bytes{job="tournament-worker"}'
+        values: "900x80"
+      - series: 's9_worker_heap_limit_bytes{job="tournament-worker"}'
+        values: "1000x80"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WorkerHeapNearLimit
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: WorkerHeapNearLimit
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "El heap del tournament-worker supera el 85% de su límite"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_heap_used_bytes{job="tournament-worker"}'
+        values: "500x80"
+      - series: 's9_worker_heap_limit_bytes{job="tournament-worker"}'
+        values: "1000x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerHeapNearLimit
+        exp_alerts: []
+
+  # ── WorkerRssHigh ────────────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_rss_bytes{job="tournament-worker"}'
+        values: "1073741824x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerRssHigh
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "El RSS del tournament-worker supera 900 MiB (límite del contenedor: 1 GiB)"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_rss_bytes{job="tournament-worker"}'
+        values: "400000000x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerRssHigh
+        exp_alerts: []
+
+  # ── WorkerJobRetries ─────────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_job_retries_total{job="tournament-worker"}'
+        values: "0 0 0 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: WorkerJobRetries
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "El worker reintenta trabajos en bucle (más de 3 reintentos en 15 min)"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_job_retries_total{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerJobRetries
+        exp_alerts: []
+
+  # ── WorkerJobsNeedReview ─────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_jobs_needs_review{job="tournament-worker"}'
+        values: "2x120"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WorkerJobsNeedReview
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: WorkerJobsNeedReview
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Hay 2 trabajos del worker en needs_review"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_jobs_needs_review{job="tournament-worker"}'
+        values: "0x120"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: WorkerJobsNeedReview
+        exp_alerts: []
+
+  # ── WorkerBattlesLeaseExpired ────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_battles_lease_expired{job="tournament-worker"}'
+        values: "1x80"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WorkerBattlesLeaseExpired
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: WorkerBattlesLeaseExpired
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Hay 1 batallas running con el lease vencido sin recuperar"
+  # Sin métricas del worker (capability apagada) NO dispara ninguna de las anteriores.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api"}'
+        values: "1x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerBattlesLeaseExpired
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: WorkerHeapNearLimit
+        exp_alerts: []
+
+  # ── WorkerMetricsDown ────────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 'up{job="tournament-worker"}'
+        values: "1x8 0x40"
+      - series: 's9_worker_up{job="tournament-worker"}'
+        values: "1x8 _x40"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerMetricsDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: tournament-worker }
+            exp_annotations:
+              summary: "El tournament-worker dejó de exportar métricas (caído o reiniciándose)"
+  # Capability apagada: el target está down desde siempre y nunca exportó s9_worker_up ⇒ NO dispara.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="tournament-worker"}'
+        values: "0x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WorkerMetricsDown
+        exp_alerts: []

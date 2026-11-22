@@ -30,7 +30,10 @@ import { handleUpdateStandings } from "./standings.js";
 import { TournamentWorker } from "./worker.js";
 import { buildLoadConfig, executorLoadOptions, workerLoadOptions } from "./load-config.js";
 import { defaultBattleResources } from "./battle-resources.js";
-import { startReaper } from "./battle-reaper.js";
+import { reapAtStartup, startReaper } from "./battle-reaper.js";
+import { startOrphanSweeper } from "./orphan-recovery.js";
+import { startMetricsServer, workerMetricsEnabled } from "./worker-metrics.js";
+import { settleFailedBattle } from "./results.js";
 import { LABEL_BATTLE_ID, LABEL_ROLE, ROLE_BATTLE_BOT } from "../../bot-manager/src/container-runner.js";
 
 // ADR-016 · el worker NO expone HTTP (su señal de vida es un fichero), así que
@@ -215,12 +218,36 @@ const stopRescue = startTournamentRescue(db, (touched, err) => {
   else if (touched.length) log("tournament_rescue", { tournaments: touched });
 });
 let stopReaper: (() => void) | undefined;
+// V1-P0 · barrido de batallas huérfanas (`running` con el lease vencido): reencola una vez o cierra
+// como terminal (`failed`/infraestructura). Una pasada ahora y otra cada 60 s.
+const stopSweeper = startOrphanSweeper({
+  db,
+  everyMs: 60_000,
+  onReport: (r, err) => {
+    if (err) log("orphan_sweep_error", { err: String(err) });
+    else if (r.requeued.length || r.failed.length || r.skipped.length)
+      log("orphan_sweep", { requeued: r.requeued, failed: r.failed, skipped: r.skipped });
+  },
+  onBattleFailed: (battleId) => settleFailedBattle(db, battleId).then(() => undefined),
+});
+// V1-P0 · métricas (heap/RSS, reintentos, aparcados, huérfanas): sólo con S9_METRICS_ENABLED.
+if (workerMetricsEnabled()) {
+  const metricsPort = Number(process.env.WORKER_METRICS_PORT ?? 8086);
+  startMetricsServer(metricsPort);
+  log("worker_metrics", { port: metricsPort });
+}
 if (proxyRunner) {
   const runner = proxyRunner;
   defaultBattleResources.setVerifier(async (battleId) =>
     (await runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: battleId }))
       .filter((c) => c.state !== "removing")
       .map((c) => c.id.slice(0, 12)),
+  );
+  // V1-P0 · al arrancar, ANTES de reclamar trabajo: retira los contenedores de bot de cualquier
+  // batalla que no esté `running` con lease vigente (restos de la ejecución anterior).
+  await reapAtStartup({ db, runner }).then(
+    (r) => log("battle_reaper_startup", { removed: r.removed, errors: r.errors }),
+    (err: unknown) => log("battle_reaper_startup_error", { err: String(err) }),
   );
   stopReaper = startReaper({
     db,
@@ -248,6 +275,7 @@ async function shutdown(sig: string): Promise<void> {
   log(`${sig}: parando`);
   clearInterval(heartbeat);
   stopReaper?.();
+  stopSweeper();
   stopRescue();
   // OLA2-MF · las batallas vivas se abortan (WORKER_ERROR): cada una pasa por su
   // teardown en el finally del handler y vuelve a `scheduled` para otro worker.
