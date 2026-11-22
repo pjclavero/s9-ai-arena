@@ -731,8 +731,8 @@ for (const n of [2, 3, 4])
     });
 
     /**
-     * Oráculo por equipos: 3/1/0 por BANDO desde participants.outcome (`played*`) más el descanso
-     * (bye), que la tabla interna cuenta como victoria (docs/technical/tournaments.md y
+     * Oráculo por equipos: 3/1/0 por BANDO desde participants.outcome (`played*`) y el descanso
+     * (bye) contado APARTE (D-OP-24): no suma puntos ni victorias (docs/technical/tournaments.md y
      * docs/user/rankings.md).
      */
     async function teamOracle() {
@@ -782,12 +782,8 @@ for (const n of [2, 3, 4])
       const matches = (await h.db("matches").where({ tournament_id: tid })) as Row[];
       for (const m of matches) {
         const pr = typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing;
-        if (pr.bye && pr.home) {
-          const r = oracle.get(pr.home as string)!;
-          r.points += 3;
-          r.wins++;
-          r.byes++;
-        }
+        // D-OP-24: el bye NO puntúa ni es victoria jugada: sólo se cuenta en `byes`.
+        if (pr.bye && pr.home) oracle.get(pr.home as string)!.byes++;
       }
       return oracle;
     }
@@ -830,19 +826,33 @@ for (const n of [2, 3, 4])
       expect(new Set([...oracle.values()].map((o) => o.points)).size).toBeGreaterThan(1);
     });
 
-    // CONTRATO DOCUMENTADO (docs/technical/tournaments.md, docs/user/rankings.md): la tabla interna del
-    // torneo cuenta el descanso (bye) como victoria (3 puntos y 1 victoria). Con 3 equipos cada uno
-    // descansa exactamente una vez. (Pregunta de producto, no defecto: la clasificación de temporada
-    // no cuenta los byes; ver informe V1-C.)
-    it(`V1C_TDM_bye_contract · ${n}v${n}: la tabla por equipos cuenta el bye como victoria, una vez por equipo`, async () => {
+    // CONTRATO D-OP-24 (docs/technical/tournaments.md, docs/user/rankings.md): el descanso (bye) es un
+    // avance administrativo: NO es victoria, derrota ni empate, suma 0 puntos y no cuenta como partida
+    // disputada; va en su propia columna `byes`. Con 3 equipos cada uno descansa exactamente una vez.
+    // (Antes de D-OP-24 la tabla lo contaba como 3 puntos y 1 victoria.)
+    it(`V1C_TDM_bye_contract · ${n}v${n}: la tabla por equipos NO cuenta el bye como victoria ni puntos; va en \`byes\`, una vez por equipo`, async () => {
       await ensure();
       const st = await request(app).get(`/tournaments/${tid}/team-standings`);
       const oracle = await teamOracle();
       for (const row of st.body as Row[]) {
         const o = oracle.get(row.teamId as string)!;
         expect(o.byes).toBe(1);
-        expect(Number(row.points)).toBe(o.playedPoints + 3);
-        expect(Number(row.wins)).toBe(o.playedWins + 1);
+        expect(Number(row.byes)).toBe(1);
+        expect(Number(row.points)).toBe(o.playedPoints);
+        expect(Number(row.wins)).toBe(o.playedWins);
+        // partidas disputadas = V + E + D: el bye no suma; sin resultados técnicos en este ciclo.
+        expect(Number(row.played)).toBe(Number(row.wins) + Number(row.draws) + Number(row.losses));
+        expect(Number(row.played)).toBe(2);
+        expect(Number(row.technical)).toBe(0);
+      }
+      // Ningún bye genera batalla ni rating_event.
+      const byeMatches = ((await h.db("matches").where({ tournament_id: tid })) as Row[]).filter((m) => {
+        const pr = typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing;
+        return pr.bye === true;
+      });
+      expect(byeMatches).toHaveLength(3);
+      for (const m of byeMatches) {
+        expect(await h.db("battles").where({ match_id: m.id })).toHaveLength(0);
       }
     });
 

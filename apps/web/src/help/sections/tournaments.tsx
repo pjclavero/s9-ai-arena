@@ -8,8 +8,8 @@
  *  - rating por bot, temporada y MODO (ratings.mode): un ranking por modo;
  *  - V-D-E (columna de /standings) sale de seasonTable (tournament-worker
  *    standings.ts, política official_played_not_reverted): ENFRENTAMIENTOS oficiales
- *    disputados (no batallas) de los torneos de la temporada; el bye no suma y un
- *    enfrentamiento sin ganador es empate; la posición (#) es la de esa tabla
+ *    disputados (no batallas) de los torneos de la temporada; el bye no suma (no es V, D ni E, ni
+ *    partida disputada, ni da Elo: D-OP-24) y un enfrentamiento sin ganador es empate; la posición (#) es la de esa tabla
  *    (3 puntos por victoria, 1 por empate), no el rating. «Descalificación =
  *    derrota» es del Elo (ratings.ts outcomeScore), no de V-D-E (EQ6, #210).
  */
@@ -49,7 +49,7 @@ export function VdeTip(props: { testId?: string }) {
       modo (un enfrentamiento puede tener varias batallas); un enfrentamiento sin ganador cuenta como empate, y una
       serie que sigue en juego cuenta con lo ya disputado (si va igualada, como empate). No cuentan las prácticas, las
       batallas revertidas ni las detenidas por límite técnico, y un bye (pasar ronda sin rival) no suma en esta
-      clasificación. Inscribirse no te hace aparecer.
+      clasificación: no es victoria, derrota ni empate, no cuenta como partida disputada y no da Elo. Inscribirse no te hace aparecer.
     </InfoTip>
   );
 }
