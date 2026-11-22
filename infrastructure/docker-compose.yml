@@ -203,6 +203,8 @@ services:
       # MG · valor INICIAL (bootstrap) de los ajustes de runtime; después manda la BD.
       S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
       S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      # V1 · BLOQUEO TEMPORAL de la creación de batallas CTF: vacío/0 = bloqueado (defecto); 1 = permitido.
+      S9_CTF_PRACTICE_ENABLED: ${S9_CTF_PRACTICE_ENABLED:-}
       S9_RUNTIME_SETTINGS_REFRESH_MS: ${S9_RUNTIME_SETTINGS_REFRESH_MS:-}
       S9_METRICS_ENABLED: ${S9_METRICS_ENABLED:-}
       # GET /keys/artifact-signing publica la clave PÚBLICA de verificación.

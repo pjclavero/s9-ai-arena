@@ -20,7 +20,15 @@ import {
   type PublicCompositionReport,
 } from "../../../../packages/game-rules/battle-rules.js";
 
+/** V1 · modo de plataforma cuya creación está bloqueada temporalmente (GET /rulesets → disabledModes). */
+export interface DisabledMode {
+  mode: string;
+  reason: string;
+}
+
 export interface RulesCatalog {
+  /** V1 · bloqueos temporales de creación (hoy CTF). Ausente = ninguno. */
+  disabledModes?: DisabledMode[];
   presets: RulesPreset[];
   custom: {
     defaults: Omit<RulesParams, "teamSize">;
@@ -164,7 +172,11 @@ export function BattleRulesPicker(props: {
   onChange: (c: RulesChoice) => void;
 }) {
   const { catalog, format, choice, teamSize } = props;
-  const presets = catalog.presets.filter((p) => p.format === format);
+  // V1 · un preset de un modo bloqueado no se ofrece (CTF, mientras esté deshabilitado).
+  const blocked = (game: string | undefined) =>
+    (catalog.disabledModes ?? []).find((d) => d.mode === (game ?? "")) ?? null;
+  const presets = catalog.presets.filter((p) => p.format === format && !blocked(p.game));
+  const ctfBlock = blocked("capture_the_flag");
   const L = catalog.custom?.limits ?? {};
   const custom = choice.kind === "custom" ? choice.params : null;
   const setCustom = (f: (p: Omit<RulesParams, "teamSize">) => Omit<RulesParams, "teamSize">) =>
@@ -242,7 +254,9 @@ export function BattleRulesPicker(props: {
                 }}
               >
                 <option value="combat">Combate (bajas)</option>
-                <option value="capture_the_flag">Capturar la bandera</option>
+                <option value="capture_the_flag" disabled={!!ctfBlock} title={ctfBlock?.reason}>
+                  Capturar la bandera{ctfBlock ? " (deshabilitado temporalmente)" : ""}
+                </option>
               </select>
             </label>
           )}

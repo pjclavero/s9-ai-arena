@@ -29,6 +29,7 @@ let orgTok: string;
 const bots: TestBot[] = [];
 
 beforeAll(async () => {
+  process.env.S9_CTF_PRACTICE_ENABLED = "1"; // V1 · estas pruebas ejercitan CTF; el bloqueo se prueba en ctf-temporary-block.test.ts
   h = await startTestDb();
   await seedDev(h.db);
   app = createApp({ db: h.db, anonQuota: { max: 10_000, windowMs: 3600_000 } });

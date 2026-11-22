@@ -2,7 +2,7 @@
 
 Un **modo** decide cómo se gana; un **conjunto de reglas** decide los detalles (tiempo, vidas, cuántos puntos hacen falta). Al crear una batalla eliges las dos cosas.
 
-Puedes usar **cuatro modos**: combate libre (*Deathmatch*, 1 contra 1), combate por equipos (*Deathmatch por equipos*), *Captura la bandera* y *Control de zona*. Son los únicos que ofrece la web y la API (`modes` del catálogo); los tres últimos se juegan por equipos. Otros modos internos del motor de simulación **no están disponibles** para el jugador y no se describen en esta guía.
+Puedes usar **cuatro modos**: combate libre (*Deathmatch*, 1 contra 1), combate por equipos (*Deathmatch por equipos*), *Captura la bandera* y *Control de zona*. Son los únicos que ofrece la web y la API (`modes` del catálogo); los tres últimos se juegan por equipos. **Aviso temporal:** la creación de batallas de *Captura la bandera* está **deshabilitada temporalmente** (web y API) hasta que el modo se corrija y se valide; no se anuncia como funcional. Las batallas de ese modo ya existentes y sus replays se siguen pudiendo consultar. Los demás modos no cambian. Otros modos internos del motor de simulación **no están disponibles** para el jugador y no se describen en esta guía.
 
 ## Cómo se elige: conjuntos oficiales, personalizado y clásico
 
@@ -52,6 +52,8 @@ Reglas comunes de las batallas clásicas: **5 minutos** de juego, **sin fuego am
 - **Equipamiento útil**: arma, blindaje y radio para coordinarse.
 
 ### Captura la bandera
+
+> **Deshabilitado temporalmente.** No se pueden crear batallas de este modo (ni con reglas clásicas, ni con el conjunto oficial, ni personalizado): la web no lo ofrece y `POST /battles` responde 400 `mode_disabled`. Es una medida provisional mientras se corrige y se valida el modo. Las batallas existentes y sus replays siguen visibles. El operador la levanta con `S9_CTF_PRACTICE_ENABLED=1` (reinicio de la API).
 
 - **Objetivo**: coger la bandera rival y llevarla a tu base.
 - **Inicio**: cada equipo tiene su base y su bandera; la tuya empieza en tu base.
