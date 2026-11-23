@@ -197,8 +197,8 @@ export const MUTANTS = [
     id: "M-T9-recipe-before-view",
     group: "T9",
     file: "publish.ts",
-    find: `  if (pair.view) await publishPartial(pair.view.partial, pair.view.final, opts);\n  await publishPartial(pair.recipe.partial, pair.recipe.final, opts);`,
-    replace: `  await publishPartial(pair.recipe.partial, pair.recipe.final, opts);\n  if (pair.view) await publishPartial(pair.view.partial, pair.view.final, opts);`,
+    find: `  if (pair.view) await linkPublish(pair.view.partial, pair.view.final, fs);\n  await linkPublish(pair.recipe.partial, pair.recipe.final, fs);`,
+    replace: `  await linkPublish(pair.recipe.partial, pair.recipe.final, fs);\n  if (pair.view) await linkPublish(pair.view.partial, pair.view.final, fs);`,
   },
   {
     id: "M-T10-no-serialization",

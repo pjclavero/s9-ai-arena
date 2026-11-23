@@ -452,6 +452,10 @@ describe("T7 búfer acotado", () => {
     await expect(w.append("a\nb", 1)).rejects.toBeInstanceOf(WriterStateError);
     await expect(w.close()).rejects.toMatchObject({ code: "records_dropped" });
     await w.closeTruncated();
+    // un registro con salto de línea (otra causa de pérdida) se rechaza con su error propio
+    const w2 = await S9rWriter.create(p("nl.s9r"), { kind: "R", header: { battleId: "x" }, maxBytes: 1 << 20 });
+    await expect(w2.append("a\nb", 1)).rejects.toBeInstanceOf(InvalidRecordError);
+    await w2.abort();
     await expect(w.append("{}", 1)).rejects.toBeInstanceOf(WriterStateError);
   });
 });
