@@ -724,6 +724,30 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
     await h.db("users").where({ id: u.id }).delete();
   });
 
+  it("FINALES_NO_SE_RELLENAN: en una fila final solo se pasa a NULL; nunca se rellena a posteriori solicitante o confirmador", async () => {
+    const [u] = await h
+      .db("users")
+      .insert({ email: "relleno@dev.arena.local", password_hash: "x", display_name: "r" })
+      .returning("id");
+    // `done` anonimizada: vuelve a NULL y ya no se puede volver a rellenar
+    const doneId = await insertOperationInState(h.db, "done", { requested_by: u.id, confirmed_by: u.id });
+    await h.db("admin_operations").where({ id: doneId }).update({ requested_by: null, confirmed_by: null });
+    await expect(h.db("admin_operations").where({ id: doneId }).update({ confirmed_by: u.id })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await expect(h.db("admin_operations").where({ id: doneId }).update({ requested_by: u.id })).rejects.toMatchObject({
+      code: "23514",
+    });
+    // `cancelled` sin confirmador: tampoco se le puede poner uno después
+    const cancelledId = await insertOperationInState(h.db, "cancelled", { requested_by: u.id });
+    await expect(
+      h.db("admin_operations").where({ id: cancelledId }).update({ confirmed_by: u.id }),
+    ).rejects.toMatchObject({ code: "23514" });
+    const row = await h.db("admin_operations").where({ id: cancelledId }).first();
+    expect(row.confirmed_by).toBeNull();
+    await h.db("users").where({ id: u.id }).delete();
+  });
+
   it("INSERT_GUARD: una orden sólo nace en awaiting_confirmation o pending (sin segundo admin) y sin campos prerrellenados", async () => {
     const bad: Record<string, unknown>[] = [
       { status: "running", lease_owner: "x", lease_expires_at: new Date(Date.now() + 60_000) },

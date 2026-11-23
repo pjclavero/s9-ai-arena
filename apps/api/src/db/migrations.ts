@@ -1220,6 +1220,8 @@ const m023_system_settings_operations: Migration = {
             -- Única modificación admitida en un estado final: ON DELETE SET NULL de requested_by/confirmed_by
             -- (borrar o anonimizar un usuario). Cualquier otra columna debe quedar igual.
             IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
                OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
                    NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
                   IS DISTINCT FROM

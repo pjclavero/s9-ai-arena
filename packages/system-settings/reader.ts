@@ -37,9 +37,16 @@ type TimedQuery = Promise<SettingsRow[]> & { timeout?: (ms: number, o?: { cancel
 
 /** Código de error sin texto libre: el de PostgreSQL (5 caracteres), TIMEOUT, o `unknown`. */
 function errorCode(e: unknown): string {
+  if ((e as { name?: unknown } | null)?.name === "KnexTimeoutError") return "TIMEOUT";
   const c = (e as { code?: unknown } | null)?.code;
   return typeof c === "string" && /^[A-Za-z0-9_]{1,16}$/.test(c) ? c : "unknown";
 }
+
+/** Margen de la cancelación de knex sobre el `statement_timeout` del servidor (éste informa primero). */
+const KNEX_TIMEOUT_MARGIN_MS = 250;
+
+/** Margen del temporizador del cliente sobre el `statement_timeout` del servidor. */
+const CLIENT_DEADLINE_MARGIN_MS = 500;
 
 export class SystemSettingsReader {
   private values = new Map<string, { value: SettingValue; source: SettingSource }>();
@@ -136,18 +143,37 @@ export class SystemSettingsReader {
     this.lastGoodAt = this.now();
   }
 
-  /** Consulta con plazo: cancelada en el servidor si el driver lo soporta y, en cualquier caso, abandonada. */
-  private async queryWithTimeout(): Promise<{ key: string; value: unknown }[]> {
-    let q = this.db(SYSTEM_SETTINGS_TABLE).select("key", "value") as unknown as TimedQuery;
-    if (typeof q.timeout === "function") q = q.timeout(this.queryTimeoutMs, { cancel: true });
+  /**
+   * Consulta con plazo, en TRES capas: (1) `SET LOCAL statement_timeout` en una transacción corta, para que
+   * el SERVIDOR cancele la consulta (no queda una sesión colgada); (2) la cancelación de knex y (3) una carrera
+   * con un temporizador del cliente, cada uno algo MÁS LARGO que el anterior para que el servidor informe primero.
+   */
+  private async queryWithTimeout(): Promise<SettingsRow[]> {
+    const select = (q: unknown): TimedQuery => {
+      const tq = q as TimedQuery;
+      return typeof tq.timeout === "function"
+        ? tq.timeout(this.queryTimeoutMs + KNEX_TIMEOUT_MARGIN_MS, { cancel: true })
+        : tq;
+    };
+    const hasTx = typeof (this.db as unknown as { transaction?: unknown }).transaction === "function";
+    const work: Promise<SettingsRow[]> = hasTx
+      ? this.db.transaction(async (trx) => {
+          await trx.raw(`SET LOCAL statement_timeout = ${Math.trunc(this.queryTimeoutMs)}`);
+          return select(trx(SYSTEM_SETTINGS_TABLE).select("key", "value"));
+        })
+      : select(this.db(SYSTEM_SETTINGS_TABLE).select("key", "value"));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "TIMEOUT" })), this.queryTimeoutMs);
+      timer = setTimeout(
+        () => reject(Object.assign(new Error("timeout"), { code: "TIMEOUT" })),
+        this.queryTimeoutMs + CLIENT_DEADLINE_MARGIN_MS,
+      );
     });
     try {
-      return await Promise.race([q, deadline]);
+      return await Promise.race([work, deadline]);
     } finally {
       if (timer) clearTimeout(timer);
+      work.catch(() => undefined); // si pierde la carrera, su rechazo tardío no queda sin tratar
     }
   }
 

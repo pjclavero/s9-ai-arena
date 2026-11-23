@@ -296,10 +296,8 @@ describe("ADM-1 · lector con sondeo (en caliente) y fail-closed", () => {
     expect(rd.get("test.workers")).toBe(9);
     // BD caída: dentro de la ventana se conserva; fuera, vuelve al defecto.
     const broken = new SystemSettingsReader(
-      new Proxy(h.db, {
-        apply: () => {
-          throw new Error("db down");
-        },
+      (() => {
+        throw new Error("db down");
       }) as never,
       REGISTRY,
       { refreshMs: 5_000, now: () => clock.t, env },
@@ -396,5 +394,28 @@ describe("ADM-1 · bloqueo ordenado del PATCH", () => {
     });
     expect(r.status).toBe(200);
     expect(r.body.changed.map((c: { key: string }) => c.key)).toEqual(["test.workers", "test.mode"]);
+  });
+});
+
+describe("ADM-1 · el lector cancela en el servidor las consultas colgadas", () => {
+  it("STATEMENT_TIMEOUT_SERVIDOR: con la tabla bloqueada, el SERVIDOR cancela la consulta (57014) antes del plazo del cliente", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const holder = await h.db.transaction();
+    try {
+      await holder.raw("LOCK TABLE system_settings IN ACCESS EXCLUSIVE MODE");
+      const rd = new SystemSettingsReader(h.db, REGISTRY, { refreshMs: 5_000, queryTimeoutMs: 200, env });
+      const t0 = Date.now();
+      await rd.refresh();
+      expect(Date.now() - t0).toBeLessThan(2_000);
+      expect(String(spy.mock.calls[0]?.[0])).toMatch(/"code":"57014"/); // query_canceled: lo informó el servidor
+      expect(rd.entry("test.workers").source).toBe("fail_closed");
+    } finally {
+      await holder.rollback().catch(() => undefined);
+      spy.mockRestore();
+    }
+    // liberada la tabla, el lector vuelve a leer con normalidad
+    const rd2 = new SystemSettingsReader(h.db, REGISTRY, { refreshMs: 5_000, env });
+    await rd2.refresh();
+    expect(rd2.entry("test.workers").source).not.toBe("fail_closed");
   });
 });
