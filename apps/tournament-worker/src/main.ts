@@ -118,6 +118,8 @@ async function buildExecutor() {
     const executor = makeEngineExecutor({
       db,
       spectate,
+      // V1 REPLAYS PR-3 · el motor graba S9R/1 por fragmentos en este directorio (parciales en .partial/).
+      replaysDir,
       agents: containerAgents({
         runner: (proxyRunner = new ProxyContainerRunner(proxyUrl)),
         provider,

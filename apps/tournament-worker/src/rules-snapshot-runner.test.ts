@@ -9,7 +9,11 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { buildBattleRules, buildTournamentRules } from "../../api/src/services/battle-rules.js";
 import { materializeBattles } from "./scheduler.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { fromJsonl } from "../../arena-engine/src/replay.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { S9rReader } from "../../replay-service/src/s9r/reader.js";
+import { discardRecordingFiles } from "../../replay-service/src/s9r/recorder.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { makeEngineExecutor, spectateDetachDelayMs } from "./engine-executor.js";
 import { createPublishedBot, type TestBot } from "./testing/fixtures.js";
@@ -53,8 +57,21 @@ async function insertBattle(rules: unknown) {
   return { battle, participants };
 }
 
+// V1 REPLAYS PR-3 · la receta se graba en S9R/1: la cabecera se lee del parcial cerrado (sin publicar).
+const replaysDir = mkdtempSync(join(tmpdir(), "rsnap-replays-"));
+async function recipeHeaderOf(out: import("./battle-runner.js").BattleExecution): Promise<any> {
+  const rec = out.recording!;
+  const r = await S9rReader.open(rec.recipe.partial);
+  try {
+    return r.header;
+  } finally {
+    await r.close();
+    await discardRecordingFiles({ recipePartial: rec.recipe.partial, viewPartial: rec.view.partial });
+  }
+}
+
 const exec = () =>
-  makeEngineExecutor({ db: h.db, agentResolver: (botId) => new HunterBot(botId), rulesetOverrides: {} });
+  makeEngineExecutor({ db: h.db, agentResolver: (botId) => new HunterBot(botId), rulesetOverrides: {}, replaysDir });
 
 function ctx(battle: any, participants: any[]): BattleContext {
   return { battle, participants, adminDisqualified: [] } as unknown as BattleContext;
@@ -88,7 +105,7 @@ describe("worker · copia de reglas", () => {
       });
     try {
       const out = await exec()(ctx(battle, rows));
-      const replay = fromJsonl(out.replayJsonl);
+      const replay = { header: await recipeHeaderOf(out) };
       expect(replay.header.ruleset).toEqual(built.snapshot!.engineRuleset);
       expect(replay.header.ruleset.respawn).toEqual({
         enabled: true,
@@ -116,8 +133,9 @@ describe("worker · copia de reglas", () => {
       db: h.db,
       agentResolver: (botId) => new HunterBot(botId),
       rulesetOverrides: { timeLimitTicks: 300 },
+      replaysDir,
     })(ctx(battle, participants));
-    const replay = fromJsonl(out.replayJsonl);
+    const replay = { header: await recipeHeaderOf(out) };
     expect(replay.header.ruleset).toEqual(
       JSON.parse(JSON.stringify(loadRuleset("tdm_mvp@1", { budgetCredits: 1000, timeLimitTicks: 300 }))),
     );
@@ -188,8 +206,9 @@ describe("torneo · copia inmutable de reglas (ADR-022)", () => {
         db: h.db,
         agentResolver: (botId) => new HunterBot(botId),
         rulesetOverrides: {},
+        replaysDir,
       })(ctx(row, ps));
-      const replay = fromJsonl(out.replayJsonl);
+      const replay = { header: await recipeHeaderOf(out) };
       expect(replay.header.ruleset).toEqual(JSON.parse(JSON.stringify(snapshot!.engineRuleset)));
       expect(replay.header.ruleset.timeoutTiebreak).toEqual(["alive", "lives", "kills"]);
       expect(replay.header.versions.engine).toBe("0.5.0"); // ADR-024 · motor de la OLA 2

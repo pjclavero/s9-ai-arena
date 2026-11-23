@@ -18,7 +18,6 @@ import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.j
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import { IdleBot } from "../../arena-engine/src/stubs.js";
 import type { Battle, BattleResult, BotAgent } from "../../arena-engine/src/sim/battle.js";
-import { replayFromBattle } from "../../arena-engine/src/replay.js";
 import { loadBattleParticipants, makeRunBattleHandler } from "./battle-runner.js";
 import { makeEngineExecutor, type AgentDriver, type AgentDriverInput } from "./engine-executor.js";
 import { createPublishedBot, EXAMPLE_LOADOUT, type TestBot } from "./testing/fixtures.js";
@@ -161,7 +160,8 @@ function recordingDriver(seen: { input?: AgentDriverInput; specs?: Map<string, a
       }
       while (!engine.isFinished() && engine.tick < 20_000) engine.step();
       const result: BattleResult = engine.run(20_000);
-      return { result, replay: replayFromBattle(engine, result) };
+      // V1 REPLAYS PR-3 · el replay lo graba el ReplayRecorder del ejecutor (el motor ya no lo retiene).
+      return { result };
     },
   };
 }

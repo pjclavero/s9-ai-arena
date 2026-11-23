@@ -93,7 +93,7 @@ const MUTANTS = [
     file: "apps/tournament-worker/src/battle-runner.ts",
     dies: "V1C_RR_cycle",
     why: "el replay no se guarda",
-    find: "if (execution.replayJsonl && replaysDir) {",
+    find: "if (execution.recording && deps.replaysDir) {",
     repl: "if (false) {",
   },
   {

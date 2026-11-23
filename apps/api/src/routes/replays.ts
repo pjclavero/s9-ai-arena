@@ -23,6 +23,7 @@ import { readFile } from "node:fs/promises";
 import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
 import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import { verifyLoaded } from "../../../replay-service/src/store.js";
+import { isS9rReplayRef } from "../../../replay-service/src/artifacts.js";
 import { DecodedReplayCache, indexFileFor, readIndexFile, sliceSegment } from "../../../replay-service/src/segment.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
@@ -297,6 +298,9 @@ export function replayRoutes(
     "verifyReplay",
     async (req, res) => {
       const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
+      // V1 REPLAYS PR-3 · un replay S9R/1 aún no tiene verificador por cursor (PR-4): 404 uniforme,
+      // nunca un `corrupt_file` falso (el JSONL no sabe leerlo y diría que está dañado).
+      if (isS9rReplayRef(battle.replay_ref)) throw replayNotFound();
       let bytes: Buffer;
       try {
         bytes = await readFile(battle.replay_ref);

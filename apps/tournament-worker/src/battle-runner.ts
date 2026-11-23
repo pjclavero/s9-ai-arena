@@ -37,8 +37,9 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Knex } from "knex";
-import { fromJsonl } from "../../arena-engine/src/replay.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { publishRecording } from "../../replay-service/src/artifacts.js";
+import { discardRecordingFiles, type ClosedRecording } from "../../replay-service/src/s9r/recorder.js";
+import type { S9rFs } from "../../replay-service/src/s9r/io.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
 import {
@@ -79,6 +80,8 @@ export interface BattleRow {
   /** E9/008: 'delayed' (anti-coaching E8.M) o 'visible' (la final, en claro). */
   spectator_mode?: string;
   claimed_by?: string | null;
+  /** Nº de reclamaciones (lo incrementa `claimBattle`): identifica el INTENTO en los ficheros del replay. */
+  run_attempts?: number;
 }
 
 export interface ParticipantRow {
@@ -109,8 +112,13 @@ export interface BattleExecution {
   finalStateHash: string;
   disqualified: string[]; // botIds descalificados por el motor
   versions: Record<string, string>;
-  /** Replay JSONL (T2.6). El runner lo archiva vía el almacén de E8 (política 23.1). */
-  replayJsonl?: string;
+  /**
+   * V1 REPLAYS PR-3 · replay S9R/1 YA CERRADO por el grabador (parciales `.part` con su prueba de
+   * cierre). `finishBattle` lo publica sólo si el cierre de la fila casa; en cualquier otro final
+   * el runner descarta los parciales. Un fallo de grabación nunca llega aquí: el ejecutor lo
+   * convierte antes en `InfrastructureFailure`.
+   */
+  recording?: ClosedRecording;
   /**
    * CPU REAL consumida por el contenedor de cada bot (ms, cgroup), por botId.
    * `null` = no medida. Se persiste en `participants.cpu_ms` en la MISMA
@@ -157,6 +165,8 @@ export interface BattleRunnerDeps {
   artifactGuard?: ArtifactLaunchCheck;
   /** Directorio de replays (política 23.1: archivos, no BD). */
   replaysDir?: string;
+  /** Sólo tests: sistema de ficheros inyectable de la publicación del replay (fallos de disco). */
+  replayFs?: S9rFs;
   /** Duración del lease de la reserva (ms). Se renueva cada leaseMs/3. Def. 45 s. */
   leaseMs?: number;
   /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
@@ -518,13 +528,25 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         throw toInfrastructureFailure(err, "engine_start_failure");
       }
 
-      if (aborter.signal.aborted) {
-        throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason));
+      try {
+        if (aborter.signal.aborted) {
+          throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason));
+        }
+        // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
+        const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
+        await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps);
+        endOk = true;
+      } finally {
+        // V1 REPLAYS PR-3 · los `.part` del intento nunca sobreviven: publicados, `publishPair` ya
+        // quitó sus nombres (esto no encuentra nada); en cualquier otro final, se borran.
+        const rec = execution.recording;
+        if (rec) {
+          await discardRecordingFiles(
+            { recipePartial: rec.recipe.partial, viewPartial: rec.view.partial },
+            deps.replayFs,
+          );
+        }
       }
-      // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
-      const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
-      await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps.replaysDir);
-      endOk = true;
     } catch (err) {
       if (endErr === undefined) endErr = err;
       if (err instanceof LostBattleClaim) throw new InfrastructureFailure("battle_busy", err.message);
@@ -572,6 +594,8 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
   if (!deps.replaysDir) return;
   const row = await db("battles").where({ id: battleId }).first();
   // Solo replays del almacén de E8 (<id>.replay); refs antiguas u otras rutas no se tocan.
+  // V1 REPLAYS PR-3 · un replay S9R/1 (`.s9r`) aún no tiene lector de estadísticas (RecipeCursor,
+  // PR-4): queda `replay_artifacts.stats_state = 'pending'` y la API dice «pendiente».
   if (!row?.replay_ref || !String(row.replay_ref).endsWith(`${battleId}.replay`)) return;
   try {
     await runStatsJob(db, deps.replaysDir, battleId);
@@ -630,7 +654,7 @@ async function finishBattle(
   failureKind: string,
   owner: string,
   endReason: EndReason,
-  replaysDir?: string,
+  deps: Pick<BattleRunnerDeps, "replaysDir" | "replayFs"> = {},
 ): Promise<void> {
   const disqualified = new Set([...adminDq, ...execution.disqualified]);
 
@@ -650,21 +674,6 @@ async function finishBattle(
         lease_expires_at: null,
       });
     if (closed !== 1) throw new LostBattleClaim(battle.id, owner);
-
-    // Replay: SOLO quien acaba de cerrar la batalla lo escribe (dentro de la
-    // transacción con la fila bloqueada): un finalizador perdedor jamás pisa el
-    // archivo `<battleId>.replay` del ganador. Si la ingesta falla, rollback.
-    if (execution.replayJsonl && replaysDir) {
-      // H2 (issue #6) · Ingesta por el almacén REAL de E8 (T8.1): valida,
-      // comprime y persiste con índice; battles.replay_ref/replay_hash siguen el
-      // convenio del almacén (hash del archivo comprimido).
-      const stored = ingestReplay(replaysDir, fromJsonl(execution.replayJsonl), {
-        official: battle.official,
-      });
-      await trx("battles")
-        .where({ id: battle.id })
-        .update({ replay_ref: stored.path, replay_hash: stored.index.sha256 });
-    }
 
     for (const p of participants) {
       const cpu = execution.cpuMsByBot ? execution.cpuMsByBot[p.bot_id] : undefined;
@@ -689,6 +698,23 @@ async function finishBattle(
     // 19.1: el resultado se procesa (avance de rondas, ratings) en su propio
     // trabajo, encolado en la MISMA transacción que el cierre.
     await enqueueJob(trx, "process_result", { battleId: battle.id }, { dedupeKey: `process_result:${battle.id}` });
+
+    // V1 REPLAYS PR-3 · Replay S9R/1: SÓLO quien acaba de cerrar la batalla (el UPDATE de arriba
+    // casó) lo publica, y como ÚLTIMO paso de la transacción (sólo el COMMIT puede ir detrás).
+    // `publishRecording` inserta `replay_artifacts`, fija replay_ref/replay_hash y enlaza vista y
+    // receta con las pruebas de cierre del escritor (nunca sin prueba). Un fallo hace ROLLBACK:
+    // nada queda publicado ni cerrado y es un FALLO TÉCNICO (`storage_unavailable`), nunca un
+    // resultado deportivo.
+    if (execution.recording && deps.replaysDir) {
+      try {
+        await publishRecording(trx, battle, execution.recording, deps.replayFs ? { fs: deps.replayFs } : {});
+      } catch (err) {
+        throw new InfrastructureFailure(
+          "storage_unavailable",
+          `replay_publish_failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   });
 }
 
