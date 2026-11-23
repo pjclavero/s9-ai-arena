@@ -16,6 +16,7 @@
  */
 import type { Response } from "express";
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import deps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
@@ -29,6 +30,14 @@ import type { Db } from "./db/connection.js";
 import { projectViewStream, scrub, type ViewerMeta } from "./replay-projection.js";
 
 export { isS9rReplayRef };
+
+/**
+ * Predicado SQL ÚNICO de «la batalla tiene replay» (diseño §8): `replay_ref` es una receta S9R/1.
+ * Una referencia de formato anterior es «sin replay» en listados, detalle y estadísticas.
+ */
+export function whereS9rReplay<Q extends { where: (...a: any[]) => Q }>(q: Q, column = "battles.replay_ref"): Q {
+  return q.where(column, "like", "%.s9r");
+}
 
 /** Ruta de la vista de una receta publicada. */
 export function viewPathOf(recipeRef: string): string {
@@ -78,11 +87,35 @@ export async function viewerMetaFromView(db: Db, header: any): Promise<ViewerMet
   };
 }
 
-/** Abre la vista de una batalla con replay S9R/1, o null (404 uniforme) si falta o está dañada. */
-export async function openView(battle: Record<string, any>): Promise<ViewReader | null> {
+/** sha256 del fichero entero en streaming (memoria constante). */
+/**
+ * Vistas ya contrastadas con su `view_sha256`, por ruta + tamaño + mtime (una vista publicada no
+ * cambia: si cambia el fichero, cambia la clave y se vuelve a contrastar). Acotada.
+ */
+const verifiedViews = new Map<string, string>();
+const VERIFIED_VIEWS_MAX = 256;
+
+/**
+ * Abre la vista de una batalla con replay S9R/1, o null (404 uniforme) si falta, está dañada o
+ * su sha256 no es el de `replay_artifacts.view_sha256` (P2-2: una vista reescrita de forma
+ * coherente no se sirve). Sin fila de inventario no hay vista que servir.
+ */
+export async function openView(db: Db, battle: Record<string, any>): Promise<ViewReader | null> {
   if (!isS9rReplayRef(battle.replay_ref)) return null;
+  const path = viewPathOf(String(battle.replay_ref));
   try {
-    return await ViewReader.open(viewPathOf(String(battle.replay_ref)));
+    const art = await db("replay_artifacts")
+      .where({ battle_id: battle.id, state: "published" })
+      .first("view_path", "view_sha256");
+    if (!art?.view_sha256 || art.view_path !== path) return null;
+    const st = await stat(path);
+    const key = `${path}:${st.size}:${st.mtimeMs}`;
+    if (verifiedViews.get(key) !== art.view_sha256) {
+      if ((await sha256OfFile(path)) !== art.view_sha256) return null;
+      verifiedViews.set(key, art.view_sha256);
+      while (verifiedViews.size > VERIFIED_VIEWS_MAX) verifiedViews.delete(verifiedViews.keys().next().value as string);
+    }
+    return await ViewReader.open(path);
   } catch {
     return null;
   }
@@ -113,11 +146,27 @@ export function storeIndexOf(battle: Record<string, any>, view: ViewReader): Rec
   };
 }
 
-/** Rango de ticks validado (mismas reglas que el segmento v1: numéricos y from <= to). */
-export function parseRange(fromRaw: unknown, toRaw: unknown, ticks: number): { from: number; to: number } | null {
+/**
+ * Anchura MÁXIMA de un segmento (ticks). El visor pide trozos de 600 (`CHUNK_TICKS`); el tope es
+ * el doble. Sin `toTick`, el segmento por defecto es de `DEFAULT_SEGMENT_TICKS` desde `fromTick`:
+ * nunca la vista entera (un replay de 45 000 ticks no se materializa en una petición).
+ */
+export const MAX_SEGMENT_TICKS = 1200;
+export const DEFAULT_SEGMENT_TICKS = 600;
+
+/**
+ * Rango de ticks validado: numéricos, `from <= to` y anchura `<= MAX_SEGMENT_TICKS`.
+ * `null` = 400 `bad_range`; `"too_large"` = 400 `segment_range_too_large` (documentado en OpenAPI).
+ */
+export function parseRange(
+  fromRaw: unknown,
+  toRaw: unknown,
+  _ticks: number,
+): { from: number; to: number } | null | "too_large" {
   const from = Number(fromRaw ?? 0);
-  const to = Number(toRaw ?? ticks);
+  const to = toRaw === undefined || toRaw === null || toRaw === "" ? from + DEFAULT_SEGMENT_TICKS - 1 : Number(toRaw);
   if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return null;
+  if (to - from + 1 > MAX_SEGMENT_TICKS) return "too_large";
   return { from, to };
 }
 
@@ -130,6 +179,9 @@ export async function rawSegment(
   view: ViewReader,
   range: { from: number; to: number },
 ): Promise<Record<string, unknown>> {
+  // Cinturón: aunque el llamador no valide, el rango nunca pasa de MAX_SEGMENT_TICKS.
+  const to = Math.min(range.to, range.from + MAX_SEGMENT_TICKS - 1);
+  range = { from: range.from, to };
   const kf = view.nearestKeyframe(range.from);
   const fromKf = kf?.tick ?? 0;
   const snapshots: any[] = [];
@@ -261,16 +313,57 @@ export async function verifyRecipe(battle: Record<string, any>): Promise<Record<
   };
 }
 
+/** El cliente cerró la conexión (o se destruyó la respuesta) a mitad de la escritura. */
+export class ClientGoneError extends Error {
+  constructor() {
+    super("el cliente cerró la conexión");
+    this.name = "ClientGoneError";
+  }
+}
+/** El cliente no leyó nada durante `stallMs`: se aborta (nunca se acumula el documento en RAM). */
+export class ClientStalledError extends Error {
+  constructor(ms: number) {
+    super(`el cliente no leyó en ${ms} ms`);
+    this.name = "ClientStalledError";
+  }
+}
+
+/** Plazo por defecto sin que el cliente lea antes de abortar una descarga. */
+export const STREAM_STALL_MS = 30_000;
+
+/**
+ * Escritura con CONTRAPRESIÓN: si `write` devuelve false se espera a `'drain'`; si el cliente
+ * cierra, `ClientGoneError`; si no lee en `stallMs`, `ClientStalledError`. Lo encolado en el
+ * proceso queda acotado por el `highWaterMark` de la respuesta más un trozo.
+ */
+export async function writeWithBackpressure(res: Response, chunk: string, stallMs = STREAM_STALL_MS): Promise<void> {
+  if (res.destroyed || res.writableEnded) throw new ClientGoneError();
+  if (res.write(chunk)) return;
+  await new Promise<void>((resolve, reject) => {
+    const done = (err?: Error) => {
+      clearTimeout(timer);
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onDrain = () => done();
+    const onClose = () => done(new ClientGoneError());
+    const timer = setTimeout(() => done(new ClientStalledError(stallMs)), stallMs);
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+  });
+}
+
 /** Documento PÚBLICO proyectado de toda la batalla, ESCRITO en streaming (dos pasadas por la vista). */
 export async function streamPublicDocument(
   res: Response,
   battle: Record<string, any>,
   view: ViewReader,
   meta: ViewerMeta | null,
+  opts: { stallMs?: number } = {},
 ): Promise<void> {
-  const w = (s: string) => {
-    res.write(s);
-  };
+  const w = (s: string) => writeWithBackpressure(res, s, opts.stallMs);
   const battleId = String(battle.id);
   // Resultado y metadatos públicos de la RECETA (pie + índice + cabecera + frame de resultado).
   const recipe = await S9rReader.open(String(battle.replay_ref));
@@ -282,37 +375,37 @@ export async function streamPublicDocument(
   } finally {
     await recipe.close();
   }
-  w(
+  await w(
     `{"projection":"s9.replay.public-competition.v2","projectionVersion":${JSON.stringify(PROJECTION_VERSION)},` +
       `"battleId":${JSON.stringify(battleId)}`,
   );
-  if (typeof header?.rulesetId === "string") w(`,"rulesetId":${JSON.stringify(header.rulesetId)}`);
-  if (typeof header?.recordedAt === "string") w(`,"recordedAt":${JSON.stringify(header.recordedAt)}`);
-  if (meta) w(`,"world":${JSON.stringify(scrub(meta.world))}`);
-  w(`,"snapshots":[`);
+  if (typeof header?.rulesetId === "string") await w(`,"rulesetId":${JSON.stringify(header.rulesetId)}`);
+  if (typeof header?.recordedAt === "string") await w(`,"recordedAt":${JSON.stringify(header.recordedAt)}`);
+  if (meta) await w(`,"world":${JSON.stringify(scrub(meta.world))}`);
+  await w(`,"snapshots":[`);
   let first = true;
   await projectViewStream(battleId, meta, view.records(), {
-    onSnapshot: (b) => {
-      w((first ? "" : ",") + JSON.stringify(b));
+    onSnapshot: async (b) => {
+      await w((first ? "" : ",") + JSON.stringify(b));
       first = false;
     },
   });
-  w(`],"events":[`);
+  await w(`],"events":[`);
   first = true;
   const done = await projectViewStream(
     battleId,
     meta,
     view.records(),
     {
-      onEvent: (e) => {
-        w((first ? "" : ",") + JSON.stringify(e));
+      onEvent: async (e) => {
+        await w((first ? "" : ",") + JSON.stringify(e));
         first = false;
       },
     },
     { result },
   );
-  w(`],"mappingId":${JSON.stringify(done.mappingId)}`);
-  if (meta) w(`,"roster":${JSON.stringify(done.roster)}`);
-  w(`,"result":${JSON.stringify(done.result ?? null)}}`);
+  await w(`],"mappingId":${JSON.stringify(done.mappingId)}`);
+  if (meta) await w(`,"roster":${JSON.stringify(done.roster)}`);
+  await w(`,"result":${JSON.stringify(done.result ?? null)}}`);
   res.end();
 }

@@ -10,7 +10,7 @@
  * no filtración de campos privados, y paginación/límites del listado.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { registerS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +39,8 @@ afterAll(async () => {
 });
 
 function writeReplayFile(contents: string): string {
-  const path = join(replayDir, `${Math.random().toString(36).slice(2)}.replay`);
+  // V1 REPLAYS PR-4 · «con replay» = receta S9R/1 (diseño §8): el nombre lleva `.s9r`.
+  const path = join(replayDir, `${Math.random().toString(36).slice(2)}.1.s9r`);
   writeFileSync(path, contents);
   return path;
 }
@@ -107,6 +108,7 @@ async function writeLegibleReplay(battleId: string, _replayPath: string): Promis
   };
   const fx = await writeS9rReplay(replayDir, replay, { battleId });
   await h.db("battles").where({ id: battleId }).update({ replay_ref: fx.path, replay_hash: fx.sha256 });
+  await registerS9rReplay(h.db, battleId, fx);
 }
 
 describe("R11 · publicReplaysEnabledFromEnv (default OFF)", () => {

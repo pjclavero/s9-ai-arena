@@ -51,7 +51,11 @@ import { replayFromBattle, verify, type Replay } from "../../apps/arena-engine/s
 import { HunterBot, FlagRunnerBot } from "../../apps/arena-engine/src/stubs.js";
 import { toEngineMap } from "../../apps/map-service/src/to-engine-map.js";
 import type { InternalMap } from "../../apps/map-service/src/types.js";
-import { writeS9rReplay, type S9rFixture as StoredReplay } from "../../apps/replay-service/src/testing/s9r-fixture.js";
+import {
+  registerS9rReplay,
+  writeS9rReplay,
+  type S9rFixture as StoredReplay,
+} from "../../apps/replay-service/src/testing/s9r-fixture.js";
 import { runStatsJob } from "../../apps/replay-service/src/stats.js";
 import { createPublishedBot } from "../../apps/tournament-worker/src/testing/fixtures.js";
 
@@ -355,6 +359,7 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
         engine_versions: JSON.stringify(state.replay.header.versions),
         result: JSON.stringify({ winner: state.result.winner, score: state.result.score, ticks: state.result.ticks }),
       });
+    await registerS9rReplay(h.db, state.battleDbId!, state.stored, { class: "official" });
 
     // Re-simulación directa con el motor (verify de E2): coincide tick a tick.
     const direct = await verify(state.replay);

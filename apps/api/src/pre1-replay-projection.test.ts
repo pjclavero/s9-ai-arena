@@ -31,7 +31,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, verify, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { registerS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 import { RecipeCursor, forEachRecipeCommand } from "../../replay-service/src/s9r/recipe.js";
 import { ViewReader } from "../../replay-service/src/s9r/view.js";
 import {
@@ -163,6 +163,7 @@ async function newBattle(botIds: string[], tournamentId: string | null = null, d
     result: JSON.stringify({ score: base.result.score, ticks: base.result.ticks }),
     finished_at: h.db.fn.now(),
   });
+  await registerS9rReplay(h.db, id, stored);
   let i = 0;
   for (const botId of botIds) {
     await h.db("participants").insert({ battle_id: id, bot_id: botId, version: 1, team: i++ % 2 ? "B" : "A" });

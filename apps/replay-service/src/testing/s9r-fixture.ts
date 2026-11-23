@@ -8,6 +8,7 @@
  * Orden de emisión: como el motor, por tick; dentro de un tick, comandos antes que hash y
  * checkpoint (receta) y eventos antes que el snapshot (vista).
  */
+import type { Knex } from "knex";
 import type { Replay } from "../../../arena-engine/src/replay.js";
 import { ReplayRecorder } from "../s9r/recorder.js";
 import { publishPair } from "../s9r/publish.js";
@@ -18,6 +19,12 @@ export interface S9rFixture {
   viewPath: string;
   viewSha256: string;
   bytes: number;
+  recipeBytes: number;
+  viewBytes: number;
+  chain: string;
+  viewChain: string;
+  ticks: number;
+  attempt: number;
 }
 
 export async function writeS9rReplay(
@@ -78,5 +85,39 @@ export async function writeS9rReplay(
     viewPath: closed.view.final,
     viewSha256: closed.view.summary.sha256,
     bytes: closed.recipe.summary.bytes + closed.view.summary.bytes,
+    recipeBytes: closed.recipe.summary.bytes,
+    viewBytes: closed.view.summary.bytes,
+    chain: closed.recipe.summary.chain,
+    viewChain: closed.view.summary.chain,
+    ticks: Number(replay.result?.ticks ?? 0),
+    attempt: opts.attempt ?? 1,
   };
+}
+
+/**
+ * Inventario (`replay_artifacts`) del replay de un fixture, como lo deja el worker al publicar:
+ * la API sólo sirve la vista si su sha coincide con `view_sha256`. Llamar tras insertar la batalla.
+ */
+export async function registerS9rReplay(
+  db: Knex,
+  battleId: string,
+  fx: S9rFixture,
+  opts: { class?: "official" | "tournament" | "practice" } = {},
+): Promise<void> {
+  await db("replay_artifacts").insert({
+    battle_id: battleId,
+    state: "published",
+    class: opts.class ?? "practice",
+    attempt: fx.attempt,
+    owner: "fixture",
+    recipe_path: fx.path,
+    recipe_sha256: fx.sha256,
+    recipe_bytes: fx.recipeBytes,
+    view_path: fx.viewPath,
+    view_sha256: fx.viewSha256,
+    view_bytes: fx.viewBytes,
+    chain_hash: fx.chain,
+    view_chain_hash: fx.viewChain,
+    ticks: fx.ticks,
+  });
 }

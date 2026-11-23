@@ -21,6 +21,7 @@ const CANON = "apps/tournament-worker/src/battle-stats-canonical.test.ts";
 const RECIPE = "apps/replay-service/src/s9r/recipe.ts";
 const VIEW = "apps/replay-service/src/s9r/view.ts";
 const API = "apps/api/src/replay-s9r.ts";
+const REV = "apps/api/src/v1-replay-pr340-review.test.ts";
 const STATS = "apps/replay-service/src/stats.ts";
 const ENGINE = "apps/arena-engine/src/replay.ts";
 
@@ -145,6 +146,71 @@ export const MUTANTS = [
         file: "apps/tournament-worker/src/battle-runner.ts",
         find: "if (!row?.replay_ref || !isS9rReplayRef(row.replay_ref)) return;",
         replace: "if (!row?.replay_ref || isS9rReplayRef(row.replay_ref)) return;",
+      },
+    ],
+  },
+  {
+    id: "M-L1-no-backpressure",
+    why: "la descarga ignora el false de res.write: el documento entero se acumula en la API",
+    test: REV,
+    t: "L1 ",
+    edits: [
+      {
+        file: API,
+        find: "  if (res.write(chunk)) return;",
+        replace: "  res.write(chunk);\n  if (Date.now() > 0) return;",
+      },
+    ],
+  },
+  {
+    id: "M-L2-no-range-cap",
+    why: "el segmento no tiene tope de anchura",
+    test: REV,
+    t: "L2 ",
+    edits: [
+      { file: API, find: 'if (to - from + 1 > MAX_SEGMENT_TICKS) return "too_large";', replace: "/* mutante */" },
+    ],
+  },
+  {
+    id: "M-L2-no-clamp",
+    why: "rawSegment materializa todo el rango pedido",
+    test: REV,
+    t: "L2 ",
+    edits: [
+      {
+        file: API,
+        find: "const to = Math.min(range.to, range.from + MAX_SEGMENT_TICKS - 1);",
+        replace: "const to = range.to;",
+      },
+    ],
+  },
+  {
+    id: "M-L3-legacy-listed",
+    why: "una referencia de formato anterior aparece en los listados como «con replay»",
+    test: REV,
+    t: "L3 ",
+    edits: [{ file: API, find: 'return q.where(column, "like", "%.s9r");', replace: "return q;" }],
+  },
+  {
+    id: "M-L4-view-sha-unchecked",
+    why: "la vista no se contrasta con view_sha256",
+    test: REV,
+    t: "L4 ",
+    edits: [
+      { file: API, find: "if ((await sha256OfFile(path)) !== art.view_sha256) return null;", replace: "/* mutante */" },
+    ],
+  },
+  {
+    id: "M-L5-download-retains",
+    why: "la descarga retiene cada frame proyectado (el documento entero en RAM)",
+    test: REV,
+    t: "L5 ",
+    edits: [
+      {
+        file: API,
+        find: '      await w((first ? "" : ",") + JSON.stringify(b));',
+        replace:
+          '      ((globalThis as any).__keep ??= []).push(b);\n      await w((first ? "" : ",") + JSON.stringify(b));',
       },
     ],
   },

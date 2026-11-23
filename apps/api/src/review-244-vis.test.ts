@@ -26,7 +26,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { registerS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 // Marcas reconocibles: si aparecen fuera de la ficha/código autorizados, hay fuga.
 const SECRET_CODE = "SECRETO_CODIGO_A_DEF_7f3a";
@@ -134,6 +134,7 @@ async function newBattle(opts: {
 }): Promise<string> {
   const id = randomUUID();
   let replay: { replay_ref: string; replay_hash: string } | null = null;
+  let fx: Awaited<ReturnType<typeof writeS9rReplay>> | null = null;
   if (opts.withReplay) {
     const header = {
       ...base.header,
@@ -142,6 +143,7 @@ async function newBattle(opts: {
     };
     const stored = await writeS9rReplay(dir, { ...base, header });
     replay = { replay_ref: stored.path, replay_hash: stored.sha256 };
+    fx = stored;
   }
   await h.db("battles").insert({
     id,
@@ -158,6 +160,7 @@ async function newBattle(opts: {
     finished_at: opts.status === "finished" ? h.db.fn.now() : null,
     ...(replay ?? {}),
   });
+  if (fx) await registerS9rReplay(h.db, id, fx);
   let i = 0;
   for (const botId of opts.botIds) {
     await h.db("participants").insert({

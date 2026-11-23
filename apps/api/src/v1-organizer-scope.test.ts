@@ -79,7 +79,7 @@ async function newBattle(botIds: string[], tournamentId: string | null): Promise
     map_version: 1,
     seed: "v1a-seed",
     tournament_id: tournamentId,
-    replay_ref: `/nonexistent/${id}.jsonl.gz`,
+    replay_ref: `/nonexistent/${id}.1.s9r`, // V1 REPLAYS PR-4 · «con replay» = receta S9R/1 (diseño §8)
     replay_hash: "0".repeat(64),
     final_state_hash: "0".repeat(64),
     result: JSON.stringify({ winner: "A", ticks: 10 }),

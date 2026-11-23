@@ -331,7 +331,11 @@ export async function projectViewStream(
   battleId: string,
   meta: ViewerMeta | null,
   records: AsyncIterable<ViewStreamRecord>,
-  out: { onSnapshot?: (body: any) => void; onEvent?: (ev: Record<string, unknown>) => void },
+  // Los callbacks pueden ser asíncronos (escritura con contrapresión): se ESPERAN en orden.
+  out: {
+    onSnapshot?: (body: any) => unknown;
+    onEvent?: (ev: Record<string, unknown>) => unknown;
+  },
   opts: { stopAfterTick?: number; result?: unknown } = {},
 ): Promise<{ mappingId: string; roster: unknown; result: unknown }> {
   const pr = new AudienceProjector({
@@ -341,12 +345,12 @@ export async function projectViewStream(
     mapEntityIds: mapIdsOf({}, meta),
   });
   let pending: { t: number; e: any }[] = [];
-  const flush = (upTo: number) => {
+  const flush = async (upTo: number) => {
     const keep: { t: number; e: any }[] = [];
     for (const x of pending) {
       if (x.t <= upTo) {
         const p = pr.projectEvent(x.e);
-        if (p) out.onEvent?.(p);
+        if (p) await out.onEvent?.(p);
       } else keep.push(x);
     }
     pending = keep;
@@ -359,10 +363,10 @@ export async function projectViewStream(
       continue;
     }
     const tick = Number(r.frame?.tick) || 0;
-    out.onSnapshot?.(pr.project(r.frame).body);
-    flush(tick);
+    await out.onSnapshot?.(pr.project(r.frame).body);
+    await flush(tick);
     if (opts.stopAfterTick !== undefined && tick > opts.stopAfterTick) return done();
   }
-  flush(Infinity);
+  await flush(Infinity);
   return done();
 }

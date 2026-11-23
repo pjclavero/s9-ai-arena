@@ -22,7 +22,7 @@ import { Router, type Request, type Response } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
-import { badRequest } from "../errors.js";
+import { ApiError, badRequest } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { flagSource } from "../runtime-settings.js";
@@ -30,6 +30,7 @@ import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } fro
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
 import { projectIndex, rawReplayAllowed } from "../replay-projection.js";
 import {
+  MAX_SEGMENT_TICKS,
   isS9rReplayRef,
   openView,
   parseRange,
@@ -39,6 +40,7 @@ import {
   streamRecipe,
   verifyRecipe,
   viewerMetaFromView,
+  whereS9rReplay,
 } from "../replay-s9r.js";
 
 const NO_STORE = "private, no-store";
@@ -81,7 +83,13 @@ export function replayRoutes(
     const readable = () =>
       applyReplayListFilters(
         db,
-        whereReplayReadable(db, db("battles").whereNotNull("battles.replay_ref"), req.auth, replaysOn()),
+        // Diseño §8 · sólo cuenta como «con replay» una receta S9R/1 (whereS9rReplay).
+        whereReplayReadable(
+          db,
+          whereS9rReplay(db("battles").whereNotNull("battles.replay_ref")),
+          req.auth,
+          replaysOn(),
+        ),
         filters,
         req.auth,
       );
@@ -162,7 +170,7 @@ export function replayRoutes(
     "getReplayIndex",
     async (req, res) => {
       const battle = await readableS9r(req);
-      const view = await openView(battle);
+      const view = await openView(db, battle);
       if (!view) throw replayNotFound();
       try {
         const meta = await viewerMetaFromView(db, view.header);
@@ -186,12 +194,21 @@ export function replayRoutes(
     "getReplaySegment",
     async (req, res) => {
       const battle = await readableS9r(req);
-      const view = await openView(battle);
+      const view = await openView(db, battle);
       if (!view) throw replayNotFound();
       try {
         const ticks = Number((battle.result as { ticks?: number } | null)?.ticks ?? view.summary.lastTick);
         const range = parseRange(req.query.fromTick, req.query.toTick, ticks);
         if (!range) throw badRequest("Rango de ticks inválido (fromTick <= toTick, numéricos)");
+        // PR-4 · tope de anchura: el segmento nunca materializa la vista entera.
+        if (range === "too_large") {
+          throw new ApiError(
+            400,
+            "segment_range_too_large",
+            `Rango de ticks demasiado ancho (máximo ${MAX_SEGMENT_TICKS} ticks por segmento)`,
+            { maxTicks: MAX_SEGMENT_TICKS },
+          );
+        }
         // Sólo los fragmentos de la vista que cubren [keyframe, toTick].
         const body = await rawSegment(battle, view, range);
         // PRE-1 · sin acceso al crudo: snapshots y eventos públicos, NUNCA comandos.

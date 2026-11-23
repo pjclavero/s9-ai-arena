@@ -24,7 +24,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record } from "../../arena-engine/src/replay.js";
 import { gunnerLoadout, mvpArena, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { registerS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -99,6 +99,7 @@ beforeAll(async () => {
     result: JSON.stringify({ score: replay.result.score, ticks: replay.result.ticks }),
     finished_at: h.db.fn.now(),
   });
+  await registerS9rReplay(h.db, battleId, stored);
   await h.db("participants").insert([
     { battle_id: battleId, bot_id: bots[0], version: 1, team: "red" },
     { battle_id: battleId, bot_id: bots[1], version: 1, team: "blue" },

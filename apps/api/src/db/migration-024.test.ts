@@ -52,11 +52,11 @@ afterAll(async () => {
 });
 
 describe("migración 024_replay_artifacts", () => {
-  it("está aplicada y es la última; la 023 queda reservada a ADM-1", async () => {
-    expect(MIGRATIONS.at(-1)!.name).toBe(NAME);
-    expect(await tables()).toContain("replay_artifacts");
+  it("está aplicada y va justo detrás de la 023 (ADM-1)", async () => {
     const names = MIGRATIONS.map((m) => m.name);
-    expect(names.filter((x) => x.startsWith("023_")).every((x) => x === "023_system_settings_operations")).toBe(true);
+    expect(names).toContain(NAME);
+    expect(names[names.indexOf(NAME) - 1]).toBe("023_system_settings_operations");
+    expect(await tables()).toContain("replay_artifacts");
   });
 
   it("invariantes: estado/clase cerrados, sha hex, bytes > 0, vista toda-o-nada, PK por batalla y cascada", async () => {

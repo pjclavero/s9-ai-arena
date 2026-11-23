@@ -34,7 +34,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { registerS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 let h: TestDbHandle;
 let off: Express; // S9_PUBLIC_REPLAYS_ENABLED apagada (defecto)
@@ -103,6 +103,7 @@ async function newBattle(botIds: string[]): Promise<string> {
     result: JSON.stringify({ score: base.result.score, ticks: base.result.ticks }),
     finished_at: h.db.fn.now(),
   });
+  await registerS9rReplay(h.db, id, stored);
   let i = 0;
   for (const botId of botIds) {
     await h.db("participants").insert({ battle_id: id, bot_id: botId, version: 1, team: i++ % 2 ? "B" : "A" });

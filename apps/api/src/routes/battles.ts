@@ -24,7 +24,7 @@ import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import { PROJECTED_HTTP_CACHE_CONTROL, projectedEtag } from "../replay-projection.js";
 import { projectBotStats } from "../../../../packages/projection/index.js";
-import { openView, streamPublicDocument, viewerMetaFromView } from "../replay-s9r.js";
+import { isS9rReplayRef, openView, streamPublicDocument, viewerMetaFromView } from "../replay-s9r.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -187,7 +187,8 @@ export function battleToJson(
     createdAt: b.created_at ? new Date(b.created_at as string).toISOString() : undefined,
     startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
-    replayAvailable: Boolean(b.replay_ref),
+    // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
+    replayAvailable: isS9rReplayRef(b.replay_ref),
     replayHash: b.replay_hash ?? undefined,
     // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
     rules: rulesToJson(rulesOf(b)),
@@ -237,7 +238,8 @@ function publicReplayBattleToJson(b: Record<string, unknown>, participants: Reco
       outcome: p.outcome ?? undefined,
     })),
     result: result ? { score: result.score, ticks: result.ticks } : undefined,
-    replayAvailable: Boolean(b.replay_ref),
+    // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
+    replayAvailable: isS9rReplayRef(b.replay_ref),
   };
 }
 
@@ -253,6 +255,7 @@ async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
   const battle = await wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
     .where({ "battles.id": id })
     .whereNotNull("battles.replay_ref")
+    .where("battles.replay_ref", "like", "%.s9r") // diseño §8: sólo recetas S9R/1
     .select(
       "battles.id as id",
       "battles.status as status",
@@ -488,6 +491,7 @@ export function battleRoutes(
       // (replay-access.ts). Activar la capability NO publica todos los ficheros.
       let q = wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
         .whereNotNull("battles.replay_ref")
+        .where("battles.replay_ref", "like", "%.s9r") // diseño §8: sólo recetas S9R/1
         .select(
           "battles.id as id",
           "battles.status as status",
@@ -554,7 +558,7 @@ export function battleRoutes(
       // competición (replay-projection.ts), igual para todos los visitantes.
       // V1 REPLAYS PR-4 · sólo replays S9R/1 (corte D-OP-30); el documento proyectado se
       // ESCRIBE en streaming recorriendo la vista por fragmentos (nunca entero en memoria).
-      const view = await openView(battle);
+      const view = await openView(db, battle);
       if (!view) throw notFound("Replay no disponible");
       try {
         const meta = await viewerMetaFromView(db, view.header);
@@ -830,7 +834,7 @@ export function battleRoutes(
     let status: "ready" | "pending" | "unavailable" = "unavailable";
     if (rows.length > 0) status = "ready";
     else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
-    else if (battle.status === "finished" && battle.replay_ref) status = "pending";
+    else if (battle.status === "finished" && isS9rReplayRef(battle.replay_ref)) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
     for (const [team, t] of teams) {
