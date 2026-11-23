@@ -37,7 +37,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Knex } from "knex";
-import { publishRecording } from "../../replay-service/src/artifacts.js";
+import { isS9rReplayRef, publishRecording } from "../../replay-service/src/artifacts.js";
 import { discardRecordingFiles, type ClosedRecording } from "../../replay-service/src/s9r/recorder.js";
 import type { S9rFs } from "../../replay-service/src/s9r/io.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
@@ -593,10 +593,9 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
 async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDeps): Promise<void> {
   if (!deps.replaysDir) return;
   const row = await db("battles").where({ id: battleId }).first();
-  // Solo replays del almacén de E8 (<id>.replay); refs antiguas u otras rutas no se tocan.
-  // V1 REPLAYS PR-3 · un replay S9R/1 (`.s9r`) aún no tiene lector de estadísticas (RecipeCursor,
-  // PR-4): queda `replay_artifacts.stats_state = 'pending'` y la API dice «pendiente».
-  if (!row?.replay_ref || !String(row.replay_ref).endsWith(`${battleId}.replay`)) return;
+  // V1 REPLAYS PR-4 · sólo recetas S9R/1 (`.s9r`, leídas por fragmentos); una referencia de otro
+  // formato es «sin replay» (corte D-OP-30): no hay estadísticas que calcular.
+  if (!row?.replay_ref || !isS9rReplayRef(row.replay_ref)) return;
   try {
     await runStatsJob(db, deps.replaysDir, battleId);
   } catch (err) {

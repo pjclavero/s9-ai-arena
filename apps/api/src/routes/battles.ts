@@ -7,7 +7,6 @@
  */
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
@@ -23,11 +22,9 @@ import type { BattleRunConfig } from "../battle-run.js";
 import { flagSource } from "../runtime-settings.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
-import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
+import { PROJECTED_HTTP_CACHE_CONTROL, projectedEtag } from "../replay-projection.js";
 import { projectBotStats } from "../../../../packages/projection/index.js";
-import { viewerMetaOf } from "./replays.js";
-import { fromJsonl } from "../../../arena-engine/src/replay.js";
-import { decompress, sha256 } from "../../../replay-service/src/format.js";
+import { openView, streamPublicDocument, viewerMetaFromView } from "../replay-s9r.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -555,23 +552,28 @@ export function battleRoutes(
       // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
       // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
       // competición (replay-projection.ts), igual para todos los visitantes.
-      let doc: Record<string, unknown>;
-      let sha = "";
+      // V1 REPLAYS PR-4 · sólo replays S9R/1 (corte D-OP-30); el documento proyectado se
+      // ESCRIBE en streaming recorriendo la vista por fragmentos (nunca entero en memoria).
+      const view = await openView(battle);
+      if (!view) throw notFound("Replay no disponible");
       try {
-        const bytes = await readFile(battle.replay_ref as string);
-        sha = sha256(bytes);
-        const replay = fromJsonl(decompress(bytes).toString("utf8"));
-        const meta = await viewerMetaOf(db, battle, sha);
-        doc = projectReplayDocument(replay, meta, sha);
-      } catch {
-        throw notFound("Replay no disponible");
+        const meta = await viewerMetaFromView(db, view.header);
+        const sha = String(battle.replay_hash ?? "");
+        // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
+        res
+          .status(200)
+          .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
+          .setHeader("ETag", projectedEtag("public-replay-download", sha))
+          .setHeader("Content-Type", "application/json; charset=utf-8");
+        await streamPublicDocument(res, battle, view, meta);
+      } catch (e) {
+        if (!res.headersSent || !res.writableEnded) {
+          if (res.headersSent) res.destroy(e as Error);
+          else throw notFound("Replay no disponible");
+        }
+      } finally {
+        await view.close();
       }
-      // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
-      res
-        .status(200)
-        .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
-        .setHeader("ETag", projectedEtag("public-replay-download", sha))
-        .json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );

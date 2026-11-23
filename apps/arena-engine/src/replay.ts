@@ -12,6 +12,7 @@
  */
 import { createHash } from "node:crypto";
 import { Battle, type BattleConfig, type BattleResult, type BotAgent } from "./sim/battle.js";
+import type { ReplaySink } from "./sim/replay-sink.js";
 import { nowIso } from "./wall-clock.js";
 import deps from "./engine-deps.json" with { type: "json" };
 import { RNG_DERIVATION, RNG_STREAM_NAMES } from "./rng.js";
@@ -424,14 +425,99 @@ export async function resimulateWithEvents(
   onEvent: (vehicleId: string, event: any) => void,
   hooks: ResimulationHooks = {},
 ): Promise<BattleResult> {
-  // OLA2-MD · misma BattleConfig que la original (latencia y cadencias incluidas).
-  const b = await Battle.create(configFromHeader(replay.header));
-  const byVehicle = new Map<string, { tick: number; command: any }[]>();
-  for (const c of replay.commands) {
-    if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
-    byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
+  const r = await resimulateFromSource(replay.header, arrayCommandSource(replay.commands), { onEvent, hooks });
+  return r.result;
+}
+
+/**
+ * V1 REPLAYS PR-4 · ORIGEN de los comandos grabados de una re-simulación. Permite re-simular
+ * leyendo la receta POR FRAGMENTOS (RecipeCursor de S9R/1) sin cargar todos los comandos:
+ *  - `ensure(tick)` (opcional, asíncrono) garantiza que `commandFor(·, tick)` ya está disponible;
+ *    se llama antes de CADA paso del motor, en orden de tick creciente;
+ *  - `commandFor(vehicleId, tick)`: la orden grabada o null (el bot no respondió en ese tick).
+ * Sin `ensure` (origen en memoria) se usa `Battle.run()` tal cual: mismo bucle de siempre.
+ */
+export interface CommandSource {
+  ensure?(tick: number): Promise<void>;
+  commandFor(vehicleId: string, tick: number): any | null;
+}
+
+/** Origen en memoria (Replay ya decodificado): misma semántica que ReplayAgent. */
+export function arrayCommandSource(commands: { tick: number; vehicleId: string; command: any }[]): CommandSource {
+  const byVehicle = new Map<string, Map<number, any>>();
+  for (const c of commands) {
+    let m = byVehicle.get(c.vehicleId);
+    if (!m) byVehicle.set(c.vehicleId, (m = new Map()));
+    m.set(c.tick, c.command);
   }
-  const { onObservation, onEmission, onKill } = hooks;
+  return { commandFor: (vid, tick) => byVehicle.get(vid)?.get(tick) ?? null };
+}
+
+/** Agente que reproduce las órdenes de un `CommandSource` (equivale a ReplayAgent). */
+class SourceAgent implements BotAgent {
+  onEvent?: (e: any) => void;
+  constructor(
+    readonly botId: string,
+    private readonly vehicleId: string,
+    private readonly src: CommandSource,
+  ) {}
+  decide(obs: any): any | null {
+    return this.src.commandFor(this.vehicleId, obs.tick) ?? null;
+  }
+}
+
+/**
+ * Sink de una re-simulación sin vista retenida: guarda SÓLO hashes y checkpoints (≈ 1 650 y
+ * 165 a 45 000 ticks) y entrega snapshots y eventos públicos a callbacks opcionales sin
+ * retenerlos. Un fallo de un callback se guarda y se relanza al terminar (nunca para el motor
+ * en silencio ni deja estadísticas a medias).
+ */
+export class ResimulationSink implements ReplaySink {
+  readonly stateHashes: { tick: number; hash: string }[] = [];
+  readonly checkpoints: ReplayCheckpointRecord[] = [];
+  error: unknown = null;
+  constructor(private readonly cb: { onSnapshot?: (frame: any) => void; onPublicEvent?: (ev: any) => void } = {}) {}
+  command(): void {}
+  snapshot(frame: any): void {
+    if (this.cb.onSnapshot) this.guard(() => this.cb.onSnapshot!(frame));
+  }
+  event(ev: any): void {
+    if (this.cb.onPublicEvent) this.guard(() => this.cb.onPublicEvent!(ev));
+  }
+  hash(rec: { tick: number; hash: string }): void {
+    this.stateHashes.push(rec);
+  }
+  checkpoint(rec: ReplayCheckpointRecord): void {
+    this.checkpoints.push(rec);
+  }
+  private guard(fn: () => void): void {
+    if (this.error) return;
+    try {
+      fn();
+    } catch (e) {
+      this.error = e;
+    }
+  }
+}
+
+export interface ResimulateOptions {
+  onEvent?: (vehicleId: string, event: any) => void;
+  hooks?: ResimulationHooks;
+  /** Sink externo (p. ej. ResimulationSink): el motor no retiene snapshots ni eventos. */
+  sink?: ResimulationSink;
+}
+
+/** Re-simula desde la cabecera y un origen de comandos (memoria o cursor de receta). */
+export async function resimulateFromSource(
+  header: ReplayHeader,
+  src: CommandSource,
+  opts: ResimulateOptions = {},
+): Promise<{ result: BattleResult }> {
+  // OLA2-MD · misma BattleConfig que la original (latencia y cadencias incluidas).
+  const config = configFromHeader(header);
+  const b = await Battle.create(opts.sink ? { ...config, replaySink: opts.sink } : config);
+  const { onObservation, onEmission, onKill } = opts.hooks ?? {};
+  const onEvent = opts.onEvent;
   if (onKill) {
     // Envolturas TRANSPARENTES (sólo miran): `damageVehicle` fija quién es el autor
     // del daño en curso y `mode.onKill` avisa con él. Fuera de `damageVehicle`
@@ -483,11 +569,9 @@ export async function resimulateWithEvents(
       onEmission(structuredClone({ tick: target.tick, ...ev }), toVehicle ?? null);
     };
   }
-  for (const p of replay.header.participants) {
-    const agent = new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []) as ReplayAgent & {
-      onEvent?: (e: any) => void;
-    };
-    agent.onEvent = (e: any) => onEvent(p.id, e);
+  for (const p of header.participants) {
+    const agent = new SourceAgent(p.botId, p.id, src);
+    if (onEvent) agent.onEvent = (e: any) => onEvent(p.id, e);
     if (onObservation) {
       const decide = agent.decide.bind(agent);
       // La orden se resuelve ANTES de avisar y sobre la observación original:
@@ -500,17 +584,63 @@ export async function resimulateWithEvents(
     }
     b.attachBot(p.id, agent);
   }
-  const result = b.run();
-  // Drenar la cola de eventos no entregados: el motor entrega los eventos de un bot
-  // al PRINCIPIO de su siguiente ciclo de decisión, así que los del último ciclo
-  // (p. ej. el vigésimo decision_timeout que descalifica, o los del tick final)
-  // quedarían sin contar. Para estadísticas eso sería mentir por poco.
-  const pending = (b as unknown as { pendingEvents: Map<string, any[]> }).pendingEvents;
-  for (const p of replay.header.participants) {
-    for (const e of pending.get(p.id) ?? []) onEvent(p.id, e);
+  try {
+    if (src.ensure) {
+      // Mismo bucle que Battle.run(), con la lectura de la receta ANTES de cada paso.
+      while (!b.isFinished() && b.tick < RESIM_MAX_TICKS) {
+        await src.ensure(b.tick);
+        b.step();
+      }
+    }
+    const result = b.run(RESIM_MAX_TICKS);
+    if (b.recordingFault) throw new Error(`re-simulación: fallo del sink (${String(b.recordingFault.cause)})`);
+    if (opts.sink?.error) throw opts.sink.error;
+    if (onEvent) {
+      // Drenar la cola de eventos no entregados: el motor entrega los eventos de un bot
+      // al PRINCIPIO de su siguiente ciclo de decisión, así que los del último ciclo
+      // (p. ej. el vigésimo decision_timeout que descalifica, o los del tick final)
+      // quedarían sin contar. Para estadísticas eso sería mentir por poco.
+      const pending = (b as unknown as { pendingEvents: Map<string, any[]> }).pendingEvents;
+      for (const p of header.participants) {
+        for (const e of pending.get(p.id) ?? []) onEvent(p.id, e);
+      }
+    }
+    return { result };
+  } finally {
+    b.free();
   }
-  b.free();
-  return result;
+}
+
+/** Mismo techo que `Battle.run()` por defecto. */
+const RESIM_MAX_TICKS = 100000;
+
+/**
+ * V1 REPLAYS PR-4 · verify() sobre un ORIGEN de comandos (cursor de receta S9R/1): mismas
+ * comprobaciones que `verify()` (cabecera, hashes intermedios, checkpoints por componente,
+ * resultado completo) sin cargar el replay. `official()` se llama DESPUÉS de re-simular: el
+ * cursor ya ha leído (por fragmentos) los hashes, checkpoints y resultado oficiales.
+ */
+export async function verifyFromSource(
+  header: ReplayHeader,
+  src: CommandSource,
+  official: () => Promise<{
+    stateHashes: { tick: number; hash: string }[];
+    checkpoints: ReplayCheckpointRecord[];
+    result: BattleResult;
+  }>,
+): Promise<VerifyResult> {
+  const reason = headerIncompatibility(header);
+  if (reason) {
+    const o = await official();
+    return rejectedResult({ header, ...o, commands: [], events: [], snapshots: [] }, reason);
+  }
+  const sink = new ResimulationSink();
+  const { result } = await resimulateFromSource(header, src, { sink });
+  const o = await official();
+  return judge(
+    { header, ...o, commands: [], events: [], snapshots: [] },
+    { result, stateHashes: sink.stateHashes, checkpoints: sink.checkpoints, events: [], snapshots: [] },
+  );
 }
 
 /** OLA2-MD · Discrepancia concreta de verify() v2: campo, valor oficial y recomputado. */

@@ -18,13 +18,7 @@
  * Toda respuesta lleva `Cache-Control: private, no-store`: un contenido
  * autorizado por usuario no se puede quedar en una caché compartida.
  */
-import { Router, type Response } from "express";
-import { readFile } from "node:fs/promises";
-import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
-import { decompress, sha256 } from "../../../replay-service/src/format.js";
-import { verifyLoaded } from "../../../replay-service/src/store.js";
-import { isS9rReplayRef } from "../../../replay-service/src/artifacts.js";
-import { DecodedReplayCache, indexFileFor, readIndexFile, sliceSegment } from "../../../replay-service/src/segment.js";
+import { Router, type Request, type Response } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
@@ -34,96 +28,20 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { flagSource } from "../runtime-settings.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
-import { projectIndex, projectSegment, projectedReplayStream, rawReplayAllowed } from "../replay-projection.js";
-
-/** OLA2-MD · texto humano del `format_version_mismatch` (replays v1 tras el replay v2). */
-export const FORMAT_VERSION_MESSAGE =
-  "Este replay usa un formato anterior al actual (v1) y este motor ya no lo re-simula. " +
-  "NO significa que esté manipulado.";
+import { projectIndex, rawReplayAllowed } from "../replay-projection.js";
+import {
+  isS9rReplayRef,
+  openView,
+  parseRange,
+  projectedSegment,
+  rawSegment,
+  storeIndexOf,
+  streamRecipe,
+  verifyRecipe,
+  viewerMetaFromView,
+} from "../replay-s9r.js";
 
 const NO_STORE = "private, no-store";
-
-/**
- * UX-D (D4 · C-G9) · Lo que el visor necesita para pintar el replay como el
- * directo: el MUNDO (tamaño, muros, destructibles, bases) y la NÓMINA (vehículo →
- * nombre del bot, equipo, chasis). Antes el índice no traía ninguna de las dos:
- * el replay se veía sin obstáculos y con `veh_1` en vez del nombre del bot. Sale
- * de la CABECERA del propio replay (el mapa exacto con el que se jugó) y de la
- * tabla `bots` para los nombres. Sólo geometría pública y nombres: ni semilla,
- * ni loadouts, ni nada que el visor del directo no reciba ya.
- */
-export interface ReplayViewerMeta {
-  world: {
-    widthM: number;
-    heightM: number;
-    walls: { position: { x: number; y: number }; halfW: number; halfH: number }[];
-    destructibles: { position: { x: number; y: number }; halfW: number; halfH: number }[];
-    bases: { team: string; position: { x: number; y: number }; radiusM?: number }[];
-  };
-  /** Nómina INTERNA (ids del motor, chasis): intrínseca; sólo sale proyectada o en el crudo. */
-  roster: { id: string; botId: string; team: string; chassis?: string; name?: string }[];
-  /** OLA 2 · MA · ids públicos del mapa (lista blanca del mapper de ids). */
-  mapEntityIds: string[];
-}
-
-const viewerMetaCache = new Map<string, ReplayViewerMeta>(); // `${battleId}:${sha}` → meta
-
-export async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: string): Promise<ReplayViewerMeta | null> {
-  const key = `${battle.id}:${sha}`;
-  const hit = viewerMetaCache.get(key);
-  if (hit) return hit;
-  let header: any;
-  try {
-    const text = decompress(await readFile(battle.replay_ref)).toString("utf8");
-    const first = text.slice(0, text.indexOf("\n") >= 0 ? text.indexOf("\n") : text.length);
-    header = JSON.parse(first);
-    if (header?.t !== "header") return null;
-  } catch {
-    return null; // el visor degrada (sin obstáculos ni nombres), nunca un 500
-  }
-  const box = (b: any) => ({
-    position: { x: Number(b?.position?.x) || 0, y: Number(b?.position?.y) || 0 },
-    halfW: Number(b?.halfW) || 0,
-    halfH: Number(b?.halfH) || 0,
-  });
-  const map = header.map ?? {};
-  const participants: any[] = Array.isArray(header.participants) ? header.participants : [];
-  const botIds = participants.map((pp) => String(pp.botId ?? "")).filter(Boolean);
-  const names = new Map<string, string>();
-  if (botIds.length > 0) {
-    const rows = await db("bots")
-      .whereIn("id", botIds)
-      .select("id", "name")
-      .catch(() => []);
-    for (const r of rows as { id: string; name: string }[]) names.set(String(r.id), r.name);
-  }
-  const idsOf = (xs: unknown) =>
-    (Array.isArray(xs) ? xs : []).map((x: any) => x?.id).filter((x: unknown): x is string => typeof x === "string");
-  const meta: ReplayViewerMeta = {
-    mapEntityIds: [...idsOf(map.walls), ...idsOf(map.destructibles), ...idsOf(map.zones)],
-    world: {
-      widthM: Number(map.widthM) || 0,
-      heightM: Number(map.heightM) || 0,
-      walls: (Array.isArray(map.walls) ? map.walls : []).map(box),
-      destructibles: (Array.isArray(map.destructibles) ? map.destructibles : []).map(box),
-      bases: (Array.isArray(map.bases) ? map.bases : []).map((b: any) => ({
-        team: String(b.team),
-        position: { x: Number(b?.position?.x) || 0, y: Number(b?.position?.y) || 0 },
-        ...(typeof b.radiusM === "number" ? { radiusM: b.radiusM } : {}),
-      })),
-    },
-    roster: participants.map((pp) => ({
-      id: String(pp.id),
-      botId: String(pp.botId ?? ""),
-      team: String(pp.team ?? ""),
-      ...(typeof pp.spec?.chassisId === "string" ? { chassis: pp.spec.chassisId } : {}),
-      ...(names.has(String(pp.botId)) ? { name: names.get(String(pp.botId)) } : {}),
-    })),
-  };
-  viewerMetaCache.set(key, meta);
-  while (viewerMetaCache.size > 64) viewerMetaCache.delete(viewerMetaCache.keys().next().value as string);
-  return meta;
-}
 
 function noStore(res: Response): Response {
   return res.setHeader("Cache-Control", NO_STORE);
@@ -137,18 +55,21 @@ export function replayRoutes(
 ): Router {
   const router = Router();
   const replaysOn = flagSource(publicReplaysEnabled, () => false);
-  const decoded = new DecodedReplayCache();
 
-  /** Índice del replay de una batalla YA autorizada, o 404 uniforme. */
-  function indexOf(battle: Record<string, any>) {
-    const index = readIndexFile(indexFileFor(battle.replay_ref));
-    if (!index) throw replayNotFound();
-    return index;
+  /**
+   * V1 REPLAYS PR-4 · batalla legible CON replay S9R/1; cualquier otra referencia (formato
+   * anterior, corte D-OP-30) es «sin replay»: el MISMO 404 que un replay inexistente.
+   */
+  async function readableS9r(req: Request) {
+    const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
+    if (!isS9rReplayRef(battle.replay_ref)) throw replayNotFound();
+    return battle;
   }
 
   // ------------------------------------------------------------- listado
   // Sustituye al `GET /replays` del replay-service (inventario de TODOS los
-  // ficheros, anónimo). Sólo lo que el solicitante puede leer.
+  // ficheros, anónimo). Sólo lo que el solicitante puede leer. PR-4 · los datos salen de la
+  // BD (`battles` + `replay_artifacts`): el listado no abre ningún fichero.
   defineOperation(router, "listReplays", async (req, res) => {
     const limit = parseLimit(req.query.limit ?? 100);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
@@ -165,13 +86,16 @@ export function replayRoutes(
         req.auth,
       );
     let q = readable()
+      .leftJoin("replay_artifacts as ra", "ra.battle_id", "battles.id")
       .select(
         "battles.id",
         "battles.official",
         "battles.result",
-        "battles.replay_ref",
         "battles.created_at",
         "battles.finished_at",
+        "ra.recipe_bytes as ra_recipe_bytes",
+        "ra.view_bytes as ra_view_bytes",
+        "ra.created_at as ra_created_at",
         db.raw(cursorTsSql("battles.created_at")),
       )
       .orderBy([
@@ -183,23 +107,17 @@ export function replayRoutes(
     const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = page.map((b: Record<string, any>) => {
-      let index = null;
-      try {
-        index = readIndexFile(indexFileFor(b.replay_ref));
-      } catch {
-        index = null; // índice corrupto: la fila sale con los datos de la BD
-      }
       const result = (b.result ?? {}) as { winner?: string; ticks?: number; endReason?: string };
       // ADR-022 · detenida por la salvaguarda técnica: sin ganador ni empate («none» + motivo).
-      const technical = result.endReason === "technical_limit" || index?.result?.endReason === "technical_limit";
+      const technical = result.endReason === "technical_limit";
       return {
         battleId: b.id,
-        ticks: index?.ticks ?? result.ticks ?? 0,
-        winner: technical ? "none" : (index?.result?.winner ?? result.winner ?? "unknown"),
+        ticks: result.ticks ?? 0,
+        winner: technical ? "none" : (result.winner ?? "unknown"),
         ...(technical ? { endReason: "technical_limit" } : {}),
         official: Boolean(b.official),
-        createdAt: new Date(index?.createdAt ?? b.finished_at ?? b.created_at).toISOString(),
-        sizeBytes: index?.sizeBytes ?? 0,
+        createdAt: new Date(b.ra_created_at ?? b.finished_at ?? b.created_at).toISOString(),
+        sizeBytes: Number(b.ra_recipe_bytes ?? 0) + Number(b.ra_view_bytes ?? 0),
       };
     });
     // `total` SÓLO si se pide (includeTotal=true): cuenta de lo legible y filtrado,
@@ -221,19 +139,19 @@ export function replayRoutes(
     router,
     "getReplay",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
+      const battle = await readableS9r(req);
       // PRE-1 · el FICHERO CRUDO (semilla + comandos + loadouts) sólo con autorización
       // explícita (replay-projection.ts). Quien sólo puede leer la proyección recibe el
       // MISMO 404 que un replay inexistente: el visor usa índice y segmentos.
       if (!(await rawReplayAllowed(db, battle.id, req.auth))) throw replayNotFound();
-      // Política 23.1: el replay vive en un archivo; la BD solo guarda la referencia.
-      let bytes: Buffer;
+      // PR-4 · la RECETA en streaming (nunca entera en memoria); el sha va en cabecera.
+      noStore(res);
       try {
-        bytes = await readFile(battle.replay_ref);
+        await streamRecipe(res, battle);
       } catch {
-        throw replayNotFound();
+        if (!res.headersSent) throw replayNotFound();
+        res.destroy();
       }
-      noStore(res).status(200).setHeader("Content-Type", "application/octet-stream").send(bytes);
     },
     (req, res, next) => anonQuota(db, "replays", quota)(req, res, next),
   );
@@ -243,15 +161,21 @@ export function replayRoutes(
     router,
     "getReplayIndex",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
-      const index = indexOf(battle);
-      const meta = await viewerMetaOf(db, battle, index.sha256);
-      // PRE-1 · índice de almacén completo sólo con acceso al crudo; el resto, proyectado.
-      if (await rawReplayAllowed(db, battle.id, req.auth)) {
-        noStore(res).json(meta ? { ...index, world: meta.world, roster: meta.roster } : index);
-        return;
+      const battle = await readableS9r(req);
+      const view = await openView(battle);
+      if (!view) throw replayNotFound();
+      try {
+        const meta = await viewerMetaFromView(db, view.header);
+        const index = storeIndexOf(battle, view);
+        // PRE-1 · índice de almacén completo sólo con acceso al crudo; el resto, proyectado.
+        if (await rawReplayAllowed(db, battle.id, req.auth)) {
+          noStore(res).json({ ...index, world: meta.world, roster: meta.roster });
+          return;
+        }
+        noStore(res).json(projectIndex(index, meta));
+      } finally {
+        await view.close();
       }
-      noStore(res).json(projectIndex(index, meta));
     },
     (req, res, next) => anonQuota(db, "replay-index", quota)(req, res, next),
   );
@@ -261,87 +185,44 @@ export function replayRoutes(
     router,
     "getReplaySegment",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
-      const index = indexOf(battle);
-      const d = decoded.get(battle.id, battle.replay_ref, index);
-      if (!d) throw replayNotFound();
-      const seg = sliceSegment(index, d, req.query.fromTick, req.query.toTick);
-      if (!seg.ok) throw badRequest("Rango de ticks inválido (fromTick <= toTick, numéricos)");
-      // PRE-1 · sin acceso al crudo: snapshots y eventos públicos, NUNCA comandos
-      // (tampoco con `debugOpen`).
-      const raw = await rawReplayAllowed(db, battle.id, req.auth);
-      if (raw) {
-        noStore(res).json(seg.body);
-        return;
+      const battle = await readableS9r(req);
+      const view = await openView(battle);
+      if (!view) throw replayNotFound();
+      try {
+        const ticks = Number((battle.result as { ticks?: number } | null)?.ticks ?? view.summary.lastTick);
+        const range = parseRange(req.query.fromTick, req.query.toTick, ticks);
+        if (!range) throw badRequest("Rango de ticks inválido (fromTick <= toTick, numéricos)");
+        // Sólo los fragmentos de la vista que cubren [keyframe, toTick].
+        const body = await rawSegment(battle, view, range);
+        // PRE-1 · sin acceso al crudo: snapshots y eventos públicos, NUNCA comandos.
+        if (await rawReplayAllowed(db, battle.id, req.auth)) {
+          noStore(res).json(body);
+          return;
+        }
+        // OLA 2 · MA · los ids públicos son los del documento ENTERO: la vista se recorre en
+        // streaming hasta pasar el rango, sin retener nada fuera de él.
+        const meta = await viewerMetaFromView(db, view.header);
+        noStore(res).json(await projectedSegment(battle, view, meta, body));
+      } finally {
+        await view.close();
       }
-      // OLA 2 · MA · los ids públicos salen del stream COMPLETO proyectado (cacheado por
-      // clave de proyección + sha): cualquier segmento usa los mismos ids que el documento.
-      const meta = await viewerMetaOf(db, battle, index.sha256);
-      const full = projectedReplayStream(
-        { header: { battleId: battle.id }, snapshots: d.snapshots, events: d.events },
-        meta,
-        index.sha256,
-      );
-      noStore(res).json(projectSegment(seg.body, full));
     },
     (req, res, next) => anonQuota(db, "replay-segment", quota)(req, res, next),
   );
 
   /**
-   * E8/T8.1 · verifyReplay: re-simula el replay con el motor de E2 (versión registrada
-   * en la cabecera) y compara resultado y hashes con el oficial. Es cara
-   * (re-simulación completa): cuota anónima propia. PRC (TD-004): misma política
-   * de acceso que la lectura (verificar un replay privado revela su resultado).
+   * E8/T8.1 · verifyReplay: re-simula la RECETA con el motor (versión registrada en la
+   * cabecera) leyéndola por fragmentos y compara hashes intermedios, checkpoints y resultado
+   * con el oficial; antes, integridad del fichero entero contra el sha de la BD. Es cara
+   * (re-simulación completa): cuota anónima propia. PRC (TD-004): misma política de acceso
+   * que la lectura (verificar un replay privado revela su resultado).
    */
   defineOperation(
     router,
     "verifyReplay",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
-      // V1 REPLAYS PR-3 · un replay S9R/1 aún no tiene verificador por cursor (PR-4): 404 uniforme,
-      // nunca un `corrupt_file` falso (el JSONL no sabe leerlo y diría que está dañado).
-      if (isS9rReplayRef(battle.replay_ref)) throw replayNotFound();
-      let bytes: Buffer;
-      try {
-        bytes = await readFile(battle.replay_ref);
-      } catch {
-        throw replayNotFound();
-      }
-      noStore(res);
-      // Manipulación byte a byte: el hash registrado en la BD manda (DoD T8.1).
-      if (battle.replay_hash && sha256(bytes) !== battle.replay_hash) {
-        res.json({ matches: false, valid: false, reason: "checksum_mismatch" });
-        return;
-      }
-      let replay: Replay;
-      try {
-        replay = fromJsonl(decompress(bytes).toString("utf8"));
-      } catch (e) {
-        const msg = (e as Error).message;
-        // OLA2-MD · un replay de formato antiguo (v1) no está corrupto ni manipulado.
-        if (msg.startsWith("format_version_mismatch")) {
-          res.json({ matches: false, valid: false, reason: msg, message: FORMAT_VERSION_MESSAGE });
-          return;
-        }
-        res.json({ matches: false, valid: false, reason: `corrupt_file: ${msg}` });
-        return;
-      }
-      const r = await verifyLoaded(battle.id, replay);
-      // Cinturón extra: el resultado oficial del ARCHIVO debe ser el que registró la BD.
-      const dbHashOk = !battle.final_state_hash || battle.final_state_hash === replay.result?.finalStateHash;
-      res.json({
-        matches: (r.verification?.matches ?? false) && dbHashOk,
-        officialHash: r.verification?.officialHash,
-        recomputedHash: r.verification?.recomputedHash,
-        valid: r.valid && dbHashOk,
-        reason: !dbHashOk ? "final_state_hash_mismatch_with_db" : r.reason,
-        // UX-F (DEF-R1) · sólo para engine_version_mismatch: «otra versión», no «manipulado».
-        message: dbHashOk ? r.message : undefined,
-        divergedAtTick: r.verification?.divergedAtTick ?? undefined,
-        // ADR-022 · un replay 0.3.0 se re-simula con el motor 0.4.0: se dice con cuál.
-        recordedWith: replay.header?.versions?.engine,
-        verifiedWith: r.verifiedWith,
-      });
+      const battle = await readableS9r(req);
+      noStore(res).json(await verifyRecipe(battle));
     },
     (req, res, next) => anonQuota(db, "replay-verify", quota)(req, res, next),
   );

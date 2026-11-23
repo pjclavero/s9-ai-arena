@@ -47,6 +47,8 @@ export const S9R_CONTENT_VERSION = 3;
 export const RECIPE_CONTENT = "s9.replay.recipe/v1";
 export const VIEW_CONTENT = "s9.replay.view.snapshots/v1";
 export const PARTIAL_DIR = ".partial";
+/** Un keyframe del índice del visor cada N snapshots (como el índice v1: ≈ 3 s a 10 Hz). */
+export const KEYFRAME_EVERY = 30;
 
 /** El sink rechazó un registro porque la cola hacia el disco está llena. */
 export class RecordingBackpressureError extends S9rError {
@@ -136,6 +138,9 @@ export class ReplayRecorder {
   private readonly lastCmd = new Map<string, string>();
   private lastTick = 0;
   private finished = false;
+  /** Vista: nº de snapshots y keyframes (uno cada KEYFRAME_EVERY snapshots) para el índice del visor. */
+  private snapshotCount = 0;
+  private readonly keyframes: { tick: number; snapshotIndex: number }[] = [];
   private waiters: (() => void)[] = [];
 
   private constructor(
@@ -154,10 +159,12 @@ export class ReplayRecorder {
     const rPend = o.recipeMaxPendingBytes ?? 2 * rFrag;
     const vPend = o.viewMaxPendingBytes ?? 2 * vFrag;
     const vRecord = 1 * MiB;
+    // `battleId` de la cabecera = el de la simulación (el motor lo usa al re-simular); en producción
+    // coincide con la fila `battles`. `s9r.battleId` es siempre el de la batalla que lo grabó.
     const header = (h: Record<string, unknown>, content: string) => ({
       ...h,
       s9r: { contentVersion: S9R_CONTENT_VERSION, content, battleId: o.battleId, attempt: o.attempt },
-      battleId: o.battleId,
+      battleId: typeof h.battleId === "string" ? h.battleId : o.battleId,
     });
     const recipeW = await S9rWriter.create(paths.recipePartial, {
       kind: "R",
@@ -266,6 +273,8 @@ export class ReplayRecorder {
   snapshot(frame: unknown): void {
     const t = this.tickOf(frame);
     this.push(this.view, `{"k":"s","t":${t},"f":${JSON.stringify(frame)}}`, t);
+    if (this.snapshotCount % KEYFRAME_EVERY === 0) this.keyframes.push({ tick: t, snapshotIndex: this.snapshotCount });
+    this.snapshotCount++;
   }
   event(ev: unknown): void {
     const t = this.tickOf(ev);
@@ -317,7 +326,10 @@ export class ReplayRecorder {
       await this.discard();
       throw this.fault;
     }
-    const [r, v] = await Promise.allSettled([this.recipe.writer.close({ result }), this.view.writer.close({})]);
+    const [r, v] = await Promise.allSettled([
+      this.recipe.writer.close({ result }),
+      this.view.writer.close({ result: this.viewSummary() }),
+    ]);
     if (this.fault || r.status === "rejected" || v.status === "rejected") {
       this.setFault(r.status === "rejected" ? r.reason : v.status === "rejected" ? v.reason : this.fault);
       await this.discard();
@@ -330,6 +342,20 @@ export class ReplayRecorder {
       recipe: { partial: this.paths.recipePartial, final: this.paths.recipeFinal, summary: r.value },
       view: { partial: this.paths.viewPartial, final: this.paths.viewFinal, summary: v.value },
       ticks: Number(result.ticks ?? this.lastTick),
+    };
+  }
+
+  /**
+   * Resumen de la VISTA (frame `result` del `.s9v`): lo que el índice del visor necesita sin
+   * recorrer el fichero. Los keyframes caben de sobra (≈ 500 a 45 000 ticks).
+   */
+  private viewSummary(): Record<string, unknown> {
+    return {
+      content: VIEW_CONTENT,
+      snapshotCount: this.snapshotCount,
+      keyframeEvery: KEYFRAME_EVERY,
+      keyframes: this.keyframes,
+      lastTick: this.lastTick,
     };
   }
 

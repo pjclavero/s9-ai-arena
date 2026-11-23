@@ -26,8 +26,15 @@
  */
 import { safeLookup } from "../../../packages/game-rules/safe-lookup.js";
 import type { Db } from "../../api/src/db/connection.js";
-import { resimulateWithEvents, type Replay } from "../../arena-engine/src/replay.js";
-import { loadStored } from "./store.js";
+import {
+  ResimulationSink,
+  resimulateFromSource,
+  resimulateWithEvents,
+  type Replay,
+  type ResimulationHooks,
+} from "../../arena-engine/src/replay.js";
+import { isAbsolute, relative, resolve } from "node:path";
+import { RecipeCursor, forEachRecipeCommand } from "./s9r/recipe.js";
 import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "./team-stats.js";
 
@@ -205,9 +212,74 @@ function sanitizeCpuMs(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
+/**
+ * V1 REPLAYS PR-4 · DE DÓNDE salen los datos de las estadísticas. Dos implementaciones:
+ *  - `replayStatsSource(replay)`: un Replay ya en memoria (tests, herramientas);
+ *  - `recipeStatsSource(path)`: la RECETA S9R/1 leída por fragmentos. Re-simula con un
+ *    RecipeCursor (los snapshots y eventos públicos salen de la propia re-simulación, sin
+ *    retenerse) y recorre los comandos en una SEGUNDA pasada por fragmentos. Nunca carga el
+ *    replay entero; no necesita la vista.
+ */
+export interface StatsSource {
+  header: any;
+  result: any;
+  /** Re-simula. `view` recibe cada snapshot y cada evento público EN ORDEN (sin retenerlos). */
+  resimulate(
+    onEvent: (vehicleId: string, e: any) => void,
+    hooks: ResimulationHooks,
+    view: { onSnapshot: (frame: any) => void; onPublicEvent: (ev: any) => void },
+  ): Promise<void>;
+  forEachCommand(cb: (c: { tick: number; vehicleId: string; command: any }) => void): Promise<void>;
+}
+
+export function replayStatsSource(replay: Replay): StatsSource {
+  return {
+    header: replay.header,
+    result: replay.result,
+    async resimulate(onEvent, hooks, view) {
+      await resimulateWithEvents(replay, onEvent, hooks);
+      // Lo GRABADO (igual que antes): snapshots y eventos públicos del replay.
+      for (const snap of replay.snapshots) view.onSnapshot(snap);
+      for (const e of replay.events) view.onPublicEvent(e);
+    },
+    async forEachCommand(cb) {
+      for (const c of replay.commands) cb(c);
+    },
+  };
+}
+
+export async function recipeStatsSource(path: string, opts: { expectBattleId?: string } = {}): Promise<StatsSource> {
+  const probe = await RecipeCursor.open(path, opts);
+  const header = probe.header;
+  const result = probe.result;
+  await probe.close();
+  return {
+    header,
+    result,
+    async resimulate(onEvent, hooks, view) {
+      const cursor = await RecipeCursor.open(path, opts);
+      try {
+        const sink = new ResimulationSink(view);
+        await resimulateFromSource(header, cursor, { onEvent, hooks, sink });
+      } finally {
+        await cursor.close();
+      }
+    },
+    forEachCommand: (cb) => forEachRecipeCommand(path, cb, opts),
+  };
+}
+
 /** Calcula todas las métricas de una batalla desde su Replay (re-simulando). */
 export async function computeBattleStats(replay: Replay, inputs: BattleStatsInputs = {}): Promise<BattleStatsResult> {
-  const header = replay.header;
+  return computeBattleStatsFrom(replayStatsSource(replay), inputs);
+}
+
+/** Igual que `computeBattleStats`, desde cualquier `StatsSource` (receta S9R/1 incluida). */
+export async function computeBattleStatsFrom(
+  src: StatsSource,
+  inputs: BattleStatsInputs = {},
+): Promise<BattleStatsResult> {
+  const header = src.header;
   const byVehicle = new Map<string, BotBattleStats>();
   const moduleIdBySlot = new Map<string, Map<string, string>>(); // vehicleId → slot → moduleId
   const weaponSlots = new Map<string, Set<string>>();
@@ -390,10 +462,36 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     else killer.kills += 1;
   };
 
-  await resimulateWithEvents(replay, onEvent, { onEmission, onObservation, onKill });
+  // Vista (snapshots y eventos públicos) EN STREAMING: distancia, último snapshot y minas.
+  let lastSnapshot: any;
+  const lastPos = new Map<string, { x: number; y: number }>();
+  const minesTriggered: any[] = [];
+  const onSnapshot = (snap: any) => {
+    lastSnapshot = snap;
+    // ---- 4b · Distancia recorrida: suma de tramos entre snapshots públicos
+    // consecutivos (cota inferior de la trayectoria real; un respawn no cuenta).
+    for (const v of snap?.vehicles ?? []) {
+      const s = byVehicle.get(v.id);
+      if (!s) continue;
+      const pos = v.alive && v.position ? v.position : null;
+      const prev = lastPos.get(v.id);
+      if (pos && prev) {
+        const d = Math.hypot(pos.x - prev.x, pos.y - prev.y);
+        // Un salto mayor de 20 m entre snapshots es un respawn, no un recorrido.
+        if (Number.isFinite(d) && d < 20) s.distanceM += d;
+      }
+      if (pos) lastPos.set(v.id, pos);
+      else lastPos.delete(v.id);
+    }
+  };
+  const onPublicEvent = (e: any) => {
+    if (e?.kind === "mine_triggered" && e.position) minesTriggered.push(e);
+  };
+
+  await src.resimulate(onEvent, { onEmission, onObservation, onKill }, { onSnapshot, onPublicEvent });
 
   // La descalificación oficial la dice el RESULTADO (fuente de verdad), no un evento.
-  for (const vehicleId of replay.result.disqualified ?? []) {
+  for (const vehicleId of src.result.disqualified ?? []) {
     const s = byVehicle.get(vehicleId);
     if (s) s.disqualified = true;
   }
@@ -417,12 +515,12 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   const fireAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → intentos
   const moveCommands = new Map<string, number>(); // vehicleId → decisiones con movimiento
   const radioAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → mensajes
-  for (const c of replay.commands) {
+  await src.forEachCommand((c) => {
     const bs = byVehicle.get(c.vehicleId);
     if (bs) bs.decisions += 1;
     // 4v4-STATS · con respawn un bot muerto sigue decidiendo: lo que ordena
     // estando muerto no es un disparo ni un mensaje (antes inflaba `shotsFired`).
-    if (!aliveAt(c.vehicleId, c.tick)) continue;
+    if (!aliveAt(c.vehicleId, c.tick)) return;
     const mv = c.command?.move;
     if (mv && ((Number(mv.throttle) || 0) !== 0 || (Number(mv.steer) || 0) !== 0)) {
       moveCommands.set(c.vehicleId, (moveCommands.get(c.vehicleId) ?? 0) + 1);
@@ -439,11 +537,11 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     for (const slot of c.command?.fire ?? []) v.set(slot, (v.get(slot) ?? 0) + 1);
     if (c.command?.deployMine?.slot) v.set(c.command.deployMine.slot, (v.get(c.command.deployMine.slot) ?? 0) + 1);
     fireAttempts.set(c.vehicleId, v);
-  }
+  });
 
   // ---- 3 · Minas detonadas (evento público, con atribución por posición).
-  for (const e of replay.events) {
-    if (e.kind === "mine_triggered" && e.position) {
+  for (const e of minesTriggered) {
+    {
       // El dueño no viaja en el evento público; se resuelve por la posición de
       // despliegue (las minas no se mueven).
       const owner = mineOwnerByPos.get(`${e.position.x},${e.position.y}`);
@@ -453,8 +551,7 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   }
 
   // ---- 4 · Cierre por bot: vida, precisión, uso de módulos.
-  const duration = replay.result.ticks;
-  const lastSnapshot = replay.snapshots.at(-1);
+  const duration = src.result.ticks;
   // R-RULES · el límite sale de la cabecera (la COPIA con que se jugó), nunca de reglas actuales.
   const respawnRule = header.ruleset?.respawn ?? {};
   const maxRespawns =
@@ -523,35 +620,18 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     }
   }
 
-  // ---- 4b · Distancia recorrida: suma de tramos entre snapshots públicos
-  // consecutivos (cota inferior de la trayectoria real; un respawn no cuenta).
-  const lastPos = new Map<string, { x: number; y: number }>();
-  for (const snap of replay.snapshots) {
-    for (const v of snap?.vehicles ?? []) {
-      const s = byVehicle.get(v.id);
-      if (!s) continue;
-      const pos = v.alive && v.position ? v.position : null;
-      const prev = lastPos.get(v.id);
-      if (pos && prev) {
-        const d = Math.hypot(pos.x - prev.x, pos.y - prev.y);
-        // Un salto mayor de 20 m entre snapshots es un respawn, no un recorrido.
-        if (Number.isFinite(d) && d < 20) s.distanceM += d;
-      }
-      if (pos) lastPos.set(v.id, pos);
-      else lastPos.delete(v.id);
-    }
-  }
+  // (4b · la distancia se acumuló en streaming, en `onSnapshot`.)
   for (const s of byVehicle.values()) s.distanceM = Math.round(s.distanceM * 100) / 100;
 
   // ---- 5 · Por equipo y por mapa.
   // B8 · `emptyDict()`, NO `{}`: `s.team` viene del CONTENIDO DEL REPLAY.
   const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
   for (const s of byVehicle.values()) {
-    const t = (perTeam[s.team] ??= emptyTeamStats(s.team, Number(safeLookup(replay.result.score ?? {}, s.team) ?? 0)));
+    const t = (perTeam[s.team] ??= emptyTeamStats(s.team, Number(safeLookup(src.result.score ?? {}, s.team) ?? 0)));
     addBotToTeam(t, s);
   }
 
-  const winner = replay.result.winner;
+  const winner = src.result.winner;
   let winnerSide: "left" | "right" | null = null;
   if (winner !== "draw") {
     const spawn = header.map.spawns?.find((sp: any) => sp.team === winner);
@@ -623,11 +703,19 @@ export async function runStatsJob(
   dbBattleId: string,
   replayBattleId?: string,
 ): Promise<StatsJobResult> {
-  const loaded = loadStored(dir, replayBattleId ?? dbBattleId);
-  if (!loaded.valid || !loaded.replay) {
-    throw new Error(`No se puede procesar ${dbBattleId}: ${loaded.reason}`);
+  // V1 REPLAYS PR-4 · la receta S9R/1 de la batalla (`battles.replay_ref`), leída por fragmentos.
+  // Otro formato es «sin replay» (corte D-OP-30). Sólo vale una receta DENTRO de `dir`.
+  const row = await db("battles").where({ id: dbBattleId }).first("replay_ref");
+  if (!row?.replay_ref || !String(row.replay_ref).endsWith(".s9r")) {
+    throw new Error(`No se puede procesar ${dbBattleId}: sin replay S9R/1`);
   }
-  const stats = await computeBattleStats(loaded.replay, {
+  const recipePath = String(row.replay_ref);
+  const rel = relative(resolve(dir), resolve(recipePath));
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`No se puede procesar ${dbBattleId}: la receta no está en el directorio de replays`);
+  }
+  const src = await recipeStatsSource(recipePath, { expectBattleId: replayBattleId ?? dbBattleId });
+  const stats = await computeBattleStatsFrom(src, {
     cpuMsByBot: await readMeasuredCpuMs(db, dbBattleId),
   });
 
@@ -653,6 +741,7 @@ export async function runStatsJob(
   await db.transaction(async (trx) => {
     await trx("battle_stats").where({ battle_id: dbBattleId }).delete();
     if (rows.length > 0) await trx("battle_stats").insert(rows);
+    await trx("replay_artifacts").where({ battle_id: dbBattleId }).update({ stats_state: "ready" });
   });
 
   return { battleId: dbBattleId, rowsWritten: rows.length, stats };

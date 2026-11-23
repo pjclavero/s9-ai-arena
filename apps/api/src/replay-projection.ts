@@ -313,3 +313,56 @@ export function projectedEtag(...parts: string[]): string {
     .slice(0, 32);
   return `"${h}"`;
 }
+
+// ------------------------------------------------- V1 REPLAYS PR-4 · proyección en STREAMING
+
+/** Registro de la vista S9R/1 (snapshot o evento público, ids internos). */
+export type ViewStreamRecord = { k: "s"; tick: number; frame: any } | { k: "e"; tick: number; event: any };
+
+/**
+ * Proyección `public_replay` en STREAMING, EXACTAMENTE con el orden de `projectReplayStream`:
+ * cada snapshot se proyecta y, tras él, los eventos con `tick <= snapshot.tick` (por tick y en
+ * orden de llegada); lo que quede, al final. La numeración pública (por primera visibilidad) es
+ * la misma que con el stream completo, pero nada se retiene: cada frame y evento proyectado se
+ * entrega a `out` y se suelta. `stopAfterTick`: se para tras el primer snapshot POSTERIOR a ese
+ * tick (proyectado y con sus eventos vaciados, igual que en el stream completo).
+ */
+export async function projectViewStream(
+  battleId: string,
+  meta: ViewerMeta | null,
+  records: AsyncIterable<ViewStreamRecord>,
+  out: { onSnapshot?: (body: any) => void; onEvent?: (ev: Record<string, unknown>) => void },
+  opts: { stopAfterTick?: number; result?: unknown } = {},
+): Promise<{ mappingId: string; roster: unknown; result: unknown }> {
+  const pr = new AudienceProjector({
+    battleId,
+    audience: PUBLIC_REPLAY,
+    roster: rosterOf({}, meta),
+    mapEntityIds: mapIdsOf({}, meta),
+  });
+  let pending: { t: number; e: any }[] = [];
+  const flush = (upTo: number) => {
+    const keep: { t: number; e: any }[] = [];
+    for (const x of pending) {
+      if (x.t <= upTo) {
+        const p = pr.projectEvent(x.e);
+        if (p) out.onEvent?.(p);
+      } else keep.push(x);
+    }
+    pending = keep;
+  };
+  const done = () => ({ mappingId: pr.mappingId, roster: pr.projectRoster(), result: pr.projectResult(opts.result) });
+  for await (const r of records) {
+    if (r.k === "e") {
+      // Los eventos llegan en orden de tick: se conserva el orden estable de `projectReplayStream`.
+      pending.push({ t: Number(r.event?.tick) || 0, e: r.event });
+      continue;
+    }
+    const tick = Number(r.frame?.tick) || 0;
+    out.onSnapshot?.(pr.project(r.frame).body);
+    flush(tick);
+    if (opts.stopAfterTick !== undefined && tick > opts.stopAfterTick) return done();
+  }
+  flush(Infinity);
+  return done();
+}
