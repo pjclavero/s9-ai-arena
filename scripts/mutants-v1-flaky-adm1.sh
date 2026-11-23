@@ -43,6 +43,11 @@ mutant A1-borrador-con-efecto-de-montaje "$S" "W_ADM1_DRAFT_RACE" \
   '  void seenKey;
   void setSeenKey;
   useEffect(() => setDraft(typeof s.value === "boolean" ? s.value : String(s.value)), [s.value, s.version]);'
+# A2 · se elimina la resincronización del borrador cuando el servidor cambia valor/versión.
+mutant A2-sin-resincronizar-con-el-servidor "$S" "RESINCRONIZA_VIGENTE" \
+  '    setSeenKey(serverKey);
+    setDraft(typeof s.value === "boolean" ? s.value : String(s.value));' \
+  '    setSeenKey(serverKey);'
 
 git diff --quiet -- "$T1" "$T2" "$S" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"
