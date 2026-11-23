@@ -47,6 +47,12 @@ scrape_configs:
     static_configs:
       - targets: ["bot-manager:8084"]
 
+  # V1-P0 · métricas del tournament-worker (heap/RSS, reintentos, trabajos en needs_review,
+  # batallas huérfanas). Sólo existen con S9_METRICS_ENABLED=1; sin ellas el target aparece `down`.
+  - job_name: tournament-worker
+    static_configs:
+      - targets: ["tournament-worker:8086"]
+
   - job_name: postgres
     static_configs:
       - targets: ["postgres-exporter:9187"]

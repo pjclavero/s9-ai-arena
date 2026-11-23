@@ -135,8 +135,8 @@ Edita **como mínimo** (detalle de cada variable en [configuration.md](configura
 
 | Variable | Valor | Por qué |
 |---|---|---|
-| `TAG` | `sha-<commit>` | el ejemplo trae `TAG=latest`, que no existe en el registro |
-| `BACKUP_TAG` | `sha-<commit>` | `backup` no sigue a `TAG`; sin definir apunta a `latest` y falla al recrear |
+| `TAG` | `sha-<commit>` o `v<X.Y.Z>` publicada | el ejemplo la trae **vacía a propósito** (`latest` no existe en el registro); `check-env.mjs` falla si sigue vacía |
+| `BACKUP_TAG` | `sha-<commit>` o `v<X.Y.Z>` publicada | `backup` no sigue a `TAG`; el ejemplo la trae vacía y `check-env.mjs` la exige |
 | `S9_DOMAIN` | p. ej. `arena.example.internal` | sustituye el valor del ejemplo, que es de otra instalación |
 | `GATEWAY_CONF` | `nginx.conf` (TLS en el gateway) o `nginx-behind-proxy.conf` (detrás de proxy) | ver [networking.md](networking.md) |
 | `HTTP_PORT` / `HTTPS_PORT` | p. ej. `8080` sólo HTTP si hay proxy delante | el gateway es el único servicio con puertos publicados |
@@ -147,6 +147,17 @@ Edita **como mínimo** (detalle de cada variable en [configuration.md](configura
 | `DOCKER_PROXY_URL` | `http://docker-proxy.internal:2375` | **sin valor por defecto en `tournament-worker`**: vacío, el worker no reclama batallas y quedan `scheduled`. Se fija una vez instalado y validado el proxy del paso 6 ([configuration.md](configuration.md)) |
 
 Ningún secreto va en `.env`.
+
+**Puerta de etiquetas (obligatoria antes del paso 6).** Con `TAG` o `BACKUP_TAG` vacías, en
+`latest` o con un formato que la CI no publica, esta instalación no puede continuar:
+
+```bash
+node infrastructure/scripts/check-env.mjs --file infrastructure/.env
+# rc 0 = etiquetas válidas; rc 1 = vacía/latest/inválida (nombra la variable); rc 2 = no se pudo leer el fichero
+```
+
+Sólo mira `TAG` y las `*_TAG` que usa el compose del proyecto (otras `*_TAG` del shell, como `CI_COMMIT_TAG`, se ignoran). Valida el valor **efectivo** (una variable exportada en el shell gana a la del fichero, como en
+Compose). Sólo necesita Node ≥ 22.15, sin `npm ci`.
 
 ## 6. Descargar las imágenes
 
@@ -236,11 +247,17 @@ Dentro del contenedor la conexión sale de `PGHOST`/`PGUSER`/`PGDATABASE` + `PGP
 
 ## 9. Primer administrador
 
-**Hoy no existe una vía limpia** ([TD-023](../roadmap/technical-debt.md#td-023)): `bootstrap` no
-crea usuarios, el registro público da los roles `user` y `developer`, y cambiar roles
-(`PUT /users/{id}/roles`) exige ya un administrador. El único camino es registrarse y promover la
-cuenta por SQL. Procedimiento completo, con su bloque DANGER, en
-[first-run.md](first-run.md#3-primer-administrador).
+`bootstrap` no crea usuarios y cambiar roles (`PUT /users/{id}/roles`) exige ya un administrador.
+Para el **primero** hay un comando, sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)):
+
+```bash
+$DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin
+```
+
+
+Con terminal pide la contraseña **sin eco** (dos veces); en scripts, por un fichero `0600` (`--password-file`) o por tubería, **nunca** por argumento;
+cumple la política de registro (≥ 12 caracteres) y el comando se niega si ya hay un
+administrador. Detalle en [first-run.md](first-run.md#3-primer-administrador).
 
 ## 10. Verificar
 
@@ -269,7 +286,7 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 
 | Síntoma | Causa | Remedio |
 |---|---|---|
-| `manifest unknown` al hacer `pull` | `TAG`/`BACKUP_TAG` en `latest` o un sha sin publicar | fija `sha-<commit>` existente para todos |
+| `manifest unknown` al hacer `pull` | `TAG`/`BACKUP_TAG` en `latest` o un sha sin publicar | `check-env.mjs` (paso 5) lo detecta antes; fija `sha-<commit>` existente para todos |
 | `docker compose up -d` no hace nada | falta `--profile production` / `COMPOSE_PROFILES` | añádelo |
 | La API reinicia en bucle: «Sin conexión a PostgreSQL» o secreto ilegible | secretos con dueño distinto de uid 1000 | reejecuta `init-secrets.sh` con `RUNTIME_UID`/`RUNTIME_GID` correctos |
 | `TRUST_PROXY_HOPS inválido` y la API no arranca | valor fuera de `0..8` | corrige `.env` |
@@ -305,7 +322,7 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 | Pasos 3, 5, 6, 7, 8, 10 ejecutados en un entorno aislado (Docker rootless, proyecto distinto, puerto 18080, imágenes `sha-27f70bb…`) | RUNTIME_VERIFIED | script de verificación de la consolidación (no versionado): `bootstrap` ×2 rc=0, gateway `/healthz` ok, `/api/v1/healthz` JSON, registro 201, promoción SQL, login, `pg_roles` = sólo `arena` |
 | `init-secrets.sh` genera esos ficheros con `0400` y dueño 1000:1000 | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/scripts/init-secrets.sh` (función `gen`/`harden_file`), `infrastructure/tests/init-secrets-nofollow.test.ts` |
 | La CI etiqueta `sha-<commit>` y `v<version ?? 0.0.0>`; no `latest` | CODE_VERIFIED + RUNTIME_VERIFIED | `.github/workflows/ci.yml:362,375-377`; GHCR: `latest` 404, `sha-27f70bb…` 200 en los 11 repos de imagen |
-| `.env.example` trae `TAG=latest` y `BACKUP_TAG=latest` | CODE_VERIFIED | `infrastructure/.env.example` sección Imágenes |
+| `.env.example` trae `TAG=` y `BACKUP_TAG=` vacías y `check-env.mjs` las rechaza (rc 1) | CODE_VERIFIED + TEST | `infrastructure/tests/check-env.test.ts` |
 | La API no migra al arrancar; `bootstrap` = migrate + seedContent sin usuarios | CODE_VERIFIED | `apps/api/src/server.ts:15-58`; `apps/api/src/db/cli.ts:56-59` |
 | Sin perfil no arranca ningún servicio | RUNTIME_VERIFIED | `docker compose -f infrastructure/docker-compose.yml config --services` → 0 |
 | `/api/healthz` cae en la web; `/api/v1/healthz` es la API | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-107`; entorno aislado |

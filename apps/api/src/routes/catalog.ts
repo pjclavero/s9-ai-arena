@@ -14,6 +14,7 @@ import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { CatalogImmutableError, getCatalog, importCatalogVersion, listCatalogVersions } from "../services/catalog.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { disabledModes } from "../ctf-practice.js";
 import { mapModeProblems, teamMapProblems, type MapCompatInput } from "../../../../packages/game-rules/map-compat.js";
 import {
   OVERTIME_TECHNICAL_LIMIT_MINUTES,
@@ -190,6 +191,8 @@ export function catalogRoutes(db: Db): Router {
     // servidor) y defectos. Aditivo: los clientes anteriores sólo leen modes/items.
     res.json({
       modes: [...PLATFORM_MODES],
+      // V1 · modos cuya CREACIÓN está bloqueada temporalmente (siguen en `modes`).
+      disabledModes: disabledModes(),
       items,
       // ADR-022 · sólo la versión VIGENTE de cada preset (las anteriores siguen en las
       // copias de las batallas y torneos que las usaron; nunca se editan).
