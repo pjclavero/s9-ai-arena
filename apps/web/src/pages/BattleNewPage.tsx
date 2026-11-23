@@ -272,6 +272,7 @@ export function BattleNewPage(props: { me: Me }) {
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
   // R-RULES · presets/personalizado/clásico. `null` = el preset por defecto del tipo.
+  const [disabledModes, setDisabledModes] = useState<{ mode: string; reason: string }[]>([]);
   const [rulesCatalog, setRulesCatalog] = useState<RulesCatalog>({ presets: [], custom: null });
   const [rulesPick, setRulesPick] = useState<RulesChoice | null>(null);
   useEffect(() => {
@@ -285,6 +286,7 @@ export function BattleNewPage(props: { me: Me }) {
           api<{ items: BotSummary[] }>("GET", "/bots?limit=100"),
           api<{
             modes: string[];
+            disabledModes?: { mode: string; reason: string }[];
             items: RulesetOption[];
             presets?: RulesCatalog["presets"];
             custom?: RulesCatalog["custom"];
@@ -298,11 +300,15 @@ export function BattleNewPage(props: { me: Me }) {
         const relevant = allBots.filter((x) => x.latestPublishedVersion != null || x.ownerId === props.me.id);
         setMaps((m.items ?? []).filter((x) => x.state === "published"));
         setBots(relevant);
-        setModes(r.modes ?? []);
+        // V1 · los modos bloqueados temporalmente (CTF) no se ofrecen para crear.
+        const off = new Set((r.disabledModes ?? []).map((d) => d.mode));
+        const offered = (r.modes ?? []).filter((x) => !off.has(x));
+        setModes(offered);
+        setDisabledModes(r.disabledModes ?? []);
         setRulesets(r.items ?? []);
-        setRulesCatalog({ presets: r.presets ?? [], custom: r.custom ?? null });
+        setRulesCatalog({ disabledModes: r.disabledModes ?? [], presets: r.presets ?? [], custom: r.custom ?? null });
         setTeams((t.items ?? []).filter((x) => x.isMember));
-        if (r.modes?.length) setMode(r.modes[0]);
+        if (offered.length) setMode(offered[0]);
         // Las versiones de cada bot: un fallo aquí no tumba la página (se cae al
         // `latestPublishedVersion` del listado y se dice que no se conocen las demás).
         // Cada bot se apunta al llegar su respuesta: hasta entonces está «cargando».
@@ -971,6 +977,11 @@ export function BattleNewPage(props: { me: Me }) {
           ))}
         </select>
       </label>
+      {disabledModes.map((d) => (
+        <p key={d.mode} className="warn" data-testid={`mode-disabled-${d.mode}`}>
+          {modeName(d.mode)}: no disponible. {d.reason}
+        </p>
+      ))}
       <ModeHelpTip mode={mode} />
       <label>
         Ruleset{" "}

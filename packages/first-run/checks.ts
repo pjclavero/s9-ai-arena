@@ -163,7 +163,7 @@ export const adminIdentityCheck: ReadinessCheck<FirstRunContext> = {
       status: "failed",
       evidence: "la consulta se ejecutó y no hay ninguna cuenta administrativa (0 filas)",
       remedy:
-        "Crea el administrador con el bootstrap del operador. Un comando que termina con éxito sobre 0 filas no creó nada.",
+        "Crea el administrador con `cli.ts create-admin` (contraseña por stdin o fichero 0600). Un comando que termina con éxito sobre 0 filas no creó nada.",
     });
     if (empty) return empty;
     if (r.seededWithRepoCredentials > 0) {

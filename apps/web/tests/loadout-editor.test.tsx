@@ -46,7 +46,7 @@ describe("T7.4 editor de loadout (validador E3 en cliente)", () => {
     }
 
     await waitFor(() => {
-      expect(screen.getByTestId("live-cost").textContent).toContain("1275/1000");
+      expect(screen.getByTestId("live-cost").textContent).toContain("1325/1000"); // B4: 1275 + 50 de la munición embebida (única fuente de coste)
     });
     const violations = screen.getByTestId("violations").textContent!;
     expect(violations).toContain("budget_exceeded");

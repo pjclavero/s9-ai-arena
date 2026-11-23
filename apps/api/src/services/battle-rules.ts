@@ -38,6 +38,7 @@ import {
 } from "../../../../packages/game-rules/battle-rules.js";
 import { resolveVehicle } from "../../../../packages/module-catalog/resolve/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
+import { loadoutCostCredits } from "../../../../packages/module-catalog/validator/index.js";
 import engineDeps from "../../../arena-engine/src/engine-deps.json" with { type: "json" };
 
 export interface BattleRulesInput {
@@ -83,10 +84,10 @@ const hasLimits = (l: { botCredits: unknown; teamCredits: unknown; botMassKg: un
 /**
  * Coste y masa REALES de cada participante: loadout congelado de su versión
  * (`bot_versions.loadout_revision` → `bot_loadouts`) resuelto con el catálogo de la
- * batalla. Coste = chasis + módulos, la MISMA regla que el presupuesto del loadout
- * (`validateLoadoutServerSide`, que no suma la munición embebida). Masa =
- * `resolveVehicle().massKg`: la masa FÍSICA que simula el motor (sí incluye la munición
- * embebida). Nunca valores del cliente.
+ * batalla. Coste = `loadoutCostCredits` (chasis + módulos + munición embebida), la MISMA
+ * regla que el presupuesto del loadout, el editor y el `summary` (B4, una sola fuente).
+ * Masa = `resolveVehicle().massKg`: la masa FÍSICA que simula el motor (también incluye la
+ * munición embebida). Nunca valores del cliente.
  */
 export async function participantTotals(
   db: Db,
@@ -132,12 +133,7 @@ export async function participantTotals(
           : `${label}: no se puede calcular su composición`,
       );
     }
-    // Coste: la MISMA suma que el presupuesto del loadout (validator/validateLoadoutServerSide:
-    // chasis + módulos por id versionado). Si `resolveVehicle` ha resuelto, todos existen.
-    const costCredits = [loadout.chassis, ...loadout.modules.map((m) => m.moduleId)].reduce(
-      (s, id) => s + (findModule(catalog, id)?.costCredits ?? 0),
-      0,
-    );
+    const costCredits = loadoutCostCredits(loadout, catalog);
     out.push({ botId: p.botId, label, team: p.team, costCredits, massKg });
   }
   return out;

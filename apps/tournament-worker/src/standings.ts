@@ -123,7 +123,17 @@ export async function seasonTable(db: Knex, seasonId: string, mode: string): Pro
   const row = (id: string) => {
     let r = rows.get(id);
     if (!r) {
-      r = { id, points: 0, wins: 0, losses: 0, draws: 0, scoreDiff: 0, seed: seeds.get(id) ?? Number.MAX_SAFE_INTEGER };
+      r = {
+        id,
+        points: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        scoreDiff: 0,
+        seed: seeds.get(id) ?? Number.MAX_SAFE_INTEGER,
+        byes: 0,
+        technical: 0,
+      };
       rows.set(id, r);
     }
     return r;

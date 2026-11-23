@@ -18,6 +18,7 @@ import { defineOperation } from "../registry.js";
 import { ApiError, badRequest } from "../errors.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { assertTeamComposition } from "./battles.js";
+import { CTF_DISABLED_CODE, CTF_DISABLED_REASON, CTF_MODE, ctfPracticeEnabledFromEnv } from "../ctf-practice.js";
 import { buildBattleRules, compositionViewer, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import { MAX_BATTLE_PARTICIPANTS } from "../../../../packages/game-rules/battle-rules.js";
@@ -27,6 +28,11 @@ export function battleRulesRoutes(db: Db): Router {
 
   defineOperation(router, "checkBattleRules", async (req, res) => {
     const { mode, rulesetId, mapId, mapVersion, participants, rules } = req.body ?? {};
+    // V1 · MISMO bloqueo temporal de CTF que POST /battles (CTF-02): el veredicto no
+    // puede decir «válido» para algo que la creación va a rechazar.
+    if (mode === CTF_MODE && !ctfPracticeEnabledFromEnv()) {
+      throw new ApiError(400, CTF_DISABLED_CODE, CTF_DISABLED_REASON);
+    }
     const content = await checkBattleContent(db, { mode, rulesetId, mapId, mapVersion });
     if (!content.ok) throw new ApiError(content.status, content.code, content.message);
     if (!Array.isArray(participants) || participants.length < 1 || participants.length > MAX_BATTLE_PARTICIPANTS) {

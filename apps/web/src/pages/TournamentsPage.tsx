@@ -6,7 +6,7 @@
 import { useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
-import { MODE_NAME, TOURNAMENT_FORMAT_NAME, TOURNAMENT_STATE_NAME, labelOf, modeName } from "../battle-result.js";
+import { TOURNAMENT_FORMAT_NAME, TOURNAMENT_STATE_NAME, labelOf, modeName } from "../battle-result.js";
 
 export interface Tournament {
   id: string;
@@ -25,11 +25,16 @@ export interface Tournament {
 
 // UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
 const FORMATS = Object.keys(TOURNAMENT_FORMAT_NAME);
-const MODES = Object.keys(MODE_NAME);
+/** B3 (V1, D-OP-9) · Modos que se pueden elegir al CREAR un torneo: Captura la bandera y Control de zona
+ *  quedan fuera (la API responde 400 `tournament_mode_not_allowed`). Espejo de TOURNAMENT_ALLOWED_MODES
+ *  (apps/tournament-worker/src/tournament-modes.ts); un test de deriva los compara. Los torneos antiguos con
+ *  esos modos se siguen LISTANDO con su nombre (modeName), sólo no se ofrecen para crear. */
+export const TOURNAMENT_CREATE_MODES = ["deathmatch", "team_deathmatch"];
+const MODES = TOURNAMENT_CREATE_MODES;
 /** V1-T1 · Los torneos «Por equipos» sólo se pueden crear con reglas NvN (preset `team_deathmatch`):
  *  la API rechaza CTF en torneos y, sin preset, el torneo nace sin tamaño de equipo, no se monta
  *  «Inscribir equipo» y los equipos no se pueden seleccionar. */
-const TEAM_TOURNAMENT_MODE = "team_deathmatch";
+export const TEAM_TOURNAMENT_MODE = "team_deathmatch";
 
 export function TournamentsPage(_props: { me: Me }) {
   const [list, reload] = useResource(() => api<{ items: Tournament[] }>("GET", "/tournaments"), []);

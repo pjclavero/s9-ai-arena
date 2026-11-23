@@ -348,10 +348,10 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
       format: "round_robin",
       mode: "deathmatch",
       rulesetId: DEFAULT_RULESET_ID,
-      budgetCredits: 600,
+      budgetCredits: 950,
     });
     expect(t.status).toBe(201);
-    expect(t.body.budgetCredits).toBe(600);
+    expect(t.body.budgetCredits).toBe(950);
     expect(t.body.state).toBe("open");
 
     const entry = await request(app)

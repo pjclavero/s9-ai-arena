@@ -30,6 +30,11 @@ import {
   type TournamentFormat,
 } from "./formats.js";
 import { enqueueJob, type JobRow } from "./queue.js";
+import {
+  TOURNAMENT_MODE_NOT_ALLOWED,
+  isTournamentModeAllowed,
+  tournamentModeNotAllowedReason,
+} from "./tournament-modes.js";
 import type { HandlerContext } from "./worker.js";
 
 // ------------------------------------------------------- commit-reveal (T9.4)
@@ -256,6 +261,12 @@ export async function handleGenerateSchedule(job: JobRow, ctx: HandlerContext): 
   // #288 · un torneo cancelado no genera calendario: no-op limpio (el trabajo termina `done`).
   if (t.state === "cancelled") return;
   if (t.state !== "closed") throw new Error(`generate_schedule: el torneo está en estado '${t.state}', no 'closed'`);
+  // B3 (V1, D-OP-9) · un torneo anterior a la restricción con un modo excluido (CTF / control de zona)
+  // NO genera calendario ni batallas: fallo técnico claro (el trabajo agota reintentos y pasa a revisión).
+  // No se toca ningún dato: el torneo sigue visible tal cual.
+  if (!isTournamentModeAllowed(t.mode)) {
+    throw new Error(`generate_schedule: ${TOURNAMENT_MODE_NOT_ALLOWED}: ${tournamentModeNotAllowedReason(t.mode)}`);
+  }
 
   // --- Validaciones del 19.1: reglas, catálogo, mapas y semillas -------------
   if (!(await db("rulesets").where({ id: t.ruleset_id }).first())) {

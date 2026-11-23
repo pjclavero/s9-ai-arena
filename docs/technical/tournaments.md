@@ -122,6 +122,17 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 - `GET /standings?mode=&seasonId=` es anónimo, con caché de 60 s. `seasonId` ausente, vacío o `"current"` ⇒ la temporada activa; la respuesta la indica en la cabecera `X-S9-Season`. La web `#/ranking` no envía `seasonId` y ya ve lo que escribe el worker.
 - El worker puntúa en `tournaments.season_id` resuelto con la misma función (`ratings.ts`).
 
+### Bye (D-OP-24)
+
+El bye (descanso del round robin/liga/suizo con n impar, o hueco del cuadro inicial de una eliminatoria) es un **avance o descanso administrativo**, no un resultado jugado:
+
+- No es victoria, derrota ni empate; **suma 0 puntos** (también en el suizo) y no cuenta como partida disputada.
+- No genera batalla ni Elo (`applyBattleRating` además lo rechaza explícitamente si apareciera una batalla colgada de un match bye).
+- En eliminatorias sigue permitiendo avanzar (el match se cierra con el que tiene rival como ganador administrativo).
+- `leagueTable` y `GET /tournaments/{id}/team-standings` lo cuentan en su propia columna `byes`; `wins`/`losses`/`draws` son sólo lo jugado y `played = wins + draws + losses`. Los enfrentamientos sin resultado deportivo (match `failed` o sólo batallas de límite técnico) van en `technical` y no puntúan. La clasificación de temporada ya excluía el bye y los técnicos: **torneo y temporada usan ahora el mismo criterio** (V-D-E sólo de lo jugado).
+- **Suizo, equidad:** (1) nadie repite descanso mientras alguien no haya descansado (el candidato es el de menos byes; a igualdad, el peor clasificado); (2) entre candidatos, se descarta el que obligaría a repetir rival si otro lo evita; (3) desempate de la clasificación: puntos y seed. **Buchholz no está implementado** (la cabecera de `formats.ts` lo documentaba por error; deuda).
+- **Sin migración ni reinterpretación del histórico:** la producción tiene 0 byes (inventario de sólo lectura), así que ningún torneo existente cambia de resultado. La tabla del torneo se calcula al vuelo; cualquier torneo futuro con byes usa esta regla. `tournaments.champion_bot_id` no se recalcula.
+
 ### Política de clasificación
 
 `STANDINGS_POLICY = official_played_not_reverted` (`apps/tournament-worker/src/standings.ts`): la clasificación de (temporada, modo) y su Elo dependen de resultados oficiales realmente disputados, no del estado administrativo del torneo. `seasonTable` parte de las **batallas**, no de las inscripciones ni de `matches.state`, y sólo cuenta las que son:
@@ -139,7 +150,7 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 | `finished` | normal |
 | `cancelled` | conserva lo jugado, salvo lo revertido |
 
-- **Unidad de V-D-E:** el enfrentamiento, resuelto con `seriesOutcome` (`results.ts`, el mismo criterio que el cierre del match); 3/1/0 puntos. Un **bye no suma V-D-E** (decisión del operador); `leagueTable`, la tabla interna del torneo, sí lo cuenta como victoria.
+- **Unidad de V-D-E:** el enfrentamiento, resuelto con `seriesOutcome` (`results.ts`, el mismo criterio que el cierre del match); 3/1/0 puntos. Un **bye no suma V-D-E** (decisión del operador) y, desde D-OP-24, **tampoco lo cuenta la tabla interna del torneo** (ver «Bye»).
 - **Orden:** puntos, enfrentamientos directos, diferencia de puntuación, mejor seed de inscripción, id.
 - **Reversión:** `revertOfficialBattle(db, battleId)` (transacción con la batalla bloqueada) pone `battles.reverted_at` y devuelve el Elo si lo tenía. No depende del Elo: si el job `update_standings` llega después, `applyBattleRating` ve la marca y no aplica Elo. Devuelve `reverted`, `already_reverted` o `nothing_to_revert` (no existe, no es oficial, no ha terminado o es técnica). Hoy ningún endpoint ni job la invoca; sólo los tests.
 - **Concurrencia del Elo:** `applyBattleRating` bloquea la batalla y luego las filas de `ratings` (por `bot_id`); la reversión sigue el mismo orden de cerrojos.
@@ -180,13 +191,13 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 - **Cierre concurrente**: `close-entries` bloquea la fila del torneo desde #289; un segundo cierre simultáneo espera y recibe `409 illegal_transition` (`tournament-cancel.test.ts`, TC-R4). El resto de [TD-013](../roadmap/technical-debt.md#td-013) no cambia.
 - **Propiedad del torneo (#291)**: gestionar un torneo (cerrar inscripciones, dry-run, excluir inscripciones ajenas no elegibles) exige ser quien lo creó (`created_by`) o staff (moderator+), además del rol del contrato. La regla única es `canManageTournament` (`services/tournament-access.ts`); `GET /tournaments/{id}` la expone como `viewerCanManage` (`Cache-Control: private, no-store`) y la web sólo muestra «Cerrar inscripciones» si es `true`. Un torneo sin `created_by` (creador borrado) sólo lo gestiona el staff. Inscribir o retirar el propio bot sigue siendo del dueño del bot.
 - **Fallos de infraestructura**: una batalla `failed (infrastructure)` ya no deja la serie sin cerrar. Con la política definitiva de `failed` (#299/#301, `apps/tournament-worker/src/results.ts`, `settleMatch`) el match se cierra cuando todos sus juegos son terminales: si todos fallaron queda `failed` sin puntos ni Elo (en eliminatoria avanza el mejor seed; si es la final, el torneo termina sin campeón) y el torneo llega siempre a `finished`. Test: `tournament-lifecycle-failed.test.ts`.
-- **CTF y control de zona (fuera de V1)**: `POST /tournaments` los acepta con reglas clásicas (sólo el preset CTF se rechaza, `services/battle-rules.ts`); el scheduler etiqueta los bandos `A`/`B` y el motor exige bandera y base por equipo o zonas de captura, así que la única batalla falla al arrancar y el torneo termina sin campeón. Caracterización: `v1-tournament-ctf-zone.e2e.test.ts` (PR #317, abierto). Decisión D-OP-2: no se anuncian como funcionales.
+- **CTF y control de zona (fuera de V1)**: B3 (D-OP-9): `POST /tournaments` responde 400 `tournament_mode_not_allowed` (con `mode` y `allowedModes`) para esos modos, con reglas clásicas, preset o personalizadas, y también si el `rulesetId` resuelve a un ruleset del motor de otro modo. La lista permitida (`deathmatch`, `team_deathmatch`) sale de una única fuente, `apps/tournament-worker/src/tournament-modes.ts` (la web la espeja con un test de deriva). No existe otra vía de alta (sin PATCH, clonado ni plantillas de torneo). Torneos ya creados: no se tocan y se leen igual; `closeEntries` responde 409 `tournament_mode_not_allowed` (no congela nada); un torneo ya `closed` con modo excluido puede cancelarse (única ampliación de `CANCELLABLE_TOURNAMENT_STATES`); y `generate_schedule` falla con `tournament_mode_not_allowed` (según la clase del fallo, reintenta hasta `max_attempts` o pasa directo a `needs_review`), sin batallas ni cambio de estado. Política propuesta y NO aplicada: guarda equivalente en `run_battle` para batallas de torneos antiguos ya programadas (toca `queue.ts`/claim, de #329). Antes el scheduler etiquetaba los bandos `A`/`B` y el motor exige bandera y base por equipo o zonas de captura, así que la única batalla fallaba al arrancar. Pruebas: `v1-b3-tournament-modes.test.ts`, `v1-tournament-ctf-zone.e2e.test.ts`.
 - **Mínimo de inscritos**: `close-entries` responde `409 not_enough_participants` con menos de 2 inscritos (2 equipos en `teams`), con `required`, `current` y `unit` (`routes/tournaments.ts`).
 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: crear, inscribir y cerrar (con `organizer`); generación del calendario; ejecución automática; cuadro; Elo; commit-reveal de semillas. Verificado de punta a punta en navegador real en un entorno aislado, con versiones publicadas forzadas en la BD (auditoría).
-- **PARCIAL**: los formatos distintos de `single_elimination` solo tienen pruebas a nivel de generador (`formats.test.ts`); una batalla `failed` ya no bloquea el cierre (política #299, TD-015 mejorada); CTF y control de zona no son jugables en torneos y quedan fuera de V1 ([TD-070](../roadmap/technical-debt.md#td-070)).
+- **PARCIAL**: los formatos distintos de `single_elimination` solo tienen pruebas a nivel de generador (`formats.test.ts`); una batalla `failed` ya no bloquea el cierre (política #299, TD-015 mejorada); CTF y control de zona no son jugables en torneos, se rechazan al crear (B3) y quedan fuera de V1 ([TD-070](../roadmap/technical-debt.md#td-070)).
 - **PENDIENTE**: selector de pool de mapas y resto de parámetros en la web, clasificación por torneo en la web.
 
 ## Documentación relacionada
