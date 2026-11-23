@@ -57,19 +57,22 @@ Los roles son jerárquicos (rango = posición en la lista):
 
 `visitor` (0) < `user` (1) < `developer` (2) < `team_captain` (3) < `organizer` (4) < `moderator` (5) < `admin` (6)
 
+- **El rol `organizer` no es staff** (D-OP-7, #306): `isReplayStaff` empieza en `moderator` (`replay-access.ts:57-59`). Sobre lo ajeno, el organizador sólo ve las batallas, los replays y el nombre de los bots de los torneos que creó (`replay-access.ts:70-78,90-96`; `battle-access.ts:114-115,157-166`); nunca ficha ni código de un bot privado, ni diagnóstico ni CPU (`canSeeBotDiagnostics`, `battle-access.ts:88-91`). Moderador y admin no cambian.
 - Cada operación del contrato `apps/api/openapi.yaml` declara `x-min-role`. `defineOperation` aplica el guard, de modo que un usuario pasa si **su rango máximo** ≥ el exigido.
 - Un `x-min-role` desconocido hace que el arranque falle (fallo cerrado contra `__proto__` y erratas).
 - Reparto actual en el contrato:
 
   | `x-min-role` | Operaciones |
   |---|---|
-  | `visitor` | 29 |
-  | `user` | 16 |
-  | `developer` | 5 |
-  | `team_captain` | 2 |
+  | `visitor` | 36 |
+  | `user` | 30 |
+  | `developer` | 6 |
+  | `team_captain` | 4 |
   | `organizer` | 5 |
   | `moderator` | 1 |
-  | `admin` | 7 |
+  | `admin` | 24 |
+
+  Recuento de las líneas `x-min-role:` de `apps/api/openapi.yaml` en `main` eb1a3f9f (106). Las 5 de `organizer` son `generateMap`, `createTournament`, `closeEntries`, `cancelTournament` y `dryRunTournament`; el alcance «sólo mis torneos» no lo expresa `x-min-role` sino la comprobación de propiedad de cada ruta.
 
 - Además del rol, las rutas de bots, loadouts, versiones y código fuente comprueban la **propiedad**: con un recurso ajeno responden 404, sin revelar que existe.
 - **Excepción conocida:** la composición de participantes de una batalla no comprueba la propiedad ni la visibilidad ([TD-005](../roadmap/technical-debt.md#td-005)).
@@ -155,8 +158,8 @@ Procedimientos: [docs/operations/configuration.md](../operations/configuration.m
 | Flag | Por defecto | Gate | Estado |
 |---|---|---|---|
 | `S9_ENABLE_REAL_BATTLE_RUNS` | apagada ⇒ `/run` responde 503 `real_battle_runs_disabled` | Carril I: reserva atómica `scheduled→running`, techo de concurrencia (`S9_MAX_CONCURRENT_REAL_BATTLE_RUNS`, por defecto 1), auditoría y liberación en caso de error. **Pendientes:** I-8 (cierre del ciclo de vida) e I-9 (autorización por propiedad) | **no activar** antes de resolver [TD-002](../roadmap/technical-debt.md#td-002) |
-| `S9_PUBLIC_SPECTATE_ENABLED` | apagada | Carril J: la API no emite tickets anónimos y el gateway de espectador rechaza los marcados `anon` | en `main`; **no desplegado** ([TD-006](../roadmap/technical-debt.md#td-006)) |
-| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, deja **leer** (anónimos incluidos) **sólo** la proyección pública de competición de las batallas `finished` mostrables en público (todos sus bots `public` o torneo con `broadcast`); nunca el replay crudo ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
+| `S9_PUBLIC_SPECTATE_ENABLED` | apagada (sólo **valor inicial**: el control vigente es la fila `app_runtime_settings`, Administración → «Acceso público / Broadcast») | Carril J: la API no emite tickets anónimos y el gateway de espectador rechaza los marcados `anon` | en `main`; **no desplegado** ([TD-006](../roadmap/technical-debt.md#td-006)) |
+| `S9_PUBLIC_REPLAYS_ENABLED` | apagada (sólo **valor inicial**; el control vigente es la fila `app_runtime_settings`) | encendido el acceso público, deja **leer** (anónimos incluidos) **sólo** la proyección pública de competición de las batallas `finished` mostrables en público (todos sus bots `public` o torneo con `broadcast`); nunca el replay crudo ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
 | `S9_METRICS_ENABLED` | apagada ⇒ `/metrics` no existe | — | — |
 
 La activación es una decisión de operación con sus precondiciones. Ver
@@ -166,7 +169,7 @@ La activación es una decisión de operación con sus precondiciones. Ver
 
 [TD-004](../roadmap/technical-debt.md#td-004), PR #158 (incluida en el commit de producción RC5.5).
 
-- **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `organizer`), el dueño de un bot participante, los miembros del equipo de un bot participante no `private`, y cualquiera sólo si `S9_PUBLIC_REPLAYS_ENABLED` está encendida y todos los bots de la batalla son públicos.
+- **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `moderator`: `moderator`, `admin`); un `organizer` **sólo** en las batallas de los torneos que él creó (`tournaments.created_by`, #306/D-OP-7: el rol es global, lo que concede sobre datos ajenos no); el dueño de un bot participante; los miembros del equipo de un bot participante no `private`; y cualquiera sólo si el acceso público a replays está activado (ajuste `app_runtime_settings`; `S9_PUBLIC_REPLAYS_ENABLED` sólo siembra el valor inicial) y la batalla es mostrable en público.
 - **Crudo restringido (PRE-1)**: leer no es recibir el fichero. El replay crudo (semilla, comandos de los bots con radio y minas, loadouts) sólo lo reciben `moderator`/`admin` y el dueño de **todos** los bots de la batalla, con la bandera pública activada o no. Todos los demás lectores, y toda ruta pública, reciben la proyección saneada de competición (`apps/api/src/replay-projection.ts`): lo que ya ve un espectador, sin nada que permita re-simular la batalla. La decisión es del backend; el visor no la toma.
 - **Sin enumeración**: «no autorizado», «no existe» e «id inválido» responden el mismo 404 (código, `error` y mensaje).
 - **Borde cerrado**: el gateway responde 404 en `/replays` y `/replays/*` (cualquier método). El replay-service sólo es alcanzable por la red interna `platform`; su ingesta sigue autenticada con `replay_ingest_secret`.

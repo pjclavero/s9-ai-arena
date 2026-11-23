@@ -12,6 +12,7 @@ import { createApp } from "./app.js";
 import { createPasswordReset } from "./routes/auth.js";
 import { FailedLoginGuard } from "./middleware/rate-limit.js";
 import { hashToken } from "./auth/tokens.js";
+import { MIN_PASSWORD_LENGTH } from "./auth/passwords.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -202,6 +203,36 @@ describe("T7.2 2FA TOTP (DoD: activación y uso E2E; la recuperación no lo elud
     // y está almacenado hasheado, nunca en claro
     const stored = await h.db("password_resets").where({ user_id: user.id }).first();
     expect(stored.token_hash).toBe(hashToken(token));
+  });
+});
+
+describe("H15 · /auth/reset aplica la política de contraseñas", () => {
+  it("reset con newPassword de 11 caracteres: 400, el mensaje cita el mínimo y el token NO se consume", async () => {
+    const [u] = await h
+      .db("users")
+      .insert({ email: "h15-reset@test.local", password_hash: "x", display_name: "H15" })
+      .returning("*");
+    const token = await createPasswordReset(h.db, u.id);
+    const corta = "a".repeat(MIN_PASSWORD_LENGTH - 1);
+    expect(corta).toHaveLength(11);
+
+    const r = await request(app).post("/auth/reset").send({ token, newPassword: corta });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toContain(`≥${MIN_PASSWORD_LENGTH}`);
+
+    // el token sigue sin usar y la contraseña no cambió
+    const stored = await h
+      .db("password_resets")
+      .where({ token_hash: hashToken(token) })
+      .first();
+    expect(stored.used_at).toBeNull();
+    expect((await h.db("users").where({ id: u.id }).first()).password_hash).toBe("x");
+
+    // y con una contraseña válida el MISMO token todavía sirve
+    const ok = await request(app)
+      .post("/auth/reset")
+      .send({ token, newPassword: "a".repeat(MIN_PASSWORD_LENGTH) });
+    expect(ok.status).toBe(204);
   });
 });
 
