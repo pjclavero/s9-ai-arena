@@ -13,7 +13,7 @@
  * puede cambiar cada uno (sólo su dueño). La web no repite esa regla: pinta lo que
  * el servidor responde, también los no autorizados y los parciales.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Me } from "../api.js";
 import { Panel, Button, ErrorState, FormError } from "../ui/primitives.js";
 import { TeamBulkPublic } from "./TeamBulkPublic.js";
@@ -59,6 +59,8 @@ export function TeamsPage(props: { me: Me }) {
   // EQ4 · maestro-detalle: equipo seleccionado (id) o el que se acaba de crear (nombre).
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectName, setSelectName] = useState<string | null>(null);
+  // Nº de clics del usuario sobre la lista: un efecto aplazado NO puede pisar una elección posterior.
+  const picks = useRef(0);
 
   async function refresh() {
     setLoadError(null);
@@ -97,10 +99,14 @@ export function TeamsPage(props: { me: Me }) {
   // entonces no se toca la selección (si no, el efecto la pisaría antes de tiempo).
   const named = selectName ? mine.find((t) => t.name === selectName) : undefined;
   const current = named ?? mine.find((t) => t.id === selectedId) ?? mine[0];
+  const picksAtRender = picks.current;
   useEffect(() => {
     if (named) {
-      setSelectedId(named.id);
-      setSelectName(null);
+      // Si el usuario eligió otro equipo tras esta renderización, su clic manda (y ya limpió selectName).
+      if (picks.current === picksAtRender) {
+        setSelectedId(named.id);
+        setSelectName(null);
+      }
     } else if (!selectName && current && current.id !== selectedId) {
       // Forma funcional: este efecto puede ejecutarse DESPUÉS de que el usuario haya pulsado
       // otro equipo (efectos pasivos aplazados). Con `setSelectedId(current.id)` pisaba esa
@@ -170,6 +176,7 @@ export function TeamsPage(props: { me: Me }) {
                     aria-current={current?.id === t.id ? "true" : undefined}
                     data-testid={`team-item-${t.name}`}
                     onClick={() => {
+                      picks.current += 1;
                       setSelectName(null);
                       setSelectedId(t.id);
                     }}

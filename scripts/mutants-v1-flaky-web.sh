@@ -7,9 +7,10 @@ cd "$(dirname "$0")/.."
 T1=apps/web/tests/team-enrollment-entry.test.tsx
 T2=apps/web/tests/eq4-teams-select-race.test.tsx
 S=apps/web/src/pages/TeamsPage.tsx
+E=apps/web/src/pages/TournamentTeamEntry.tsx
 RUN() { nice -n 19 node node_modules/vitest/vitest.mjs run --maxWorkers=1 "$T1" "$T2" apps/web/tests/eq4-bots-teams.test.tsx 2>&1; }
 
-if ! git diff --quiet -- "$T1" "$T2" "$S"; then echo "ABORTA: hay cambios sin commitear"; exit 2; fi
+if ! git diff --quiet -- "$T1" "$T2" "$S" "$E"; then echo "ABORTA: hay cambios sin commitear"; exit 2; fi
 out=$(RUN); rc=$?
 echo "BASE rc=$rc"
 [ "$rc" -eq 0 ] || { echo "línea base NO verde"; echo "$out" | tail -20; exit 1; }
@@ -34,16 +35,25 @@ EOF
   fi
 }
 
-# W1 · pickTeam deja de esperar a la opción cargada (vuelve la carrera select-antes-del-fetch).
+# W1 · pickTeam abre la puerta y no espera a la opción cargada (select antes del fetch).
 mutant W1-pickteam-sin-esperar-opcion "$T1" "W287_SUBMIT" \
-  '  await screen.findByRole("option", { name: "Bastión" });
-  await user.selectOptions(screen.getByLabelText("equipo a inscribir"), "tm1");' \
-  '  await user.selectOptions(await screen.findByLabelText("equipo a inscribir"), "tm1");'
+  '  openGate();
+  // Espera a la CONDICIÓN: la opción del equipo ya cargada (no basta con que exista el select).
+  await screen.findByRole("option", { name: "Bastión" });' \
+  '  // (mutante) sin abrir la puerta ni esperar la opción'
 # W2 · el efecto de selección inicial vuelve a pisar el clic del usuario.
 mutant W2-efecto-pisa-seleccion "$S" "W_EQ4_SELECT_RACE" \
   'setSelectedId((prev) => (prev !== null && mine.some((t) => t.id === prev) ? prev : fallback));' \
   'setSelectedId(fallback);'
+# W3 · se quita el filtro isMember de TournamentTeamEntry (la ausencia de «Ajeno» no puede ser vacua).
+mutant W3-sin-filtro-ismember "$E" "W287_TEAM_FORM" \
+  '(page?.items ?? []).filter((t) => t.isMember)' \
+  '(page?.items ?? [])'
+# W4 · la rama `named` vuelve a pisar el clic posterior del usuario.
+mutant W4-named-pisa-seleccion "$S" "W_EQ4_NAMED_RACE" \
+  'if (picks.current === picksAtRender) {' \
+  'if (true) {'
 
-git diff --quiet -- "$T1" "$T2" "$S" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
+git diff --quiet -- "$T1" "$T2" "$S" "$E" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"
 exit "$fail"

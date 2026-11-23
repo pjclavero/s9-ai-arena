@@ -60,4 +60,30 @@ describe("EQ4 · la selección del usuario no la pisa el efecto de selección in
     expect(await screen.findByRole("region", { name: "equipo Azules" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "equipo Rojos" })).toBeNull();
   });
+
+  it("W_EQ4_NAMED_RACE · tras crear un equipo, pulsar otro antes del efecto aplazado respeta el clic", async () => {
+    let created = false;
+    apiMock.mockImplementation((m: string, p: string) => {
+      if (m === "POST" && p === "/teams") {
+        created = true;
+        return Promise.resolve({});
+      }
+      if (p.startsWith("/teams"))
+        return Promise.resolve({
+          items: created
+            ? [mk("t1", "Rojos"), mk("t2", "Azules"), mk("t3", "Nuevos")]
+            : [mk("t1", "Rojos"), mk("t2", "Azules")],
+        });
+      return Promise.resolve({ items: [] });
+    });
+    render(<TeamsPage me={ME as never} />);
+    const list = await screen.findByTestId("teams-list");
+    fireEvent.change(screen.getByLabelText("nuevo-equipo"), { target: { value: "Nuevos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear equipo" }));
+    await screen.findByRole("region", { name: "equipo Nuevos" });
+    fireEvent.click(within(list).getByRole("button", { name: "Azules" }));
+    await new Promise((r) => setTimeout(r, 200)); // deja vencer los efectos aplazados
+    expect(screen.getByRole("region", { name: "equipo Azules" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "equipo Nuevos" })).toBeNull();
+  });
 });
