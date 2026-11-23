@@ -752,11 +752,27 @@ describe("T21 cualquier excepción en append cuenta como registro perdido", () =
     await w.abort();
   });
 
-  it("T21 close() no admite la segunda vía truncated:true: el fichero sale completo", async () => {
+  it("T21 close() RECHAZA cualquier opción truncated (true o false), deja el escritor sin sellar y sólo closeTruncated marca truncado", async () => {
     const f = p("noway.s9r");
     const w = await newWriter(f);
     await w.append(rec(0), 0);
-    const sum = await w.close({ truncated: true } as any);
+    await expect(w.close({ truncated: true } as any)).rejects.toMatchObject({ code: "use_close_truncated" });
+    await expect(w.close({ truncated: false } as any)).rejects.toMatchObject({ code: "use_close_truncated" });
+    // no se selló nada: el escritor sigue abierto y utilizable
+    await w.append(rec(1), 1);
+    const sum = await w.closeTruncated();
+    expect(sum.truncated).toBe(true);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+    expect(v.records).toBe(2);
+  });
+
+  it("T21 sin la opción, close() sigue sellando como completo", async () => {
+    const f = p("plain.s9r");
+    const w = await newWriter(f);
+    await w.append(rec(0), 0);
+    const sum = await w.close({ result: { ok: true } });
     expect(sum.truncated).toBe(false);
     expect((await verifyFile(f)).ok).toBe(true);
   });
@@ -831,5 +847,35 @@ describe("T22 publishPair es atómico", () => {
       { expectSha256: goodR, expectViewSha256: goodV },
     );
     expect(existsSync(vf) && existsSync(rf)).toBe(true);
+  });
+});
+
+describe("T23 requireProof: publicar exige la prueba de un cierre correcto", () => {
+  it("T23 sin expectSha256 se rechaza; con el sha del summary se publica; un sha ajeno se rechaza", async () => {
+    const part = p("proof.s9r.part");
+    const w = await newWriter(part);
+    for (let t = 0; t < 5; t++) await w.append(rec(t), t);
+    const sum = await w.close({ result: {} });
+    const fin = p("proof.s9r");
+    await expect(publishPartial(part, fin, { requireProof: true })).rejects.toMatchObject({ code: "proof_required" });
+    expect(existsSync(fin)).toBe(false);
+    await expect(publishPartial(part, fin, { requireProof: true, expectSha256: "0".repeat(64) })).rejects.toMatchObject(
+      {
+        code: "file_sha_mismatch",
+      },
+    );
+    await publishPartial(part, fin, { requireProof: true, expectSha256: sum.sha256 });
+    expect((await verifyFile(fin)).ok).toBe(true);
+  });
+
+  it("T23 un escritor cuyo cierre falló no tiene summary: aunque el fichero conservara un pie válido, no se publica con requireProof", async () => {
+    const part = p("noproof.s9r.part");
+    // todo falla a la vez salvo que el original queda: simulamos el caso copiando un completo sobre el .part
+    await completeFile(part);
+    await expect(
+      publishPair({ recipe: { partial: part, final: p("noproof.s9r") } }, { requireProof: true }),
+    ).rejects.toMatchObject({
+      code: "proof_required",
+    });
   });
 });

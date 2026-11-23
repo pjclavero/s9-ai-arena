@@ -11,6 +11,11 @@
  *  - Fallos de disco (ENOSPC/EIO/otros): `StorageError` tipado; el escritor queda
  *    envenenado y no acepta más datos (clase B).
  *  - El sha256 del fichero entero se calcula mientras se escribe.
+ *  - Si `fsync`/`close` fallan tras escribir el pie, el fichero se deja SIN PIE (ftruncate; si no,
+ *    pwrite sobre el pie; si no, se intenta borrar) y se aparta a `.failed`. Si TODO falla a la
+ *    vez (fsync, ftruncate, pwrite, rename y unlink) el original puede conservar un pie válido con
+ *    nombre `.part`: el escritor queda `failed` y el llamante NO debe publicar (sin `summary` de
+ *    cierre). `publish*` con `requireProof` + `expectSha256` lo impide.
  */
 import { createHash, type Hash } from "node:crypto";
 import { dirname } from "node:path";
@@ -323,6 +328,11 @@ export class S9rWriter {
   close(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
     return this.enqueue(async () => {
       this.assertOpen();
+      // La ÚNICA forma de marcar un fichero como truncado es `closeTruncated()`. Cualquier opción
+      // `truncated` en `close()` se rechaza y el escritor queda sin sellar (sigue abierto).
+      if ("truncated" in (opts as object)) {
+        throw new WriterStateError("use_close_truncated", "close() no admite `truncated`: usa closeTruncated()");
+      }
       // Tras un límite de bytes faltan registros: cerrar como «completo» sería mentir.
       this.assertNotLimited();
       await this.flushInner();

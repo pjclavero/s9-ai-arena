@@ -512,8 +512,8 @@ export const MUTANTS = [
     id: "M-T21-close-truncated-option",
     group: "T21",
     file: "writer.ts",
-    find: "return this.finish({ result: opts.result, truncated: false });",
-    replace: "return this.finish(opts as any);",
+    find: 'if ("truncated" in (opts as object)) {',
+    replace: "if (false) {",
   },
   {
     id: "M-T22-no-rollback",
@@ -528,6 +528,13 @@ export const MUTANTS = [
     file: "publish.ts",
     find: "await assertPublishable(pair.view.partial, opts, opts.expectViewSha256);",
     replace: "await assertPublishable(pair.view.partial, opts, undefined);",
+  },
+  {
+    id: "M-T23-proof-not-required",
+    group: "T23",
+    file: "publish.ts",
+    find: "if (opts.requireProof && expectSha256 === undefined) {",
+    replace: "if (false) {",
   },
 ];
 

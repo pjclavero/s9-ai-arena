@@ -21,6 +21,14 @@ export interface PublishOptions {
   expectSha256?: string;
   /** Idem para la VISTA en `publishPair` (los hashes son por fichero). */
   expectViewSha256?: string;
+  /**
+   * Exige la PRUEBA de un cierre correcto: el `sha256` del `summary` que devolvió
+   * `close()`/`closeTruncated()` (en `expectSha256` y, en un par, `expectViewSha256`).
+   * Un escritor que falló (fsync, etc.) no tiene `summary`, así que nunca puede publicarse con
+   * esta opción, aunque un fallo total del almacenamiento hubiera dejado un pie válido con
+   * nombre `.part`. PR-3 debe usarla siempre.
+   */
+  requireProof?: boolean;
 }
 
 /**
@@ -32,6 +40,9 @@ export interface PublishOptions {
  * del servicio (no hay protección frente a otro proceso que lo reemplace entre ambos pasos).
  */
 export async function assertPublishable(path: string, opts: PublishOptions = {}, expectSha256?: string): Promise<void> {
+  if (opts.requireProof && expectSha256 === undefined) {
+    throw new WriterStateError("proof_required", "se exige la prueba del cierre (sha256 del summary) para publicar");
+  }
   if (path.endsWith(".failed")) throw new CorruptReplayError("failed_file", "fichero .failed: nunca se publica");
   if (!path.endsWith(".part")) throw new WriterStateError("not_a_partial", "sólo se publican orígenes .part");
   const r = await S9rReader.open(path, { fs: opts.fs });
