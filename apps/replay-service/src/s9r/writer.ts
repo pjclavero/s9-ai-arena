@@ -32,6 +32,7 @@ import {
 } from "./format.js";
 import {
   InvalidRecordError,
+  S9rError,
   ReplayLimitExceededError,
   StorageError,
   WriterStateError,
@@ -180,7 +181,17 @@ export class S9rWriter {
   append(record: string | object, tick: number): Promise<void> {
     const seq = this.seq++;
     if (this.lostFromSeq !== null) return Promise.reject(this.lossError());
-    const line = typeof record === "string" ? record : JSON.stringify(record);
+    // Cualquier registro que no se pueda serializar (undefined, circular, BigInt, función…) es un
+    // registro PERDIDO: mismo tratamiento que el resto de rechazos, y siempre una promesa rechazada.
+    let line: string;
+    try {
+      const l = typeof record === "string" ? record : JSON.stringify(record);
+      if (typeof l !== "string") throw new TypeError("el registro no es serializable a JSON");
+      line = l;
+    } catch (cause) {
+      this.markLoss(seq);
+      return Promise.reject(new InvalidRecordError("bad_record", "registro no serializable", { cause }));
+    }
     // Cota de memoria aunque el llamador no espere cada append: la cola no crece sin límite.
     const bytes = Buffer.byteLength(line) + 1;
     if (this.queuedBytes + bytes > this.o.maxQueuedBytes) {
@@ -208,7 +219,22 @@ export class S9rWriter {
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(fn);
+    // Una excepción inesperada dentro de una operación (no tipada) deja el escritor FALLIDO:
+    // nunca se sigue como si nada con un estado interno dudoso.
+    const guarded = async (): Promise<T> => {
+      try {
+        return await fn();
+      } catch (e) {
+        if (e instanceof S9rError) throw e;
+        const err = toStorageError(e, "internal");
+        this.state = "failed";
+        this.failure = err;
+        this.lines = [];
+        this.bufBytes = 0;
+        throw err;
+      }
+    };
+    const run = this.tail.then(guarded);
     this.tail = run.catch(() => undefined);
     return run;
   }
@@ -294,13 +320,14 @@ export class S9rWriter {
    * Si el volcado del último fragmento excede el tope, lanza `ReplayLimitExceededError`
    * y el escritor sigue abierto: el llamador decide (p. ej. `closeTruncated`).
    */
-  close(opts: { result?: Record<string, unknown>; truncated?: boolean } = {}): Promise<WriteSummary> {
+  close(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
     return this.enqueue(async () => {
       this.assertOpen();
       // Tras un límite de bytes faltan registros: cerrar como «completo» sería mentir.
       this.assertNotLimited();
       await this.flushInner();
-      return this.finish(opts);
+      // Sólo `closeTruncated()` puede sellar un fichero como truncado: no hay segunda vía.
+      return this.finish({ result: opts.result, truncated: false });
     });
   }
 
@@ -374,6 +401,8 @@ export class S9rWriter {
     }
     const indexOffset = this.offset;
     await this.rawWrite(indexFrame, "write_index");
+    // Desde aquí empieza el pie: si el fsync/close falla se recorta justo en este offset.
+    this.footerOffset = this.offset;
     const footer = encodeFooter({
       flags: FLAG_COMPLETE | (opts.truncated ? FLAG_TRUNCATED : 0),
       indexOffset,
@@ -403,7 +432,36 @@ export class S9rWriter {
   }
 
   private failedPath: string | null = null;
+  private footerOffset = -1;
+  /**
+   * El fsync/close falló con el pie ya escrito. La defensa está en el CONTENIDO, no en el nombre:
+   *  1. ftruncate hasta el offset del pie -> el fichero queda SIN PIE (incompleto para cualquier lector);
+   *  2. si no se puede, pwrite de ceros sobre el pie (magic invalidado);
+   *  3. si tampoco, se intenta borrarlo.
+   * Después se intenta apartarlo a `.failed` (y los lectores rechazan ese nombre).
+   */
   private async quarantine(): Promise<void> {
+    let invalid = false;
+    if (this.footerOffset >= 0) {
+      try {
+        await this.file.truncate(this.footerOffset);
+        invalid = true;
+      } catch {
+        try {
+          await this.file.writeAt(Buffer.alloc(FOOTER_LEN), this.footerOffset);
+          invalid = true;
+        } catch {
+          /* se intentará borrar */
+        }
+      }
+      if (invalid) {
+        try {
+          await this.file.sync();
+        } catch {
+          /* best effort */
+        }
+      }
+    }
     try {
       await this.file.close();
     } catch {
@@ -413,7 +471,13 @@ export class S9rWriter {
       await this.fs.rename(this.path, this.path + ".failed");
       this.failedPath = this.path + ".failed";
     } catch {
-      /* si no se puede apartar, abort() lo borrará */
+      if (!invalid) {
+        try {
+          await this.fs.unlink(this.path);
+        } catch {
+          /* sin más recursos: abort() lo intentará de nuevo */
+        }
+      }
     }
   }
 

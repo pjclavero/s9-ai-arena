@@ -8,6 +8,10 @@ export interface S9rFile {
   write(buf: Buffer): Promise<void>;
   read(buf: Buffer, position: number): Promise<number>;
   sync(): Promise<void>;
+  /** ftruncate del fichero abierto para escribir. */
+  truncate(len: number): Promise<void>;
+  /** pwrite en una posición concreta. */
+  writeAt(buf: Buffer, position: number): Promise<void>;
   close(): Promise<void>;
   size(): Promise<number>;
 }
@@ -39,6 +43,10 @@ function wrap(fh: import("node:fs").promises.FileHandle): S9rFile {
       return bytesRead;
     },
     sync: () => fh.sync(),
+    truncate: (len) => fh.truncate(len),
+    async writeAt(buf, position) {
+      await fh.write(buf, 0, buf.length, position);
+    },
     close: () => fh.close(),
     size: async () => (await fh.stat()).size,
   };

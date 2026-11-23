@@ -1,81 +1,99 @@
 /**
- * S9R/1 · Publicación atómica y SIN sobrescribir, desde `.partial`.
+ * S9R/1 · Publicación atómica y SIN sobrescribir, desde `.part`.
  *
  * `link(parcial, final)` crea el nombre final de forma atómica y falla con EEXIST si ya
- * existe (a diferencia de `rename`, que sobrescribe en POSIX y obligaría a un `exists()`
- * previo con carrera). Después se quita el nombre del parcial: ambos apuntan al mismo
- * fichero ya cerrado y con `fsync`, así que en ningún instante hay un final incompleto.
- * Si el `unlink` del parcial falla, la publicación YA ocurrió: queda un parcial redundante
- * que el janitor limpia (no se devuelve error). Se sincroniza el directorio del destino y,
- * si es otro, también el del parcial.
- *
- * Con vista y receta se publica la VISTA primero y la RECETA al final: la presencia de la
- * receta equivale a «publicado». Si falla la receta, la vista queda sin receta (huérfana:
- * la limpia el janitor; no se deshace aquí).
+ * existe (a diferencia de `rename`, que sobrescribe). Los parciales sólo se quitan cuando
+ * todos los finales están enlazados y sincronizados; si algo falla se deshacen los enlaces
+ * ya hechos (TODO o NADA, también en `publishPair`). Con vista y receta se enlaza la VISTA
+ * primero y la RECETA al final: la presencia de la receta equivale a «publicado».
  */
 import { dirname } from "node:path";
-import { TruncatedReplayError, WriterStateError, toStorageError } from "./errors.js";
+import { CorruptReplayError, TruncatedReplayError, WriterStateError, toStorageError } from "./errors.js";
+import { nodeFs, type S9rFs } from "./io.js";
 import { S9rReader } from "./reader.js";
 import { verifyFile } from "./verify.js";
-import { nodeFs, type S9rFs } from "./io.js";
 
 export interface PublishOptions {
   fs?: S9rFs;
   /** Publica un replay truncado (clase A). Explícito y nombrado: por defecto se rechaza. */
   allowTruncated?: boolean;
-  /** Si se indica, se hace una verificación COMPLETA (sha256 del fichero incluido) antes de publicar. */
+  /** Si se indica, verificación COMPLETA (sha256 del fichero incluido) de la RECETA antes de publicar. */
   expectSha256?: string;
+  /** Idem para la VISTA en `publishPair` (los hashes son por fichero). */
+  expectViewSha256?: string;
 }
 
 /**
- * Comprobación OBLIGATORIA previa a publicar: el fichero debe tener pie válido, índice y
- * cadena correctos (`S9rReader.open`). Un parcial sin pie o corrupto lanza
- * `IncompleteReplayError`/`CorruptReplayError`; un truncado lanza `TruncatedReplayError`
+ * Comprobación OBLIGATORIA previa a publicar. El origen debe ser un `.part` (nunca un `.failed`
+ * ni un fichero final). Después `S9rReader.open` (pie, índice, cadena): un parcial sin pie da
+ * `IncompleteReplayError`, uno corrupto `CorruptReplayError`, un truncado `TruncatedReplayError`
  * salvo `allowTruncated`. Con `expectSha256` se verifica además todo el fichero.
+ * Nota: la comprobación y el `link` son por ruta; el directorio de parciales debe ser privado
+ * del servicio (no hay protección frente a otro proceso que lo reemplace entre ambos pasos).
  */
-export async function assertPublishable(path: string, opts: PublishOptions = {}): Promise<void> {
+export async function assertPublishable(path: string, opts: PublishOptions = {}, expectSha256?: string): Promise<void> {
+  if (path.endsWith(".failed")) throw new CorruptReplayError("failed_file", "fichero .failed: nunca se publica");
+  if (!path.endsWith(".part")) throw new WriterStateError("not_a_partial", "sólo se publican orígenes .part");
   const r = await S9rReader.open(path, { fs: opts.fs });
   const truncated = r.truncated;
   await r.close();
   if (truncated && !opts.allowTruncated) {
     throw new TruncatedReplayError("truncated", "replay truncado: no se publica sin allowTruncated explícito");
   }
-  if (opts.expectSha256 !== undefined) {
-    const v = await verifyFile(path, {
-      fs: opts.fs,
-      expectSha256: opts.expectSha256,
-      allowTruncated: opts.allowTruncated,
-    });
+  if (expectSha256 !== undefined) {
+    const v = await verifyFile(path, { fs: opts.fs, expectSha256, allowTruncated: opts.allowTruncated });
     if (!v.ok) throw v.error!;
   }
 }
 
-export async function publishPartial(partialPath: string, finalPath: string, opts: PublishOptions = {}): Promise<void> {
-  const fs = opts.fs ?? nodeFs;
-  await assertPublishable(partialPath, opts);
-  await linkPublish(partialPath, finalPath, fs);
+interface Item {
+  partial: string;
+  final: string;
 }
 
-async function linkPublish(partialPath: string, finalPath: string, fs: S9rFs): Promise<void> {
+/**
+ * Publica TODOS o NINGUNO: se enlazan los finales en orden; si falla uno (o el fsync de
+ * directorios), se deshacen los ya enlazados (los parciales siguen intactos) y se relanza.
+ * Los parciales sólo se quitan cuando todo está enlazado y sincronizado.
+ */
+async function publishAll(items: Item[], fs: S9rFs): Promise<void> {
+  const linked: string[] = [];
+  const rollback = async () => {
+    for (const f of linked.reverse()) await fs.unlink(f).catch(() => undefined);
+  };
   try {
-    await fs.link(partialPath, finalPath);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code === "EEXIST") {
-      throw new WriterStateError("final_exists", "el destino ya existe: no se sobrescribe un replay publicado");
+    for (const it of items) {
+      try {
+        await fs.link(it.partial, it.final);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code === "EEXIST") {
+          throw new WriterStateError("final_exists", "el destino ya existe: no se sobrescribe un replay publicado");
+        }
+        throw toStorageError(e, "link");
+      }
+      linked.push(it.final);
     }
-    throw toStorageError(e, "link");
-  }
-  try {
-    await fs.unlink(partialPath);
-  } catch {
-    /* publicado; el parcial redundante lo limpia el janitor */
-  }
-  try {
-    await fs.syncDir(dirname(finalPath));
-    if (dirname(partialPath) !== dirname(finalPath)) await fs.syncDir(dirname(partialPath));
+    try {
+      for (const dir of new Set(items.map((i) => dirname(i.final)))) await fs.syncDir(dir);
+    } catch (e) {
+      throw toStorageError(e, "fsync_dir");
+    }
   } catch (e) {
-    throw toStorageError(e, "fsync_dir");
+    await rollback();
+    throw e;
   }
+  // Publicado: quitar los nombres de los parciales (si falla, el janitor limpia el redundante).
+  for (const it of items) await fs.unlink(it.partial).catch(() => undefined);
+  const partialDirs = new Set(
+    items.map((i) => dirname(i.partial)).filter((d) => !items.some((i) => dirname(i.final) === d)),
+  );
+  for (const dir of partialDirs) await fs.syncDir(dir).catch(() => undefined);
+}
+
+export async function publishPartial(partialPath: string, finalPath: string, opts: PublishOptions = {}): Promise<void> {
+  const fs = opts.fs ?? nodeFs;
+  await assertPublishable(partialPath, opts, opts.expectSha256);
+  await publishAll([{ partial: partialPath, final: finalPath }], fs);
 }
 
 export interface PublishPair {
@@ -83,14 +101,13 @@ export interface PublishPair {
   view?: { partial: string; final: string };
 }
 
-/** Vista primero, receta al final. */
+/** Vista primero, receta al final; ATÓMICO: si algo falla no queda publicado ninguno de los dos. */
 export async function publishPair(pair: PublishPair, opts: PublishOptions = {}): Promise<void> {
   const fs = opts.fs ?? nodeFs;
-  // Se comprueban AMBOS antes de publicar nada: no se deja una vista publicada con receta inválida.
-  if (pair.view) await assertPublishable(pair.view.partial, { ...opts, expectSha256: undefined });
-  await assertPublishable(pair.recipe.partial, opts);
-  if (pair.view) await linkPublish(pair.view.partial, pair.view.final, fs);
-  await linkPublish(pair.recipe.partial, pair.recipe.final, fs);
+  // Se comprueban AMBOS antes de publicar nada.
+  if (pair.view) await assertPublishable(pair.view.partial, opts, opts.expectViewSha256);
+  await assertPublishable(pair.recipe.partial, opts, opts.expectSha256);
+  await publishAll([...(pair.view ? [pair.view] : []), pair.recipe], fs);
 }
 
 /** Borra un parcial; idempotente. */

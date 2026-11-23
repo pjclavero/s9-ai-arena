@@ -55,6 +55,9 @@ export class S9rReader {
 
   static async open(path: string, opts: OpenOptions = {}): Promise<S9rReader> {
     const fs = opts.fs ?? nodeFs;
+    // Un fichero apartado por fallo de escritura nunca se lee como replay.
+    if (path.endsWith(".failed"))
+      throw new CorruptReplayError("failed_file", "fichero marcado como fallido (.failed): no es un replay");
     let file: S9rFile;
     try {
       file = await fs.openRead(path);

@@ -3,19 +3,31 @@
  * fabricados, bombas de descompresión, permisos y publicación sin sobrescribir.
  * Cada test T<n> tiene mutante nombrado en apps/replay-service/scripts/s9r-mutants.mjs.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CorruptReplayError,
   InvalidRecordError,
+  S9rError,
   ReplayLimitExceededError,
   S9rReader,
   S9rWriter,
   WriterStateError,
   nodeFs,
   IncompleteReplayError,
+  StorageIoError,
   TruncatedReplayError,
   publishPair,
   publishPartial,
@@ -574,5 +586,250 @@ describe("T19 durabilidad y resultado", () => {
     expect(e).toBeInstanceOf(CorruptReplayError);
     expect(e.code).toBe("bad_json");
     await r.close();
+  });
+});
+
+// ---------------------------------------------------------------- ronda 3
+const io = (code = "EIO") => Object.assign(new Error(`${code} simulado`), { code });
+
+/** fs cuyo fichero falla en fsync y, opcionalmente, en rename / truncate / writeAt. */
+function fsyncFails(opts: { rename?: boolean; truncate?: boolean; writeAt?: boolean } = {}): S9rFs {
+  return {
+    ...nodeFs,
+    create: async (path) => {
+      const fh = await nodeFs.create(path);
+      return {
+        ...fh,
+        sync: async () => {
+          throw io();
+        },
+        truncate: async (n) => {
+          if (opts.truncate) throw io();
+          return fh.truncate(n);
+        },
+        writeAt: async (b, pos) => {
+          if (opts.writeAt) throw io();
+          return fh.writeAt(b, pos);
+        },
+      };
+    },
+    rename: async (a, b) => {
+      if (opts.rename) throw io();
+      return nodeFs.rename(a, b);
+    },
+  };
+}
+const asPart = (from: string): string => {
+  const to = p("copy.part");
+  copyFileSync(from, to);
+  return to;
+};
+
+describe("T20 un fallo de fsync nunca deja algo con aspecto de completo", () => {
+  it("T20 fsync falla: el fichero apartado (.failed) no verifica, no se lee ni se publica; su contenido no tiene pie", async () => {
+    const f = p("g.s9r.part");
+    const w = await newWriter(f, {}, fsyncFails());
+    await w.append(rec(1), 1);
+    await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "storage_io" });
+    expect(existsSync(f)).toBe(false);
+    expect(existsSync(f + ".failed")).toBe(true);
+    const v = await verifyFile(f + ".failed");
+    expect(v.ok).toBe(false);
+    await expect(S9rReader.open(f + ".failed")).rejects.toMatchObject({ code: "failed_file" });
+    await expect(publishPartial(f + ".failed", p("g.final.s9r"))).rejects.toMatchObject({ code: "failed_file" });
+    // y aunque alguien le quite el nombre .failed, el CONTENIDO ya no tiene pie
+    const copy = asPart(f + ".failed");
+    const vc = await verifyFile(copy);
+    expect(vc.ok).toBe(false);
+    expect(vc.error).toBeInstanceOf(IncompleteReplayError);
+    await expect(publishPartial(copy, p("g2.final.s9r"))).rejects.toBeInstanceOf(IncompleteReplayError);
+    await w.abort();
+    expect(existsSync(f + ".failed")).toBe(false);
+  });
+
+  it("T20 fsync Y rename fallan: el original queda en su nombre pero SIN PIE: no verifica ni se publica", async () => {
+    const f = p("h.s9r.part");
+    const w = await newWriter(f, {}, fsyncFails({ rename: true }));
+    await w.append(rec(1), 1);
+    await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "storage_io" });
+    expect(existsSync(f)).toBe(true);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.error).toBeInstanceOf(IncompleteReplayError);
+    await expect(publishPartial(f, p("h.final.s9r"))).rejects.toBeInstanceOf(IncompleteReplayError);
+    await w.abort();
+  });
+
+  it("T20 fsync, rename y ftruncate fallan: el pie se invalida con pwrite y tampoco verifica ni se publica", async () => {
+    const f = p("i.s9r.part");
+    const w = await newWriter(f, {}, fsyncFails({ rename: true, truncate: true }));
+    await w.append(rec(1), 1);
+    await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "storage_io" });
+    expect(existsSync(f)).toBe(true);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.error).toBeInstanceOf(IncompleteReplayError);
+    await expect(publishPartial(f, p("i.final.s9r"))).rejects.toBeInstanceOf(IncompleteReplayError);
+    await w.abort();
+  });
+
+  it("T20 todo falla (rename, ftruncate y pwrite): se intenta borrar el fichero", async () => {
+    const f = p("j.s9r.part");
+    const w = await newWriter(f, {}, fsyncFails({ rename: true, truncate: true, writeAt: true }));
+    await w.append(rec(1), 1);
+    await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "storage_io" });
+    expect(existsSync(f)).toBe(false);
+    await w.abort();
+  });
+
+  it("T20 closeTruncated con fallo de fsync: igual de seguro", async () => {
+    const f = p("k.s9r.part");
+    const w = await newWriter(f, {}, fsyncFails({ rename: true }));
+    await w.append(rec(1), 1);
+    await expect(w.closeTruncated({})).rejects.toMatchObject({ code: "storage_io" });
+    expect((await verifyFile(f)).ok).toBe(false);
+    await expect(publishPartial(f, p("k.final.s9r"), { allowTruncated: true })).rejects.toBeInstanceOf(
+      IncompleteReplayError,
+    );
+    await w.abort();
+  });
+
+  it("T20 un fichero completo cuyo nombre acaba en .failed no se lee, no se verifica y no se publica", async () => {
+    const good = p("ok.s9r.part");
+    await completeFile(good);
+    const bad = p("ok.s9r.failed");
+    renameSync(good, bad);
+    const v = await verifyFile(bad);
+    expect(v.ok).toBe(false);
+    expect(v.error!.code).toBe("failed_file");
+    await expect(publishPartial(bad, p("ok.final.s9r"))).rejects.toMatchObject({ code: "failed_file" });
+  });
+
+  it("T20 sólo se publican orígenes .part: un fichero con otro nombre se rechaza", async () => {
+    const f = p("origin.s9r");
+    await completeFile(f);
+    await expect(publishPartial(f, p("origin.final.s9r"))).rejects.toMatchObject({ code: "not_a_partial" });
+    expect(existsSync(f)).toBe(true);
+  });
+});
+
+describe("T21 cualquier excepción en append cuenta como registro perdido", () => {
+  const circular: any = {};
+  circular.self = circular;
+  const cases: [string, unknown][] = [
+    ["undefined", undefined],
+    ["referencia circular", circular],
+    ["BigInt", { n: 10n }],
+    ["función", () => 1],
+  ];
+  for (const [name, value] of cases) {
+    it(`T21 ${name}: append devuelve una promesa rechazada (no lanza), y close() ya no puede sellar`, async () => {
+      const f = p("ser.s9r.part");
+      const w = await newWriter(f);
+      await w.append(rec(0), 0);
+      let pr: Promise<void> | undefined;
+      expect(() => {
+        pr = w.append(value as any, 1);
+      }).not.toThrow();
+      await expect(pr).rejects.toMatchObject({ code: "bad_record" });
+      await w.append(rec(2), 2).catch(() => undefined);
+      await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "records_dropped" });
+      const sum = await w.closeTruncated();
+      expect(sum.records).toBe(1);
+      expect(sum.truncated).toBe(true);
+    });
+  }
+
+  it("T21 una excepción interna inesperada deja el escritor fallido (no sigue con estado dudoso)", async () => {
+    const f = p("internal.s9r.part");
+    const w = await newWriter(f);
+    await w.append(rec(0), 0);
+    (w as any).lines = 5; // estado corrupto: flush revienta con TypeError
+    await expect(w.flushFragment()).rejects.toBeInstanceOf(S9rError);
+    await expect(w.append(rec(1), 1)).rejects.toMatchObject({ code: "storage_error" });
+    await expect(w.close()).rejects.toMatchObject({ code: "storage_error" });
+    await expect(w.closeTruncated()).rejects.toMatchObject({ code: "storage_error" });
+    await w.abort();
+  });
+
+  it("T21 close() no admite la segunda vía truncated:true: el fichero sale completo", async () => {
+    const f = p("noway.s9r");
+    const w = await newWriter(f);
+    await w.append(rec(0), 0);
+    const sum = await w.close({ truncated: true } as any);
+    expect(sum.truncated).toBe(false);
+    expect((await verifyFile(f)).ok).toBe(true);
+  });
+});
+
+describe("T22 publishPair es atómico", () => {
+  async function pair(tag: string) {
+    const vp = p(`${tag}-v.s9v.part`);
+    const rp = p(`${tag}-r.s9r.part`);
+    await completeFile(vp);
+    await completeFile(rp);
+    return { vp, rp, vf: p(`${tag}.s9v`), rf: p(`${tag}.s9r`) };
+  }
+
+  it("T22 receta con final_exists: no queda publicada la vista y los parciales siguen en su sitio", async () => {
+    const { vp, rp, vf, rf } = await pair("atom1");
+    writeFileSync(rf, "ya existe");
+    await expect(
+      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }),
+    ).rejects.toMatchObject({ code: "final_exists" });
+    expect(existsSync(vf)).toBe(false);
+    expect(readFileSync(rf, "utf8")).toBe("ya existe");
+    expect(existsSync(vp)).toBe(true);
+    expect(existsSync(rp)).toBe(true);
+  });
+
+  it("T22 error de E/S al enlazar la receta: se deshace la vista", async () => {
+    const { vp, rp, vf, rf } = await pair("atom2");
+    const fs2: S9rFs = {
+      ...nodeFs,
+      link: async (a, b) => {
+        if (b === rf) throw io();
+        return nodeFs.link(a, b);
+      },
+    };
+    await expect(
+      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 }),
+    ).rejects.toBeInstanceOf(StorageIoError);
+    expect(existsSync(vf)).toBe(false);
+    expect(existsSync(rf)).toBe(false);
+    expect(existsSync(vp) && existsSync(rp)).toBe(true);
+  });
+
+  it("T22 fallo del fsync de directorio tras enlazar: se deshacen ambos", async () => {
+    const { vp, rp, vf, rf } = await pair("atom3");
+    const fs2: S9rFs = {
+      ...nodeFs,
+      syncDir: async () => {
+        throw io();
+      },
+    };
+    await expect(
+      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 }),
+    ).rejects.toBeInstanceOf(StorageIoError);
+    expect(existsSync(vf) || existsSync(rf)).toBe(false);
+    expect(existsSync(vp) && existsSync(rp)).toBe(true);
+  });
+
+  it("T22 expectViewSha256 se verifica también para la vista y expectSha256 para la receta", async () => {
+    const { vp, rp, vf, rf } = await pair("atom4");
+    const goodR = (await verifyFile(rp)).sha256!;
+    const goodV = (await verifyFile(vp)).sha256!;
+    await expect(
+      publishPair(
+        { recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } },
+        { expectSha256: goodR, expectViewSha256: "0".repeat(64) },
+      ),
+    ).rejects.toMatchObject({ code: "file_sha_mismatch" });
+    expect(existsSync(vf) || existsSync(rf)).toBe(false);
+    await publishPair(
+      { recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } },
+      { expectSha256: goodR, expectViewSha256: goodV },
+    );
+    expect(existsSync(vf) && existsSync(rf)).toBe(true);
   });
 });

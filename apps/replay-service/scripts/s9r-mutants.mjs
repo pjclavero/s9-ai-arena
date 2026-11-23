@@ -445,10 +445,94 @@ export const MUTANTS = [
     find: 'parseJson(await this.readFragment(i), "resultado")',
     replace: 'JSON.parse((await this.readFragment(i)).toString("utf8"))',
   },
+  {
+    id: "M-T20-no-truncate",
+    group: "T20",
+    file: "writer.ts",
+    find: "await this.file.truncate(this.footerOffset);",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T20-no-pwrite-fallback",
+    group: "T20",
+    file: "writer.ts",
+    find: "await this.file.writeAt(Buffer.alloc(FOOTER_LEN), this.footerOffset);",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T20-no-unlink-last-resort",
+    group: "T20",
+    file: "writer.ts",
+    find: "await this.fs.unlink(this.path);",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-T20-reader-accepts-failed",
+    group: "T20",
+    file: "reader.ts",
+    find: 'if (path.endsWith(".failed"))',
+    replace: "if (false)",
+  },
+  {
+    id: "M-T20-publish-accepts-failed",
+    group: "T20",
+    file: "publish.ts",
+    find: 'if (path.endsWith(".failed")) throw new CorruptReplayError("failed_file", "fichero .failed: nunca se publica");',
+    replace: "",
+  },
+  {
+    id: "M-T20-publish-any-name",
+    group: "T20",
+    file: "publish.ts",
+    find: 'if (!path.endsWith(".part"))',
+    replace: "if (false)",
+  },
+  {
+    id: "M-T21-undefined-serializes",
+    group: "T21",
+    file: "writer.ts",
+    find: 'if (typeof l !== "string") throw new TypeError("el registro no es serializable a JSON");',
+    replace: "",
+  },
+  {
+    id: "M-T21-serialization-not-lossy",
+    group: "T21",
+    file: "writer.ts",
+    find: "} catch (cause) {\n      this.markLoss(seq);",
+    replace: "} catch (cause) {",
+  },
+  {
+    id: "M-T21-internal-not-poisoned",
+    group: "T21",
+    file: "writer.ts",
+    find: 'const err = toStorageError(e, "internal");',
+    replace: "throw e;",
+  },
+  {
+    id: "M-T21-close-truncated-option",
+    group: "T21",
+    file: "writer.ts",
+    find: "return this.finish({ result: opts.result, truncated: false });",
+    replace: "return this.finish(opts as any);",
+  },
+  {
+    id: "M-T22-no-rollback",
+    group: "T22",
+    file: "publish.ts",
+    find: "for (const f of linked.reverse()) await fs.unlink(f).catch(() => undefined);",
+    replace: "void linked;",
+  },
+  {
+    id: "M-T22-view-sha-ignored",
+    group: "T22",
+    file: "publish.ts",
+    find: "await assertPublishable(pair.view.partial, opts, opts.expectViewSha256);",
+    replace: "await assertPublishable(pair.view.partial, opts, undefined);",
+  },
 ];
 
 function run(group) {
-  const test = /^T1[0-9]$/.test(group) ? HARD : TEST;
+  const test = /^T(1[0-9]|2[0-9])$/.test(group) ? HARD : TEST;
   const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", test, "-t", `${group} `, "--maxWorkers=1"], {
     cwd: root,
     encoding: "utf8",
