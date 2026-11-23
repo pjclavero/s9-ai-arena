@@ -55,6 +55,7 @@ test.describe("@fase1 EQ4 navegación y organización", () => {
       "Auditoría",
       "Roles y permisos",
       "Streaming", // EQ5b
+      "Ajustes", // ADM-1
     ]);
     await sub.getByRole("link", { name: "Roles y permisos" }).click();
     await expect(adm.getByRole("heading", { name: "Roles y permisos" })).toBeVisible();

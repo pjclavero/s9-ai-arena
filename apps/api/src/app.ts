@@ -24,6 +24,9 @@ import { replayRoutes } from "./routes/replays.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { RuntimeSettingsStore } from "./runtime-settings.js";
 import { runtimeSettingsRoutes } from "./routes/runtime-settings.js";
+import { adminSettingsRoutes } from "./routes/admin-settings.js";
+import { adminOperationsRoutes } from "./routes/admin-operations.js";
+import { SYSTEM_SETTINGS_REGISTRY, type SettingsRegistry } from "../../../packages/system-settings/registry.js";
 import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
@@ -109,6 +112,13 @@ export interface AppConfig {
    * (por defecto, de STREAM_SECRETS_PUBLIC_KEY_FILE). Inyectables en tests.
    */
   streamer?: StreamerClient;
+  /**
+   * ADM-1 · Registro de ajustes del sistema y entorno que actúa de techo duro (inyectables en
+   * tests; en producción, el registro de código y `process.env`).
+   */
+  systemSettings?: { registry?: SettingsRegistry; env?: NodeJS.ProcessEnv };
+  /** ADM-1 · Límite de intentos de `confirmAdminOperation` por admin (por defecto, compartido en BD). */
+  adminConfirmLimiter?: RateLimiterLike;
   streamingPublicKey?: () => { pem: string; kid: string } | null;
   broadcastBaseUrl?: string;
 }
@@ -195,6 +205,19 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(adminRoutes(cfg.db));
   const streamer = cfg.streamer ?? streamerClientFromEnv();
   app.use(runtimeSettingsRoutes(cfg.db, runtimeSettings, { streamerConfigured: streamer.configured }));
+  // ADM-1 · ajustes del sistema y órdenes administrativas (sólo admin).
+  app.use(
+    adminSettingsRoutes(cfg.db, {
+      registry: cfg.systemSettings?.registry ?? SYSTEM_SETTINGS_REGISTRY,
+      env: cfg.systemSettings?.env,
+    }),
+  );
+  app.use(
+    adminOperationsRoutes(cfg.db, {
+      confirmLimiter:
+        cfg.adminConfirmLimiter ?? new SharedRateLimiter(cfg.db, "admin.confirm", { max: 10, windowMs: 5 * 60_000 }),
+    }),
+  );
   app.use(
     streamingRoutes(cfg.db, {
       streamer,

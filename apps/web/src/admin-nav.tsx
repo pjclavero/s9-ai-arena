@@ -75,6 +75,14 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
     ],
     minRole: "admin",
   },
+  // ADM-1 · Administración → Ajustes del sistema (claves registradas, en caliente / con reinicio).
+  {
+    href: "#/settings",
+    label: "Ajustes",
+    testId: "settings-link",
+    operations: ["listSystemSettings", "updateSystemSettings"],
+    minRole: "admin",
+  },
 ];
 
 /** Pantallas del apartado que la sesión puede usar según el RBAC del servidor. */
