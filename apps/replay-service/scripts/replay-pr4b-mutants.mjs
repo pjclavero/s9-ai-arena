@@ -238,6 +238,19 @@ export const MUTANTS = [
       },
     ],
   },
+  {
+    id: "M-SPECTATE-strict-first-ticket",
+    why: "CI de #345 · se vuelve a exigir 201 al primer ticket anónimo aunque la batalla siga scheduled (la carrera, ahora determinista)",
+    test: "apps/tournament-worker/src/spectate-live.test.ts",
+    t: "EN DIRECTO con ticket",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/spectate-live.test.ts",
+        find: "      if (tk.status === 404) {",
+        replace: "      expect(tk.status).toBe(201);\n      if (tk.status === 404) {",
+      },
+    ],
+  },
 ];
 
 function run(test, t) {
