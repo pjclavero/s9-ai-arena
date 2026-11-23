@@ -62,4 +62,57 @@ describe("lector de ajustes", () => {
       spy.mockRestore();
     }
   });
+
+  it("TIMEOUT_DE_CONSULTA: una consulta colgada se abandona al vencer el plazo y la guarda de reentrada se libera", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let calls = 0;
+      const rd = new SystemSettingsReader(
+        fakeDb(() => {
+          calls++;
+          return calls === 1 ? new Promise(() => undefined) : Promise.resolve([{ key: "test.n", value: 7 }]);
+        }),
+        REGISTRY,
+        { refreshMs: 5_000, queryTimeoutMs: 40, env: {} },
+      );
+      await rd.refresh();
+      expect(calls).toBe(1);
+      expect(String(spy.mock.calls[0][0])).toMatch(/"code":"TIMEOUT"/);
+      await rd.refresh();
+      expect(calls).toBe(2);
+      expect(rd.get("test.n")).toBe(7);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("LOG_SIN_MENSAJE_DEL_DRIVER: el log lleva sólo el código, nunca el texto del error (SQL, hosts, credenciales)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const rd = new SystemSettingsReader(
+        fakeDb(async () => {
+          throw Object.assign(new Error("password authentication failed for user secreto-host"), { code: "28P01" });
+        }),
+        REGISTRY,
+        { refreshMs: 5_000, env: {} },
+      );
+      await rd.refresh();
+      const line = String(spy.mock.calls[0][0]);
+      expect(line).toMatch(/"code":"28P01"/);
+      expect(line).not.toMatch(/secreto-host|password authentication/);
+      const rd2 = new SystemSettingsReader(
+        fakeDb(async () => {
+          throw new Error("texto libre con datos");
+        }),
+        REGISTRY,
+        { refreshMs: 5_000, env: {} },
+      );
+      await rd2.refresh();
+      const line2 = String(spy.mock.calls[1][0]);
+      expect(line2).toMatch(/"code":"unknown"/);
+      expect(line2).not.toMatch(/texto libre/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

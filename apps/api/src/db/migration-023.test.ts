@@ -7,6 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
+import { insertOperationInState } from "../testing/admin-ops.js";
 import { MIGRATIONS, migrateNamed, NAMED_ROLLBACK_ALLOWED, rollbackNamed } from "./migrations.js";
 
 let h: TestDbHandle;
@@ -55,9 +56,9 @@ describe("migración 023_system_settings_operations", () => {
   });
 
   it("UNA activa por tipo (índice único parcial); las terminadas no cuentan", async () => {
-    await h.db("admin_operations").insert({ kind: "system.noop", status: "done" });
-    await h.db("admin_operations").insert({ kind: "system.noop", status: "cancelled" });
-    await h.db("admin_operations").insert({ kind: "system.noop", status: "pending" });
+    await insertOperationInState(h.db, "done");
+    await insertOperationInState(h.db, "cancelled");
+    await insertOperationInState(h.db, "pending");
     await expect(
       h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" }),
     ).rejects.toMatchObject({ code: "23505" });

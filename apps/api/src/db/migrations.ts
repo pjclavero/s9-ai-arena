@@ -1217,7 +1217,17 @@ const m023_system_settings_operations: Migration = {
 
         IF NEW.status = OLD.status THEN
           IF OLD.status IN ('done','failed','expired','cancelled') THEN
-            RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            -- Única modificación admitida en un estado final: ON DELETE SET NULL de requested_by/confirmed_by
+            -- (borrar o anonimizar un usuario). Cualquier otra columna debe quedar igual.
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
           END IF;
           RETURN NEW;
         END IF;
@@ -1243,12 +1253,35 @@ const m023_system_settings_operations: Migration = {
       $guard$;
       CREATE TRIGGER admin_operations_guard BEFORE UPDATE ON admin_operations
         FOR EACH ROW EXECUTE FUNCTION admin_operations_guard();
+
+      -- Una orden NACE como la crea la API: en awaiting_confirmation, o en pending sin segundo admin (acciones sin
+      -- impacto), y sin campos de confirmación, lease, resultado ni intentos prerrellenados.
+      CREATE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.status = 'pending' AND NEW.requires_second_admin THEN
+          RAISE EXCEPTION 'admin_operations: una orden con segundo admin nace en awaiting_confirmation' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
+      CREATE TRIGGER admin_operations_insert_guard BEFORE INSERT ON admin_operations
+        FOR EACH ROW EXECUTE FUNCTION admin_operations_insert_guard();
     `);
   },
   // Vuelta atrás: se pierden los ajustes guardados (vuelve el entorno/defecto) y el historial de órdenes
   // (su rastro de auditoría queda en audit_log).
   async down(db) {
-    await db.raw(`DROP TABLE admin_operations; DROP FUNCTION admin_operations_guard(); DROP TABLE system_settings;`);
+    await db.raw(
+      `DROP TABLE admin_operations; DROP FUNCTION admin_operations_guard(); DROP FUNCTION admin_operations_insert_guard(); DROP TABLE system_settings;`,
+    );
   },
 };
 

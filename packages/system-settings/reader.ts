@@ -24,11 +24,22 @@ export interface ReaderOptions {
   refreshMs?: number;
   /** Ventana (ms) en la que se conserva el último valor si la BD falla. Por defecto 3 × refreshMs. */
   staleMs?: number;
+  /** Plazo (ms) de la consulta; vencido, cuenta como fallo y libera la guarda de reentrada. Por defecto max(1 s, refreshMs). */
+  queryTimeoutMs?: number;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
 }
 
 export type SettingSource = "database" | "environment" | "default" | "fail_closed";
+
+type SettingsRow = { key: string; value: unknown };
+type TimedQuery = Promise<SettingsRow[]> & { timeout?: (ms: number, o?: { cancel: boolean }) => TimedQuery };
+
+/** Código de error sin texto libre: el de PostgreSQL (5 caracteres), TIMEOUT, o `unknown`. */
+function errorCode(e: unknown): string {
+  const c = (e as { code?: unknown } | null)?.code;
+  return typeof c === "string" && /^[A-Za-z0-9_]{1,16}$/.test(c) ? c : "unknown";
+}
 
 export class SystemSettingsReader {
   private values = new Map<string, { value: SettingValue; source: SettingSource }>();
@@ -40,6 +51,7 @@ export class SystemSettingsReader {
   private readonly env: NodeJS.ProcessEnv;
   readonly refreshMs: number;
   readonly staleMs: number;
+  readonly queryTimeoutMs: number;
   /** Filas inválidas o de claves desconocidas en la ÚLTIMA lectura (gauge para la alerta). */
   invalidCount = 0;
 
@@ -50,6 +62,7 @@ export class SystemSettingsReader {
   ) {
     this.refreshMs = opts.refreshMs ?? refreshMsFromEnv();
     this.staleMs = opts.staleMs ?? this.refreshMs * DEFAULT_STALE_FACTOR;
+    this.queryTimeoutMs = opts.queryTimeoutMs ?? Math.max(1_000, this.refreshMs);
     this.now = opts.now ?? Date.now;
     this.env = opts.env ?? process.env;
   }
@@ -92,7 +105,7 @@ export class SystemSettingsReader {
   private async readOnce(): Promise<void> {
     let rows: { key: string; value: unknown }[];
     try {
-      rows = await this.db(SYSTEM_SETTINGS_TABLE).select("key", "value");
+      rows = await this.queryWithTimeout();
     } catch (e) {
       // Se registra al EMPEZAR a fallar (no cada 5 s): el valor vigente se conserva sólo hasta `staleMs`.
       if (!this.failing) {
@@ -101,7 +114,8 @@ export class SystemSettingsReader {
           JSON.stringify({
             level: "error",
             msg: "system_settings: lectura fallida; se conserva el último valor hasta staleMs y luego los defectos",
-            error: (e as Error)?.message ?? String(e),
+            // Sólo un código/clase genérica: el mensaje del driver puede traer SQL, hosts o credenciales.
+            code: errorCode(e),
           }),
         );
       }
@@ -120,6 +134,21 @@ export class SystemSettingsReader {
     this.invalidCount = invalid;
     this.values = next;
     this.lastGoodAt = this.now();
+  }
+
+  /** Consulta con plazo: cancelada en el servidor si el driver lo soporta y, en cualquier caso, abandonada. */
+  private async queryWithTimeout(): Promise<{ key: string; value: unknown }[]> {
+    let q = this.db(SYSTEM_SETTINGS_TABLE).select("key", "value") as unknown as TimedQuery;
+    if (typeof q.timeout === "function") q = q.timeout(this.queryTimeoutMs, { cancel: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "TIMEOUT" })), this.queryTimeoutMs);
+    });
+    try {
+      return await Promise.race([q, deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   start(): this {

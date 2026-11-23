@@ -235,7 +235,7 @@ export async function createOperation(
           confirm_token_hash: token ? sha256(token) : null,
           confirm_expires_at: needsConfirm ? new Date(Date.now() + CONFIRM_TTL_MS) : null,
           requires_second_admin: requiresSecondAdmin,
-          confirmed_at: needsConfirm ? null : t.fn.now(),
+          confirmed_at: null,
           confirmed_by: null,
         })
         .returning("*");

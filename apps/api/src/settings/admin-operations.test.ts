@@ -14,6 +14,7 @@ import { createApp } from "../app.js";
 import { hashPassword } from "../auth/passwords.js";
 import { generateTotpSecret } from "../auth/totp.js";
 import { SharedRateLimiter } from "../middleware/shared-rate-limit.js";
+import { insertOperationInState } from "../testing/admin-ops.js";
 import { OPERATION_KINDS, buildOperationKinds } from "./admin-operations.js";
 import {
   claimOperation,
@@ -666,7 +667,7 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
     expect(await statusOf(id)).toBe("pending");
   });
 
-  it("USUARIO_BORRADO: borrar al solicitante (ON DELETE SET NULL) no choca con el trigger", async () => {
+  it("USUARIO_BORRADO: borrar al solicitante (ON DELETE SET NULL) no choca con el trigger, con la orden viva", async () => {
     const [u] = await h
       .db("users")
       .insert({ email: "borrable@dev.arena.local", password_hash: "x", display_name: "b" })
@@ -675,6 +676,85 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
     await h.db("users").where({ id: u.id }).delete();
     const row = await h.db("admin_operations").first();
     expect(row.requested_by).toBeNull();
+    expect(row.status).toBe("pending");
+  });
+
+  it("USUARIO_BORRADO_FINALES: borrar solicitante y confirmador de órdenes done/failed/cancelled las conserva con NULL", async () => {
+    const mk = async (email: string) =>
+      (
+        await h
+          .db("users")
+          .insert({ email, password_hash: "x", display_name: email.slice(0, 8) })
+          .returning("id")
+      )[0].id as string;
+    const requester = await mk("solicitante@dev.arena.local");
+    const confirmer = await mk("confirmador@dev.arena.local");
+    const ids: Record<string, string> = {};
+    for (const st of ["done", "failed", "cancelled"] as const) {
+      ids[st] = await insertOperationInState(h.db, st, { requested_by: requester, confirmed_by: confirmer });
+    }
+    await h.db("users").where({ id: requester }).delete();
+    await h.db("users").where({ id: confirmer }).delete();
+    for (const [st, id] of Object.entries(ids)) {
+      const r = await h.db("admin_operations").where({ id }).first();
+      expect(r, st).toMatchObject({ status: st, requested_by: null, confirmed_by: null });
+    }
+  });
+
+  it("FINALES_SOLO_SET_NULL: en un estado final sólo se admite poner solicitante/confirmador a NULL; nada más", async () => {
+    const [u] = await h
+      .db("users")
+      .insert({ email: "final@dev.arena.local", password_hash: "x", display_name: "f" })
+      .returning("id");
+    const id = await insertOperationInState(h.db, "done", { requested_by: u.id, confirmed_by: u.id });
+    await expect(
+      h
+        .db("admin_operations")
+        .where({ id })
+        .update({ requested_by: null, result: JSON.stringify({ x: 1 }) }),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(h.db("admin_operations").where({ id }).update({ attempts: 9 })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await expect(h.db("admin_operations").where({ id }).update({ requested_by: u.id })).rejects.toMatchObject({
+      code: "23514",
+    });
+    await h.db("admin_operations").where({ id }).update({ requested_by: null });
+    expect((await h.db("admin_operations").where({ id }).first()).requested_by).toBeNull();
+    await h.db("users").where({ id: u.id }).delete();
+  });
+
+  it("INSERT_GUARD: una orden sólo nace en awaiting_confirmation o pending (sin segundo admin) y sin campos prerrellenados", async () => {
+    const bad: Record<string, unknown>[] = [
+      { status: "running", lease_owner: "x", lease_expires_at: new Date(Date.now() + 60_000) },
+      { status: "done" },
+      { status: "failed" },
+      { status: "cancelled" },
+      { status: "expired" },
+      { status: "pending", requires_second_admin: true },
+      { status: "pending", confirmed_at: new Date() },
+      { status: "awaiting_confirmation", confirmed_at: new Date() },
+      { status: "awaiting_confirmation", result: JSON.stringify({ ok: 1 }) },
+      { status: "awaiting_confirmation", attempts: 1 },
+      { status: "pending", started_at: new Date() },
+      { status: "pending", finished_at: new Date() },
+    ];
+    for (const b of bad) {
+      await expect(
+        h.db("admin_operations").insert({ kind: "system.noop", ...b }),
+        JSON.stringify(Object.keys(b)),
+      ).rejects.toMatchObject({ code: "23514" });
+    }
+    const admin1 = await h.db("users").where({ email: DEV_USERS.admin }).first();
+    await expect(
+      h.db("admin_operations").insert({ kind: "system.noop", status: "pending", confirmed_by: admin1.id }),
+    ).rejects.toMatchObject({ code: "23514" });
+    // lo legítimo, como lo hace la API
+    await h
+      .db("admin_operations")
+      .insert({ kind: "system.noop", status: "awaiting_confirmation", requires_second_admin: true });
+    await h.db("admin_operations").delete();
+    await h.db("admin_operations").insert({ kind: "system.noop", status: "pending" });
   });
 });
 
@@ -790,7 +870,7 @@ describe("ADM-1 · registro de tipos y su CHECK", () => {
     expect(inDb).toEqual(Object.keys(OPERATION_KINDS).sort());
     // y cada tipo del registro se puede insertar de verdad
     for (const kind of Object.keys(OPERATION_KINDS)) {
-      await h.db("admin_operations").insert({ kind, status: "done" });
+      await insertOperationInState(h.db, "done", { kind });
     }
   });
 
