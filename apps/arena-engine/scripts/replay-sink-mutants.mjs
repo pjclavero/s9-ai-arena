@@ -176,7 +176,7 @@ export const MUTANTS = [
     test: ENGINE,
     group: "R7",
     file: SINK,
-    find: "maxSnapshots: per(p.snapshotEvery),",
+    find: "maxSnapshots: per(p.snapshotEvery, 3),",
     replace: "maxSnapshots: 200_000,",
   },
   {
@@ -184,7 +184,7 @@ export const MUTANTS = [
     test: ENGINE,
     group: "R7",
     file: SINK,
-    find: "maxCommands: Math.ceil(ticks * Math.max(1, p.vehicles) * 1.1) + 16,",
+    find: "maxCommands: Math.ceil(ticks * vehicles * 1.1) + 16,",
     replace: "maxCommands: 2_000_000,",
   },
   {
