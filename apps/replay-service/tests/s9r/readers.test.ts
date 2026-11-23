@@ -54,7 +54,8 @@ async function syntheticRecipe(ticks: number, veh: number, fragmentBytes: number
     recipeFragmentBytes: fragmentBytes,
     recipeMaxPendingBytes: 8 * 1024 * 1024,
   });
-  const cmd = (t: number, v: number) => (t % 3 === 0 ? { move: { throttle: 1 } } : { move: { throttle: t % 7 }, v });
+  // Cada orden se repite 5 ticks seguidos (la receta la elide con "="), y cambia entre vehículos.
+  const cmd = (t: number, v: number) => ({ move: { throttle: Math.floor(t / 5) % 3 }, v });
   for (let t = 0; t < ticks; t++) {
     for (let v = 0; v < veh; v++) rec.command({ tick: t, vehicleId: `veh_${v + 1}`, command: cmd(t, v) });
     if (t % 30 === 0) rec.hash({ tick: t, hash: `h${t}` });
@@ -62,6 +63,12 @@ async function syntheticRecipe(ticks: number, veh: number, fragmentBytes: number
     if (t % 200 === 0) await rec.drain();
   }
   const closed = await rec.finish({ ticks });
+  // no vacuo: la receta contiene comandos elididos
+  let elided = 0;
+  const probe = await S9rReader.open(closed.recipe.partial);
+  for await (const line of probe.records()) if (line.includes('"=":1')) elided++;
+  await probe.close();
+  expect(elided).toBeGreaterThan(ticks * veh * 0.5);
   await publishPair(
     {
       recipe: { partial: closed.recipe.partial, final: closed.recipe.final },
