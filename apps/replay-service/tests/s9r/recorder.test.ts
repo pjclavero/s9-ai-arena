@@ -183,7 +183,7 @@ describe("ReplayRecorder", () => {
     expect(() => rec.snapshot({ tick: 99 })).toThrow(RecordingStallError);
     fs.release();
     await expect(rec.finish({})).rejects.toBeInstanceOf(RecordingStallError);
-  });
+  }, 5_000);
 
   it("RC6 ficheros por batalla, intento y titular: el titular sólo aparece como sha8", async () => {
     const p = recordingPaths("/d", BID, 7, OWNER);
