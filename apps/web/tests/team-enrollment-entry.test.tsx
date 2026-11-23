@@ -37,6 +37,10 @@ let versionsByBot: Record<string, unknown>;
 let tournament: Record<string, unknown>;
 let teams: Record<string, unknown>[];
 let consents: { botId: string; version: number; mine?: boolean }[];
+// Latencia simulada de GET /teams: el select «equipo a inscribir» existe desde el primer render
+// (estado «cargando») y sólo recibe sus opciones cuando resuelve el fetch. Con 0 ms la carrera
+// dependía de la carga de la máquina; con latencia fija el test que no espera la opción falla SIEMPRE.
+const TEAMS_LATENCY_MS = 40;
 
 const TEAMS_4V4 = {
   id: "t1",
@@ -66,7 +70,10 @@ function mock() {
     if (method === "GET" && path === "/tournaments") return { items: [] };
     if (path === "/tournaments/t1/battles") return { items: [] };
     if (path.startsWith("/bots?ownerId=")) return { items: [] };
-    if (path === "/teams?limit=100") return { items: teams };
+    if (path === "/teams?limit=100") {
+      await new Promise((res) => setTimeout(res, TEAMS_LATENCY_MS));
+      return { items: teams };
+    }
     if (method === "GET" && path.startsWith("/tournaments/t1/team-consents?teamId=")) return { items: consents };
     if (method === "PUT" && path.startsWith("/tournaments/t1/team-consents/")) return {};
     const m = /^\/bots\/([^/]+)\/versions$/.exec(path);
@@ -96,7 +103,9 @@ async function pickTeam() {
   render(<TournamentDetailPage id="t1" me={ME} />);
   const user = userEvent.setup();
   await screen.findByText("Copa Equipos");
-  await user.selectOptions(await screen.findByLabelText("equipo a inscribir"), "tm1");
+  // Espera a la CONDICIÓN: la opción del equipo ya cargada (no basta con que exista el select).
+  await screen.findByRole("option", { name: "Bastión" });
+  await user.selectOptions(screen.getByLabelText("equipo a inscribir"), "tm1");
   return user;
 }
 
@@ -150,7 +159,8 @@ describe("#287 · detalle de un torneo por equipos", () => {
     expect(await screen.findByLabelText("equipo a inscribir")).toBeTruthy();
     expect(screen.queryByLabelText("bot a inscribir")).toBeNull();
     expect(screen.getByTestId("team-entry-form").textContent).toContain("Tamaño: 4 vs 4");
-    // Sólo los equipos de los que soy miembro.
+    // Sólo los equipos de los que soy miembro (tras cargar la lista: si no, la ausencia sería vacía).
+    await screen.findByRole("option", { name: "Bastión" });
     expect(screen.queryByRole("option", { name: "Ajeno" })).toBeNull();
   });
 

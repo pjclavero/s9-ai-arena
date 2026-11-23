@@ -102,8 +102,14 @@ export function TeamsPage(props: { me: Me }) {
       setSelectedId(named.id);
       setSelectName(null);
     } else if (!selectName && current && current.id !== selectedId) {
-      setSelectedId(current.id);
+      // Forma funcional: este efecto puede ejecutarse DESPUÉS de que el usuario haya pulsado
+      // otro equipo (efectos pasivos aplazados). Con `setSelectedId(current.id)` pisaba esa
+      // elección con el valor de la renderización anterior; así sólo corrige una selección
+      // inexistente (null o un equipo que ya no está).
+      const fallback = current.id;
+      setSelectedId((prev) => (prev !== null && mine.some((t) => t.id === prev) ? prev : fallback));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [named, current, selectedId, selectName]);
 
   return (
