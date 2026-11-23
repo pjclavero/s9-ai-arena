@@ -58,7 +58,15 @@ describe("launchEmbedded · señal real de puerto ocupado", () => {
     await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
     const port = (s.address() as AddressInfo).port;
     try {
-      await expect(launchEmbedded(port)).rejects.toBeInstanceOf(PortBusyError);
+      // Si arrancara (mutante), se para en el acto: un clúster vivo mantendría colgado al runner.
+      const outcome = await launchEmbedded(port).then(
+        async (pg) => {
+          await pg.stop();
+          return "arrancó" as const;
+        },
+        (e: unknown) => e,
+      );
+      expect(outcome).toBeInstanceOf(PortBusyError);
     } finally {
       await new Promise<void>((r) => s.close(() => r()));
     }
