@@ -7,7 +7,11 @@ import { ApiError, conflict, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { audit } from "../audit.js";
 // Validador y resolutor REALES de E3 (T3.2/T3.3): importados, no reescritos.
-import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import {
+  loadoutCostCredits,
+  validateLoadout,
+  type Violation,
+} from "../../../../packages/module-catalog/validator/index.js";
 import { resolveVehicle } from "../../../../packages/module-catalog/resolve/index.js";
 import {
   findModule,
@@ -222,7 +226,7 @@ export async function validateLoadoutServerSide(
 
   const spec = resolveVehicle(e3Input, catalog);
   const defs = [findModule(catalog, input.chassis)!, ...input.modules.map((m) => findModule(catalog, m.moduleId)!)];
-  const costCredits = defs.reduce((s, d) => s + d.costCredits, 0);
+  const costCredits = loadoutCostCredits(e3Input, catalog); // única fuente (B4): incluye la munición embebida
   const generation = defs.filter((d) => d.category === "power").reduce((s, d) => s + (d.generationEUs ?? 0), 0);
   const passive = defs.reduce((s, d) => s + (d.power?.passiveEUs ?? 0), 0);
   return {

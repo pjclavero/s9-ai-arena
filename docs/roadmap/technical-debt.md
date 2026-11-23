@@ -99,7 +99,7 @@ Estados posibles:
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
 | [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA (corrige el PR #316) |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
-| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (fuera de V1: CTF y zona se aceptan con reglas clásicas y no se pueden jugar) |
+| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (fuera de V1: CTF y zona rechazados al crear torneos con 400 `tournament_mode_not_allowed`; sin soporte real) |
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 | [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |
@@ -216,7 +216,7 @@ Estados posibles:
   - Hay un test sobre la config real que se pone rojo con la mutación M1a.
 - **Verificación (REVIEW, 2026-10-18):** sigue ABIERTA. En el E2E de la integración, `GET /replays` anónimo a través de TLS y del gateway real responde 200 con el inventario (`replay.spec.ts`).
 - **Cierre (DEV-SEC, 2026-10, rama `prc/dev-sec`):**
-  - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) autoriza ANTES de leer el fichero. Staff (rol ≥ `organizer`), dueño o equipo (bot no `private`) de un bot participante; público sólo con `S9_PUBLIC_REPLAYS_ENABLED` y todos los bots `public`. Resto: 404 idéntico a inexistente.
+  - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) autoriza ANTES de leer el fichero. Staff (rol ≥ `moderator`), dueño o equipo (bot no `private`) de un bot participante; público sólo con el acceso público a replays activado (ajuste `app_runtime_settings`; `S9_PUBLIC_REPLAYS_ENABLED` sólo siembra el valor inicial) y batalla mostrable en público. **Corrección V1 (#306, D-OP-7, `eb1a3f9f`):** el cierre original daba lectura a todo rol ≥ `organizer`; ahora un `organizer` sólo lee las batallas de los torneos que él creó (`replay-access.ts:62-64,70-78,90-96`). Resto: 404 idéntico a inexistente.
   - **Borde**: `location = /replays` y `/replays/` responden 404 en `nginx.conf` y `nginx-behind-proxy.conf`; el navegador lee por `/api/v1/replays/{id}`, `/index`, `/segment` y `GET /api/v1/replays` (contrato 0.9.0). Ingesta del worker sin cambios.
   - **Tests**: `apps/api/src/td004-replay-access.test.ts` (87/87); `infrastructure/gateway/tests/replay-gateway.test.ts` con nginx real (11/11, opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`); E2E de navegador (`tests/browser/specs/replay.spec.ts`).
   - **Mutación** (la inversa de M1a): re-exponer el `proxy_pass` de `/replays/` ⇒ 5 tests rojos (rc=1) sobre la conf real.
@@ -655,6 +655,7 @@ Estados posibles:
 ## TD-023 — Administración operativa sólo por SSH
 
 - **Estado:** ABIERTA
+- **Actualización V1 (carril B2):** el primer administrador ya se crea sin SQL con `cli.ts create-admin` (contraseña por stdin o fichero 0600; ver [first-run.md](../operations/first-run.md#3-primer-administrador)); el resto sigue abierto.
 - **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `GET /system/status` no expone backup, restore, readiness ni drift (`apps/api/src/routes/system.ts:49-85`).
 - **Prioridad:** P2
 - **Área:** Administración

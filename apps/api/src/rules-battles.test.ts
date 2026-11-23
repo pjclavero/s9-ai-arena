@@ -25,15 +25,14 @@ function moduleJson(id: string) {
   return JSON.parse(readFileSync(join(DATA, `${id}.json`), "utf8"));
 }
 /**
- * Coste y masa de referencia, leídos de los JSON del catálogo. Coste = chasis + módulos
- * (la regla del presupuesto del loadout). Masa = la FÍSICA del motor: chasis + módulos
- * + munición embebida.
+ * Coste y masa de referencia, leídos de los JSON del catálogo. B4: coste y masa cuentan lo
+ * mismo, chasis + módulos + munición embebida (única fuente `loadoutCostCredits`).
  */
 function reference(loadout: { chassis: string; modules: { moduleId: string; ammo?: string }[] }) {
   const ids = [loadout.chassis, ...loadout.modules.map((m) => m.moduleId)];
   const ammo = loadout.modules.flatMap((m) => (m.ammo ? [m.ammo] : []));
   return {
-    cost: ids.reduce((s, id) => s + moduleJson(id).costCredits, 0),
+    cost: [...ids, ...ammo].reduce((s, id) => s + moduleJson(id).costCredits, 0),
     mass: [...ids, ...ammo].reduce((s, id) => s + moduleJson(id).massKg, 0),
   };
 }

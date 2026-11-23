@@ -86,14 +86,14 @@ describe("V1-T1 · crear un torneo por equipos", () => {
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("nombre del torneo"), "Copa");
     await user.selectOptions(screen.getByLabelText("formato"), "single_elimination");
-    await user.selectOptions(screen.getByLabelText("modo"), "capture_the_flag");
+    await user.selectOptions(screen.getByLabelText("modo"), "team_deathmatch");
     await user.selectOptions(screen.getByLabelText("formato"), "round_robin");
-    expect((screen.getByLabelText("modo") as HTMLSelectElement).value).toBe("capture_the_flag");
+    expect((screen.getByLabelText("modo") as HTMLSelectElement).value).toBe("team_deathmatch");
     await user.click(screen.getByRole("button", { name: "Crear torneo" }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === "POST" && c.path === "/tournaments")?.body).toMatchObject({
         format: "round_robin",
-        mode: "capture_the_flag",
+        mode: "team_deathmatch",
       }),
     );
   });

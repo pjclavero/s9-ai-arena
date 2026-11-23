@@ -9,9 +9,12 @@
  * participante. El scheduler crea la batalla cuando ambos lados se resuelven.
  *
  * Reglas de desempate documentadas por formato:
+ *  - Bye (D-OP-24): avance/descanso administrativo; no es victoria, derrota ni empate, no suma
+ *    puntos ni partidas, no da Elo; en eliminatorias permite avanzar.
  *  - Liga / round robin: 1) puntos (victoria 3, empate 1); 2) enfrentamiento
  *    directo; 3) diferencia de puntuación total; 4) orden de seed.
- *  - Suizo: 1) puntos; 2) Buchholz (suma de puntos de los rivales); 3) seed.
+ *  - Suizo: 1) puntos; 2) seed. (Buchholz NO está implementado: se documentó pero el código
+ *    sólo ordena por puntos y seed; deuda anotada, D-OP-24.) El bye vale 0 puntos.
  *  - Eliminatorias: no hay tabla; el desempate por emparejamiento es el de la
  *    propia serie (rounds_per_pairing impar decide; con serie empatada gana el
  *    mejor seed, documentado en la entrega).
@@ -334,6 +337,8 @@ export interface SwissStanding {
   /** Para desempates; el generador ordena por puntos y luego seed. */
   seed: number;
   hadBye?: boolean;
+  /** Descansos ya disfrutados (D-OP-24); si falta se usa `hadBye`. */
+  byes?: number;
 }
 
 export function recommendedSwissRounds(n: number): number {
@@ -344,45 +349,55 @@ export function recommendedSwissRounds(n: number): number {
  * Una ronda suiza: empareja por puntuación (adyacentes tras ordenar por
  * puntos, luego seed) EVITANDO repetir rival mientras sea evitable
  * (backtracking completo: si existe un emparejamiento sin repeticiones, lo
- * encuentra; solo si es inevitable permite repetir). Con n impar, bye para el
- * peor clasificado que aún no descansó.
+ * encuentra; solo si es inevitable permite repetir).
+ *
+ * Bye (D-OP-24): con n impar, un participante descansa. El bye es un avance
+ * administrativo (0 puntos, ni victoria ni derrota ni empate, sin Elo). Reparto:
+ *  1) NADIE repite descanso si hay alternativa: sólo son candidatos los que
+ *     menos byes llevan (con `byes` ausente se usa `hadBye`);
+ *  2) entre ellos, el peor clasificado, pero sólo si con su descanso el resto
+ *     se puede emparejar SIN repetir rivales; si ninguno lo permite, el peor.
  */
 export function generateSwissRound(standings: SwissStanding[], played: ReadonlySet<string>, round: number): Pairing[] {
   const ordered = [...standings].sort((a, b) => b.points - a.points || a.seed - b.seed);
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+  function pair(pool: SwissStanding[], allowRepeats: boolean): [string, string][] | null {
+    const out: [string, string][] = [];
+    const bt = (rest0: SwissStanding[]): boolean => {
+      if (rest0.length === 0) return true;
+      const [first, ...rest] = rest0;
+      for (let i = 0; i < rest.length; i++) {
+        const rival = rest[i];
+        if (!allowRepeats && played.has(pairKey(first.id, rival.id))) continue;
+        out.push([first.id, rival.id]);
+        if (bt(rest.filter((_, j) => j !== i))) return true;
+        out.pop();
+      }
+      return false;
+    };
+    return bt(pool) ? out : null;
+  }
+
   let byeId: string | null = null;
   let field = ordered;
+  let result: [string, string][] | null = null;
   if (ordered.length % 2 === 1) {
-    const candidate = [...ordered].reverse().find((s) => !s.hadBye) ?? ordered[ordered.length - 1];
-    byeId = candidate.id;
+    const count = (s: SwissStanding) => s.byes ?? (s.hadBye ? 1 : 0);
+    const fewest = Math.min(...ordered.map(count));
+    const candidates = [...ordered].reverse().filter((s) => count(s) === fewest); // peor primero
+    const feasible = candidates.find(
+      (c) =>
+        pair(
+          ordered.filter((s) => s.id !== c.id),
+          false,
+        ) !== null,
+    );
+    byeId = (feasible ?? candidates[0]).id;
     field = ordered.filter((s) => s.id !== byeId);
   }
-
-  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-  const result: [string, string][] = [];
-
-  function backtrack(pool: SwissStanding[], allowRepeats: boolean): boolean {
-    if (pool.length === 0) return true;
-    const [first, ...rest] = pool;
-    for (let i = 0; i < rest.length; i++) {
-      const rival = rest[i];
-      if (!allowRepeats && played.has(pairKey(first.id, rival.id))) continue;
-      result.push([first.id, rival.id]);
-      if (
-        backtrack(
-          rest.filter((_, j) => j !== i),
-          allowRepeats,
-        )
-      )
-        return true;
-      result.pop();
-    }
-    return false;
-  }
-
-  if (!backtrack(field, false)) {
-    result.length = 0;
-    if (!backtrack(field, true)) throw new Error("suizo: imposible emparejar la ronda");
-  }
+  result = pair(field, false) ?? pair(field, true);
+  if (!result) throw new Error("suizo: imposible emparejar la ronda");
 
   const pairings: Pairing[] = result.map(([a, b], i) => ({
     slot: `S${round}M${i + 1}`,

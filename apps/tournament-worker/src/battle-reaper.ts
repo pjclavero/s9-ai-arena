@@ -28,6 +28,7 @@ import {
   ROLE_BATTLE_BOT,
   type ManagedContainer,
 } from "../../bot-manager/src/container-runner.js";
+import { workerMetrics } from "./worker-metrics.js";
 import { defaultBattleResources, withinDeadline, type BattleResourceRegistry } from "./battle-resources.js";
 
 /**
@@ -98,14 +99,16 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
     return report;
   }
   const ids = [...new Set(containers.map((c) => c.labels[LABEL_BATTLE_ID]).filter((x): x is string => !!x))];
-  let rows: { id: string; status: string; claimed_by: string | null }[] = [];
+  let rows: { id: string; status: string; claimed_by: string | null; lease_expires_at: Date | null }[] = [];
   if (ids.length) {
     try {
       rows = (await withinDeadline(
-        Promise.resolve().then(() => deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by")),
+        Promise.resolve().then(() =>
+          deps.db("battles").whereIn("id", ids).select("id", "status", "claimed_by", "lease_expires_at"),
+        ),
         callMs,
         "consulta de batallas del reaper",
-      )) as { id: string; status: string; claimed_by: string | null }[];
+      )) as { id: string; status: string; claimed_by: string | null; lease_expires_at: Date | null }[];
     } catch (err) {
       // Sin la BD no se sabe qué es de quién: no se borra NADA en esta pasada (fail-closed).
       report.errors.push(`consulta: ${err instanceof Error ? err.message : String(err)}`);
@@ -130,6 +133,16 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
     if (!row) why = "batalla inexistente";
     else if (TERMINAL.has(row.status)) why = `batalla ${row.status}`;
     else if (row.status === "scheduled" && old) why = "batalla sin intento vivo (scheduled)";
+    // V1-P0 · `running` con el lease VENCIDO y sin ejecución viva en este proceso: el titular murió
+    // (OOM/kill sin `finally`). Un `running` con lease vigente —aunque el titular sea de otro
+    // proceso— nunca se toca.
+    else if (
+      row.status === "running" &&
+      old &&
+      row.lease_expires_at !== null &&
+      new Date(row.lease_expires_at).getTime() < now
+    )
+      why = "lease vencido (titular muerto)";
     else if (
       row.status === "running" &&
       old &&
@@ -149,11 +162,23 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
         "borrado del reaper",
       );
       report.removed.push({ id: c.id, battleId, why });
+      workerMetrics.inc("orphan_containers_removed_total");
     } catch (err) {
       report.errors.push(`${c.id.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return report;
+}
+
+/**
+ * V1-P0 · Pasada del reaper AL ARRANCAR el worker, antes de reclamar nada: este proceso acaba de
+ * nacer, así que no tiene ejecución viva y cualquier contenedor de bot de una batalla que no esté
+ * `running` con lease vigente (terminal, inexistente, `scheduled`, titular anterior o lease vencido)
+ * es resto de una ejecución anterior. `graceMs: 0`: no hay intento nuevo que proteger todavía.
+ * Los de una batalla `running` con lease VIGENTE se conservan (los recupera el barrido al vencer).
+ */
+export function reapAtStartup(deps: ReaperDeps): Promise<ReapReport> {
+  return reapOnce({ ...deps, graceMs: 0 });
 }
 
 /** La label se sanea (battleLabels); se compara con la misma regla. */

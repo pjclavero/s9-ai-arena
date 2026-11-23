@@ -14,6 +14,7 @@ import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCu
 import {
   assertTournamentEligible,
   assertVersionsEligible,
+  assertWithinTournamentBudget,
   canonicalUuid,
   eligibilityKey,
   entryCompetitionGate,
@@ -23,6 +24,14 @@ import {
   teamSizeOf,
 } from "../services/version-eligibility.js";
 import { pathParam } from "../params.js";
+import { engineRulesetIdFromRow } from "../services/battle-ruleset-resolver.js";
+import { loadRuleset } from "../../../../packages/game-rules/index.js";
+import {
+  TOURNAMENT_ALLOWED_MODES,
+  TOURNAMENT_MODE_NOT_ALLOWED,
+  isTournamentModeAllowed,
+  tournamentModeNotAllowedReason,
+} from "../../../tournament-worker/src/tournament-modes.js";
 import { assertCanManageTournament, canManageTournament } from "../services/tournament-access.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
@@ -87,6 +96,16 @@ async function assertMinimumParticipants(
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
+
+/** B3 · 400 `tournament_mode_not_allowed` con el motivo y la lista (misma fuente que worker y web). */
+function rejectTournamentMode(mode: unknown, extra: Record<string, unknown> = {}): void {
+  if (isTournamentModeAllowed(mode)) return;
+  throw new ApiError(400, TOURNAMENT_MODE_NOT_ALLOWED, tournamentModeNotAllowedReason(mode), {
+    mode,
+    allowedModes: [...TOURNAMENT_ALLOWED_MODES],
+    ...extra,
+  });
+}
 
 export function tournamentToJson(t: Record<string, unknown>) {
   return {
@@ -209,8 +228,24 @@ export function tournamentRoutes(
     } = req.body ?? {};
     if (typeof name !== "string" || !name || name.length > 64) throw badRequest("name obligatorio (máx. 64)");
     if (!FORMATS.includes(format)) throw badRequest(`format debe ser uno de ${FORMATS.join(", ")}`);
-    if (!MODES.includes(mode)) throw badRequest(`mode debe ser uno de ${MODES.join(", ")}`);
-    if (!(await db("rulesets").where({ id: rulesetId }).first())) throw badRequest("rulesetId desconocido");
+    if (!MODES.includes(mode)) throw badRequest(`mode debe ser uno de ${TOURNAMENT_ALLOWED_MODES.join(", ")}`);
+    // B3 (V1, D-OP-9) · CTF y control de zona quedan FUERA de los torneos: 400 estable, antes de
+    // mirar nada más. Es la ÚNICA vía de alta de torneos (no hay edición, clonado ni plantillas).
+    rejectTournamentMode(mode);
+    const rulesetRow = await db("rulesets").where({ id: rulesetId }).first();
+    if (!rulesetRow) throw badRequest("rulesetId desconocido");
+    // Un ruleset de plataforma cuyo `config.engineRulesetId` juega CTF/zona no sirve como «clásico» de un
+    // torneo de un modo permitido: se mira el modo REAL del ruleset del motor, no sólo el campo `mode`.
+    const engineId = engineRulesetIdFromRow(rulesetRow);
+    if (engineId) {
+      let engineMode: string | undefined;
+      try {
+        engineMode = loadRuleset(engineId).mode;
+      } catch {
+        engineMode = undefined;
+      }
+      if (engineMode !== undefined) rejectTournamentMode(engineMode, { rulesetId, engineRulesetId: engineId });
+    }
     // ADR-000/D7: presupuesto por competición dentro de [200, 5000]; si se omite, manda el ruleset.
     if (
       budgetCredits !== undefined &&
@@ -347,7 +382,12 @@ export function tournamentRoutes(
       // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
       // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
       // OLA 2 (EQUIPMENT_PRIVATE) · sólo el dueño llega aquí: ve el motivo real de su loadout.
-      await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false });
+      await assertTournamentEligible(
+        db,
+        v,
+        { userId: req.auth!.userId, staff: false },
+        t.budget_credits as number | null | undefined,
+      );
       // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente que ya no compite se
       // puede cambiar por otra versión válida (nunca se sustituye sola).
       const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
@@ -529,6 +569,10 @@ export function tournamentRoutes(
       }
       // OLA 2 (EQUIPMENT_PRIVATE) · el detalle del 409 sólo para los bots propios del solicitante.
       await assertVersionsEligible(trx, roster, { userId, staff: false });
+      await assertWithinTournamentBudget(trx, roster, t.budget_credits as number | null | undefined, {
+        userId,
+        staff: false,
+      }); // B4
       if (await trx("entries").where({ tournament_id: t.id, team_id: teamId }).first()) {
         throw conflict("team_already_entered", "El equipo ya está inscrito en este torneo");
       }
@@ -630,6 +674,14 @@ export function tournamentRoutes(
         throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
           currentState: t.state,
           allowedTransitions: t.state === "draft" ? ["open"] : [],
+        });
+      }
+      // B3 (O1) · un torneo ANTIGUO con modo excluido no se cierra: fallo rápido y claro ANTES de congelar
+      // nada (si no, quedaría `closed` sin calendario). Se cancela desde `open`.
+      if (!isTournamentModeAllowed(t.mode)) {
+        throw conflict(TOURNAMENT_MODE_NOT_ALLOWED, tournamentModeNotAllowedReason(t.mode), {
+          mode: t.mode,
+          allowedModes: [...TOURNAMENT_ALLOWED_MODES],
         });
       }
 
@@ -797,7 +849,7 @@ export function tournamentRoutes(
         throw conflict("already_entered", "El bot ya está inscrito: retira antes la autorización para cambiarla");
       }
       const v = await tx("bot_versions").where({ bot_id: botId, version }).first();
-      await assertTournamentEligible(tx, v, { userId, staff: false }); // la regla única de #283 (estado + loadout)
+      await assertTournamentEligible(tx, v, { userId, staff: false }, t.budget_credits as number | null | undefined); // la regla única de #283 (estado + loadout)
       await tx("team_entry_consents")
         .insert({ tournament_id: t.id, bot_id: botId, team_id: teamId, version, owner_id: userId })
         .onConflict(["tournament_id", "bot_id"])
@@ -864,7 +916,11 @@ export function tournamentRoutes(
       if (!t) throw notFound();
       assertCanManageTournament(req.auth, t); // #291 · predicado único (dueño del torneo o staff)
       if (t.state === "cancelled") return t; // idempotente: ni cambio ni auditoría
-      if (!(CANCELLABLE_TOURNAMENT_STATES as readonly string[]).includes(t.state)) {
+      // B3 (O1) · un torneo `closed` con modo excluido nunca generará calendario: se puede cancelar
+      // (sólo ese caso amplía los estados cancelables).
+      const cancellableStates: string[] = [...CANCELLABLE_TOURNAMENT_STATES];
+      if (t.state === "closed" && !isTournamentModeAllowed(t.mode)) cancellableStates.push("closed");
+      if (!cancellableStates.includes(t.state)) {
         throw conflict(
           "tournament_not_cancellable",
           t.state === "finished"
@@ -875,7 +931,7 @@ export function tournamentRoutes(
       }
       const [cancelled] = await trx("tournaments")
         .where({ id: t.id })
-        .whereIn("state", [...CANCELLABLE_TOURNAMENT_STATES])
+        .whereIn("state", cancellableStates)
         .update({ state: "cancelled" })
         .returning("*");
       if (!cancelled) throw conflict("tournament_not_cancellable", "El torneo cambió de estado: no se puede cancelar");
@@ -990,6 +1046,10 @@ export function tournamentRoutes(
         wins: row.wins,
         losses: row.losses,
         draws: row.draws,
+        // D-OP-24 · partidas disputadas = V+E+D (el bye no cuenta); byes y técnicos van aparte.
+        played: row.wins + row.draws + row.losses,
+        byes: row.byes,
+        technical: row.technical,
         scoreDiff: row.scoreDiff,
         seed: row.seed,
       })),

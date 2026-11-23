@@ -19,7 +19,11 @@ import { slotName, slotPurpose, categoryName } from "../help/names.js";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
-import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
+import {
+  loadoutCostCredits,
+  validateLoadout,
+  type Violation,
+} from "../../../../packages/module-catalog/validator/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import {
   CHASSIS_CHOICE_EFFECT,
@@ -84,7 +88,7 @@ export function computeLive(draft: LoadoutDraft, catalog: ModuleDefinition[], bu
   const defs = [chassisDef, ...draft.modules.map((m) => findModule(catalog, m.moduleId))].filter(
     (d): d is ModuleDefinition => !!d,
   );
-  const costCredits = defs.reduce((s, d) => s + d.costCredits, 0);
+  const costCredits = loadoutCostCredits(draft, catalog); // única fuente (B4): incluye la munición embebida
   const massKg = defs.reduce((s, d) => s + d.massKg, 0);
   const generation = defs.filter((d) => d.category === "power").reduce((s, d) => s + (d.generationEUs ?? 0), 0);
   const passive = defs.reduce((s, d) => s + (d.power?.passiveEUs ?? 0), 0);
