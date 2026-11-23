@@ -79,6 +79,8 @@ Más la comprobación de la puerta de ejecución (`gateState`), también sin son
 
 ## Qué NO mide
 
+- No comprueba que exista un administrador (se crea con `cli.ts create-admin`; ver
+  [first-run.md](first-run.md#3-primer-administrador)): su veredicto no sustituye ese paso.
 - No comprueba la funcionalidad del producto (build de bots, batallas, replays): una instalación
   podría dar verde en todo lo anterior y seguir sin ejecutar código de usuario
   ([TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002)).

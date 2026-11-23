@@ -16,7 +16,7 @@ import { createApp } from "./app.js";
 import { createPublishedBot, EXAMPLE_LOADOUT, type TestBot } from "../../tournament-worker/src/testing/fixtures.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
-import { findModule } from "../../../packages/module-catalog/types.js";
+import { loadoutCostCredits } from "../../../packages/module-catalog/validator/index.js";
 import { getCatalog } from "./services/catalog.js";
 
 let h: TestDbHandle;
@@ -35,10 +35,8 @@ async function engineTotals(l: { chassis: string; modules: any[] }) {
     { loadoutId: "x", revision: 1, catalogVersion: latest.catalog_version, chassis: l.chassis, modules: l.modules },
     catalog,
   );
-  const cost = [l.chassis, ...l.modules.map((m) => m.moduleId)].reduce(
-    (s, id) => s + (findModule(catalog, id)?.costCredits ?? 0),
-    0,
-  );
+  // B4: coste con la munición embebida (única fuente).
+  const cost = loadoutCostCredits(l, catalog);
   return { cost, mass: spec.massKg };
 }
 
@@ -71,6 +69,8 @@ beforeAll(async () => {
   await h.db("bots").where({ id: privateForeign.botId }).update({ visibility: "private" });
   GUN = await engineTotals(EXAMPLE_LOADOUT);
   HEAVY = await engineTotals(ARCHETYPES.heavy as any);
+  // B4 · oráculo independiente: el coste esperado del artillero es un literal, no lo que devuelva la implementación.
+  expect(GUN.cost).toBe(900);
 }, 120_000);
 
 afterAll(async () => {

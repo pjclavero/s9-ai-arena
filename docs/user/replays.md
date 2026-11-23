@@ -8,14 +8,15 @@ Puedes ver el replay de una batalla (lista y reproductor) si:
 
 - **uno de tus bots participó** en ella;
 - eres **miembro del equipo** de un bot participante y ese bot no es privado (visibilidad «equipo» o «pública»);
-- tienes rol de **organizador, moderador o administrador**;
-- o la plataforma tiene activado el **acceso público a replays** y **todos** los bots de la batalla son públicos, o la batalla es de un torneo con **retransmisión pública** ([Visibilidad](visibility.md)). Activarlo no hace públicas las demás batallas en las que participa algún bot privado o de equipo. En un replay público de un bot privado se ven su nombre, su equipo, sus acciones en el campo y sus estadísticas deportivas; nunca su código ni su ficha.
+- tienes rol de **moderador o administrador** (ven todos los replays);
+- tienes rol de **organizador** y la batalla es de un **torneo que creaste tú**: de los torneos de otros organizadores y de las batallas de práctica no ves nada que no veas ya como usuario normal;
+- o la plataforma tiene activado el **acceso público a replays** (un ajuste de administración, no una variable de entorno; ver [Administración](administration.md#acceso-público)) y **todos** los bots de la batalla son públicos, o la batalla es de un torneo con **retransmisión pública** ([Visibilidad](visibility.md)). Activarlo no hace públicas las demás batallas en las que participa algún bot privado o de equipo. En un replay público de un bot privado se ven su nombre, su equipo, sus acciones en el campo y sus estadísticas deportivas; nunca su código ni su ficha.
 
 ### Qué ves: la proyección de competición
 
 Lo que reproduce el visor (y lo que entrega la descarga pública) es la **proyección de competición**: lo mismo que ve un espectador en directo (posiciones, vida, módulos, proyectiles, marcador, objetivos, eventos públicos y resultado). No incluye la semilla de la batalla, las órdenes de los bots (radio, minas, campo `debug`…), el equipamiento completo ni datos internos del almacén. La regla la aplica el servidor y no cambia aunque el acceso público a replays esté activado.
 
-El **fichero completo** del replay (con semilla y órdenes de todos los bots) sólo lo reciben **moderadores y administradores**, y tú si **todos** los bots de la batalla son tuyos. En una batalla contra bots de otras personas recibes la proyección, como el resto: el fichero llevaría también las órdenes y el equipamiento de tus rivales. Los organizadores ven todos los replays, también proyectados; para comprobar una batalla está la verificación en servidor, que no necesita el fichero.
+El **fichero completo** del replay (con semilla y órdenes de todos los bots) sólo lo reciben **moderadores y administradores**, y tú si **todos** los bots de la batalla son tuyos. En una batalla contra bots de otras personas recibes la proyección, como el resto: el fichero llevaría también las órdenes y el equipamiento de tus rivales. Un organizador ve los replays de **sus** torneos, también proyectados (nunca el fichero completo); para comprobar una batalla está la verificación en servidor, que no necesita el fichero.
 
 La **descarga pública** (`/public/replays/<id>/download`, sólo con el acceso público activado) entrega un documento JSON con la proyección de la batalla entera, no el fichero completo.
 

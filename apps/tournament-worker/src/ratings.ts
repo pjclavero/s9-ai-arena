@@ -100,6 +100,14 @@ export async function applyBattleRating(
   // ADR-022 · detenida por la salvaguarda técnica: sin resultado deportivo, no puntúa.
   if (resultOf(battle)?.endReason === "technical_limit") return false;
 
+  // D-OP-24 · un bye (avance/descanso administrativo) no es una batalla jugada: nunca da Elo.
+  // Normalmente no existe batalla colgando de un bye; la guarda cierra la puerta por si aparece.
+  if (battle.match_id) {
+    const m = await db("matches").where({ id: battle.match_id }).first("pairing");
+    const pairing = typeof m?.pairing === "string" ? safeParse(m.pairing) : m?.pairing;
+    if ((pairing as { bye?: unknown } | null | undefined)?.bye === true) return false;
+  }
+
   const tournament = battle.tournament_id ? await db("tournaments").where({ id: battle.tournament_id }).first() : null;
   // EQ2c · STANDINGS_POLICY: draft no aporta, ni a la clasificación ni al Elo.
   if (tournament?.state === "draft") return false;
@@ -286,4 +294,12 @@ function resultOf(battle: Record<string, unknown>): { endReason?: string } | nul
     }
   }
   return typeof r === "object" ? (r as { endReason?: string }) : null;
+}
+
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }

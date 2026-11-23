@@ -27,7 +27,7 @@ En las batallas por equipos, el cambio se reparte por parejas de bots rivales, a
 
 ### V-D-E
 
-Victorias, derrotas y empates, contados por **enfrentamientos de los torneos** (no por batallas sueltas: un enfrentamiento puede tener varias batallas) y **sumados en todos los torneos de la temporada en ese modo**. Un enfrentamiento terminado sin ganador cuenta como empate; uno detenido por el límite técnico, como si no existiera. **Pasar una ronda sin rival (*bye*) no suma victoria** en esta clasificación, porque no es un enfrentamiento disputado (la tabla interna del propio torneo sí lo cuenta como victoria). Si un enfrentamiento aún está **en juego**, cuenta con lo ya disputado; si va igualado, cuenta como empate hasta que se resuelva.
+Victorias, derrotas y empates, contados por **enfrentamientos de los torneos** (no por batallas sueltas: un enfrentamiento puede tener varias batallas) y **sumados en todos los torneos de la temporada en ese modo**. Un enfrentamiento terminado sin ganador cuenta como empate; uno detenido por el límite técnico, como si no existiera. **Pasar una ronda sin rival (*bye*) no suma victoria** en esta clasificación, porque no es un enfrentamiento disputado: no es victoria, derrota ni empate, no da puntos ni rating. La tabla interna de un torneo lo trata igual y lo muestra aparte, en su propia columna de descansos («byes»). Si un enfrentamiento aún está **en juego**, cuenta con lo ya disputado; si va igualado, cuenta como empate hasta que se resuelva.
 
 ### La posición (#)
 

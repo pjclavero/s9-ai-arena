@@ -128,6 +128,7 @@ info:
   # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
   # cierre, excludeTournamentEntry y la sustitución de versión (lo que bloquea el cierre siempre
   # se puede excluir); freeze condicional (una sola auditoría por versión).
+  # BYE (D-OP-24, sin subir versión): TeamStanding gana played/byes/technical y el bye deja de sumar puntos/victorias.
   version: 0.25.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -3231,15 +3232,18 @@ components:
     # H6 (issue #10) · Fila de la tabla por equipos (leagueTable de E9, isTeams).
     TeamStanding:
       type: object
-      required: [rank, teamId, points, wins, losses, draws, scoreDiff]
+      required: [rank, teamId, points, wins, losses, draws, played, byes, technical, scoreDiff]
       properties:
         rank: { type: integer }
         teamId: { type: string }
         teamName: { type: string }
-        points: { type: integer, description: 'Liga: victoria 3, empate 1 (formats.ts de E9)' }
-        wins: { type: integer }
+        points: { type: integer, description: 'Liga: victoria 3, empate 1 (formats.ts de E9). El bye NO suma puntos (D-OP-24).' }
+        wins: { type: integer, description: 'Victorias JUGADAS. Un bye no es victoria (D-OP-24; antes se contaba).' }
         losses: { type: integer }
         draws: { type: integer }
+        played: { type: integer, description: 'Enfrentamientos disputados = wins + draws + losses (el bye no cuenta)' }
+        byes: { type: integer, description: 'Descansos/avances administrativos: ni victoria, derrota ni empate; 0 puntos; sin Elo' }
+        technical: { type: integer, description: 'Enfrentamientos sin resultado deportivo (match failed o sólo límite técnico); no puntúan' }
         scoreDiff: { type: number, description: Diferencia de puntuación agregada de las series }
         seed: { type: integer, description: Orden de inscripción (último desempate) }
 
