@@ -141,6 +141,21 @@ describe("ADM-1 · página Ajustes del sistema", () => {
     await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(3)); // GET, PATCH, GET de recarga
   });
 
+  it("RESINCRONIZA_VIGENTE: si el servidor cambia valor/versión (otra pestaña), el borrador adopta lo vigente", async () => {
+    apiMock.mockResolvedValueOnce({ settings: [HOT] });
+    render(<SettingsPage me={ME} />);
+    await screen.findByTestId("settings-table");
+    fireEvent.change(screen.getByTestId("setting-input-ops.probe_hot"), { target: { value: "99" } });
+    // El PATCH choca con un cambio ajeno (409) y la recarga trae OTRA versión y OTRO valor.
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("conflicto de versión"), { status: 409 }));
+    apiMock.mockResolvedValueOnce({ settings: [{ ...HOT, value: 7, version: 4 }] });
+    fireEvent.click(screen.getByTestId("setting-save-ops.probe_hot"));
+    await screen.findByTestId("settings-error");
+    await waitFor(() =>
+      expect((screen.getByTestId("setting-input-ops.probe_hot") as HTMLInputElement).value).toBe("7"),
+    );
+  });
+
   it("SIN_CLAVES: sin ajustes registrados lo dice en lugar de una tabla vacía", async () => {
     apiMock.mockResolvedValueOnce({ settings: [] });
     render(<SettingsPage me={ME} />);
