@@ -46,7 +46,7 @@ import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../../apps/api/src/db
 import { tokenFor } from "../../../apps/api/src/testing/helpers.js";
 import { createApp } from "../../../apps/api/src/app.js";
 import { createReplayServer } from "../../../apps/replay-service/src/server.js";
-import { ingestReplay } from "../../../apps/replay-service/src/store.js";
+import { writeS9rReplay } from "../../../apps/replay-service/src/testing/s9r-fixture.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../../apps/arena-engine/src/sim/physics.js";
 import { record } from "../../../apps/arena-engine/src/replay.js";
@@ -234,8 +234,8 @@ beforeAll(async () => {
   );
   const battle = async (bots: string[]) => {
     const id = randomUUID();
-    // Mismo almacén que el worker: el replay-service real lo encontraría por id.
-    const stored = ingestReplay(dir, { ...base, header: { ...base.header, battleId: id } }, { official: false });
+    // V1 REPLAYS PR-4 · mismo formato y publicación que el worker (S9R/1).
+    const stored = await writeS9rReplay(dir, { ...base, header: { ...base.header, battleId: id } });
     await h.db("battles").insert({
       id,
       status: "finished",
@@ -246,7 +246,7 @@ beforeAll(async () => {
       map_version: 1,
       seed: "gw-secret-seed",
       replay_ref: stored.path,
-      replay_hash: stored.index.sha256,
+      replay_hash: stored.sha256,
       final_state_hash: base.result.finalStateHash,
       finished_at: h.db.fn.now(),
     });

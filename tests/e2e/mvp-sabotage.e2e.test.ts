@@ -29,7 +29,7 @@ import { record, type Replay } from "../../apps/arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../apps/arena-engine/src/fixtures.js";
 import { HunterBot } from "../../apps/arena-engine/src/stubs.js";
 import { toEngineMap } from "../../apps/map-service/src/to-engine-map.js";
-import { ingestReplay, type StoredReplay } from "../../apps/replay-service/src/store.js";
+import { writeS9rReplay, type S9rFixture as StoredReplay } from "../../apps/replay-service/src/testing/s9r-fixture.js";
 import { runStatsJob } from "../../apps/replay-service/src/stats.js";
 
 let h: TestDbHandle;
@@ -91,10 +91,10 @@ beforeAll(async () => {
     },
   );
   dir = mkdtempSync(join(tmpdir(), "e12-sabotage-replays-"));
-  stored = ingestReplay(dir, replay, { official: true });
+  stored = await writeS9rReplay(dir, replay);
   battleId = await insertFinishedBattle({
     replay_ref: stored.path,
-    replay_hash: stored.index.sha256,
+    replay_hash: stored.sha256,
     final_state_hash: replay.result.finalStateHash,
     result: JSON.stringify({ winner: replay.result.winner, ticks: replay.result.ticks }),
   });
@@ -203,9 +203,9 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
     // 5a · bytes alterados en disco: checksum_mismatch, sin re-simular.
     const tampered = Buffer.from(readFileSync(stored.path));
     tampered[Math.floor(tampered.length / 2)] ^= 0xff;
-    const tPath = join(dir, "tampered.replay");
+    const tPath = join(dir, "tampered.1.s9r");
     writeFileSync(tPath, tampered);
-    const tamperedId = await insertFinishedBattle({ replay_ref: tPath, replay_hash: stored.index.sha256 });
+    const tamperedId = await insertFinishedBattle({ replay_ref: tPath, replay_hash: stored.sha256 });
     const r1 = await request(app).post(`/replays/${tamperedId}/verify`).set(staff);
     expect(r1.status).toBe(200);
     expect(r1.body.matches).toBe(false);
@@ -214,7 +214,7 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
     // 5b · resultado oficial falseado en la BD: el archivo no lo respalda.
     const fakedId = await insertFinishedBattle({
       replay_ref: stored.path,
-      replay_hash: stored.index.sha256,
+      replay_hash: stored.sha256,
       final_state_hash: "f".repeat(64),
     });
     const r2 = await request(app).post(`/replays/${fakedId}/verify`).set(staff);
@@ -225,7 +225,7 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
   it("sabotaje 6 (estadísticas): sin replay archivado no se fabrican stats", async () => {
     // El saboteador borra el archivo del almacén: el job de stats NO inventa datos.
     const dir2 = mkdtempSync(join(tmpdir(), "e12-sabotage-stats-"));
-    const stored2 = ingestReplay(dir2, replay, { official: true });
+    const stored2 = await writeS9rReplay(dir2, replay);
     rmSync(stored2.path);
     const ghostId = await insertFinishedBattle({ replay_ref: stored2.path });
     await expect(runStatsJob(h.db, dir2, ghostId, "e12_sabotage_dm")).rejects.toThrow(

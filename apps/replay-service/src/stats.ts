@@ -714,7 +714,12 @@ export async function runStatsJob(
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`No se puede procesar ${dbBattleId}: la receta no está en el directorio de replays`);
   }
-  const src = await recipeStatsSource(recipePath, { expectBattleId: replayBattleId ?? dbBattleId });
+  let src: StatsSource;
+  try {
+    src = await recipeStatsSource(recipePath, { expectBattleId: replayBattleId ?? dbBattleId });
+  } catch (e) {
+    throw new Error(`No se puede procesar ${dbBattleId}: ${(e as Error).message}`);
+  }
   const stats = await computeBattleStatsFrom(src, {
     cpuMsByBot: await readMeasuredCpuMs(db, dbBattleId),
   });
