@@ -975,6 +975,7 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
     async (_l, env) => {
       const p = runMain(env as Record<string, string>);
       const code = await p.exited;
+      await p.closed; // `exit` puede llegar antes de la cola de la tubería
       expect(code).toBe(78);
       expect(p.output()).toMatch(/configuración rechazada/);
       expect(p.output()).not.toMatch(/escuchando/);

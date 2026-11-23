@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")/.."
 F=apps/api/src/testing/test-db.ts
 T=apps/api/src/testing/test-db-port.test.ts
-RUN() { nice -n 19 node node_modules/vitest/vitest.mjs run --maxWorkers=1 "$T" 2>&1; }
+RUN() { nice -n 19 timeout 150 node node_modules/vitest/vitest.mjs run --maxWorkers=1 "$T" 2>&1; }
 git diff --quiet -- "$F" "$T" || { echo "ABORTA: cambios sin commitear"; exit 2; }
 out=$(RUN); rc=$?; echo "BASE rc=$rc"
 [ "$rc" -eq 0 ] || { echo "$out" | tail -20; exit 1; }
@@ -32,6 +32,8 @@ mutant T3-sin-tope "TOPE" \
   "if (!opts.isBusy(e) || attempt >= max) throw e;" "if (!opts.isBusy(e)) throw e;"
 mutant T4-ipv4-parcial-no-detectado "señal real de puerto ocupado" \
   "could not bind IPv4 address[^\\n]*address already in use" "zzz-nunca"
+mutant T5-stop-tras-salida-temprana "FALLO TOTAL" \
+  "let started = false;" "let started = true;"
 git diff --quiet -- "$F" || { echo "ÁRBOL SUCIO"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"
 exit "$fail"

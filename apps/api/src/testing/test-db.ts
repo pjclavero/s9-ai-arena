@@ -66,6 +66,7 @@ export async function startOnFreePort<T>(
  * proceso sale pronto; la causa sólo está en sus logs, que se capturan para distinguir «puerto
  * ocupado» de cualquier otro fallo. En fallo no deja el directorio de datos.
  */
+const STOP_GRACE_MS = 5_000;
 const BUSY_IPV4 = /could not bind IPv4 address[^\n]*address already in use/i;
 const BUSY_ANY = /address already in use|could not create any TCP\/IP sockets/i;
 
@@ -80,18 +81,26 @@ export async function launchEmbedded(port: number): Promise<EmbeddedPostgres & {
     persistent: false,
     onLog: (m: unknown) => void (logs += String(m)),
   });
+  // `start()` rechaza con `undefined` cuando el proceso YA salió, sin limpiar su estado interno: llamar
+  // entonces a `stop()` espera un `exit` que no volverá a emitirse y no resuelve nunca. Sólo se para el
+  // clúster si `start()` llegó a resolver (caso de bind IPv4 parcial) y, aun así, con plazo.
+  let started = false;
   try {
     await pg.initialise();
     await pg.start();
+    started = true;
     // Postgres arranca aunque falle UNA dirección: si 127.0.0.1:puerto es de otro proceso pero
     // `::` queda libre, «arranca» y el test acabaría hablando con el proceso equivocado.
     if (BUSY_IPV4.test(logs)) throw new PortBusyError("dirección IPv4 ocupada");
   } catch (e) {
-    await pg.stop().catch(() => {});
+    if (started)
+      await Promise.race([pg.stop().catch(() => {}), new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS))]);
     rmSync(dataDir, { recursive: true, force: true });
     if (e instanceof PortBusyError || BUSY_ANY.test(logs))
       throw new PortBusyError(`puerto ${port} ocupado: ${logs.slice(-300)}`);
-    throw e ?? new Error(`el clúster embebido salió al arrancar: ${logs.slice(-500)}`);
+    // Fallo que NO es de puerto: el diagnóstico de arranque (antes iba a console.log) no se pierde.
+    console.error(`[test-db] el clúster embebido falló al arrancar:\n${logs}`);
+    throw e ?? new Error(`el clúster embebido salió al arrancar: ${logs.slice(-2000)}`);
   }
   return Object.assign(pg, { dataDir });
 }

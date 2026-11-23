@@ -81,4 +81,31 @@ describe("launchEmbedded · señal real de puerto ocupado", () => {
     const after = readdirSync(tmpdir()).filter((d) => d.startsWith("e7-pg-") && !before.has(d));
     expect(after.filter((d) => existsSync(`${tmpdir()}/${d}`))).toEqual([]);
   }, 120_000);
+
+  it("FALLO TOTAL: con el puerto ocupado en TODAS las direcciones (Postgres sale) no cuelga, lanza PortBusyError y limpia el dataDir", async () => {
+    const before = new Set(readdirSync(tmpdir()).filter((d) => d.startsWith("e7-pg-")));
+    // `::` en doble pila ocupa también IPv4. Sin IPv6 en el host no se puede reproducir: se anota y sale.
+    const s = createServer();
+    const listening = await new Promise<boolean>((r) => {
+      s.once("error", () => r(false));
+      s.listen(0, "::", () => r(true));
+    });
+    if (!listening) return;
+    const port = (s.address() as AddressInfo).port;
+    try {
+      // `stop()` tras la salida temprana de Postgres no resuelve nunca: el plazo del test lo delata.
+      const outcome = await launchEmbedded(port).then(
+        async (pg) => {
+          await pg.stop();
+          return "arrancó" as const;
+        },
+        (e: unknown) => e,
+      );
+      expect(outcome).toBeInstanceOf(PortBusyError);
+    } finally {
+      await new Promise<void>((r) => s.close(() => r()));
+    }
+    const after = readdirSync(tmpdir()).filter((d) => d.startsWith("e7-pg-") && !before.has(d));
+    expect(after.filter((d) => existsSync(`${tmpdir()}/${d}`))).toEqual([]);
+  }, 30_000);
 });

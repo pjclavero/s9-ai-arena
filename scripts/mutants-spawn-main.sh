@@ -41,18 +41,18 @@ mutant M1-waitfor-sin-esperar "LECTURA" \
   "      listeners.add(check); done(resolve);"
 # M2 · startMain no relanza ante EADDRINUSE (vuelve la carrera del puerto).
 mutant M2-sin-relanzar-eaddrinuse "si el puerto elegido ya está ocupado" \
-  "if (!/EADDRINUSE/.test(p.output()) || attempt >= max) throw e;" \
+  "if (!/listen EADDRINUSE/.test(p.output()) || attempt >= max) throw e;" \
   "throw e;"
 # M3 · relanza ante CUALQUIER salida (reintento ciego).
 mutant M3-reintento-ciego "sólo EADDRINUSE se relanza" \
-  "if (!/EADDRINUSE/.test(p.output()) || attempt >= max) throw e;" \
+  "if (!/listen EADDRINUSE/.test(p.output()) || attempt >= max) throw e;" \
   "if (attempt >= max) throw e;"
 # M4 · no mata ni espera al hijo en el camino de fallo (huérfano).
 mutant M4-hijo-sin-matar "si el hijo no llega a anunciar" \
   "      await killTree(p.child, \"SIGTERM\");
       await p.exited;
-      if (!/EADDRINUSE/" \
-  "      if (!/EADDRINUSE/"
+      if (!/listen EADDRINUSE/" \
+  "      if (!/listen EADDRINUSE/"
 
 git diff --quiet -- "$F" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"

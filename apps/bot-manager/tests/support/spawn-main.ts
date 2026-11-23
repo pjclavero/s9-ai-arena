@@ -25,6 +25,8 @@ import { killTree, spawnService } from "../../../../packages/test-process/index.
 export interface MainProcess {
   child: ChildProcess;
   exited: Promise<number | null>;
+  /** Salida Y cierre de las tuberías: sólo tras esto `output()` está completo. */
+  closed: Promise<void>;
   ready: Promise<void>;
   output: () => string;
   /** Resuelve cuando la salida acumulada (stdout+stderr) casa con `re`; rechaza si el hijo sale antes o vence el plazo. */
@@ -85,7 +87,7 @@ export function runMain(env: Record<string, string>, opts: RunOptions): MainProc
   const ready = opts.untilLog ? waitFor(opts.untilLog, opts.timeoutMs) : closed;
   // Un `ready` rechazado que nadie ha esperado aún no debe tumbar el proceso de test.
   ready.catch(() => {});
-  return { child, exited, ready, output: () => out, waitFor };
+  return { child, exited, closed, ready, output: () => out, waitFor };
 }
 
 export interface StartOptions extends RunOptions {
@@ -110,7 +112,7 @@ export async function startMain(
     } catch (e) {
       await killTree(p.child, "SIGTERM");
       await p.exited;
-      if (!/EADDRINUSE/.test(p.output()) || attempt >= max) throw e;
+      if (!/listen EADDRINUSE/.test(p.output()) || attempt >= max) throw e;
     }
   }
 }
