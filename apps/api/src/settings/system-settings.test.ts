@@ -169,18 +169,19 @@ describe("ADM-1 · validación en servidor", () => {
     expect(await auditRows()).toHaveLength(0);
   });
 
-  it("ATOMICO_BD: un conflicto de versión en el 2.º cambio revierte también el 1.º y su auditoría", async () => {
-    await patch(one("test.mode", "b"));
+  it("ATOMICO_BD: un conflicto de versión en un cambio posterior (en orden de bloqueo) revierte también el anterior y su auditoría", async () => {
+    await patch(one("test.workers", 3)); // test.workers ya tiene versión 1
     const before = (await auditRows()).length;
+    // Se bloquea por clave: test.mode (ok) va ANTES que test.workers (conflicto).
     const r = await patch({
       changes: [
-        { key: "test.workers", value: 5, expectedVersion: 0 },
-        { key: "test.mode", value: "a", expectedVersion: 0 }, // versión real = 1
+        { key: "test.workers", value: 5, expectedVersion: 0 }, // versión real = 1
+        { key: "test.mode", value: "b", expectedVersion: 0 },
       ],
     });
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("version_conflict");
-    expect(await h.db("system_settings").where({ key: "test.workers" })).toHaveLength(0);
+    expect(await h.db("system_settings").where({ key: "test.mode" })).toHaveLength(0);
     expect((await auditRows()).length).toBe(before);
   });
 });
