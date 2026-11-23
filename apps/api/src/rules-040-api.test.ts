@@ -28,7 +28,9 @@ let tok: string;
 let orgTok: string;
 const bots: TestBot[] = [];
 
+const ctfEnvBefore = process.env.S9_CTF_PRACTICE_ENABLED;
 beforeAll(async () => {
+  process.env.S9_CTF_PRACTICE_ENABLED = "1"; // V1 · estas pruebas ejercitan CTF; el bloqueo se prueba en ctf-temporary-block.test.ts
   h = await startTestDb();
   await seedDev(h.db);
   app = createApp({ db: h.db, anonQuota: { max: 10_000, windowMs: 3600_000 } });
@@ -39,6 +41,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  if (ctfEnvBefore === undefined) delete process.env.S9_CTF_PRACTICE_ENABLED;
+  else process.env.S9_CTF_PRACTICE_ENABLED = ctfEnvBefore;
   await h.stop();
 });
 
