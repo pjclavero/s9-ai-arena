@@ -34,6 +34,8 @@ export class SystemSettingsReader {
   private values = new Map<string, { value: SettingValue; source: SettingSource }>();
   private lastGoodAt: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private refreshing = false;
+  private failing = false;
   private readonly now: () => number;
   private readonly env: NodeJS.ProcessEnv;
   readonly refreshMs: number;
@@ -77,12 +79,35 @@ export class SystemSettingsReader {
 
   /** Relee todas las filas. Un error NO renueva la lectura: al vencer `staleMs` se cierra. */
   async refresh(): Promise<void> {
+    // Guarda de reentrada: con una BD lenta no se acumulan lecturas concurrentes.
+    if (this.refreshing) return;
+    this.refreshing = true;
+    try {
+      await this.readOnce();
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
+  private async readOnce(): Promise<void> {
     let rows: { key: string; value: unknown }[];
     try {
       rows = await this.db(SYSTEM_SETTINGS_TABLE).select("key", "value");
-    } catch {
+    } catch (e) {
+      // Se registra al EMPEZAR a fallar (no cada 5 s): el valor vigente se conserva sólo hasta `staleMs`.
+      if (!this.failing) {
+        this.failing = true;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            msg: "system_settings: lectura fallida; se conserva el último valor hasta staleMs y luego los defectos",
+            error: (e as Error)?.message ?? String(e),
+          }),
+        );
+      }
       return;
     }
+    this.failing = false;
     const byKey = new Map(rows.map((r) => [r.key, r.value]));
     const next = new Map<string, { value: SettingValue; source: SettingSource }>();
     let invalid = 0;

@@ -8,7 +8,11 @@
  *   GRANT INSERT ON audit_log TO <rol>;      -- sólo inserción (el log ya no admite UPDATE/DELETE)
  *
  * (comprobado con un rol real en `admin-operations.test.ts`). No puede tocar `params`,
- * `kind` ni a quién se solicitó, ni ninguna tabla de dominio.
+ * `kind` ni a quién se solicitó, ni ninguna tabla de dominio. Además un TRIGGER de la BD (migración
+ * 023) sólo admite las transiciones legales: el ejecutor NUNCA puede mover `awaiting_confirmation`
+ * (no puede escribir `confirmed_by`/`confirmed_at`, que el trigger exige) ni cambiar `kind`/`params`.
+ * `owner` debe ser ÚNICO por proceso ejecutor (dos procesos con el mismo `owner` se pisarían el lease).
+ * Cada transición y su auditoría van en la MISMA transacción.
  *
  * Ciclo: `claimOperation` (pending → running con LEASE) → trabajo (renovando con
  * `extendLease`) → `completeOperation` | `failOperation`. Si el ejecutor muere, el lease caduca
@@ -40,31 +44,38 @@ function assertKinds(kinds: readonly string[]): void {
   }
 }
 
+/** Ejecuta `fn` en una transacción (o en un savepoint si `db` ya es una transacción). */
+function atomic<T>(db: Db, fn: (t: Db) => Promise<T>): Promise<T> {
+  return db.transaction((trx) => fn(trx as unknown as Db)) as Promise<T>;
+}
+
 /** Toma la orden `pending` más antigua de sus tipos (SKIP LOCKED: varios ejecutores no se pisan). */
 export async function claimOperation(
   db: Db,
   opts: { kinds: readonly string[]; owner: string; leaseMs: number },
 ): Promise<ClaimedOperation | null> {
   assertKinds(opts.kinds);
-  const res = await db.raw(
-    `UPDATE admin_operations
-        SET status = 'running', lease_owner = ?, lease_expires_at = now() + (? * interval '1 millisecond'),
-            attempts = attempts + 1, started_at = COALESCE(started_at, now())
-      WHERE id = (SELECT id FROM admin_operations
-                   WHERE status = 'pending' AND kind = ANY(?)
-                   ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1)
-      RETURNING id, kind, params, attempts, lease_expires_at`,
-    [opts.owner, Math.trunc(opts.leaseMs), [...opts.kinds]],
-  );
-  const r = res.rows[0];
-  if (!r) return null;
-  await audit(db, {
-    actorId: null,
-    action: "admin.op.started",
-    target: `operation:${r.id}`,
-    detail: { kind: r.kind, executor: opts.owner, attempt: r.attempts },
+  return atomic(db, async (t) => {
+    const res = await t.raw(
+      `UPDATE admin_operations
+          SET status = 'running', lease_owner = ?, lease_expires_at = now() + (? * interval '1 millisecond'),
+              attempts = attempts + 1, started_at = COALESCE(started_at, now())
+        WHERE id = (SELECT id FROM admin_operations
+                     WHERE status = 'pending' AND kind = ANY(?)
+                     ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1)
+        RETURNING id, kind, params, attempts, lease_expires_at`,
+      [opts.owner, Math.trunc(opts.leaseMs), [...opts.kinds]],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    await audit(t, {
+      actorId: null,
+      action: "admin.op.started",
+      target: `operation:${r.id}`,
+      detail: { kind: r.kind, executor: opts.owner, attempt: r.attempts },
+    });
+    return { id: r.id, kind: r.kind, params: r.params, attempts: r.attempts, leaseExpiresAt: r.lease_expires_at };
   });
-  return { id: r.id, kind: r.kind, params: r.params, attempts: r.attempts, leaseExpiresAt: r.lease_expires_at };
 }
 
 /** Renueva el lease SÓLO si sigue siendo suyo y vigente. */
@@ -81,71 +92,100 @@ function boundedResult(result: unknown): unknown {
   return text.length > MAX_RESULT_BYTES ? { truncated: true, bytes: text.length } : (result ?? {});
 }
 
-/** `running` → `done`. Sólo el dueño del lease; devuelve false si ya no lo es. */
+/** `running` → `done`. Sólo el dueño del lease VIGENTE; devuelve false si ya no lo es. */
 export async function completeOperation(db: Db, id: string, owner: string, result: unknown): Promise<boolean> {
-  const rows = await db("admin_operations")
-    .where({ id, status: "running", lease_owner: owner })
-    .update({
-      status: "done",
-      result: JSON.stringify(boundedResult(result)),
-      finished_at: db.fn.now(),
-      lease_expires_at: null,
-    })
-    .returning(["kind"]);
-  if (rows.length !== 1) return false;
-  await audit(db, {
-    actorId: null,
-    action: "admin.op.succeeded",
-    target: `operation:${id}`,
-    detail: { kind: rows[0].kind, executor: owner },
+  return atomic(db, async (t) => {
+    const rows = await t("admin_operations")
+      .where({ id, status: "running", lease_owner: owner })
+      .where("lease_expires_at", ">", t.fn.now())
+      .update({
+        status: "done",
+        result: JSON.stringify(boundedResult(result)),
+        finished_at: t.fn.now(),
+        lease_expires_at: null,
+      })
+      .returning(["kind"]);
+    if (rows.length !== 1) return false;
+    await audit(t, {
+      actorId: null,
+      action: "admin.op.succeeded",
+      target: `operation:${id}`,
+      detail: { kind: rows[0].kind, executor: owner },
+    });
+    return true;
   });
-  return true;
 }
 
-/** `running` → `failed` con un motivo corto (sin secretos ni rutas internas). */
+/** `running` → `failed` con un motivo corto (sin secretos ni rutas internas). Sólo con el lease vigente. */
 export async function failOperation(db: Db, id: string, owner: string, reason: string): Promise<boolean> {
-  const rows = await db("admin_operations")
-    .where({ id, status: "running", lease_owner: owner })
-    .update({
-      status: "failed",
-      result: JSON.stringify({ error: String(reason).slice(0, 500) }),
-      finished_at: db.fn.now(),
-      lease_expires_at: null,
-    })
-    .returning(["kind"]);
-  if (rows.length !== 1) return false;
-  await audit(db, {
-    actorId: null,
-    action: "admin.op.failed",
-    target: `operation:${id}`,
-    detail: { kind: rows[0].kind, executor: owner },
+  return atomic(db, async (t) => {
+    const rows = await t("admin_operations")
+      .where({ id, status: "running", lease_owner: owner })
+      .where("lease_expires_at", ">", t.fn.now())
+      .update({
+        status: "failed",
+        result: JSON.stringify({ error: String(reason).slice(0, 500) }),
+        finished_at: t.fn.now(),
+        lease_expires_at: null,
+      })
+      .returning(["kind"]);
+    if (rows.length !== 1) return false;
+    await audit(t, {
+      actorId: null,
+      action: "admin.op.failed",
+      target: `operation:${id}`,
+      detail: { kind: rows[0].kind, executor: owner },
+    });
+    return true;
   });
-  return true;
 }
 
-/** Lease caducado: de vuelta a `pending` si quedan intentos; si no, `failed` (lease_expired). */
+/**
+ * Lease caducado: de vuelta a `pending` si quedan intentos; si no, `failed` (lease_expired). Cada
+ * transición queda auditada (`admin.op.requeued` / `admin.op.failed`) en la misma transacción.
+ */
 export async function reapExpiredLeases(
   db: Db,
   opts: { kinds: readonly string[]; maxAttempts: number },
 ): Promise<{ requeued: number; failed: number }> {
   assertKinds(opts.kinds);
-  const requeued = await db("admin_operations")
-    .where({ status: "running" })
-    .whereIn("kind", [...opts.kinds])
-    .where("lease_expires_at", "<=", db.fn.now())
-    .where("attempts", "<", opts.maxAttempts)
-    .update({ status: "pending", lease_owner: null, lease_expires_at: null });
-  const failed = await db("admin_operations")
-    .where({ status: "running" })
-    .whereIn("kind", [...opts.kinds])
-    .where("lease_expires_at", "<=", db.fn.now())
-    .where("attempts", ">=", opts.maxAttempts)
-    .update({
-      status: "failed",
-      result: JSON.stringify({ error: "lease_expired" }),
-      finished_at: db.fn.now(),
-      lease_owner: null,
-      lease_expires_at: null,
-    });
-  return { requeued, failed };
+  return atomic(db, async (t) => {
+    const requeued: { id: string; kind: string; attempts: number }[] = await t("admin_operations")
+      .where({ status: "running" })
+      .whereIn("kind", [...opts.kinds])
+      .where("lease_expires_at", "<=", t.fn.now())
+      .where("attempts", "<", opts.maxAttempts)
+      .update({ status: "pending", lease_owner: null, lease_expires_at: null })
+      .returning(["id", "kind", "attempts"]);
+    const failed: { id: string; kind: string; attempts: number }[] = await t("admin_operations")
+      .where({ status: "running" })
+      .whereIn("kind", [...opts.kinds])
+      .where("lease_expires_at", "<=", t.fn.now())
+      .where("attempts", ">=", opts.maxAttempts)
+      .update({
+        status: "failed",
+        result: JSON.stringify({ error: "lease_expired" }),
+        finished_at: t.fn.now(),
+        lease_owner: null,
+        lease_expires_at: null,
+      })
+      .returning(["id", "kind", "attempts"]);
+    for (const r of requeued) {
+      await audit(t, {
+        actorId: null,
+        action: "admin.op.requeued",
+        target: `operation:${r.id}`,
+        detail: { kind: r.kind, reason: "lease_expired", attempts: r.attempts },
+      });
+    }
+    for (const r of failed) {
+      await audit(t, {
+        actorId: null,
+        action: "admin.op.failed",
+        target: `operation:${r.id}`,
+        detail: { kind: r.kind, reason: "lease_expired", attempts: r.attempts },
+      });
+    }
+    return { requeued: requeued.length, failed: failed.length };
+  });
 }

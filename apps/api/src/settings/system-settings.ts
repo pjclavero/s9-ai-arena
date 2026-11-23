@@ -16,6 +16,7 @@ import { badRequest, conflict } from "../errors.js";
 import {
   effectiveValue,
   envCeiling,
+  envCeilingState,
   validateSettingValue,
   type SettingValue,
   type SettingsRegistry,
@@ -39,6 +40,8 @@ export interface SettingView {
   description: string;
   /** Techo duro del entorno vigente (null si no hay). */
   envCeiling: number | null;
+  /** true ⇒ la variable de entorno del techo está mal formada: la clave está bloqueada y vale su defecto. */
+  envCeilingInvalid: boolean;
   value: SettingValue;
   source: "database" | "environment" | "default";
   /** 0 = sin fila en BD. Es el `expectedVersion` del próximo PATCH. */
@@ -70,6 +73,7 @@ function view(registry: SettingsRegistry, key: string, row: Row | undefined, env
     requiresRestart: d.apply === "restart",
     description: d.description,
     envCeiling: envCeiling(d, env),
+    envCeilingInvalid: envCeilingState(d, env).state === "invalid",
     value: e.value,
     source: e.source,
     version: row?.version ?? 0,
@@ -151,67 +155,79 @@ export async function patchSettings(
   if (errors.length) throw badRequest(errors.join("; "));
 
   // 2) Escritura + auditoría en UNA transacción: o todo o nada.
-  const changed: PatchResult["changed"] = [];
-  await db.transaction(async (trx) => {
-    const t = trx as unknown as Db;
-    for (const { item, value } of valid) {
-      const d = registry.get(item.key)!;
-      const row: Row | undefined = await t(SYSTEM_SETTINGS_TABLE).where({ key: item.key }).forUpdate().first();
-      const currentVersion = row?.version ?? 0;
-      if (currentVersion !== item.expectedVersion) {
-        throw conflict("version_conflict", `${item.key} cambió mientras lo editabas (versión ${currentVersion})`, {
-          key: item.key,
-          currentVersion,
-        });
-      }
-      if (row && JSON.stringify(row.value) === JSON.stringify(value)) continue; // sin cambio real: ni versión ni auditoría
-      let version: number;
-      if (row) {
-        version = row.version + 1;
-        await t(SYSTEM_SETTINGS_TABLE)
-          .where({ key: item.key })
-          .update({ value: JSON.stringify(value), version, updated_at: t.fn.now(), updated_by: ctx.actorId });
-      } else {
-        version = 1;
-        // Sin fila no hay nada que bloquear: una inserción concurrente de la misma clave choca con la PK (409).
-        try {
-          await t(SYSTEM_SETTINGS_TABLE).insert({
+  const changedByKey = new Map<string, PatchResult["changed"][number]>();
+  // Bloqueo en ORDEN DETERMINISTA (por clave): dos PATCH con las mismas claves en orden inverso no se interbloquean.
+  const ordered = [...valid].sort((x, y) => (x.item.key < y.item.key ? -1 : x.item.key > y.item.key ? 1 : 0));
+  await db
+    .transaction(async (trx) => {
+      const t = trx as unknown as Db;
+      for (const { item, value } of ordered) {
+        const d = registry.get(item.key)!;
+        const row: Row | undefined = await t(SYSTEM_SETTINGS_TABLE).where({ key: item.key }).forUpdate().first();
+        const currentVersion = row?.version ?? 0;
+        if (currentVersion !== item.expectedVersion) {
+          throw conflict("version_conflict", `${item.key} cambió mientras lo editabas (versión ${currentVersion})`, {
             key: item.key,
-            value: JSON.stringify(value),
-            version,
-            updated_by: ctx.actorId,
+            currentVersion,
           });
-        } catch (e) {
-          if ((e as { code?: string }).code === "23505") {
-            throw conflict("version_conflict", `${item.key} lo creó otro administrador a la vez`, { key: item.key });
-          }
-          throw e;
         }
-      }
-      await audit(t, {
-        actorId: ctx.actorId,
-        action: SETTINGS_AUDIT_ACTION,
-        target: `setting:${item.key}`,
-        detail: {
+        if (row && JSON.stringify(row.value) === JSON.stringify(value)) continue; // sin cambio real: ni versión ni auditoría
+        let version: number;
+        if (row) {
+          version = row.version + 1;
+          await t(SYSTEM_SETTINGS_TABLE)
+            .where({ key: item.key })
+            .update({ value: JSON.stringify(value), version, updated_at: t.fn.now(), updated_by: ctx.actorId });
+        } else {
+          version = 1;
+          // Sin fila no hay nada que bloquear: una inserción concurrente de la misma clave choca con la PK (409).
+          try {
+            await t(SYSTEM_SETTINGS_TABLE).insert({
+              key: item.key,
+              value: JSON.stringify(value),
+              version,
+              updated_by: ctx.actorId,
+            });
+          } catch (e) {
+            if ((e as { code?: string }).code === "23505") {
+              throw conflict("version_conflict", `${item.key} lo creó otro administrador a la vez`, { key: item.key });
+            }
+            throw e;
+          }
+        }
+        await audit(t, {
+          actorId: ctx.actorId,
+          action: SETTINGS_AUDIT_ACTION,
+          target: `setting:${item.key}`,
+          detail: {
+            key: item.key,
+            before: row ? row.value : null,
+            after: value,
+            beforeVersion: currentVersion,
+            afterVersion: version,
+            requiresRestart: d.apply === "restart",
+            consumer: d.consumer,
+          },
+          correlationId: ctx.correlationId,
+        });
+        changedByKey.set(item.key, {
           key: item.key,
           before: row ? row.value : null,
           after: value,
-          beforeVersion: currentVersion,
-          afterVersion: version,
+          version,
           requiresRestart: d.apply === "restart",
-          consumer: d.consumer,
-        },
-        correlationId: ctx.correlationId,
-      });
-      changed.push({
-        key: item.key,
-        before: row ? row.value : null,
-        after: value,
-        version,
-        requiresRestart: d.apply === "restart",
-      });
-    }
-  });
+        });
+      }
+    })
+    .catch((e) => {
+      // Defensa en profundidad: un interbloqueo residual se comunica como conflicto reintentable, no como 500.
+      if ((e as { code?: string }).code === "40P01") {
+        throw conflict("version_conflict", "Otro administrador estaba cambiando las mismas claves: reintenta");
+      }
+      throw e;
+    });
+  // La respuesta conserva el orden de la petición.
+  const changed = valid.map((v) => changedByKey.get(v.item.key)).filter((c) => c !== undefined);
 
   return {
     settings: await listSettings(db, registry, env),

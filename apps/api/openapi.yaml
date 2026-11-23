@@ -3617,6 +3617,7 @@ components:
         requiresRestart: { type: boolean }
         description: { type: string }
         envCeiling: { type: number, nullable: true, description: 'Techo duro del entorno vigente (el valor guardado no puede superarlo).' }
+        envCeilingInvalid: { type: boolean, description: 'La variable de entorno del techo está mal formada: la clave queda BLOQUEADA para escritura y vale su valor por defecto (fail-closed).' }
         value: { $ref: '#/components/schemas/SystemSettingValue' }
         source: { type: string, enum: [database, environment, default] }
         version: { type: integer, description: 'Versión guardada (0 = sin fila); es el `expectedVersion` del próximo PATCH.' }
@@ -3668,7 +3669,7 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7).' }
+        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7). `system.noop` es de PRUEBA: sólo se acepta en tests o con S9_ADMIN_OPS_NOOP=1; en producción la API no admite ningún tipo todavía.' }
         params:
           type: object
           description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'

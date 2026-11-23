@@ -96,39 +96,78 @@ export function createSettingsRegistry(defs: readonly SettingDef[]): SettingsReg
   return { defs: [...map.values()], get: (k) => map.get(k) };
 }
 
-/** Techo del entorno vigente para la clave (o null si no hay o no es válido). */
-export function envCeiling(d: SettingDef, env: NodeJS.ProcessEnv = process.env): number | null {
-  if ((d.type !== "integer" && d.type !== "number") || !d.env) return null;
+export type CeilingState =
+  | { state: "none" }
+  | { state: "ok"; value: number }
+  /** Variable definida pero ilegible o fuera de [min,max]: la clave se trata como BLOQUEADA (fail-closed). */
+  | { state: "invalid" };
+
+const loggedInvalid = new Set<string>();
+
+/**
+ * Estado del techo del entorno. Una variable ausente o vacía = sin techo; definida y MAL FORMADA (no
+ * numérica, no entera, fuera de rango) = `invalid`: no se ignora en silencio (se registra una vez en el
+ * log) y el llamador falla cerrado.
+ */
+export function envCeilingState(d: SettingDef, env: NodeJS.ProcessEnv = process.env): CeilingState {
+  if ((d.type !== "integer" && d.type !== "number") || !d.env) return { state: "none" };
   const raw = env[d.env];
-  if (raw === undefined || raw.trim() === "") return null;
+  if (raw === undefined || raw.trim() === "") return { state: "none" };
   const n = Number(raw);
-  if (!Number.isFinite(n) || (d.type === "integer" && !Number.isInteger(n))) return null;
-  if (n < d.min! || n > d.max!) return null;
-  return n;
+  if (!Number.isFinite(n) || (d.type === "integer" && !Number.isInteger(n)) || n < d.min! || n > d.max!) {
+    if (!loggedInvalid.has(`${d.env}=${raw}`)) {
+      loggedInvalid.add(`${d.env}=${raw}`);
+      console.error(
+        JSON.stringify({
+          level: "error",
+          msg: "ajuste: variable de entorno de techo inválida; la clave queda bloqueada y vale su defecto",
+          key: d.key,
+          env: d.env,
+        }),
+      );
+    }
+    return { state: "invalid" };
+  }
+  return { state: "ok", value: n };
 }
 
-/** Valida un valor a ESCRIBIR: tipo, rango del registro y techo del entorno. */
+/** Techo del entorno vigente y VÁLIDO (null si no hay o la variable es inválida: ver `envCeilingState`). */
+export function envCeiling(d: SettingDef, env: NodeJS.ProcessEnv = process.env): number | null {
+  const c = envCeilingState(d, env);
+  return c.state === "ok" ? c.value : null;
+}
+
+/** Valida un valor a ESCRIBIR: tipo, rango del registro y techo del entorno (inválido ⇒ clave bloqueada). */
 export function validateSettingValue(d: SettingDef, v: unknown, env: NodeJS.ProcessEnv = process.env): Validation {
   const r = validateRaw(d, v);
   if (!r.ok) return r;
-  const ceil = envCeiling(d, env);
-  if (ceil !== null && typeof r.value === "number" && r.value > ceil) {
-    return { ok: false, error: `${d.key} no puede superar el techo del entorno (${ceil})` };
+  const c = envCeilingState(d, env);
+  if (c.state === "invalid") {
+    return {
+      ok: false,
+      error: `${d.key} está bloqueada: la variable de entorno ${d.env} está mal formada (corrígela y reinicia)`,
+    };
+  }
+  if (c.state === "ok" && typeof r.value === "number" && r.value > c.value) {
+    return { ok: false, error: `${d.key} no puede superar el techo del entorno (${c.value})` };
   }
   return r;
 }
 
 /**
- * Valor EFECTIVO de una clave dada la fila de BD (o undefined). Sin fila: techo/entorno y,
- * si no hay, el defecto. Fila inválida (o ilegible): se IGNORA y se cae al mismo valor.
- * Fila válida por encima del techo actual del entorno: se recorta al techo.
+ * Valor EFECTIVO de una clave dada la fila de BD (o undefined). Sin fila: techo/entorno y, si no hay,
+ * el defecto. Fila inválida (o ilegible): se IGNORA y se cae al mismo valor. Fila válida por encima del
+ * techo actual del entorno: se recorta al techo. Techo del entorno MAL FORMADO: fail-closed, vale el
+ * defecto del registro (nunca el valor de la BD) y se marca como inválido.
  */
 export function effectiveValue(
   d: SettingDef,
   dbValue: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): { value: SettingValue; source: "database" | "environment" | "default"; invalid: boolean } {
-  const ceil = envCeiling(d, env);
+  const cs = envCeilingState(d, env);
+  if (cs.state === "invalid") return { value: d.default, source: "default", invalid: true };
+  const ceil = cs.state === "ok" ? cs.value : null;
   const fallback = (): { value: SettingValue; source: "environment" | "default" } =>
     ceil !== null ? { value: ceil, source: "environment" } : { value: d.default, source: "default" };
   if (dbValue === undefined) return { ...fallback(), invalid: false };

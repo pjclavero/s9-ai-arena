@@ -2,11 +2,12 @@
  * ADM-1 · Registro de ajustes (puro, sin BD): tipos estrictos, rangos, techo del entorno y
  * valor efectivo. Cada caso lleva su mutante en scripts/adm1-mutants.py.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createSettingsRegistry,
   effectiveValue,
   envCeiling,
+  envCeilingState,
   SYSTEM_SETTINGS_REGISTRY,
   validateSettingValue,
   type SettingDef,
@@ -57,9 +58,32 @@ describe("registro de ajustes: validación en servidor", () => {
     expect(r.error).toMatch(/techo del entorno/);
   });
 
-  it("TECHO_ENTORNO_INVALIDO: un techo ilegible o fuera de rango se ignora (no abre ni cierra nada)", () => {
-    for (const raw of ["", "abc", "2.5", "0", "99"])
-      expect(envCeiling(INT, { S9_TEST_COUNT_MAX: raw }), raw).toBeNull();
+  it("TECHO_ENTORNO_VACIO: una variable ausente o vacía es «sin techo» (no es un error)", () => {
+    expect(envCeilingState(INT, {})).toEqual({ state: "none" });
+    expect(envCeilingState(INT, { S9_TEST_COUNT_MAX: "  " })).toEqual({ state: "none" });
+    expect(envCeiling(INT, { S9_TEST_COUNT_MAX: "" })).toBeNull();
+  });
+
+  it("TECHO_ENTORNO_INVALIDO: una variable mal formada FALLA CERRADO (clave bloqueada, defecto, y queda en el log)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const raw of ["abc", "8x", "2.5", "0", "99", "NaN"]) {
+        const env = { S9_TEST_COUNT_MAX: raw };
+        expect(envCeilingState(INT, env), raw).toEqual({ state: "invalid" });
+        // Escritura: bloqueada aunque el valor esté en rango.
+        const w = validateSettingValue(INT, 3, env);
+        expect(w.ok, raw).toBe(false);
+        expect(w.error).toMatch(/bloqueada/);
+        // Lectura: vale el defecto, nunca el valor de la BD (ni un techo imaginario).
+        expect(effectiveValue(INT, 12, env), raw).toMatchObject({ value: 4, source: "default", invalid: true });
+      }
+      expect(spy).toHaveBeenCalled();
+      const logged = String(spy.mock.calls[0][0]);
+      expect(logged).toMatch(/S9_TEST_COUNT_MAX/);
+      expect(logged).not.toMatch(/8x/); // el valor crudo no se vuelca al log
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

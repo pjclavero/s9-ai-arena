@@ -14,6 +14,7 @@ import { createApp } from "../app.js";
 import { hashPassword } from "../auth/passwords.js";
 import { generateTotpSecret } from "../auth/totp.js";
 import { SharedRateLimiter } from "../middleware/shared-rate-limit.js";
+import { OPERATION_KINDS, buildOperationKinds } from "./admin-operations.js";
 import {
   claimOperation,
   completeOperation,
@@ -558,6 +559,247 @@ describe("ADM-1 · circuito de extremo a extremo con un ejecutor de prueba", () 
       "admin.op.confirmed",
       "admin.op.started",
       "admin.op.succeeded",
+    ]);
+  });
+});
+
+describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
+  async function execRole() {
+    await h.db.raw(
+      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 's9_ops_exec') THEN CREATE ROLE s9_ops_exec NOLOGIN; END IF; END $$`,
+    );
+    await h.db.raw(`GRANT SELECT ON admin_operations TO s9_ops_exec`);
+    await h.db.raw(
+      `GRANT UPDATE (status, result, lease_owner, lease_expires_at, attempts, started_at, finished_at) ON admin_operations TO s9_ops_exec`,
+    );
+    await h.db.raw(`GRANT INSERT ON audit_log TO s9_ops_exec`);
+  }
+  const asExec = (sql: string, bindings: unknown[] = []) =>
+    h.db.transaction(async (trx) => {
+      await trx.raw(`SET LOCAL ROLE s9_ops_exec`);
+      await trx.raw(sql, bindings);
+    });
+  const statusOf = async (id: string) => (await h.db("admin_operations").where({ id }).first()).status;
+
+  it("TRANSICIONES_EN_BD: el rol ejecutor NO puede mover una orden sin confirmar (ni a pending ni a running ni a done)", async () => {
+    await execRole();
+    const { id } = await createAndTake(destructive);
+    await expect(asExec(`UPDATE admin_operations SET status = 'pending' WHERE id = ?`, [id])).rejects.toMatchObject({
+      code: "23514",
+      message: expect.stringMatching(/exige la confirmación/),
+    });
+    for (const to of ["running", "done", "failed"]) {
+      await expect(asExec(`UPDATE admin_operations SET status = '${to}' WHERE id = ?`, [id]), to).rejects.toMatchObject(
+        {
+          code: "23514",
+        },
+      );
+    }
+    // Tampoco puede fabricar la confirmación: no tiene permiso sobre confirmed_by/confirmed_at.
+    await expect(
+      asExec(
+        `UPDATE admin_operations SET status = 'pending', confirmed_by = requested_by, confirmed_at = now() WHERE id = ?`,
+        [id],
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    expect(await statusOf(id)).toBe("awaiting_confirmation");
+  });
+
+  it("TRANSICIONES_EN_BD_ESTADOS: sólo las transiciones legales, para cualquier rol; los finales no se tocan", async () => {
+    const r = await create({ kind: "system.noop" });
+    const id = r.body.operation.id as string;
+    // pending → done directo (sin pasar por running) no existe
+    await expect(h.db("admin_operations").where({ id }).update({ status: "done" })).rejects.toMatchObject({
+      code: "23514",
+    });
+    const c = await claimOperation(h.db, { kinds: ["system.noop"], owner: "e1", leaseMs: 60_000 });
+    expect(c?.id).toBe(id);
+    expect(await completeOperation(h.db, id, "e1", { ok: 1 })).toBe(true);
+    // estado final: ni resucitar ni tocar
+    await expect(
+      h.db("admin_operations").where({ id }).update({ status: "pending", lease_owner: null, lease_expires_at: null }),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      h
+        .db("admin_operations")
+        .where({ id })
+        .update({ result: JSON.stringify({ x: 1 }) }),
+    ).rejects.toMatchObject({
+      code: "23514",
+    });
+  });
+
+  it("INMUTABLES_EN_BD: kind, params, impacto y solicitante no cambian nunca, ni siquiera para un superusuario", async () => {
+    const { id } = await createAndTake(destructive);
+    for (const patch of [
+      { params: JSON.stringify({ impactClass: "none" }) },
+      { impact: JSON.stringify({ summary: "otro", counts: {} }) },
+      { confirm_phrase: "otra frase" },
+      { requires_second_admin: true },
+      { requested_by: (await h.db("users").where({ email: DEV_USERS.moderator }).first()).id },
+    ]) {
+      await expect(
+        h.db("admin_operations").where({ id }).update(patch),
+        JSON.stringify(Object.keys(patch)),
+      ).rejects.toMatchObject({
+        code: "23514",
+      });
+    }
+    expect(await statusOf(id)).toBe("awaiting_confirmation");
+  });
+
+  it("SEGUNDO_ADMIN_EN_BD: aunque se fabrique la confirmación, en una irreversible no puede confirmar quien la pidió", async () => {
+    const created = await create(irreversible, admin);
+    const id = created.body.operation.id as string;
+    const row = await h.db("admin_operations").where({ id }).first();
+    await expect(
+      h
+        .db("admin_operations")
+        .where({ id })
+        .update({ status: "pending", confirmed_by: row.requested_by, confirmed_at: h.db.fn.now() }),
+    ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/segundo admin/) });
+    const other = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ status: "pending", confirmed_by: other.id, confirmed_at: h.db.fn.now() });
+    expect(await statusOf(id)).toBe("pending");
+  });
+
+  it("USUARIO_BORRADO: borrar al solicitante (ON DELETE SET NULL) no choca con el trigger", async () => {
+    const [u] = await h
+      .db("users")
+      .insert({ email: "borrable@dev.arena.local", password_hash: "x", display_name: "b" })
+      .returning("id");
+    await h.db("admin_operations").insert({ kind: "system.noop", status: "pending", requested_by: u.id });
+    await h.db("users").where({ id: u.id }).delete();
+    const row = await h.db("admin_operations").first();
+    expect(row.requested_by).toBeNull();
+  });
+});
+
+describe("ADM-1 · auditoría atómica del ejecutor y lease vigente", () => {
+  async function blockAudit(action: string) {
+    await h.db.raw(`CREATE OR REPLACE FUNCTION adm1_block_audit_action() RETURNS trigger AS $$
+      BEGIN IF NEW.action = TG_ARGV[0] THEN RAISE EXCEPTION 'auditoria bloqueada'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`);
+    await h.db.raw(`DROP TRIGGER IF EXISTS adm1_block_exec ON audit_log`);
+    await h.db.raw(
+      `CREATE TRIGGER adm1_block_exec BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION adm1_block_audit_action('${action}')`,
+    );
+  }
+  const unblock = () => h.db.raw(`DROP TRIGGER IF EXISTS adm1_block_exec ON audit_log`);
+  const pendingNoop = async () => (await create({ kind: "system.noop" })).body.operation.id as string;
+  const row = (id: string) => h.db("admin_operations").where({ id }).first();
+
+  it("EJECUTOR_ATOMICO_CLAIM: si falla la auditoría, la orden NO queda en running", async () => {
+    const id = await pendingNoop();
+    await blockAudit("admin.op.started");
+    try {
+      await expect(claimOperation(h.db, { kinds: ["system.noop"], owner: "e1", leaseMs: 60_000 })).rejects.toThrow(
+        /auditoria bloqueada/,
+      );
+    } finally {
+      await unblock();
+    }
+    expect(await row(id)).toMatchObject({ status: "pending", attempts: 0, lease_owner: null });
+  });
+
+  it("EJECUTOR_ATOMICO_COMPLETE_FAIL: si falla la auditoría, la orden sigue running", async () => {
+    const id = await pendingNoop();
+    await claimOperation(h.db, { kinds: ["system.noop"], owner: "e1", leaseMs: 60_000 });
+    await blockAudit("admin.op.succeeded");
+    try {
+      await expect(completeOperation(h.db, id, "e1", { ok: 1 })).rejects.toThrow(/auditoria bloqueada/);
+    } finally {
+      await unblock();
+    }
+    expect((await row(id)).status).toBe("running");
+    await blockAudit("admin.op.failed");
+    try {
+      await expect(failOperation(h.db, id, "e1", "x")).rejects.toThrow(/auditoria bloqueada/);
+    } finally {
+      await unblock();
+    }
+    expect((await row(id)).status).toBe("running");
+  });
+
+  it("EJECUTOR_ATOMICO_REAPER: el reaper audita cada reencolado y cada fallo, y es atómico con su auditoría", async () => {
+    const id = await pendingNoop();
+    await claimOperation(h.db, { kinds: ["system.noop"], owner: "e1", leaseMs: 60_000 });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ lease_expires_at: new Date(Date.now() - 1000) });
+    await blockAudit("admin.op.requeued");
+    try {
+      await expect(reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 3 })).rejects.toThrow(
+        /auditoria bloqueada/,
+      );
+    } finally {
+      await unblock();
+    }
+    expect((await row(id)).status).toBe("running"); // el UPDATE del reaper se deshizo
+    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 3 })).toEqual({
+      requeued: 1,
+      failed: 0,
+    });
+    // y ahora el que agota los intentos
+    await claimOperation(h.db, { kinds: ["system.noop"], owner: "e2", leaseMs: 60_000 });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ lease_expires_at: new Date(Date.now() - 1000) });
+    expect(await reapExpiredLeases(h.db, { kinds: ["system.noop"], maxAttempts: 2 })).toEqual({
+      requeued: 0,
+      failed: 1,
+    });
+    const acts = await audits("admin.op.%");
+    expect(acts.map((a) => a.action)).toEqual([
+      "admin.op.requested",
+      "admin.op.started",
+      "admin.op.requeued",
+      "admin.op.started",
+      "admin.op.failed",
+    ]);
+    expect(acts[2].detail).toMatchObject({ reason: "lease_expired" });
+    expect(acts[4].detail).toMatchObject({ reason: "lease_expired" });
+  });
+
+  it("LEASE_VENCIDO_NO_COMPLETA: con el lease vencido (aunque nadie lo haya recogido) ni complete ni fail valen", async () => {
+    const id = await pendingNoop();
+    await claimOperation(h.db, { kinds: ["system.noop"], owner: "e1", leaseMs: 60_000 });
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ lease_expires_at: new Date(Date.now() - 1000) });
+    expect(await completeOperation(h.db, id, "e1", { ok: 1 })).toBe(false);
+    expect(await failOperation(h.db, id, "e1", "x")).toBe(false);
+    expect((await row(id)).status).toBe("running");
+    expect((await audits("admin.op.succeeded")).length).toBe(0);
+  });
+});
+
+describe("ADM-1 · registro de tipos y su CHECK", () => {
+  it("DERIVA_CHECK_REGISTRO: el CHECK de `kind` de la BD y OPERATION_KINDS contienen exactamente los mismos tipos", async () => {
+    const r = await h.db.raw(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+        WHERE conrelid = 'admin_operations'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%kind%'`,
+    );
+    expect(r.rows).toHaveLength(1);
+    const inDb = [...String(r.rows[0].def).matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    expect(inDb).toEqual(Object.keys(OPERATION_KINDS).sort());
+    // y cada tipo del registro se puede insertar de verdad
+    for (const kind of Object.keys(OPERATION_KINDS)) {
+      await h.db("admin_operations").insert({ kind, status: "done" });
+    }
+  });
+
+  it("NOOP_SOLO_EN_TESTS: en producción el registro no trae system.noop salvo activación expresa", () => {
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual([]);
+    expect(Object.keys(buildOperationKinds({}))).toEqual([]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" }))).toEqual(["system.noop"]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production", S9_ADMIN_OPS_NOOP: "1" }))).toEqual([
+      "system.noop",
     ]);
   });
 });

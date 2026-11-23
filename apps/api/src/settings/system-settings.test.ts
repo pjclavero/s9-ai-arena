@@ -3,7 +3,7 @@
  * rangos en servidor, techo del entorno, auditoría atómica, concurrencia optimista y lectura en
  * caliente con sondeo y fail-closed. Cada caso lleva su mutante en scripts/adm1-mutants.py.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
@@ -329,5 +329,71 @@ describe("ADM-1 · lector con sondeo (en caliente) y fail-closed", () => {
     const rd = reader({ t: 1 }, { S9_TEST_WORKERS_MAX: "6" });
     await rd.refresh();
     expect(rd.get("test.workers")).toBe(6);
+  });
+});
+
+describe("ADM-1 · techo del entorno mal formado (fail-closed)", () => {
+  it("ENV_INVALIDO_BLOQUEA: la clave queda bloqueada para escribir, vale su defecto y el GET lo avisa", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await h.db("system_settings").insert({ key: "test.workers", value: JSON.stringify(9), version: 1 });
+      env.S9_TEST_WORKERS_MAX = "8x";
+      const w = await patch(one("test.workers", 3, 1));
+      expect(w.status).toBe(400);
+      expect(String(w.body.message)).toMatch(/bloqueada/);
+      const g = await get(admin);
+      const row = g.body.settings.find((x: { key: string }) => x.key === "test.workers");
+      expect(row).toMatchObject({ value: 2, source: "default", envCeilingInvalid: true, envCeiling: null });
+      // El lector de los servicios hace lo mismo: ni el valor de la BD ni un techo inexistente.
+      const rd = new SystemSettingsReader(h.db, REGISTRY, { refreshMs: 5_000, env });
+      await rd.refresh();
+      expect(rd.get("test.workers")).toBe(2);
+      // Otras claves siguen escribibles.
+      expect((await patch(one("test.mode", "b", 0))).status).toBe(200);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("ADM-1 · bloqueo ordenado del PATCH", () => {
+  it("PATCH_ORDEN_DETERMINISTA: dos PATCH con las mismas claves en orden inverso nunca se interbloquean", async () => {
+    await h.db("system_settings").insert([
+      { key: "test.workers", value: JSON.stringify(3), version: 1 },
+      { key: "test.mode", value: JSON.stringify("a"), version: 1 },
+    ]);
+    let version = 1;
+    for (let round = 0; round < 12; round++) {
+      const mk = (keys: string[], n: number) => ({
+        changes: keys.map((k) => ({
+          key: k,
+          value: k === "test.workers" ? 4 + (n % 5) : n % 2 ? "a" : "b",
+          expectedVersion: version,
+        })),
+      });
+      const [r1, r2] = await Promise.all([
+        patch(mk(["test.workers", "test.mode"], round * 2 + 1)),
+        patch(mk(["test.mode", "test.workers"], round * 2 + 2)),
+      ]);
+      for (const r of [r1, r2]) {
+        expect([200, 409]).toContain(r.status);
+        // Un 409 legítimo es de versión: trae la versión vigente; un interbloqueo mapeado no la trae.
+        if (r.status === 409) expect(r.body.currentVersion).toBeDefined();
+      }
+      const cur = await h.db("system_settings").where({ key: "test.workers" }).first();
+      version = cur.version;
+      await h.db("system_settings").where({ key: "test.mode" }).update({ version });
+    }
+  });
+
+  it("RESPUESTA_EN_ORDEN_DE_PETICION: aunque se bloquee ordenado, `changed` conserva el orden pedido", async () => {
+    const r = await patch({
+      changes: [
+        { key: "test.workers", value: 5, expectedVersion: 0 },
+        { key: "test.mode", value: "b", expectedVersion: 0 },
+      ],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.changed.map((c: { key: string }) => c.key)).toEqual(["test.workers", "test.mode"]);
   });
 });

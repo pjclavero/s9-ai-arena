@@ -1192,12 +1192,63 @@ const m023_system_settings_operations: Migration = {
       CREATE UNIQUE INDEX admin_operations_one_active_per_kind
         ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running');
       CREATE INDEX admin_operations_claim_idx ON admin_operations (status, kind, created_at);
+
+      -- MÁQUINA DE ESTADOS EN LA BD (vale para CUALQUIER rol, también un ejecutor con UPDATE de columnas):
+      --  * kind, params y los datos de la solicitud son inmutables (sólo pueden pasar a NULL por ON DELETE SET NULL);
+      --  * transiciones legales: awaiting_confirmation → pending|expired|cancelled; pending → running|cancelled;
+      --    running → done|failed|pending (reaper); los estados finales no se tocan;
+      --  * awaiting_confirmation → pending sólo con confirmación: confirmed_by y confirmed_at informados EN ESA
+      --    MISMA actualización (columnas que el rol ejecutor no puede escribir) y, con segundo admin, distinto del
+      --    solicitante. Así un ejecutor no puede saltarse token, frase, reautenticación ni segundo admin.
+      CREATE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.requires_second_admin IS DISTINCT FROM OLD.requires_second_admin
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          IF OLD.requires_second_admin AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.requested_by THEN
+            RAISE EXCEPTION 'admin_operations: la acción irreversible exige un segundo admin distinto del solicitante' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE TRIGGER admin_operations_guard BEFORE UPDATE ON admin_operations
+        FOR EACH ROW EXECUTE FUNCTION admin_operations_guard();
     `);
   },
   // Vuelta atrás: se pierden los ajustes guardados (vuelve el entorno/defecto) y el historial de órdenes
   // (su rastro de auditoría queda en audit_log).
   async down(db) {
-    await db.raw(`DROP TABLE admin_operations; DROP TABLE system_settings;`);
+    await db.raw(`DROP TABLE admin_operations; DROP FUNCTION admin_operations_guard(); DROP TABLE system_settings;`);
   },
 };
 
