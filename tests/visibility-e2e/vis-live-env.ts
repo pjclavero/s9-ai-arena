@@ -38,7 +38,9 @@ const { initPhysics } = await import(join(REPO, "apps/arena-engine/src/sim/physi
 const { replayFromBattle } = await import(join(REPO, "apps/arena-engine/src/replay.ts"));
 const { emptyArena, gunnerLoadout, scoutLoadout } = await import(join(REPO, "apps/arena-engine/src/fixtures.ts"));
 const { HunterBot } = await import(join(REPO, "apps/arena-engine/src/stubs.ts"));
-const { ingestReplay } = await import(join(REPO, "apps/replay-service/src/store.ts"));
+const { writeS9rReplay, registerS9rReplay } = await import(
+  join(REPO, "apps/replay-service/src/testing/s9r-fixture.ts")
+);
 const { HttpStreamerClient } = await import(join(REPO, "apps/api/src/services/streamer-client.ts"));
 const { readPublicKey } = await import(join(REPO, "apps/api/src/services/streaming.ts"));
 const { createPublishedBot } = await import(join(REPO, "apps/tournament-worker/src/testing/fixtures.ts"));
@@ -187,18 +189,25 @@ async function startBattle(): Promise<void> {
     clearInterval(timer);
     const r = b.getResult() as any;
     const replay = replayFromBattle(b, r);
-    const stored = ingestReplay(REPLAYS, replay, { official: true });
-    void h
-      .db("battles")
-      .where({ id })
-      .update({
-        status: "finished",
-        finished_at: h.db.fn.now(),
-        replay_ref: stored.path,
-        replay_hash: stored.index.sha256,
-        final_state_hash: r.finalStateHash ?? null,
-        result: JSON.stringify({ score: r.score ?? {}, ticks: r.ticks ?? 0, winner: r.winner ?? null }),
-      })
+    // V1 REPLAYS PR-4 · grabado S9R/1 con el mismo grabador y publicación que el worker.
+    const fxRef: { current: any } = { current: null };
+    void writeS9rReplay(REPLAYS, replay, { battleId: id })
+      .then(
+        (stored: any) =>
+          (fxRef.current = stored) &&
+          h
+            .db("battles")
+            .where({ id })
+            .update({
+              status: "finished",
+              finished_at: h.db.fn.now(),
+              replay_ref: stored.path,
+              replay_hash: stored.sha256,
+              final_state_hash: r.finalStateHash ?? null,
+              result: JSON.stringify({ score: r.score ?? {}, ticks: r.ticks ?? 0, winner: r.winner ?? null }),
+            }),
+      )
+      .then(() => registerS9rReplay(h.db, id, fxRef.current, { class: "official" }))
       .then(() => setTimeout(() => gateway.detachBattle(id), 3000));
   }, 1000 / 30);
 }

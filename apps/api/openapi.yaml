@@ -1847,11 +1847,11 @@ paths:
       security: []
       parameters:
         - { $ref: '#/components/parameters/BattleId' }
-        - { name: fromTick, in: query, schema: { type: integer, minimum: 0 } }
-        - { name: toTick, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: fromTick, in: query, description: "Tick inicial (defecto 0)", schema: { type: integer, minimum: 0 } }
+        - { name: toTick, in: query, description: "Tick final, incluido. Defecto fromTick + 599. La anchura (toTick - fromTick + 1) no puede pasar de 1200 ticks", schema: { type: integer, minimum: 0 } }
       responses:
         '200': { description: Segmento, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-        '400': { description: rango de ticks inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: "rango de ticks inválido (`bad_request`) o demasiado ancho: más de 1200 ticks (`segment_range_too_large`)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /replays/{battleId}/verify:

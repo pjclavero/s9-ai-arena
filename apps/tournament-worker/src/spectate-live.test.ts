@@ -25,7 +25,7 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { SpectateGateway, type AttachOptions, type SpectatableBattle } from "../../api/src/spectate/gateway.js";
-import { readIndex } from "../../replay-service/src/store.js";
+import { verifyFile } from "../../replay-service/src/s9r/verify.js";
 import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { enqueueJob } from "./queue.js";
@@ -199,13 +199,17 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
 
   it("al archivar el replay quedan el almacén de E8 y las stats RICAS de runStatsJob", async () => {
     const battle = await h.db("battles").where({ id: battleId }).first();
-    // Replay en el almacén REAL de E8 (T8.1): archivo comprimido + índice.
-    expect(String(battle.replay_ref).endsWith(`${battleId}.replay`)).toBe(true);
+    // V1 REPLAYS PR-4 · replay S9R/1 publicado (receta + vista) y su fila de inventario: mismas
+    // garantías que el almacén JSONL (fichero en disco, oficial, sha de la BD = sha del fichero).
+    expect(String(battle.replay_ref)).toBe(join(replaysDir, `${battleId}.${battle.run_attempts}.s9r`));
     expect(existsSync(battle.replay_ref)).toBe(true);
-    const index = readIndex(replaysDir, battleId);
-    expect(index).not.toBeNull();
-    expect(index!.official).toBe(true);
-    expect(index!.sha256).toBe(battle.replay_hash);
+    const art = await h.db("replay_artifacts").where({ battle_id: battleId }).first();
+    expect(art).toBeTruthy();
+    expect(art.class).toBe("official");
+    expect(art.recipe_sha256).toBe(battle.replay_hash);
+    expect((await verifyFile(battle.replay_ref, { expectSha256: battle.replay_hash })).ok).toBe(true);
+    expect((await verifyFile(art.view_path, { expectSha256: art.view_sha256 })).ok).toBe(true);
+    expect(art.stats_state).toBe("ready");
 
     // Stats ricas de E8 (T8.4): los campos que leen los agregados de E9.
     const rows = await h.db("battle_stats").where({ battle_id: battleId });

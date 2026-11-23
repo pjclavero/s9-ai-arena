@@ -63,7 +63,7 @@ async function newBattle(status: string, opts: { privateBot?: boolean } = {}): P
     finished_at: status === "finished" ? h.db.fn.now() : null,
     result: status === "finished" ? JSON.stringify({ score: { red: 1 }, ticks: 9 }) : null,
     // getPublicReplay sólo mira la fila (no abre el fichero).
-    replay_ref: status === "finished" ? `/nonexistent/${id}.jsonl.gz` : null,
+    replay_ref: status === "finished" ? `/nonexistent/${id}.1.s9r` : null, // PR-4 · receta S9R/1 (diseño §8)
   });
   const bot = await createPublishedBot(h.db, `mg-${id.slice(0, 8)}`);
   if (opts.privateBot) await h.db("bots").where({ id: bot.botId }).update({ visibility: "private" });

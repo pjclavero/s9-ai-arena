@@ -35,7 +35,6 @@ import { TournamentWorker } from "./worker.js";
 import { sortTable, type TableRow } from "./results.js";
 import { makeDefaultHandlers, type AgentDriver } from "./engine-executor.js";
 import { IdleBot } from "../../arena-engine/src/stubs.js";
-import { replayFromBattle } from "../../arena-engine/src/replay.js";
 import type { Battle, BotAgent } from "../../arena-engine/src/sim/battle.js";
 import { createPublishedBot, type TestBot } from "./testing/fixtures.js";
 
@@ -113,7 +112,8 @@ function duelDriver(): AgentDriver {
         engine.step();
       }
       const result = engine.run(5000);
-      return { result, replay: replayFromBattle(engine, result) };
+      // V1 REPLAYS PR-3 · el replay lo graba el ReplayRecorder del ejecutor (el motor ya no lo retiene).
+      return { result };
     },
   };
 }

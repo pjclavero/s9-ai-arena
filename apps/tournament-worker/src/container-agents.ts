@@ -536,7 +536,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             else signal?.addEventListener("abort", onAbort, { once: true });
           }),
         ]);
-        const replay = server.getReplay();
+        // V1 REPLAYS PR-3 · el replay ya no se recoge del motor: lo grabó el ReplayRecorder (sink) del ejecutor.
         offDisconnect();
 
         // Última muestra (por si el contenedor aún vive) y se fija la medida.
@@ -571,7 +571,6 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         }
         return {
           result,
-          replay,
           cpuMsByBot: Object.fromEntries(cpuMsByBot),
           diagnosticsByBot: Object.fromEntries(diagnosticsByBot),
         };

@@ -117,8 +117,8 @@ beforeAll(async () => {
   BOT.pub1 = await newBot(C.id, "public", "AUDIT-UXD-publico-1");
   BOT.pub2 = await newBot(C.id, "public", "AUDIT-UXD-publico-2");
 
-  B.priv = await newBattle("finished", [BOT.privA, BOT.pub1], { replay_ref: "/no/existe/priv.replay" });
-  B.pub = await newBattle("finished", [BOT.pub1, BOT.pub2], { replay_ref: "/no/existe/pub.replay" });
+  B.priv = await newBattle("finished", [BOT.privA, BOT.pub1], { replay_ref: "/no/existe/priv.1.s9r" });
+  B.pub = await newBattle("finished", [BOT.pub1, BOT.pub2], { replay_ref: "/no/existe/pub.1.s9r" });
   B.live = await newBattle("running", [BOT.pub1, BOT.pub2], { started_at: h.db.fn.now() });
   B.liveMixed = await newBattle("running", [BOT.privA, BOT.pub2], { started_at: h.db.fn.now() });
   B.sched = await newBattle("scheduled", [BOT.privA, BOT.pub2]);

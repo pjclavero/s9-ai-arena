@@ -23,7 +23,8 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { fromJsonl, record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay, type StoredReplay } from "../../replay-service/src/store.js";
+import type { S9rFixture as StoredReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 import { implementedOperations } from "./registry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -79,9 +80,9 @@ beforeAll(async () => {
     },
   );
   dir = mkdtempSync(join(tmpdir(), "e8-api-replays-"));
-  stored = ingestReplay(dir, replay, { official: true });
+  stored = await writeS9rReplay(dir, replay);
   battleId = await insertBattle(h.db, stored.path, {
-    replay_hash: stored.index.sha256,
+    replay_hash: stored.sha256,
     final_state_hash: replay.result.finalStateHash,
     engine_versions: JSON.stringify(replay.header.versions),
     result: JSON.stringify({ score: replay.result.score, ticks: replay.result.ticks }),
@@ -115,9 +116,9 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
   it("replay manipulado en disco ⇒ matches=false por checksum, sin re-simular", async () => {
     const tampered = readFileSync(stored.path);
     tampered[Math.floor(tampered.length / 2)] ^= 0xff;
-    const tPath = join(dir, "tampered.replay");
+    const tPath = join(dir, "tampered.s9r");
     writeFileSync(tPath, tampered);
-    const id = await insertBattle(h.db, tPath, { replay_hash: stored.index.sha256 });
+    const id = await insertBattle(h.db, tPath, { replay_hash: stored.sha256 });
 
     const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
     expect(r.status).toBe(200);
@@ -128,7 +129,7 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
 
   it("si la BD registra otro final_state_hash que el archivo, no cuela", async () => {
     const id = await insertBattle(h.db, stored.path, {
-      replay_hash: stored.index.sha256,
+      replay_hash: stored.sha256,
       final_state_hash: "f".repeat(64), // resultado oficial distinto del archivo
     });
     const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
@@ -137,7 +138,7 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     expect(r.body.reason).toBe("final_state_hash_mismatch_with_db");
   }, 120000);
 
-  it("UX-F (DEF-R1) + OLA2-MD: replay v1 real ⇒ «formato anterior», nunca «manipulado»", async () => {
+  it("V1 REPLAYS PR-4 (corte D-OP-30): un replay de formato ANTERIOR (v1 real en disco) es «sin replay»: 404 uniforme, nunca «manipulado» ni 500", async () => {
     const fixture = join(
       __dirname,
       "..",
@@ -147,8 +148,7 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
       "fixtures",
       "engine-0.1.0-sin-perimetro.replay.jsonl.gz",
     );
-    // OLA2-MD · el fixture es un replay v1 REAL: la ingesta v2 ya no lo admite, así que se
-    // deja en disco tal cual (como quedaría un replay histórico en producción).
+    // El fixture es un replay v1 REAL, dejado en disco tal cual (como quedaría uno histórico).
     const bytes = readFileSync(fixture);
     expect(JSON.parse(gunzipSync(bytes).toString("utf8").split("\n")[0]).formatVersion).toBe(1);
     const path = join(dir, "old-v1.replay");
@@ -156,14 +156,15 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     const id = await insertBattle(h.db, path, {
       replay_hash: createHash("sha256").update(bytes).digest("hex"),
     });
-    const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
-    expect(r.status).toBe(200);
-    expect(r.body.valid).toBe(false);
-    expect(r.body.matches).toBe(false);
-    expect(r.body.reason).toMatch(/^format_version_mismatch/);
-    expect(r.body.message).toMatch(/formato anterior/);
-    expect(r.body.message).toMatch(/NO significa que esté manipulado/);
-    expect(r.body.divergedAtTick).toBeUndefined();
+    const auth = { Authorization: `Bearer ${staff}` };
+    const r = await request(app).post(`/replays/${id}/verify`).set(auth);
+    expect(r.status).toBe(404);
+    expect(r.body.error).toBe("not_found");
+    expect(JSON.stringify(r.body)).not.toMatch(/manipulad|checksum|corrupt/);
+    // Igual que una batalla SIN replay: ni índice, ni segmento, ni crudo.
+    for (const p of [`/replays/${id}/index`, `/replays/${id}/segment`, `/replays/${id}`]) {
+      expect((await request(app).get(p).set(auth)).status, p).toBe(404);
+    }
   }, 120000);
 
   it("batalla sin replay ⇒ 404; batalla inexistente ⇒ 404", async () => {

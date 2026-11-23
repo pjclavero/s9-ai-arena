@@ -24,7 +24,7 @@ import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import type { Replay } from "../../arena-engine/src/replay.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { BLUE, RED, play4v4 } from "../../replay-service/tests/fixtures/team4v4.js";
 import { STATS_HITS_STEP } from "../../../packages/projection/policy.js";
@@ -87,7 +87,7 @@ beforeAll(async () => {
 
   ({ replay } = await play4v4("api-4v4-tdm", (v) => botOf[v]));
   const dir = mkdtempSync(join(tmpdir(), "t4-replays-"));
-  ingestReplay(dir, replay, { official: false });
+  const fx = await writeS9rReplay(dir, replay);
 
   battleId = randomUUID();
   await h.db("battles").insert({
@@ -99,7 +99,8 @@ beforeAll(async () => {
     map_id: "mvp-arena-01",
     map_version: 1,
     seed: "api-4v4-tdm",
-    replay_ref: "api-4v4-tdm",
+    replay_ref: fx.path,
+    replay_hash: fx.sha256,
     result: JSON.stringify({
       schema: "battle-result/v1",
       winner: replay.result.winner,

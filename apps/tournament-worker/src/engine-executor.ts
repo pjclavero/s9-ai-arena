@@ -29,8 +29,17 @@ import type { LoadoutInput, ModuleDefinition } from "../../../packages/module-ca
 import { getCatalog } from "../../api/src/services/catalog.js";
 import { toEngineMap } from "../../map-service/src/to-engine-map.js";
 import type { InternalMap } from "../../map-service/src/types.js";
-import { replayFromBattle, toJsonl, type Replay } from "../../arena-engine/src/replay.js";
-import { Battle, type BattleResult, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
+import { buildHeaderV2, runningVersions } from "../../arena-engine/src/replay.js";
+import {
+  Battle,
+  type BattleConfig,
+  type BattleResult,
+  type BotAgent,
+  type Participant,
+} from "../../arena-engine/src/sim/battle.js";
+import type { ReplaySink } from "../../arena-engine/src/sim/replay-sink.js";
+import { ReplayRecorder, type ClosedRecording, type RecorderOptions } from "../../replay-service/src/s9r/recorder.js";
+import type { S9rFs } from "../../replay-service/src/s9r/io.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
 import { rulesOf } from "../../api/src/services/battle-rules.js";
@@ -51,8 +60,14 @@ export interface VehicleAssignment {
 
 export interface AgentDriverInput {
   battleId: string;
-  /** Motor ya creado (mapa, ruleset y vehículos reales), con recordReplay. */
+  /** Motor ya creado (mapa, ruleset y vehículos reales), con recordReplay y su ReplaySink. */
   engine: Battle;
+  /**
+   * V1 REPLAYS PR-3 · espera a que la cola de grabación baje (contrapresión hacia el disco). La
+   * usan los drivers que avanzan el motor MÁS RÁPIDO que el reloj (en proceso); el directo real
+   * va a ritmo de reloj. Sin grabador, resuelve al momento.
+   */
+  recordingDrain?: () => Promise<void>;
   vehicles: VehicleAssignment[];
   ruleset: Ruleset;
   catalogVersion: string;
@@ -63,7 +78,6 @@ export interface AgentDriverInput {
 
 export interface AgentDriverOutput {
   result: BattleResult;
-  replay: Replay;
   /** CPU real por botId (contenedores); ausente si el driver no mide. */
   cpuMsByBot?: Record<string, number | null>;
   /** UX-06 · diagnóstico de arranque/transporte/contenedor por botId; ausente si el driver no lo sabe. */
@@ -112,17 +126,20 @@ const YIELD_EVERY_N_TICKS = 25;
 export function inProcessAgents(resolver: AgentResolver): AgentDriver {
   return {
     kind: "in_process_stub",
-    async run({ engine, vehicles, signal }) {
+    async run({ engine, vehicles, signal, recordingDrain }) {
       for (const v of vehicles) engine.attachBot(v.vehicleId, resolver(v.botId, v.version, v.vehicleId));
       while (!engine.isFinished() && engine.tick < MAX_TICKS) {
         if (signal?.aborted) throw new Error(`batalla abortada: ${String(signal.reason)}`);
         engine.step();
-        if (engine.tick % YIELD_EVERY_N_TICKS === 0) await new Promise((r) => setImmediate(r));
+        if (engine.tick % YIELD_EVERY_N_TICKS === 0) {
+          await new Promise((r) => setImmediate(r));
+          if (recordingDrain) await recordingDrain();
+        }
       }
       // Cierre por el MOTOR: si agotó los ticks, run() con el techo ya alcanzado
       // declara el empate; si terminó, devuelve el resultado ya calculado.
       const result = engine.run(MAX_TICKS);
-      return { result, replay: replayFromBattle(engine, result) };
+      return { result };
     },
   };
 }
@@ -147,6 +164,45 @@ export interface EngineExecutorOptions {
   spectateDetachDelayMs?: number;
   /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
   resources?: BattleResourceRegistry;
+  /**
+   * V1 REPLAYS PR-3 · directorio de replays: el motor emite a un `ReplayRecorder` que escribe
+   * S9R/1 por fragmentos en `<replaysDir>/.partial/`. Sin él la batalla corre SIN replay (el sink
+   * descarta; nada se acumula en RAM).
+   */
+  replaysDir?: string;
+  /** Sólo tests: sistema de ficheros inyectable del grabador (fallos de disco). */
+  replayFs?: S9rFs;
+  /** Sólo tests: ajustes del grabador (topes de cola/fichero pequeños). */
+  recorderOverrides?: Partial<
+    Pick<
+      RecorderOptions,
+      | "maxRecipeBytes"
+      | "maxViewBytes"
+      | "recipeFragmentBytes"
+      | "viewFragmentBytes"
+      | "recipeMaxPendingBytes"
+      | "viewMaxPendingBytes"
+      | "algo"
+      | "stallMs"
+    >
+  >;
+}
+
+/** Sink que descarta (batalla sin directorio de replays): no retiene nada. */
+const DISCARD_SINK: ReplaySink = {
+  command() {},
+  snapshot() {},
+  event() {},
+  hash() {},
+  checkpoint() {},
+};
+
+/** Motivo legible (sin pila) de un fallo de grabación. */
+function faultText(cause: unknown): string {
+  const e = cause as { name?: unknown; code?: unknown; message?: unknown } | null;
+  const name = typeof e?.name === "string" ? e.name : "Error";
+  const code = typeof e?.code === "string" ? `${e.code}: ` : "";
+  return `${name}: ${code}${typeof e?.message === "string" ? e.message : String(cause)}`;
 }
 
 export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor {
@@ -280,17 +336,48 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     }
 
     // --- batalla real del motor (con replay T2.6) ----------------------------
+    const config: BattleConfig = {
+      battleId: battle.id,
+      seed: battle.seed ?? battle.id,
+      ruleset,
+      map: arenaMap,
+      participants: engineParticipants,
+      recordReplay: true,
+    };
+    // V1 REPLAYS PR-3 · grabador S9R/1 por intento (parciales identificados por batalla, intento y
+    // titular). Si no se puede crear (disco), la batalla no arranca: fallo técnico, sin contenedores.
+    let recorder: ReplayRecorder | null = null;
+    if (opts.replaysDir) {
+      try {
+        recorder = await ReplayRecorder.create({
+          dir: opts.replaysDir,
+          battleId: battle.id,
+          attempt: Number(battle.run_attempts ?? 0),
+          owner: String(battle.claimed_by ?? "unclaimed"),
+          recipeHeader: buildHeaderV2(config, runningVersions(ruleset.rulesetId)) as unknown as Record<string, unknown>,
+          viewHeader: {
+            battleId: battle.id,
+            mode: battle.mode,
+            mapId: battle.map_id,
+            mapVersion: battle.map_version,
+            map: arenaMap,
+            roster,
+            snapshotEveryNTicks: 3,
+          },
+          checkpointEveryNTicks: 300,
+          ...(opts.recorderOverrides ?? {}),
+          ...(opts.replayFs ? { fs: opts.replayFs } : {}),
+        });
+      } catch (err) {
+        throw new InfrastructureFailure("storage_unavailable", `replay_recorder_unavailable: ${faultText(err)}`);
+      }
+    }
+    let recording: ClosedRecording | null = null;
     let engine: Battle;
     try {
-      engine = await Battle.create({
-        battleId: battle.id,
-        seed: battle.seed ?? battle.id,
-        ruleset,
-        map: arenaMap,
-        participants: engineParticipants,
-        recordReplay: true,
-      });
+      engine = await Battle.create({ ...config, replaySink: recorder ?? DISCARD_SINK });
     } catch (err) {
+      await recorder?.discard();
       // El motor no arrancó (p. ej. composición incompatible con el modo).
       throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
     }
@@ -369,6 +456,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           catalogVersion: effectiveCatalogVersion,
           signal: ctx.signal,
           owner: battle.claimed_by ?? null,
+          ...(recorder ? { recordingDrain: () => recorder.drain() } : {}),
         });
         ok = true;
       } finally {
@@ -377,7 +465,25 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         if (opts.spectate)
           await res.cleanupBattleResources(battle.id, ok ? "FINISHED" : "FAILED", { scope: "executor" });
       }
-      const { result, replay } = out;
+      const { result } = out;
+
+      // V1 REPLAYS PR-3 · CONDICIÓN DEL OPERADOR: un fallo de grabación (cola llena, disco, tope) es un
+      // FALLO TÉCNICO, nunca un resultado deportivo. Se decide AQUÍ, antes de devolver la ejecución: la
+      // batalla no llega a `finishBattle` (ni completed, ni empate, ni victoria; sin Elo ni standings).
+      if (engine.recordingFault) {
+        const f = engine.recordingFault;
+        throw new InfrastructureFailure(
+          "storage_unavailable",
+          `recording_fault: stream=${f.stream} tick=${f.tick} ${faultText(f.cause)}`,
+        );
+      }
+      if (recorder) {
+        try {
+          recording = await recorder.finish(result as unknown as Record<string, unknown>);
+        } catch (err) {
+          throw new InfrastructureFailure("storage_unavailable", `recording_close_failed: ${faultText(err)}`);
+        }
+      }
 
       // El motor descalifica VEHÍCULOS (`veh_N`); el runner y `participants`
       // hablan de BOTS. Antes se pasaba la lista de vehículos tal cual como si
@@ -400,7 +506,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           rulesetDb: battle.ruleset_id ?? "",
           rulesetEngine: ruleset.rulesetId,
         },
-        replayJsonl: toJsonl(replay),
+        ...(recording ? { recording } : {}),
         ...(out.cpuMsByBot ? { cpuMsByBot: out.cpuMsByBot } : {}),
         ...(out.diagnosticsByBot ? { diagnosticsByBot: out.diagnosticsByBot } : {}),
         agents: driver.kind,
@@ -411,6 +517,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       // El motor o los agentes murieron: fallo técnico (19.2), reintentable.
       throw toInfrastructureFailure(err, "engine_start_failure");
     } finally {
+      // Sin ejecución devuelta (cualquier fallo, deportivo o técnico): fuera los parciales del intento.
+      if (!recording) await recorder?.discard();
       try {
         engine.free();
       } catch {
@@ -433,7 +541,11 @@ export function makeDefaultHandlers(opts: EngineExecutorOptions & { replaysDir?:
     const { handleUpdateStandings } = await import("./standings.js");
     return {
       handlers: {
-        run_battle: makeRunBattleHandler({ executor: makeEngineExecutor(opts), replaysDir: opts.replaysDir }),
+        run_battle: makeRunBattleHandler({
+          executor: makeEngineExecutor(opts),
+          replaysDir: opts.replaysDir,
+          ...(opts.replayFs ? { replayFs: opts.replayFs } : {}),
+        }),
         generate_schedule: handleGenerateSchedule,
         process_result: handleProcessResult,
         update_standings: handleUpdateStandings,

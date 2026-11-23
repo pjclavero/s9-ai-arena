@@ -1287,6 +1287,58 @@ const m023_system_settings_operations: Migration = {
   },
 };
 
+// V1 REPLAYS · PR-3 · `replay_artifacts`: un replay S9R/1 publicado por batalla (receta `.s9r` y
+// vista `.s9v`), con el intento y el titular que lo grabaron, sha256 y bytes de cada fichero, la
+// cadena de integridad, `truncated` y el estado del ciclo de vida (lo gobiernan el janitor y el
+// borrado de PR-6/PR-7; aquí sólo nace `published`). `battles.replay_ref` apunta a la receta y
+// `replay_hash` = `recipe_sha256`.
+//
+// NUMERACIÓN: va después de `023_system_settings_operations` (ADM-1, #334, integrada antes).
+// Tabla NUEVA e independiente (sólo FK a battles y users): entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-024.test.ts`.
+const m024_replay_artifacts: Migration = {
+  name: "024_replay_artifacts",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE replay_artifacts (
+        battle_id        uuid PRIMARY KEY REFERENCES battles(id) ON DELETE CASCADE,
+        state            text NOT NULL DEFAULT 'published' CHECK (state IN ('published', 'trashed', 'purged')),
+        class            text NOT NULL CHECK (class IN ('official', 'tournament', 'practice')),
+        protected        boolean NOT NULL DEFAULT false,
+        protected_by     uuid REFERENCES users(id) ON DELETE SET NULL,
+        protected_at     timestamptz,
+        protected_reason text,
+        attempt          integer NOT NULL CHECK (attempt >= 0),
+        owner            text NOT NULL,
+        recipe_path      text NOT NULL,
+        recipe_sha256    text NOT NULL CHECK (recipe_sha256 ~ '^[0-9a-f]{64}$'),
+        recipe_bytes     bigint NOT NULL CHECK (recipe_bytes > 0),
+        view_path        text,
+        view_sha256      text CHECK (view_sha256 IS NULL OR view_sha256 ~ '^[0-9a-f]{64}$'),
+        view_bytes       bigint CHECK (view_bytes IS NULL OR view_bytes > 0),
+        chain_hash       text NOT NULL,
+        view_chain_hash  text,
+        ticks            integer NOT NULL CHECK (ticks >= 0),
+        truncated        boolean NOT NULL DEFAULT false,
+        stats_state      text NOT NULL DEFAULT 'pending' CHECK (stats_state IN ('pending', 'ready', 'not_applicable')),
+        created_at       timestamptz NOT NULL DEFAULT now(),
+        view_dropped_at  timestamptz,
+        trashed_at       timestamptz,
+        trashed_by       uuid REFERENCES users(id) ON DELETE SET NULL,
+        trash_reason     text,
+        purged_at        timestamptz,
+        CHECK ((view_path IS NULL) = (view_sha256 IS NULL) AND (view_path IS NULL) = (view_bytes IS NULL))
+      );
+      CREATE INDEX replay_artifacts_state_created_idx ON replay_artifacts (state, created_at);
+      CREATE INDEX replay_artifacts_class_state_created_idx ON replay_artifacts (class, state, created_at);
+    `);
+  },
+  // Vuelta atrás: se pierde el inventario de artefactos (los ficheros y battles.replay_ref quedan).
+  async down(db) {
+    await db.raw(`DROP TABLE IF EXISTS replay_artifacts;`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1311,6 +1363,7 @@ export const MIGRATIONS: Migration[] = [
   m021_runtime_settings,
   m022_entries_team,
   m023_system_settings_operations,
+  m024_replay_artifacts,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1387,6 +1440,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "022_entries_team",
   // ADM-1 · tablas propias sin dependencias posteriores.
   "023_system_settings_operations",
+  // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
+  "024_replay_artifacts",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

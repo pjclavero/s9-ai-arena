@@ -6,6 +6,7 @@
  * visibilidad del bot en la web) se hace con la API pública y el Bearer del dueño,
  * y se anota como hallazgo.
  */
+import { collectReplaySnapshots } from "./replay-pages.js";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { OUT, go } from "./helpers.js";
@@ -170,11 +171,14 @@ export async function waitStatsReady(api: PublicApi, battleId: string): Promise<
   return s;
 }
 
-/** Todas las instantáneas del replay por la API autorizada (como el reproductor). */
+/** Todas las instantáneas del replay por la API autorizada, en segmentos (ver replay-pages.ts). */
 export async function replaySnapshots(api: PublicApi, battleId: string): Promise<{ index: any; snapshots: any[] }> {
   const index = await api.ok("GET", `/replays/${battleId}/index`);
-  const seg = await api.ok("GET", `/replays/${battleId}/segment?fromTick=0&toTick=${index.ticks}`);
-  return { index, snapshots: seg.snapshots as any[] };
+  const snapshots = await collectReplaySnapshots(
+    (from, to) => api.ok("GET", `/replays/${battleId}/segment?fromTick=${from}&toTick=${to}`),
+    index.ticks,
+  );
+  return { index, snapshots };
 }
 
 /** Basura que nunca debe salir en la UI (SPEC-COMUN §7). */
