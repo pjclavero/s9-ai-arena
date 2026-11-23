@@ -36,7 +36,7 @@ M = [
         "  throw new ApiError(400, TOURNAMENT_MODE_NOT_ALLOWED,", "  throw new ApiError(400, \"bad_request\",")],
      API_T, ["B3_CTF_CLASSIC"]),
     ("M5", "el 400 no lleva la lista de modos permitidos", [(ROUTES,
-        "    allowedModes: [...TOURNAMENT_ALLOWED_MODES],\n", "")],
+        "    allowedModes: [...TOURNAMENT_ALLOWED_MODES],\n    ...extra,\n", "    ...extra,\n")],
      API_T, ["B3_CTF_CLASSIC"]),
     ("M6", "OpenAPI no documenta el 400 de createTournament", [(YAML,
         "'Datos inválidos · tournament_mode_not_allowed (B3:", "'Datos inválidos · (B3:")],
