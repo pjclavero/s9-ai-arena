@@ -24,7 +24,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record } from "../../arena-engine/src/replay.js";
 import { gunnerLoadout, mvpArena, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -84,7 +84,7 @@ beforeAll(async () => {
       b.attachBot("veh_2", new HunterBot(bots[1]));
     },
   );
-  const stored = ingestReplay(dir, replay, { official: false });
+  const stored = await writeS9rReplay(dir, replay);
   await h.db("battles").insert({
     id: battleId,
     status: "finished",
@@ -94,7 +94,7 @@ beforeAll(async () => {
     map_id: "mvp-arena-01",
     map_version: 1,
     replay_ref: stored.path,
-    replay_hash: stored.index.sha256,
+    replay_hash: stored.sha256,
     final_state_hash: replay.result.finalStateHash,
     result: JSON.stringify({ score: replay.result.score, ticks: replay.result.ticks }),
     finished_at: h.db.fn.now(),

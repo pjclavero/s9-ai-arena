@@ -16,7 +16,7 @@
  * contiene todo eso (si no, la ausencia en la proyección no probaría nada).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -28,11 +28,12 @@ import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { fromJsonl, record, verify, type Replay } from "../../arena-engine/src/replay.js";
+import { record, verify, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
-import { decompress } from "../../replay-service/src/format.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { RecipeCursor, forEachRecipeCommand } from "../../replay-service/src/s9r/recipe.js";
+import { ViewReader } from "../../replay-service/src/s9r/view.js";
 import {
   PUBLIC_EVENT_KINDS,
   PUBLIC_PROJECTION_FORMAT,
@@ -144,7 +145,7 @@ async function newBattle(botIds: string[], tournamentId: string | null = null, d
     battleId: id,
     participants: base.header.participants.map((p: any, i: number) => ({ ...p, botId: botIds[i % botIds.length] })),
   };
-  const stored = ingestReplay(dir, { ...base, header }, { official: false, debugOpen });
+  const stored = await writeS9rReplay(dir, { ...base, header });
   rawFile[id] = stored.path;
   await h.db("battles").insert({
     id,
@@ -157,7 +158,7 @@ async function newBattle(botIds: string[], tournamentId: string | null = null, d
     seed: SEED,
     tournament_id: tournamentId,
     replay_ref: stored.path,
-    replay_hash: stored.index.sha256,
+    replay_hash: stored.sha256,
     final_state_hash: base.result.finalStateHash,
     result: JSON.stringify({ score: base.result.score, ticks: base.result.ticks }),
     finished_at: h.db.fn.now(),
@@ -340,23 +341,33 @@ async function anonHarvest(battleId: string) {
 
 // =================================================================== calibración
 describe("PRE-1 · calibración: el CRUDO contiene lo que la proyección debe quitar", () => {
-  it("el fichero grabado lleva semilla, radio con carga, minas, spec y eventos privados no", () => {
-    const text = decompress(readFileSync(rawFile[B.pub])).toString("utf8");
-    expect(text).toContain(SEED);
-    expect(text).toContain(RADIO_SECRET);
-    expect(text).toContain("deployMine");
-    expect(text).toContain("mine.explosive@1");
-    const replay = fromJsonl(text);
-    expect(replay.commands.length).toBeGreaterThan(10);
-    expect(replay.commands.some((c) => Array.isArray(c.command?.radio))).toBe(true);
-    expect(replay.commands.some((c) => c.command?.deployMine)).toBe(true);
+  it("el fichero grabado lleva semilla, radio con carga, minas, spec y eventos privados no", async () => {
+    // V1 REPLAYS PR-4 · el replay es S9R/1: RECETA (cabecera + comandos) y VISTA (snapshots +
+    // eventos públicos), leídas por fragmentos. Mismas comprobaciones que sobre el JSONL.
+    const recipe = await RecipeCursor.open(rawFile[B.pub]);
+    const headerText = JSON.stringify(recipe.header);
+    await recipe.close();
+    expect(headerText).toContain(SEED);
+    expect(headerText).toContain("mine.explosive@1");
+    const commands: any[] = [];
+    await forEachRecipeCommand(rawFile[B.pub], (c) => commands.push(c));
+    expect(JSON.stringify(commands)).toContain(RADIO_SECRET);
+    expect(JSON.stringify(commands)).toContain("deployMine");
+    expect(commands.length).toBeGreaterThan(10);
+    expect(commands.some((c) => Array.isArray(c.command?.radio))).toBe(true);
+    expect(commands.some((c) => c.command?.deployMine)).toBe(true);
     // Mina REAL (P2-A de MC): el motor la sembró de verdad, no sólo se pidió. `mine_deployed` es un
     // evento dirigido al dueño y no va al fichero; la prueba es una mina viva en un snapshot crudo.
+    const view = await ViewReader.open(rawFile[B.pub].replace(/\.s9r$/, ".s9v"));
+    const snapshots: any[] = [];
+    const events: any[] = [];
+    for await (const r of view.records()) r.k === "s" ? snapshots.push(r.frame) : events.push(r.event);
+    await view.close();
     const liveMine = (sn: any) => (sn.deployables ?? []).some((d: any) => d.kind === "mine" && d.ownerId === "v_blue");
-    expect(replay.snapshots.some(liveMine)).toBe(true);
-    expect(replay.snapshots.length).toBeGreaterThan(5);
+    expect(snapshots.some(liveMine)).toBe(true);
+    expect(snapshots.length).toBeGreaterThan(5);
     // y eventos públicos reales (si no, «el visor recibe todos los eventos» sería 0 = 0)
-    expect(replay.events.filter((e: any) => PUBLIC_EVENT_KINDS.has(e.kind)).length).toBeGreaterThan(0);
+    expect(events.filter((e: any) => PUBLIC_EVENT_KINDS.has(e.kind)).length).toBeGreaterThan(0);
   });
 
   it("un actor con crudo recibe exactamente esos bytes (moderator, flag on y off)", async () => {
@@ -542,13 +553,22 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
 
 // ======================================================= depuración abierta (debugOpen)
 describe("PRE-1 · `debugOpen` no abre los comandos a quien no tiene el crudo", () => {
-  it("calibración: con depuración abierta, el moderator recibe los comandos crudos con la radio", async () => {
-    const seg = await get(on, "moderator", `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
-    expect(seg.status).toBe(200);
-    expect(Array.isArray(seg.body.commands)).toBe(true);
-    expect(JSON.stringify(seg.body.commands)).toContain(RADIO_SECRET);
+  // V1 REPLAYS PR-4 · S9R/1 no tiene `debugOpen` (el worker nunca lo activó: no hay comandos en
+  // ningún segmento). Calibración equivalente de los negativos de abajo: la radio secreta SÍ está
+  // en la receta cruda que recibe el moderator (no es un 0 = 0), y ni su índice abre la depuración.
+  it("calibración: la receta cruda del moderator lleva los comandos con la radio; el índice nunca abre la depuración", async () => {
+    const raw = await getBinary(on, "moderator", `/replays/${B.dbg}`);
+    expect(raw.status).toBe(200);
+    const local = join(dir, `dl-${B.dbg}.s9r`);
+    writeFileSync(local, raw.body as Buffer);
+    const commands: any[] = [];
+    await forEachRecipeCommand(local, (c) => commands.push(c));
+    expect(JSON.stringify(commands)).toContain(RADIO_SECRET);
     const index = await get(on, "moderator", `/replays/${B.dbg}/index`);
-    expect(index.body.debugOpen).toBe(true);
+    expect(index.status).toBe(200);
+    expect(index.body.debugOpen).toBe(false);
+    const seg = await get(on, "moderator", `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
+    expect(seg.body.commands).toBeUndefined();
   });
 
   for (const actor of ["anon", "S", "A", "C", "organizer"] as const) {

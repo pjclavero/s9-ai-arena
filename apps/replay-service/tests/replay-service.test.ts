@@ -5,6 +5,7 @@
  * (record() de apps/arena-engine/src/replay.ts) — nada de replays sintéticos, porque
  * el servicio existe para el formato real y las mentiras sintéticas no encuentran bugs.
  */
+import { writeS9rReplay } from "../src/testing/s9r-fixture.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -153,10 +154,11 @@ describe("T8.1 verify (criterio cap. 28)", () => {
     expect(r.reason).toContain("engine_version_mismatch");
   });
 
-  it("el comando `replay-service verify <id>` funciona de verdad (CLI)", async () => {
+  it("el comando `replay-service verify <id>` funciona de verdad (CLI, receta S9R/1)", async () => {
     const replay = await recordBattle("cli_verify");
     const dir = tmp();
-    ingestReplay(dir, replay, { official: true });
+    // V1 REPLAYS PR-4 · la CLI verifica la RECETA S9R/1 publicada (por fragmentos).
+    await writeS9rReplay(dir, replay);
     const out = execFileSync(
       join(REPO, "node_modules", ".bin", "tsx"),
       ["apps/replay-service/src/cli.ts", "verify", replay.header.battleId, "--dir", dir],

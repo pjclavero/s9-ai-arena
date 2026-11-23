@@ -16,6 +16,7 @@
  */
 import type { Response } from "express";
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import deps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
 import { verifyRecipePath } from "../../replay-service/src/recipe-verify.js";
@@ -181,6 +182,12 @@ export async function projectedSegment(
   };
 }
 
+async function sha256OfFile(path: string): Promise<string> {
+  const h = createHash("sha256");
+  for await (const chunk of createReadStream(path)) h.update(chunk as Buffer);
+  return h.digest("hex");
+}
+
 /** Descarga del CRUDO (receta) en streaming. */
 export async function streamRecipe(res: Response, battle: Record<string, any>): Promise<void> {
   res.status(200).setHeader("Content-Type", "application/octet-stream");
@@ -194,6 +201,17 @@ export async function streamRecipe(res: Response, battle: Record<string, any>): 
  */
 export async function verifyRecipe(battle: Record<string, any>): Promise<Record<string, unknown>> {
   const path = String(battle.replay_ref);
+  // Manipulación byte a byte: el hash registrado en la BD manda (DoD T8.1), antes que la
+  // estructura. sha256 del fichero entero en streaming (memoria constante).
+  if (battle.replay_hash) {
+    let sha: string;
+    try {
+      sha = await sha256OfFile(path);
+    } catch {
+      return { matches: false, valid: false, reason: "corrupt_file: unreadable" };
+    }
+    if (sha !== String(battle.replay_hash)) return { matches: false, valid: false, reason: "checksum_mismatch" };
+  }
   const integrity = await verifyFile(path, {
     ...(battle.replay_hash ? { expectSha256: String(battle.replay_hash) } : {}),
   });

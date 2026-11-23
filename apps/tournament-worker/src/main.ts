@@ -60,7 +60,7 @@ const db = createDb();
 const replaysDir = process.env.REPLAYS_DIR ?? "/data/replays";
 
 // B7 · Este worker INGESTA replays en disco (battle-runner.finishBattle →
-// ingestReplay(replaysDir, …)) y guarda la ruta resultante en
+// (V1 REPLAYS PR-3/PR-4: hoy publica S9R/1 con el ReplayRecorder) y guarda la ruta resultante en
 // battles.replay_ref. Hasta B7 el servicio ni siquiera tenía montado
 // `arena_replays`: escribía en el sistema de ficheros efímero del contenedor
 // —cuando podía— y la API, que lee ese replay_ref de otro contenedor, jamás

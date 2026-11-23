@@ -15,7 +15,7 @@ import { DeadBot, FlagRunnerBot, HunterBot, IdleBot } from "../../arena-engine/s
 import { loadCatalog } from "../../../packages/module-catalog/loadCatalog.js";
 import { startTestDb, type TestDbHandle } from "../../api/src/testing/test-db.js";
 import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../api/src/db/seeds/dev.js";
-import { ingestReplay } from "../src/store.js";
+import { writeS9rReplay } from "../src/testing/s9r-fixture.js";
 import { aggregateByBotVersion, aggregateByModule, computeBattleStats, runStatsJob } from "../src/stats.js";
 
 beforeAll(async () => {
@@ -255,7 +255,7 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
 
     // Replay REAL cuyos participantes llevan el botId (uuid) de la plataforma.
     const replay = await hunterBattle("stats_job", { red: redBotId, blue: blueBotId });
-    ingestReplay(dir, replay, { official: true });
+    const fx = await writeS9rReplay(dir, replay);
 
     const [battle] = await h
       .db("battles")
@@ -267,6 +267,8 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
         map_id: "mvp-arena-01",
         map_version: 1,
         seed: "stats_job",
+        replay_ref: fx.path,
+        replay_hash: fx.sha256,
       })
       .returning("*");
     dbBattleId = battle.id;
@@ -360,7 +362,7 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
         b.attachBot("v_blue", new IdleBot(blueBotId));
       },
     );
-    ingestReplay(dir, replay, { official: true });
+    await writeS9rReplay(dir, replay);
     expect(replay.result.ticks).toBe(9000);
 
     const t0 = performance.now();

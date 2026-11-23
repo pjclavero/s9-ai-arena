@@ -26,7 +26,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 // Marcas reconocibles: si aparecen fuera de la ficha/código autorizados, hay fuga.
 const SECRET_CODE = "SECRETO_CODIGO_A_DEF_7f3a";
@@ -140,8 +140,8 @@ async function newBattle(opts: {
       battleId: id,
       participants: base.header.participants.map((p: any, i: number) => ({ ...p, botId: opts.botIds[i] })),
     };
-    const stored = ingestReplay(dir, { ...base, header }, { official: true });
-    replay = { replay_ref: stored.path, replay_hash: stored.index.sha256 };
+    const stored = await writeS9rReplay(dir, { ...base, header });
+    replay = { replay_ref: stored.path, replay_hash: stored.sha256 };
   }
   await h.db("battles").insert({
     id,

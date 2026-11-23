@@ -26,7 +26,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -195,7 +195,7 @@ beforeAll(async () => {
       b.attachBot("v_blue", new HunterBot("bot_blue"));
     },
   );
-  const stored = ingestReplay(mkdtempSync(join(tmpdir(), "frozen-reuse-")), replay, { official: true });
+  const stored = await writeS9rReplay(mkdtempSync(join(tmpdir(), "frozen-reuse-")), replay);
   const [bA] = await h
     .db("battles")
     .insert({
@@ -208,7 +208,7 @@ beforeAll(async () => {
       seed: "frozen_reuse_A",
       tournament_id: tA,
       replay_ref: stored.path,
-      replay_hash: stored.index.sha256,
+      replay_hash: stored.sha256,
       final_state_hash: replay.result.finalStateHash,
       engine_versions: JSON.stringify(replay.header.versions),
       result: JSON.stringify({ score: replay.result.score, ticks: replay.result.ticks }),

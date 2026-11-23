@@ -10,9 +10,9 @@
  * no filtración de campos privados, y paginación/límites del listado.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import request from "supertest";
 import type { Express } from "express";
@@ -75,10 +75,11 @@ async function seedFinishedBattleWithReplay(overrides: Record<string, unknown> =
  * todo lo que no puede salir (semilla, spec y un comando con radio y mina): la
  * descarga pública proyecta el fichero, y uno ilegible responde 404.
  */
-function writeLegibleReplay(battleId: string, replayPath: string): void {
-  const jsonl = [
-    {
-      t: "header",
+async function writeLegibleReplay(battleId: string, _replayPath: string): Promise<void> {
+  // V1 REPLAYS PR-4 · el mismo contenido sensible, grabado como S9R/1 (receta + vista) con el
+  // grabador del worker; la batalla pasa a apuntar a la receta.
+  const replay: any = {
+    header: {
       formatVersion: 2,
       battleId,
       seed: "top-secret-seed-should-never-leak",
@@ -91,27 +92,21 @@ function writeLegibleReplay(battleId: string, replayPath: string): void {
       versions: {},
       recordedAt: "2026-01-01T00:00:00.000Z",
     },
-    {
-      t: "cmd",
-      tick: 0,
-      vehicleId: "v1",
-      command: { radio: [{ slot: "radio_a", data: "radio-should-never-leak" }], deployMine: { slot: "mine_bay" } },
-    },
-    { t: "snap", tick: 0, vehicles: [], projectiles: [], score: { A: 0 }, objectives: [] },
-    {
-      t: "result",
-      battleId,
-      winner: "A",
-      ticks: 3,
-      score: { A: 1 },
-      finalStateHash: "h",
-      disqualified: [],
-      versions: {},
-    },
-  ]
-    .map((l) => JSON.stringify(l))
-    .join("\n");
-  writeFileSync(replayPath, gzipSync(Buffer.from(jsonl + "\n")));
+    commands: [
+      {
+        tick: 0,
+        vehicleId: "v1",
+        command: { radio: [{ slot: "radio_a", data: "radio-should-never-leak" }], deployMine: { slot: "mine_bay" } },
+      },
+    ],
+    snapshots: [{ tick: 0, vehicles: [], projectiles: [], score: { A: 0 }, objectives: [] }],
+    events: [],
+    stateHashes: [],
+    checkpoints: [],
+    result: { battleId, winner: "A", ticks: 3, score: { A: 1 }, finalStateHash: "h", disqualified: [], versions: {} },
+  };
+  const fx = await writeS9rReplay(replayDir, replay, { battleId });
+  await h.db("battles").where({ id: battleId }).update({ replay_ref: fx.path, replay_hash: fx.sha256 });
 }
 
 describe("R11 · publicReplaysEnabledFromEnv (default OFF)", () => {
@@ -216,7 +211,7 @@ describe("R11 · capability encendida", () => {
   it("GET /public/replays/{battleId}/download sirve la PROYECCIÓN pública, nunca el fichero crudo (PRE-1)", async () => {
     const app: Express = createApp({ db: h.db, publicReplaysEnabled: true });
     const { battleId, replayPath } = await seedFinishedBattleWithReplay();
-    writeLegibleReplay(battleId, replayPath);
+    await writeLegibleReplay(battleId, replayPath);
     const res = await request(app).get(`/public/replays/${battleId}/download`);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("application/json");
@@ -374,7 +369,7 @@ describe("R11 · cuota anónima (candado de no-regresión)", () => {
   it("GET /public/replays/{battleId}/download corta con 429 al superar la cuota (route propia)", async () => {
     await h.db("api_usage").where({ route: "public-replay-download" }).delete();
     const { battleId, replayPath } = await seedFinishedBattleWithReplay();
-    writeLegibleReplay(battleId, replayPath);
+    await writeLegibleReplay(battleId, replayPath);
     const strict = createApp({ db: h.db, publicReplaysEnabled: true, anonQuota: { max: 2, windowMs: 3600_000 } });
     for (let i = 0; i < 2; i++) {
       const ok = await request(strict).get(`/public/replays/${battleId}/download`);

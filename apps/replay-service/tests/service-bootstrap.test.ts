@@ -18,7 +18,6 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -147,7 +146,7 @@ const INGEST_SECRET = "secreto-ingesta-bootstrap";
 
 describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad", () => {
   it(
-    "sobre un directorio de datos VACÍO, el servicio arranca e ingesta y devuelve un replay real",
+    "sobre un directorio de datos VACÍO, el servicio arranca, lo crea y no expone rutas del formato anterior",
     { timeout: 120_000 },
     async () => {
       // "Desde cero": el directorio ni siquiera existe todavía, como un volumen
@@ -159,27 +158,26 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
       expect(s.code, `el servicio murió al arrancar:\n${s.salida}`).toBeNull();
       expect(existsSync(dir), "el servicio debe crear su directorio de datos").toBe(true);
 
+      // V1 REPLAYS PR-4 · el servicio de producción ya NO ingiere ni sirve replays (los publica el
+      // worker en S9R/1 y los lee la API; ver v1-replay-pr3-wiring W4 y los tests de la API). Las
+      // rutas del formato anterior no existen en el proceso real, ni con el secreto correcto, y
+      // el directorio de datos no se toca.
       const base = `http://127.0.0.1:${s.port}`;
+      expect((await fetch(`${base}/healthz`)).status).toBe(200);
       const post = await fetch(`${base}/replays/${replay.header.battleId}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-ndjson", "x-replay-ingest-auth": INGEST_SECRET },
         body: jsonl,
       });
-      expect(post.status, await post.clone().text()).toBe(201);
-      const meta = (await post.json()) as { sha256: string; path: string };
-
-      // (2) El replay está DE VERDAD en el disco, en ese directorio.
-      const enDisco = readdirSync(dir).sort();
-      expect(enDisco).toEqual([`${replay.header.battleId}.replay`, `${replay.header.battleId}.replay.json`]);
-      expect(meta.path).toBe(join(dir, `${replay.header.battleId}.replay`));
-
-      // (3) Y se vuelve a leer por HTTP, byte a byte, con su hash intacto.
-      const get = await fetch(`${base}/replays/${replay.header.battleId}`);
-      expect(get.status).toBe(200);
-      const bytes = Buffer.from(await get.arrayBuffer());
-      expect(bytes.length).toBeGreaterThan(0);
-      expect(createHash("sha256").update(bytes).digest("hex")).toBe(meta.sha256);
-      expect(get.headers.get("x-replay-sha256")).toBe(meta.sha256);
+      expect(post.status).toBe(404);
+      for (const path of [
+        "/replays",
+        `/replays/${replay.header.battleId}`,
+        `/replays/${replay.header.battleId}/index`,
+      ]) {
+        expect((await fetch(`${base}${path}`)).status, path).toBe(404);
+      }
+      expect(readdirSync(dir)).toEqual([]);
     },
   );
 
@@ -234,20 +232,19 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
  * puede tocar.
  */
 describe("B8 · el servicio REAL sin secreto configurado: lee pero no deja escribir", () => {
-  it("arranca, sirve lecturas y rechaza la ingesta con 401 sin escribir nada", { timeout: 120_000 }, async () => {
+  it("arranca y no expone ninguna ruta de escritura (404) sin escribir nada", { timeout: 120_000 }, async () => {
     const dir = join(mkdtempSync(join(tmpdir(), "b8-boot-")), "replays");
     const s = await arrancar(dir, undefined);
     expect(s.code, `el servicio no debe morir por no tener secreto:\n${s.salida}`).toBeNull();
 
     const base = `http://127.0.0.1:${s.port}`;
 
-    // (1) Las lecturas siguen vivas: el visor no depende de la credencial.
+    // (1) El servicio vive (healthz) sin la credencial.
     const healthz = await fetch(`${base}/healthz`);
     expect(healthz.status).toBe(200);
-    const lista = await fetch(`${base}/replays`);
-    expect(lista.status).toBe(200);
 
-    // (2) La ingesta se rechaza con CUALQUIER credencial (no hay modo abierto).
+    // (2) V1 REPLAYS PR-4 · no hay NINGUNA ruta de escritura (ingesta ni barrido), con o sin
+    // credencial: fail-closed por construcción (404), nunca un modo abierto.
     for (const cred of [undefined, "", "lo-que-sea"]) {
       const post = await fetch(`${base}/replays/${replay.header.battleId}`, {
         method: "POST",
@@ -257,12 +254,10 @@ describe("B8 · el servicio REAL sin secreto configurado: lee pero no deja escri
         },
         body: jsonl,
       });
-      expect(post.status, `credencial ${JSON.stringify(cred)}`).toBe(401);
+      expect(post.status, `credencial ${JSON.stringify(cred)}`).toBe(404);
     }
-
-    // (3) El barrido de retención tampoco.
     const sweep = await fetch(`${base}/retention/sweep`, { method: "POST" });
-    expect(sweep.status).toBe(401);
+    expect(sweep.status).toBe(404);
 
     // (4) EFECTO observable: el directorio de datos sigue VACÍO.
     expect(readdirSync(dir)).toEqual([]);
