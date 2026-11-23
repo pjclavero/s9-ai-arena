@@ -56,6 +56,7 @@ function harness(opts: { xvfbIgnoresTerm?: boolean; xvfbNeverReady?: boolean } =
     readyTimeoutMs: 200,
     stopGraceMs: 20,
     exists: (p) => files.has(p),
+    accepts: async () => true, // fichero simulado: sin servidor X real
     readFile: () => {
       throw new Error("no existe");
     },
@@ -181,6 +182,7 @@ describe("OLA2-MF · Xvfb y procesos de emisión a demanda", () => {
       readyTimeoutMs: 500,
       stopGraceMs: 500,
       exists: (p) => files.has(p),
+      accepts: async () => true, // fichero simulado: sin servidor X real
       readFile: (p) => {
         if (p === "/tmp/.X99-lock") return `${[...alivePids].at(-1) ?? "0"}\n`;
         const m = /^\/proc\/(\d+)\/comm$/.exec(p);
