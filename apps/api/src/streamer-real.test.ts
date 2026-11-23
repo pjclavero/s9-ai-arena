@@ -405,7 +405,7 @@ describe("STREAMER · §17 · errores estables y §31 PERMISSION_DENIED / INVALI
 });
 
 describe("STREAMER · #241 R4-2 · `rollback:name` con lista cerrada", () => {
-  it("la lista es exactamente 016/017/018/019/020/021/022", () => {
+  it("la lista es exactamente 016/017/018/019/020/021/022/024", () => {
     // VISIBILIDAD (#244, P2-1): la 019 entra mientras ninguna migración posterior
     // reescriba `s9_bot_version_guard` (su down lo reescribe; ver migrations.ts).
     expect([...NAMED_ROLLBACK_ALLOWED]).toEqual([
@@ -418,6 +418,8 @@ describe("STREAMER · #241 R4-2 · `rollback:name` con lista cerrada", () => {
       "021_runtime_settings",
       // #287 · entries.team_id: columna propia y nullable.
       "022_entries_team",
+      // V1 REPLAYS PR-3 · replay_artifacts: tabla propia (la 023 la añade ADM-1 #334, que va antes).
+      "024_replay_artifacts",
     ]);
   });
   it("`rollbackNamed('001_identity')` se RECHAZA y la tabla users sigue ahí; 002..015 también", async () => {
