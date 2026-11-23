@@ -99,7 +99,7 @@ Estados posibles:
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
 | [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA (corrige el PR #316) |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
-| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (fuera de V1: CTF y zona se aceptan con reglas clásicas y no se pueden jugar) |
+| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (fuera de V1: CTF y zona rechazados al crear torneos con 400 `tournament_mode_not_allowed`; sin soporte real) |
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 | [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |

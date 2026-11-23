@@ -37,6 +37,12 @@ let versionsByBot: Record<string, unknown>;
 let tournament: Record<string, unknown>;
 let teams: Record<string, unknown>[];
 let consents: { botId: string; version: number; mine?: boolean }[];
+// GET /teams con puerta diferida: el select «equipo a inscribir» existe desde el primer render
+// (estado «cargando») y sólo recibe sus opciones cuando resuelve el fetch. `pickTeam` cierra la
+// puerta, comprueba que la opción NO está y la abre después: el orden es determinista, no de reloj.
+let gated = false;
+let openGate: () => void = () => {};
+let teamsGate: Promise<void> = Promise.resolve();
 
 const TEAMS_4V4 = {
   id: "t1",
@@ -66,7 +72,10 @@ function mock() {
     if (method === "GET" && path === "/tournaments") return { items: [] };
     if (path === "/tournaments/t1/battles") return { items: [] };
     if (path.startsWith("/bots?ownerId=")) return { items: [] };
-    if (path === "/teams?limit=100") return { items: teams };
+    if (path === "/teams?limit=100") {
+      if (gated) await teamsGate;
+      return { items: teams };
+    }
     if (method === "GET" && path.startsWith("/tournaments/t1/team-consents?teamId=")) return { items: consents };
     if (method === "PUT" && path.startsWith("/tournaments/t1/team-consents/")) return {};
     const m = /^\/bots\/([^/]+)\/versions$/.exec(path);
@@ -80,6 +89,7 @@ function mock() {
 afterEach(cleanup);
 beforeEach(() => {
   apiMock.mockReset();
+  gated = false;
   calls = [];
   tournament = TEAMS_4V4;
   teams = [BASTION, { id: "tm2", name: "Ajeno", isMember: false }];
@@ -93,10 +103,17 @@ beforeEach(() => {
 });
 
 async function pickTeam() {
+  gated = true;
+  teamsGate = new Promise<void>((res) => (openGate = res));
   render(<TournamentDetailPage id="t1" me={ME} />);
   const user = userEvent.setup();
   await screen.findByText("Copa Equipos");
-  await user.selectOptions(await screen.findByLabelText("equipo a inscribir"), "tm1");
+  expect(await screen.findByLabelText("equipo a inscribir")).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "Bastión" })).toBeNull(); // el fetch aún no resolvió
+  openGate();
+  // Espera a la CONDICIÓN: la opción del equipo ya cargada (no basta con que exista el select).
+  await screen.findByRole("option", { name: "Bastión" });
+  await user.selectOptions(screen.getByLabelText("equipo a inscribir"), "tm1");
   return user;
 }
 
@@ -150,7 +167,8 @@ describe("#287 · detalle de un torneo por equipos", () => {
     expect(await screen.findByLabelText("equipo a inscribir")).toBeTruthy();
     expect(screen.queryByLabelText("bot a inscribir")).toBeNull();
     expect(screen.getByTestId("team-entry-form").textContent).toContain("Tamaño: 4 vs 4");
-    // Sólo los equipos de los que soy miembro.
+    // Sólo los equipos de los que soy miembro (tras cargar la lista: si no, la ausencia sería vacía).
+    await screen.findByRole("option", { name: "Bastión" });
     expect(screen.queryByRole("option", { name: "Ajeno" })).toBeNull();
   });
 

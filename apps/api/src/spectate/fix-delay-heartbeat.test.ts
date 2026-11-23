@@ -607,6 +607,8 @@ describe("FIX-DELAY · latidos sin retardo, snapshots con retardo", () => {
       })
       .sort();
     expect(timerUses, "temporizadores de gateway.ts: la lista cambió").toEqual([
+      // V1 REPLAYS · re-attach del mismo battleId: se detiene el bombeo del feed anterior.
+      "attachBattle:clearInterval(previous.timer)",
       "attachBattle:setInterval(ArrowFunctionExpression, LogicalExpression)",
       "detachBattle:clearInterval(feed.timer)",
       "dropClient:clearInterval(conn.heartbeat)",
