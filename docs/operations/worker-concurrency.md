@@ -32,6 +32,13 @@ Cada bot es un contenedor con límites fijos (`DEFAULT_LIMITS` de `bot-manager`)
 Son techos (límites), no consumo medido. Mediciones reales: ver el informe del carril
 y `scripts/ops/measure-battle-cost.ts`.
 
+## Máximo seguro con la emisión (D-OP-32)
+
+La concurrencia máxima segura por tipo de batalla, con y sin emisión 1080p30, y el cálculo de RAM y CPU
+en 6 vCPU y 6,84 GB están en [resource-budget.md](resource-budget.md#concurrencia-máxima-segura-del-worker)
+y los comprueba `infrastructure/tests/resource-budget.test.ts`. Resumen: con emisión, 1v1 hasta 2 y
+2v2, 3v3 y 4v4 sólo de una en una; sin emisión, 1v1 hasta 3, 2v2 hasta 2 y 3v3 y 4v4 de una en una.
+
 ## Fórmula de `auto`
 
 ```

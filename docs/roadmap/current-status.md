@@ -78,6 +78,7 @@ Columnas: **I** = implementado, **M** = integrado en `main`, **P** = probado en 
 | Ajustes de runtime del acceso público | sí | sí | sí | — | sí | no verificado | `mg-runtime-settings.test.ts`, `mg-runtime-failclosed.test.ts` |
 | Espectador y replays públicos | sí | sí | sí | — | sí (apagados) | no verificado | `vis-broadcast.spec.ts` |
 | Streaming a YouTube real | sí | sí | local | — | sí (desactivado) | **no verificado**; imagen en blanco en emisión real | issue #256; TD-066 |
+| Presupuesto de recursos (D-OP-32): límites por servicio, escenario de pico y ausencia de recursos abandonados | sí (PR de recursos, borrador) | no | sí (test estático; liberación 4v4 y streamer) | **medición real con AVX2 y contenedores: pendiente** | no | no | `infrastructure/tests/resource-budget.test.ts`; [resource-budget.md](../operations/resource-budget.md) |
 | Streaming V2 y Broadcast Manager | **no**: sólo diseño | no | — | — | — | — | PR #275 (borrador); ver [v1-roadmap.md](v1-roadmap.md#streaming-v2-y-broadcast-manager) |
 | Cambio y recuperación de contraseña | cambio: en PR; recuperación: no | no | — | — | — | — | PR #315; TD-012 |
 
@@ -96,6 +97,7 @@ Ninguno está en `main`. Todos son borradores y esperan autorización de merge.
 | #307, #308 | `SECURITY.md` y `CHANGELOG.md`; rescate de la deuda de `init-secrets` | borradores |
 | #295 | Reset competitivo previo a la 0.5 (operación) | borrador |
 | #275 | Diseño de Streaming V2 (MS-1) | borrador, sólo documentación |
+| (recursos) | Presupuesto de recursos D-OP-32: límites por servicio (de 16,75 a 8,25 GiB en total), `resource-budget.yaml` con test, escenario de pico y pruebas de liberación 4v4 y streamer | borrador; pendiente de validación en el laboratorio y de decisiones del operador |
 | #277 | Refresco anterior del roadmap y los manuales (2026-11-12) | abierto; solapa con este documento y quedó obsoleto |
 
 ## Prioridades abiertas
@@ -135,6 +137,7 @@ Hallazgos de V1 que aún no tienen TD propio (defectos del roadmap): rol `organi
 4. **CTF y control de zona en torneos:** decisión del operador sobre cómo excluirlos (cambia el contrato de la API).
 5. **Recuperación de contraseña:** no existe canal de entrega; ningún usuario puede recuperar su cuenta sin intervención del operador. El cambio de contraseña llega con #315.
 6. **Validación con navegador real del torneo por equipos:** pendiente (#309 sólo se probó con tests de componente y de API).
+7. **Recursos fijos (D-OP-32):** V1 debe caber en 6 vCPU y 6,84 GB con la emisión 1080p30 y batallas; el presupuesto está propuesto y probado de forma estática, pero la CPU del streamer con AVX2 y la RAM de un bot real **no están medidas** (carril de laboratorio, [plan de medición](../operations/resource-budget.md#plan-de-medición-no-ejecutado)). Ver [Restricciones de recursos](v1-roadmap.md#restricciones-de-recursos-de-v1-d-op-32).
 
 ## Security
 
@@ -185,4 +188,6 @@ La clasificación completa (V1, OLA 2, futura, defectos) está en [v1-roadmap.md
 | Ciclo completo de torneos validado en laboratorio (RR, eliminación simple, suizo, TDM 2v2/3v3/4v4) | LAB (PR #317, aún sin merge) | informe V1-C: 32 tests, rc=0 dos veces seguidas; 17 de 17 mutantes muertos |
 | CTF y zona en torneos fallan al jugar | LAB (PR #317) | `v1-tournament-ctf-zone.e2e.test.ts` |
 | Streaming V2 y Broadcast Manager no existen en `main` | CODE_VERIFIED | `git grep -n "StreamSession\|BroadcastQueue" -- apps packages infrastructure` (vacío) |
+| La suma de límites de memoria de los 13 servicios en marcha era 16,75 GiB frente a 6,84 GB de RAM | RUNTIME_VERIFIED (2026-11-22) | `docker inspect` de los contenedores de producción (sólo lectura); [resource-budget.md](../operations/resource-budget.md) |
+| El escenario emisión 1080p30 + batallas cabe con los límites propuestos | TEST (PR de recursos, borrador; no integrado ni desplegado) | `infrastructure/tests/resource-budget.test.ts` |
 | Los 19 P3 y los P0, P1 y P2 abiertos | CODE_VERIFIED (recuento) | índice de [technical-debt.md](technical-debt.md) |

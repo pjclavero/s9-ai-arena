@@ -54,6 +54,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Descargar las imágenes de runtime de los bots antes de activar la ejecución | [installation.md](installation.md#imágenes-de-runtime-de-los-bots) | host |
 | Publicar detrás de un proxy inverso / TLS | [networking.md](networking.md) | host + proxy |
 | Retransmitir (`/broadcast`, streamer, RTMPS, grabación MP4) y saber qué está verificado | [streaming.md](streaming.md) | host (perfil `streaming`) |
+| Saber cuánta CPU y RAM tiene cada servicio, qué cabe con la emisión y las batallas y qué se mide | [resource-budget.md](resource-budget.md) | host |
 | Ver métricas, alertas y logs | [observability.md](observability.md) | host (perfil `observability`) |
 | Comprobar las copias | [backup.md](backup.md) | host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |

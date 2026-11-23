@@ -23,6 +23,7 @@ Base: `main` en `80f4952` (2026-11-20). Referencias de PR e issues: `https://git
 - [Versión futura](#versión-futura)
 - [Defectos y exclusiones de V1](#defectos-y-exclusiones-de-v1)
 - [Streaming V2 y Broadcast Manager](#streaming-v2-y-broadcast-manager)
+- [Restricciones de recursos de V1 (D-OP-32)](#restricciones-de-recursos-de-v1-d-op-32)
 - [Verificación](#verificación)
 
 ## Cómo se clasifica
@@ -159,6 +160,26 @@ Comprobado contra `main` (`80f4952`) antes de clasificarlos como futuros:
   es Streaming V1, dentro de V1 pero **sin prueba contra YouTube real** y con un defecto abierto
   (#256, imagen blanca).
 
+## Restricciones de recursos de V1 (D-OP-32)
+
+Decisión definitiva del operador (2026-11-22): **los recursos son fijos y no se proponen ampliaciones**.
+La máquina virtual de producción tiene 6 vCPU (tipo de CPU `host`, con AVX2) y 6,84 GB de RAM, sobre un
+anfitrión de 28 hilos y 32 GB. V1 debe funcionar dentro de esos límites, con la emisión a YouTube en
+1080p30 mientras corren batallas, el worker acotado, replays incrementales y el almacenamiento limitado.
+Estas restricciones son **criterio de aceptación** de V1:
+
+| ID | Criterio de aceptación | Cómo se comprueba | Estado |
+|---|---|---|---|
+| RES-1 | Cada servicio declara `cpus` y memoria; la suma de techos no supera 1,35× la RAM y el escenario de pico simultáneo (emisión 1080p30 + batallas + build + resto de servicios), calculado con el **pico medido más un margen de seguridad explícito**, cabe en 6 vCPU y 6,84 GB con la reserva del sistema y deja **≥ 1 GiB de RAM disponible**; el peor caso teórico (techos de cgroup de bots y streamer) no supera la VM y la suma de todos los techos se documenta como riesgo contenido por los límites de cada contenedor | `infrastructure/tests/resource-budget.test.ts` contra `infrastructure/resource-budget.yaml` ([presupuesto](../operations/resource-budget.md)) | implementado en PR (borrador); no integrado, no desplegado |
+| RES-2 | Concurrencia del worker acotada por tipo de batalla (defecto 1; tope declarado por tipo, con y sin emisión) | mismo test + [worker-concurrency.md](../operations/worker-concurrency.md) | implementado en PR; la cifra con contenedores reales está **pendiente de medir en el laboratorio** |
+| RES-3 | Ausencia de recursos abandonados: tras una batalla terminada con éxito, con fallo o interrumpida no queda contenedor de bot, recurso registrado, puerto del host de la batalla ni fichero temporal del worker; del streamer no quedan Chromium ni ffmpeg al parar, reiniciar o reintentar | `mf-battle-teardown.test.ts` (RR-1…RR-4, 4v4), `xvfb-on-demand.test.ts` (SR-1…SR-3) y `scripts/mutants-resource-budget.sh` | implementado en PR; mutantes por ejecutar en el laboratorio |
+| RES-4 | Medición real con la CPU `host` (AVX2): **emisión 1080p30 sola (PENDIENTE; sólo hay medición sin AVX2)** y 4v4 con la emisión; ya medidas sin emisión una 4v4 (VM 1656 MiB de pico, 5122 MiB disponibles) y dos 1v1 | `scripts/ops/measure-resource-scenario.sh` (fases A-D) | **no ejecutado**; carril de laboratorio |
+| RES-5 | Una swap ocupada **no** es por sí sola criterio de bloqueo: se decide por presión sostenida (PSI, memoria disponible, carga) | guardián de producción v2 | operativo en el laboratorio |
+
+Los límites de memoria se bajaron donde el pico medido es muy inferior al techo (de 16,75 GiB a 8,25 GiB
+en total); el desglose, servicio a servicio, está en el [presupuesto de recursos](../operations/resource-budget.md#tabla-por-servicio).
+V1 **no se declara cerrada** sin RES-1…RES-4 cumplidos y verificados en producción tras el despliegue.
+
 ## Verificación
 
 | Afirmación | Estado | Fuente |
@@ -169,3 +190,4 @@ Comprobado contra `main` (`80f4952`) antes de clasificarlos como futuros:
 | `POST /tournaments` acepta CTF y zona con reglas clásicas | TEST (en el PR #317, abierto) | `v1-tournament-ctf-zone.e2e.test.ts`; `apps/api/src/services/battle-rules.ts` |
 | La política `failed` cierra el torneo | CODE_VERIFIED | `apps/tournament-worker/src/results.ts` (`settleMatch`); `tournament-lifecycle-failed.test.ts` |
 | Contrato OpenAPI 0.25.0 con 106 operaciones, motor 0.5.0, migraciones 001–022 | CODE_VERIFIED | `apps/api/openapi.yaml`, `packages/game-rules/rules-doc.ts`, `apps/api/src/db/migrations.ts` |
+| Contrato de recursos D-OP-32: el escenario cabe en 6 vCPU y 6,84 GB y no quedan recursos abandonados | TEST (en el PR de recursos, borrador) | `infrastructure/tests/resource-budget.test.ts`, `mf-battle-teardown.test.ts`, `xvfb-on-demand.test.ts` |

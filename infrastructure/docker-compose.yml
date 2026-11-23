@@ -139,7 +139,7 @@ services:
       start_period: 10s
     deploy:
       resources:
-        limits: { cpus: "0.50", memory: 256M }
+        limits: { cpus: "0.50", memory: 128M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -165,7 +165,7 @@ services:
       start_period: 20s
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 512M }
+        limits: { cpus: "0.50", memory: 256M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -271,7 +271,7 @@ services:
       start_period: 20s
     deploy:
       resources:
-        limits: { cpus: "2.0", memory: 1G }
+        limits: { cpus: "2.0", memory: 768M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -332,7 +332,7 @@ services:
       start_period: 20s
     deploy:
       resources:
-        limits: { cpus: "4.0", memory: 2G }
+        limits: { cpus: "1.0", memory: 512M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -488,7 +488,7 @@ services:
       start_period: 20s
     deploy:
       resources:
-        limits: { cpus: "2.0", memory: 2G }
+        limits: { cpus: "1.0", memory: 512M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -567,7 +567,7 @@ services:
       start_period: 30s
     deploy:
       resources:
-        limits: { cpus: "2.0", memory: 2G }
+        limits: { cpus: "1.0", memory: 1G }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -609,7 +609,7 @@ services:
       start_period: 20s
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 512M }
+        limits: { cpus: "0.50", memory: 256M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -694,7 +694,7 @@ services:
       retries: 3
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 512M }
+        limits: { cpus: "0.50", memory: 384M }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -745,7 +745,7 @@ services:
       start_period: 15s
     deploy:
       resources:
-        limits: { cpus: "2.0", memory: 2G }
+        limits: { cpus: "2.0", memory: 1G }
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
@@ -818,7 +818,7 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: { cpus: "4.0", memory: 4G, pids: 512 }
+        limits: { cpus: "3.0", memory: 1536M, pids: 512 }
     # STREAMER §15-§16 · aislamiento:
     #  - init: tini como PID 1 recoge a los descendientes huérfanos (Chromium
     #    lanza zygote/GPU/renderers); sin él quedarían zombis en el contenedor.
