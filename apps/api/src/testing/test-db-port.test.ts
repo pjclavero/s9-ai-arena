@@ -3,13 +3,15 @@
  * sólo un EADDRINUSE confirmado se relanza (con tope); cualquier otro error se propaga.
  * Mutantes: scripts/mutants-test-db-port.sh.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type AddressInfo } from "node:net";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { launchEmbedded, PortBusyError, startOnFreePort, stopOrKill } from "./test-db.js";
 
+const realTmp = tmpdir();
 const isBusy = (e: unknown) => e instanceof PortBusyError;
 
 describe("startOnFreePort · reintento acotado y específico", () => {
@@ -61,6 +63,20 @@ describe("startOnFreePort · reintento acotado y específico", () => {
 });
 
 describe("launchEmbedded · señal real de puerto ocupado", () => {
+  // Raíz temporal PROPIA: en un host compartido otros procesos crean `e7-pg-*` en el /tmp común y
+  // la comprobación «no deja directorio de datos» fallaría por directorios ajenos.
+  const prevTmp = process.env.TMPDIR;
+  let root = "";
+  beforeAll(() => {
+    root = mkdtempSync(join(realTmp, "s9-port-"));
+    process.env.TMPDIR = root;
+  });
+  afterAll(() => {
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("con el puerto ocupado por otro proceso lanza PortBusyError y no deja directorio de datos", async () => {
     const before = new Set(readdirSync(tmpdir()).filter((d) => d.startsWith("e7-pg-")));
     const s = createServer();
