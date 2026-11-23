@@ -67,6 +67,11 @@ describe("B3 · crear torneos con modos excluidos", () => {
     await expectRejected({ mode: "zone_control", rulesetId: "zone-control-mvp" });
   });
 
+  it("B3_CTF_FOREIGN_RULESET · capture_the_flag con el ruleset de OTRO modo (antes se creaba con reglas nulas) -> 400", async () => {
+    await expectRejected({ mode: "capture_the_flag", rulesetId: "deathmatch-mvp" });
+    await expectRejected({ mode: "zone_control", rulesetId: "deathmatch-mvp" });
+  });
+
   it("B3_CTF_PRESET · capture_the_flag con preset oficial -> 400 tournament_mode_not_allowed", async () => {
     await expectRejected({
       mode: "capture_the_flag",

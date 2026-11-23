@@ -23,7 +23,7 @@ YAML = "apps/api/openapi.yaml"
 M = [
     ("M1", "createTournament no rechaza el modo excluido", [(ROUTES,
         "    rejectTournamentMode(mode);\n", "")],
-     API_T, ["B3_CTF_CLASSIC", "B3_ZONE_CLASSIC", "B3_CTF_PRESET", "B3_ZONE_CUSTOM"]),
+     API_T, ["B3_CTF_FOREIGN_RULESET"]),
     ("M2", "no se mira el modo real del ruleset de plataforma", [(ROUTES,
         "      if (engineMode !== undefined) rejectTournamentMode(engineMode, { rulesetId, engineRulesetId: engineId });\n",
         "")],
