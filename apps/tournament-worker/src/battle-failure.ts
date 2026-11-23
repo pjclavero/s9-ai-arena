@@ -30,6 +30,15 @@ export async function onBattleJobExhausted(job: JobRow, ctx: HandlerContext): Pr
   }
 }
 
+/**
+ * Cierre del torneo para una batalla que el BARRIDO de huérfanos acaba de dejar `failed` (mismo
+ * efecto que `onBattleJobExhausted` para el camino del claim). Lo cablea `main.ts` y lo prueba el
+ * test de avance de torneo con torneo y match reales.
+ */
+export function settleOrphanFailed(db: Knex): (battleId: string) => Promise<void> {
+  return (battleId) => settleFailedBattle(db, battleId);
+}
+
 /** Arranca el rescate: una vez ahora y cada `everyMs`. Devuelve la función que lo para. */
 export function startTournamentRescue(
   db: Knex,

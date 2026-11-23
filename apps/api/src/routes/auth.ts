@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from "../auth/passwords.js";
+import { MIN_PASSWORD_LENGTH, hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -159,9 +159,8 @@ export function authRoutes(deps: AuthDeps): Router {
     async (req, res) => {
       const { email, password, displayName } = req.body ?? {};
       if (typeof email !== "string" || !EMAIL_RE.test(email)) throw badRequest("email inválido");
-      if (typeof password !== "string" || password.length < 12) {
-        throw badRequest("La contraseña debe tener al menos 12 caracteres");
-      }
+      const violation = passwordPolicyViolation(password);
+      if (violation) throw badRequest(violation);
       if (typeof displayName !== "string" || !displayName || displayName.length > 48) {
         throw badRequest("displayName obligatorio (máx. 48)");
       }
@@ -404,9 +403,8 @@ export function authRoutes(deps: AuthDeps): Router {
       if (typeof currentPassword !== "string" || !currentPassword) {
         throw badRequest("currentPassword obligatorio");
       }
-      if (typeof newPassword !== "string" || newPassword.length < MIN_PASSWORD_LENGTH) {
-        throw badRequest(`La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
-      }
+      const violation = passwordPolicyViolation(newPassword, "La nueva contraseña");
+      if (violation) throw badRequest(violation);
       // Política ANTES de la reautenticación: una petición que se va a rechazar no debe gastar un código
       // de recuperación (requireStrongReauth lo consume). Sólo compara el cuerpo consigo mismo: no revela nada.
       if (newPassword === currentPassword) {
@@ -476,8 +474,8 @@ export function authRoutes(deps: AuthDeps): Router {
     { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" },
     async (req, res) => {
       const { token, newPassword } = req.body ?? {};
-      if (typeof token !== "string" || typeof newPassword !== "string" || newPassword.length < 12) {
-        throw badRequest("token y newPassword (≥12) obligatorios");
+      if (typeof token !== "string" || passwordPolicyViolation(newPassword) !== null) {
+        throw badRequest(`token y newPassword (≥${MIN_PASSWORD_LENGTH}) obligatorios`);
       }
       const reset = await db("password_resets")
         .where({ token_hash: hashToken(token) })

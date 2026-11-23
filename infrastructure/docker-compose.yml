@@ -378,6 +378,18 @@ services:
       # Carga del host (AUD2-10): defecto 1 batalla simultánea; `auto` o 1..16 sólo explícito; ver .env.example.
       TOURNAMENT_WORKER_CONCURRENCY: ${TOURNAMENT_WORKER_CONCURRENCY:-1}
       TOURNAMENT_WORKER_CPU_SAMPLE_MS: ${TOURNAMENT_WORKER_CPU_SAMPLE_MS:-2000}
+      # V1-P0 · heap de V8 coherente con el límite del contenedor (`memory: 1G`, más abajo): 640 MiB
+      # de old-space dejan ~380 MiB para new-space, código, Buffers/sockets y RSS no-heap. Con el
+      # defecto de V8 (~512 MiB de tope según la memoria visible) el worker caía por OOM en lugar de
+      # degradar; con un heap MAYOR que el límite del cgroup, lo mataría el kernel (SIGKILL, sin
+      # `finally`). NO es la solución a la retención de memoria por batalla (fase 3: grabación de
+      # replays en streaming): sólo evita que el límite sea un accidente. Lo verifica
+      # apps/tournament-worker/src/v1-worker-stability.test.ts (heap < memory).
+      NODE_OPTIONS: "--max-old-space-size=640"
+      # V1-P0 · métricas del worker (heap/RSS, reintentos, aparcados, huérfanas): sólo con
+      # S9_METRICS_ENABLED; sirve GET /metrics en WORKER_METRICS_PORT (scrape: job tournament-worker).
+      S9_METRICS_ENABLED: ${S9_METRICS_ENABLED:-}
+      WORKER_METRICS_PORT: "8086"
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # El gateway de espectador (en este proceso) aplica la MISMA capability

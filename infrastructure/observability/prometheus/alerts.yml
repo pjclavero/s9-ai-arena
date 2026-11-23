@@ -158,3 +158,55 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "La página de emisión no se pinta (pantalla en blanco o sin dibujar): no se emite"
+
+  # V1-P0 · estabilidad del tournament-worker (métricas s9_worker_*, sólo con S9_METRICS_ENABLED=1).
+  # Cada alerta lleva su guarda de presencia: si el worker no exporta métricas (capability apagada)
+  # NINGUNA salta por ausencia de datos. Probadas con promtool: alerts-worker.test.yml.
+  - name: s9-tournament-worker
+    rules:
+      # Heap de V8 por encima del 85 % de su tope durante 5 min: OOM inminente (sin `finally`).
+      - alert: WorkerHeapNearLimit
+        expr: max(s9_worker_heap_used_bytes / s9_worker_heap_limit_bytes) > 0.85
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El heap del tournament-worker supera el 85% de su límite"
+
+      # RSS por encima de 900 MiB con un límite de contenedor de 1 GiB: el kernel lo matará.
+      - alert: WorkerRssHigh
+        expr: max(s9_worker_rss_bytes) > 943718400
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "El RSS del tournament-worker supera 900 MiB (límite del contenedor: 1 GiB)"
+
+      # Reintentos en cadena: más de 3 trabajos reclamados por segunda vez en 15 min.
+      - alert: WorkerJobRetries
+        expr: increase(s9_worker_job_retries_total[15m]) > 3
+        labels: { severity: warning }
+        annotations:
+          summary: "El worker reintenta trabajos en bucle (más de 3 reintentos en 15 min)"
+
+      # Trabajos NUEVOS en revisión manual (el gauge cuenta todos los needs_review, también los
+      # históricos): alerta por INCREMENTO en 30 min, no por el valor absoluto (R329-07).
+      - alert: WorkerJobsNeedReview
+        expr: delta(s9_worker_jobs_needs_review[30m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Han aumentado los trabajos del worker en needs_review (últimos 30 min)"
+
+      # Batallas `running` con el lease vencido que el barrido no resuelve en 5 min.
+      - alert: WorkerBattlesLeaseExpired
+        expr: max(s9_worker_battles_lease_expired) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Hay {{ $value }} batallas running con el lease vencido sin recuperar"
+
+      # El worker exportaba métricas y dejó de hacerlo: reinicios/OOM o proceso muerto.
+      - alert: WorkerMetricsDown
+        expr: up{job="tournament-worker"} == 0 and on() (max_over_time(s9_worker_up[1h]) == 1)
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "El tournament-worker dejó de exportar métricas (caído o reiniciándose)"

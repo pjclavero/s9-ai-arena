@@ -193,6 +193,57 @@ describe("T9.2 · golden brackets (calendario exacto)", () => {
     expect(pairs).toContain("P2|P4");
   });
 
+  // D-OP-24 · reparto de descansos del suizo: nadie repite bye si hay alternativa.
+  it("BYE_swiss_no_repeat: con n impar nadie repite descanso hasta que todos lo han tenido (hasta 13 participantes)", () => {
+    for (const n of [3, 5, 7, 9, 13]) {
+      const byes = new Map<string, number>(P(n).map((e) => [e.id, 0]));
+      const played = new Set<string>();
+      const points = new Map<string, number>(P(n).map((e) => [e.id, 0]));
+      for (let round = 1; round <= n; round++) {
+        const standings: SwissStanding[] = P(n).map((e) => ({
+          id: e.id,
+          points: points.get(e.id)!,
+          seed: e.seed,
+          hadBye: byes.get(e.id)! > 0,
+          byes: byes.get(e.id)!,
+        }));
+        const pairings = generateSwissRound(standings, played, round);
+        const bye = pairings.filter((p) => p.bye);
+        expect(bye).toHaveLength(1);
+        const id = bye[0].home!;
+        // nadie con descanso previo mientras alguien no haya descansado aún
+        if ([...byes.values()].some((c) => c === 0)) expect(byes.get(id)).toBe(0);
+        byes.set(id, byes.get(id)! + 1);
+        // el bye NO suma puntos (0): sólo los emparejados puntúan (gana el local)
+        for (const p of pairings) {
+          if (p.bye) continue;
+          played.add([p.home!, p.away!].sort().join("|"));
+          points.set(p.home!, points.get(p.home!)! + 3);
+        }
+      }
+      // tras n rondas con n impar, todos descansaron exactamente una vez
+      expect([...byes.values()]).toEqual(Array(n).fill(1));
+    }
+  });
+
+  it("BYE_swiss_feasible: entre los candidatos a descansar, el bye no fuerza un rival repetido si hay alternativa", () => {
+    // 5 participantes sin descansos previos. P1 ya jugó con P2, P3 y P4: si descansa P5 (el peor), P1
+    // sólo puede emparejar con alguien ya jugado ⇒ rematch forzado. Descansando P4 todo queda limpio
+    // (P1-P5, P2-P3), así que el bye debe ser P4 y no P5.
+    const standings: SwissStanding[] = [
+      { id: "P1", points: 3, seed: 1, byes: 0 },
+      { id: "P2", points: 3, seed: 2, byes: 0 },
+      { id: "P3", points: 0, seed: 3, byes: 0 },
+      { id: "P4", points: 0, seed: 4, byes: 0 },
+      { id: "P5", points: 0, seed: 5, byes: 0 },
+    ];
+    const played = new Set(["P1|P2", "P1|P3", "P1|P4"]);
+    const round = generateSwissRound(standings, played, 2);
+    const pairs = round.filter((p) => !p.bye).map((p) => [p.home, p.away].sort().join("|"));
+    for (const pr of pairs) expect(played.has(pr)).toBe(false);
+    expect(round.filter((p) => p.bye).map((p) => p.home)).toEqual(["P4"]);
+  });
+
   it("equipos con 4 plantillas: liguilla entre equipos (round robin)", () => {
     const teams = generateTeams([
       { teamId: "T1", roster: ["a1", "a2"] },

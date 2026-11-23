@@ -180,14 +180,18 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
 
 // ------------------------------------------------------- suizo: ronda siguiente
 
-/** Puntos de liga: victoria 3, empate 1 (documentado en formats.ts). Bye = victoria. */
-async function swissStandings(
+/**
+ * Puntos de liga: victoria 3, empate 1 (documentado en formats.ts). Bye (D-OP-24) = descanso
+ * administrativo: 0 puntos, ni victoria ni derrota ni empate; sólo marca `hadBye` para repartir
+ * los descansos.
+ */
+export async function swissStandings(
   db: Knex,
   tournamentId: string,
 ): Promise<{ standings: SwissStanding[]; played: Set<string>; rounds: number }> {
   const matches = (await db("matches").where({ tournament_id: tournamentId })) as MatchRow[];
   const points = new Map<string, number>();
-  const hadBye = new Set<string>();
+  const byeCount = new Map<string, number>();
   const played = new Set<string>();
   const entries = await db("entries").where({ tournament_id: tournamentId }).orderBy("created_at", "asc");
   const seedByBot = new Map<string, number>(
@@ -199,8 +203,7 @@ async function swissStandings(
     const p = pairingOf(m);
     rounds = Math.max(rounds, m.round);
     if (p.bye && p.home) {
-      hadBye.add(p.home);
-      points.set(p.home, (points.get(p.home) ?? 0) + 3);
+      byeCount.set(p.home, (byeCount.get(p.home) ?? 0) + 1);
       continue;
     }
     if (p.home && p.away) played.add(p.home < p.away ? `${p.home}|${p.away}` : `${p.away}|${p.home}`);
@@ -215,7 +218,8 @@ async function swissStandings(
     id,
     points: pts,
     seed: seedByBot.get(id) ?? 999,
-    hadBye: hadBye.has(id),
+    hadBye: (byeCount.get(id) ?? 0) > 0,
+    byes: byeCount.get(id) ?? 0,
   }));
   return { standings, played, rounds };
 }
@@ -281,6 +285,10 @@ export interface TableRow {
   draws: number;
   scoreDiff: number;
   seed: number;
+  /** D-OP-24 · descansos (byes): avance administrativo, NO es victoria/derrota/empate ni suma puntos. */
+  byes: number;
+  /** D-OP-24 · enfrentamientos SIN resultado deportivo (match `failed` o sólo batallas de límite técnico). */
+  technical: number;
 }
 
 /** ADR-022 · ¿El resultado es la salvaguarda técnica (sin resultado deportivo)? */
@@ -344,20 +352,28 @@ export async function leagueTableDetailed(
     ? [...new Set(entries.map((e: Record<string, unknown>) => e.team_id as string))]
     : entries.map((e: Record<string, unknown>) => e.bot_id as string);
   ids.forEach((id: string, i: number) =>
-    rows.set(id, { id, points: 0, wins: 0, losses: 0, draws: 0, scoreDiff: 0, seed: i + 1 }),
+    rows.set(id, { id, points: 0, wins: 0, losses: 0, draws: 0, scoreDiff: 0, seed: i + 1, byes: 0, technical: 0 }),
   );
 
   const headToHead = new Map<string, number>(); // "a|b" → victorias de a sobre b
   for (const m of matches) {
-    if (m.state !== "finished") continue;
     const p = pairingOf(m);
+    // D-OP-24 · un `failed` es un resultado técnico (sin resultado deportivo): se cuenta aparte.
+    if (m.state === "failed") {
+      const h = p.home ? rows.get(p.home) : undefined;
+      const a = p.away ? rows.get(p.away) : undefined;
+      if (h && a) {
+        h.technical++;
+        a.technical++;
+      }
+      continue;
+    }
+    if (m.state !== "finished") continue;
     const winner = isTeams ? m.winner_team_id : m.winner_bot_id;
     if (p.bye && p.home) {
+      // D-OP-24 · el bye NO puntúa ni es victoria jugada: sólo su propia columna.
       const r = rows.get(p.home);
-      if (r) {
-        r.points += 3;
-        r.wins++;
-      }
+      if (r) r.byes++;
       continue;
     }
     if (!p.home || !p.away) continue;
@@ -370,7 +386,11 @@ export async function leagueTableDetailed(
     );
     // ADR-022 · un enfrentamiento cuyas batallas JUGADAS terminaron TODAS por la salvaguarda
     // técnica no tiene resultado deportivo: no puntúa ni cuenta como empate en V-D-E.
-    if (battles.length > 0 && battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
+    if (battles.length > 0 && battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) {
+      home.technical++;
+      away.technical++;
+      continue;
+    }
     if (winner === p.home) {
       home.points += 3;
       home.wins++;
