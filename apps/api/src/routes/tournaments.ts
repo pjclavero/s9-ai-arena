@@ -1034,6 +1034,10 @@ export function tournamentRoutes(
         wins: row.wins,
         losses: row.losses,
         draws: row.draws,
+        // D-OP-24 · partidas disputadas = V+E+D (el bye no cuenta); byes y técnicos van aparte.
+        played: row.wins + row.draws + row.losses,
+        byes: row.byes,
+        technical: row.technical,
         scoreDiff: row.scoreDiff,
         seed: row.seed,
       })),

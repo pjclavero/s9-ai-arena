@@ -435,6 +435,8 @@ describe("EQ3 Centro de Ayuda · navegación, accesibilidad y alias", () => {
     // EQ2 · política official_played_not_reverted: V-D-E cuenta ENFRENTAMIENTOS oficiales disputados; el bye no suma.
     expect(dlg.textContent).toMatch(/enfrentamientos OFICIALES disputados de los torneos de la temporada/);
     expect(dlg.textContent).toMatch(/un bye \(pasar ronda sin rival\) no suma en esta clasificación/);
+    // D-OP-24 · el bye no es victoria, derrota ni empate, no es partida disputada y no da Elo.
+    expect(dlg.textContent).toMatch(/no es victoria, derrota ni empate, no cuenta como partida disputada y no da Elo/);
     // EQ2c · H4: una serie a medias igualada no es una victoria del seed.
     expect(dlg.textContent).toMatch(
       /serie que sigue en juego cuenta con lo ya disputado \(si va igualada, como empate\)/,

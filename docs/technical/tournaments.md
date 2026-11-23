@@ -122,6 +122,17 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 - `GET /standings?mode=&seasonId=` es anónimo, con caché de 60 s. `seasonId` ausente, vacío o `"current"` ⇒ la temporada activa; la respuesta la indica en la cabecera `X-S9-Season`. La web `#/ranking` no envía `seasonId` y ya ve lo que escribe el worker.
 - El worker puntúa en `tournaments.season_id` resuelto con la misma función (`ratings.ts`).
 
+### Bye (D-OP-24)
+
+El bye (descanso del round robin/liga/suizo con n impar, o hueco del cuadro inicial de una eliminatoria) es un **avance o descanso administrativo**, no un resultado jugado:
+
+- No es victoria, derrota ni empate; **suma 0 puntos** (también en el suizo) y no cuenta como partida disputada.
+- No genera batalla ni Elo (`applyBattleRating` además lo rechaza explícitamente si apareciera una batalla colgada de un match bye).
+- En eliminatorias sigue permitiendo avanzar (el match se cierra con el que tiene rival como ganador administrativo).
+- `leagueTable` y `GET /tournaments/{id}/team-standings` lo cuentan en su propia columna `byes`; `wins`/`losses`/`draws` son sólo lo jugado y `played = wins + draws + losses`. Los enfrentamientos sin resultado deportivo (match `failed` o sólo batallas de límite técnico) van en `technical` y no puntúan. La clasificación de temporada ya excluía el bye y los técnicos: **torneo y temporada usan ahora el mismo criterio** (V-D-E sólo de lo jugado).
+- **Suizo, equidad:** (1) nadie repite descanso mientras alguien no haya descansado (el candidato es el de menos byes; a igualdad, el peor clasificado); (2) entre candidatos, se descarta el que obligaría a repetir rival si otro lo evita; (3) desempate de la clasificación: puntos y seed. **Buchholz no está implementado** (la cabecera de `formats.ts` lo documentaba por error; deuda).
+- **Sin migración ni reinterpretación del histórico:** la producción tiene 0 byes (inventario de sólo lectura), así que ningún torneo existente cambia de resultado. La tabla del torneo se calcula al vuelo; cualquier torneo futuro con byes usa esta regla. `tournaments.champion_bot_id` no se recalcula.
+
 ### Política de clasificación
 
 `STANDINGS_POLICY = official_played_not_reverted` (`apps/tournament-worker/src/standings.ts`): la clasificación de (temporada, modo) y su Elo dependen de resultados oficiales realmente disputados, no del estado administrativo del torneo. `seasonTable` parte de las **batallas**, no de las inscripciones ni de `matches.state`, y sólo cuenta las que son:
@@ -139,7 +150,7 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 | `finished` | normal |
 | `cancelled` | conserva lo jugado, salvo lo revertido |
 
-- **Unidad de V-D-E:** el enfrentamiento, resuelto con `seriesOutcome` (`results.ts`, el mismo criterio que el cierre del match); 3/1/0 puntos. Un **bye no suma V-D-E** (decisión del operador); `leagueTable`, la tabla interna del torneo, sí lo cuenta como victoria.
+- **Unidad de V-D-E:** el enfrentamiento, resuelto con `seriesOutcome` (`results.ts`, el mismo criterio que el cierre del match); 3/1/0 puntos. Un **bye no suma V-D-E** (decisión del operador) y, desde D-OP-24, **tampoco lo cuenta la tabla interna del torneo** (ver «Bye»).
 - **Orden:** puntos, enfrentamientos directos, diferencia de puntuación, mejor seed de inscripción, id.
 - **Reversión:** `revertOfficialBattle(db, battleId)` (transacción con la batalla bloqueada) pone `battles.reverted_at` y devuelve el Elo si lo tenía. No depende del Elo: si el job `update_standings` llega después, `applyBattleRating` ve la marca y no aplica Elo. Devuelve `reverted`, `already_reverted` o `nothing_to_revert` (no existe, no es oficial, no ha terminado o es técnica). Hoy ningún endpoint ni job la invoca; sólo los tests.
 - **Concurrencia del Elo:** `applyBattleRating` bloquea la batalla y luego las filas de `ratings` (por `bot_id`); la reversión sigue el mismo orden de cerrojos.

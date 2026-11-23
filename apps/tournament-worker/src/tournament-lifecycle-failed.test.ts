@@ -236,6 +236,29 @@ describe("batalla failed definitiva: el torneo siempre llega a un estado termina
     expect(await ratingEventsOf(tid)).toHaveLength(0);
   });
 
+  it("[R9-liga] LIGA con TODAS las batallas failed: sin campeón, sin Elo, y todo se cuenta como técnico", async () => {
+    const tid = await schedule("league", 4);
+    await drainAll(makeWorker(() => true));
+    const s = await snapshot(tid);
+    expect(s.t.state).toBe("finished");
+    expect(s.t.champion_bot_id).toBeNull();
+    expect(s.m.every((m: any) => m.state === "failed")).toBe(true);
+    expect(await ratingEventsOf(tid)).toHaveLength(0);
+    const table = await leagueTable(h.db, tid, false);
+    expect(table.every((r) => r.points === 0 && r.wins + r.draws + r.losses === 0 && r.technical > 0)).toBe(true);
+  });
+
+  it("[R9-bye] round robin IMPAR con TODAS failed: el bye (D-OP-24) no corona a nadie ni puntúa", async () => {
+    const tid = await schedule("round_robin", 3);
+    await drainAll(makeWorker(() => true));
+    const s = await snapshot(tid);
+    expect(s.t.state).toBe("finished");
+    expect(s.t.champion_bot_id).toBeNull();
+    const table = await leagueTable(h.db, tid, false);
+    expect(table.map((r) => r.byes)).toEqual([1, 1, 1]);
+    expect(table.every((r) => r.points === 0 && r.wins === 0)).toBe(true);
+  });
+
   it("serie de 2 juegos con UNO failed: el match se resuelve con el juego jugado", async () => {
     const tid = await schedule("round_robin", 3, 2);
     const g = await h.db("battles").where({ tournament_id: tid, game_index: 2 }).orderBy("id").first();
