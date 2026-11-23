@@ -166,6 +166,45 @@ export const MUTANTS = [
       },
     ],
   },
+  {
+    id: "M-VAL-gate-ignored",
+    why: "la escritura validada (sustituta de la ingesta) almacena un replay incompleto",
+    test: "apps/replay-service/tests/replay-service.test.ts",
+    t: "sin checksum de mapa se rechaza y no se almacena",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/replay-file.ts",
+        find: "    if (problems.length) throw",
+        replace: "    if (Date.now() < 0) throw",
+      },
+    ],
+  },
+  {
+    id: "M-VAL-checksum-not-checked",
+    why: "validateReplay deja de exigir el checksum del mapa",
+    test: "apps/replay-service/tests/replay-service.test.ts",
+    t: "sin checksum de mapa se rechaza y no se almacena",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/replay-file.ts",
+        find: 'problems.push("mapa sin checksum");',
+        replace: "void 0;",
+      },
+    ],
+  },
+  {
+    id: "M-CLI-sweep-back",
+    why: "la CLI vuelve a aceptar `sweep`",
+    test: "apps/replay-service/tests/replay-service.test.ts",
+    t: "los comandos retirados",
+    edits: [
+      {
+        file: "apps/replay-service/src/cli.ts",
+        find: "    default:",
+        replace: '    case "sweep":\n      return 0;\n    default:',
+      },
+    ],
+  },
 ];
 
 function run(test, t) {

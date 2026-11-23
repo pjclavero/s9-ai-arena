@@ -132,7 +132,7 @@ async function cmdRun(): Promise<void> {
     }
     const replay = await record(config, attach);
     mkdirSync(out, { recursive: true });
-    const fx = await writeS9rReplay(out, replay);
+    const fx = await writeS9rReplay(out, replay, { validate: true });
     report(replay.result, performance.now() - t0);
     console.log(`  replay escrito en ${fx.path} (+ ${fx.viewPath})`);
     return;

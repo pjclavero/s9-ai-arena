@@ -32,11 +32,54 @@ export interface S9rFixture {
   attempt: number;
 }
 
+/**
+ * V1 REPLAYS PR-4b · Validación de completitud de un `Replay` (antes `validateReplay` de store.ts, la
+ * puerta de la ingesta retirada). Lista de problemas; vacía = almacenable. La usan las herramientas
+ * que sustituyen a la ingesta (CLI del motor, arnés de smoke) con `writeS9rReplay(…, {validate:true})`.
+ */
+export function validateReplay(replay: Replay): string[] {
+  const problems: string[] = [];
+  const h = replay.header;
+  if (!h) return ["sin cabecera"];
+  if (h.formatVersion !== 2) problems.push(`formatVersion no soportada: ${String(h.formatVersion)}`);
+  if (!h.battleId) problems.push("cabecera sin battleId");
+  if (!h.seed) problems.push("cabecera sin seed");
+  if (!h.ruleset || !h.rulesetId) problems.push("cabecera sin ruleset");
+  if (!h.map) problems.push("cabecera sin mapa");
+  else if (typeof h.map.checksum !== "string" || h.map.checksum.length === 0) problems.push("mapa sin checksum");
+  if (!Array.isArray(h.participants) || h.participants.length === 0) problems.push("cabecera sin participantes");
+  for (const k of ["engine", "physics", "rules", "protocol"] as const) {
+    if (!(h.versions as Record<string, unknown> | undefined)?.[k]) problems.push(`cabecera sin versión de ${k}`);
+  }
+  if (!Array.isArray(replay.stateHashes) || replay.stateHashes.length === 0) {
+    problems.push("sin hashes intermedios: verify() no podría localizar divergencias");
+  }
+  if (!replay.result?.finalStateHash) problems.push("sin resultado oficial (finalStateHash)");
+  if (!Array.isArray(replay.checkpoints) || replay.checkpoints.length === 0) {
+    problems.push("sin checkpoints: verify() v2 no podría decir qué componente divergió");
+  }
+  if (!Array.isArray(replay.snapshots) || replay.snapshots.length === 0) {
+    problems.push("sin snapshots: el reproductor no tendría nada que enseñar");
+  }
+  return problems;
+}
+
 export async function writeS9rReplay(
   dir: string,
   replay: Replay,
-  opts: { battleId?: string; attempt?: number; recipeFragmentBytes?: number; viewFragmentBytes?: number } = {},
+  opts: {
+    battleId?: string;
+    attempt?: number;
+    recipeFragmentBytes?: number;
+    viewFragmentBytes?: number;
+    /** true: rechaza (sin escribir nada) un replay incompleto según `validateReplay`. */
+    validate?: boolean;
+  } = {},
 ): Promise<S9rFixture> {
+  if (opts.validate) {
+    const problems = validateReplay(replay);
+    if (problems.length) throw new Error(`replay inválido, no se almacena: ${problems.join("; ")}`);
+  }
   const battleId = opts.battleId ?? String(replay.header.battleId).replace(/[^0-9A-Za-z_-]/g, "_");
   const rec = await ReplayRecorder.create({
     dir,

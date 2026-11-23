@@ -113,7 +113,7 @@ export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: Container
     overallTimeoutMs: cfg.timeoutMs,
   });
   mkdirSync(cfg.replayOutDir, { recursive: true });
-  const fx = await writeS9rReplay(cfg.replayOutDir, replay);
+  const fx = await writeS9rReplay(cfg.replayOutDir, replay, { validate: true });
   // No se da por bueno un replay que no verifica (re-simula la receta y compara hashes y resultado).
   const { verification } = await verifyRecipePath(fx.path);
   const verified = verification.matches;

@@ -10,7 +10,7 @@
 import { writeS9rReplay, readS9rReplay } from "../src/testing/s9r-fixture.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ import { verifyFile } from "../src/s9r/verify.js";
 import { ViewReader } from "../src/s9r/view.js";
 import { PREFERRED_ALGO } from "../src/s9r/codec.js";
 import { S9rReader } from "../src/s9r/reader.js";
+import { validateReplay } from "../src/s9r/replay-file.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -63,6 +64,26 @@ function tmp(): string {
 }
 
 describe("T8.1 grabación S9R/1 y validación", () => {
+  // V1 REPLAYS PR-4b · sustituye a «un replay real pasa la validación» y «sin hashes o sin checksum
+  // de mapa se rechaza» (validateReplay de store.ts, retirado): misma función, mismas aserciones, y
+  // la escritura validada (la que usan CLI y smoke en lugar de la ingesta) no deja nada en disco.
+  it("un replay real del motor pasa la validación de cabecera", async () => {
+    const replay = await recordBattle("ingest_ok");
+    expect(validateReplay(replay)).toEqual([]);
+  });
+
+  it("un replay sin hashes intermedios o sin checksum de mapa se rechaza y no se almacena", async () => {
+    const replay = await recordBattle("ingest_bad_v");
+    const sinHashes = { ...replay, stateHashes: [] };
+    expect(validateReplay(sinHashes as Replay).join(" ")).toContain("hashes intermedios");
+    const sinChecksum = { ...replay, header: { ...replay.header, map: { ...replay.header.map, checksum: "" } } };
+    expect(validateReplay(sinChecksum as Replay).join(" ")).toContain("checksum");
+    const dir = tmp();
+    await expect(writeS9rReplay(dir, sinHashes as Replay, { validate: true })).rejects.toThrow(/no se almacena/);
+    await expect(writeS9rReplay(dir, sinChecksum as Replay, { validate: true })).rejects.toThrow(/no se almacena/);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
   it("un replay sin hashes intermedios no verifica (la receta exige sus hashes)", async () => {
     const replay = await recordBattle("ingest_bad");
     const fx = await writeS9rReplay(tmp(), { ...replay, stateHashes: [] });
@@ -148,6 +169,29 @@ describe("T8.1 verify (criterio cap. 28)", () => {
     const parsed = JSON.parse(out);
     expect(parsed.valid).toBe(true);
     expect(parsed.verification.matches).toBe(true);
+  }, 120000);
+
+  // V1 REPLAYS PR-4b · sustituye a los tests de ingesta HTTP y de retención (POST /replays, sweep):
+  // los comandos de CLI `ingest`, `sweep` y `serve` ya no existen y no tocan el directorio.
+  it("los comandos retirados `ingest`, `sweep` y `serve` no existen: salen con 2 y no tocan el directorio", async () => {
+    const replay = await recordBattle("cli_retired");
+    const dir = tmp();
+    await writeS9rReplay(dir, replay);
+    const before = readdirSync(dir).sort();
+    for (const cmd of ["ingest", "sweep", "serve"]) {
+      let code = 0;
+      try {
+        execFileSync(join(REPO, "node_modules", ".bin", "tsx"), ["apps/replay-service/src/cli.ts", cmd, "--dir", dir], {
+          cwd: REPO,
+          encoding: "utf8",
+          stdio: "pipe",
+        });
+      } catch (e: any) {
+        code = e.status;
+      }
+      expect(code, cmd).toBe(2);
+    }
+    expect(readdirSync(dir).sort()).toEqual(before);
   }, 120000);
 });
 
