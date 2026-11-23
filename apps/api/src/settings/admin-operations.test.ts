@@ -794,12 +794,10 @@ describe("ADM-1 · registro de tipos y su CHECK", () => {
     }
   });
 
-  it("NOOP_SOLO_EN_TESTS: en producción el registro no trae system.noop salvo activación expresa", () => {
+  it("NOOP_SOLO_EN_TESTS: en producción (y desarrollo) el registro no trae system.noop", () => {
     expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual([]);
     expect(Object.keys(buildOperationKinds({}))).toEqual([]);
     expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" }))).toEqual(["system.noop"]);
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production", S9_ADMIN_OPS_NOOP: "1" }))).toEqual([
-      "system.noop",
-    ]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "development" }))).toEqual([]);
   });
 });

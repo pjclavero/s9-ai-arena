@@ -3669,7 +3669,7 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7). `system.noop` es de PRUEBA: sólo se acepta en tests o con S9_ADMIN_OPS_NOOP=1; en producción la API no admite ningún tipo todavía.' }
+        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7). `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test); en producción la API no admite ningún tipo todavía.' }
         params:
           type: object
           description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'

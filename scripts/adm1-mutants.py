@@ -290,7 +290,7 @@ M = [
      "      if (false) {",
      "packages/system-settings/reader.test.ts", "LOG_DE_FALLO"),
     ("M66 system.noop también en producción", SOPS,
-     '  if (env.NODE_ENV === "test" || env.S9_ADMIN_OPS_NOOP === "1") kinds',
+     '  if (env.NODE_ENV === "test") kinds',
      "  if (true) kinds",
      OPS, "NOOP_SOLO_EN_TESTS"),
     ("M67 registro con un tipo sin CHECK en BD", SOPS,

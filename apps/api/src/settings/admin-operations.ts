@@ -80,12 +80,12 @@ const SYSTEM_NOOP: OperationKindDef = {
 
 /**
  * Registro CERRADO de tipos de PRODUCCIÓN. ADM-4/6/7 añaden los suyos aquí (y amplían el CHECK de `kind`).
- * `system.noop` es un tipo de PRUEBA: sólo se registra en tests (NODE_ENV=test) o si se activa
- * expresamente con `S9_ADMIN_OPS_NOOP=1`; en producción la API no acepta ningún tipo todavía.
+ * `system.noop` es un tipo de PRUEBA: sólo se registra en tests (NODE_ENV=test); en producción la
+ * API no acepta ningún tipo todavía.
  */
 export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Readonly<Record<string, OperationKindDef>> {
   const kinds: Record<string, OperationKindDef> = {};
-  if (env.NODE_ENV === "test" || env.S9_ADMIN_OPS_NOOP === "1") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
+  if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
   return Object.freeze(kinds);
 }
 

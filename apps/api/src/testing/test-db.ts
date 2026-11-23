@@ -25,8 +25,6 @@ import { migrateToLatest } from "../db/migrations.js";
 // En vez de reintroducir un literal de secreto, activamos el modo de desarrollo
 // EXPLÍCITO, que usa un secreto efímero aleatorio por proceso. Nunca en producción.
 process.env.ARENA_DEV_INSECURE_SECRETS ??= "1";
-// ADM-1: el tipo de orden de PRUEBA `system.noop` sólo se registra en tests (ver buildOperationKinds).
-process.env.S9_ADMIN_OPS_NOOP ??= "1";
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
