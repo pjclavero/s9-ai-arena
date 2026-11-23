@@ -62,6 +62,42 @@ export async function startOnFreePort<T>(
 }
 
 /**
+ * Para el clúster con plazo. Si vence con Postgres aún vivo se MATA el proceso (SIGKILL, por pid) y se
+ * espera a que desaparezca: nunca se debe borrar el directorio de datos de un clúster en marcha.
+ * El temporizador se limpia siempre al resolver.
+ */
+export async function stopOrKill(pg: { stop(): Promise<void> }, graceMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  await Promise.race([
+    pg.stop().catch(() => {}),
+    new Promise<void>((r) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        r();
+      }, graceMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (!timedOut) return;
+  const pid = (pg as unknown as { process?: { pid?: number } }).process?.pid;
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    return; // ya no existe
+  }
+  for (let i = 0; i < 40; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/**
  * Un intento de arranque del clúster embebido. `embedded-postgres` rechaza con `undefined` si el
  * proceso sale pronto; la causa sólo está en sus logs, que se capturan para distinguir «puerto
  * ocupado» de cualquier otro fallo. En fallo no deja el directorio de datos.
@@ -93,8 +129,7 @@ export async function launchEmbedded(port: number): Promise<EmbeddedPostgres & {
     // `::` queda libre, «arranca» y el test acabaría hablando con el proceso equivocado.
     if (BUSY_IPV4.test(logs)) throw new PortBusyError("dirección IPv4 ocupada");
   } catch (e) {
-    if (started)
-      await Promise.race([pg.stop().catch(() => {}), new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS))]);
+    if (started) await stopOrKill(pg, STOP_GRACE_MS);
     rmSync(dataDir, { recursive: true, force: true });
     if (e instanceof PortBusyError || BUSY_ANY.test(logs))
       throw new PortBusyError(`puerto ${port} ocupado: ${logs.slice(-300)}`);

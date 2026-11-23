@@ -39,6 +39,8 @@ mutant T4-ipv4-parcial-no-detectado "señal real de puerto ocupado" \
 mutant T5-stop-tras-salida-temprana "FALLO TOTAL" \
   "let started = false;" "let started = true;" \
   "const STOP_GRACE_MS = 5_000;" "const STOP_GRACE_MS = 3_600_000;"
+mutant T6-plazo-vencido-sin-matar "plazo vencido con Postgres vivo" \
+  'process.kill(pid, "SIGKILL");' 'void pid;'
 git diff --quiet -- "$F" || { echo "ÁRBOL SUCIO"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"
 exit "$fail"
