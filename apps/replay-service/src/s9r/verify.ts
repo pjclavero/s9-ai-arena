@@ -20,12 +20,22 @@ import {
   decodePreamble,
   type IndexDoc,
 } from "./format.js";
-import { CorruptReplayError, S9rError } from "./errors.js";
+import { CorruptReplayError, S9rError, TruncatedReplayError } from "./errors.js";
+import { parseJson } from "./validate.js";
 import { nodeFs, type S9rFs } from "./io.js";
 import { S9rReader, computeChain, readExact } from "./reader.js";
 
 export interface VerifyResult {
+  /**
+   * `true` SÓLO si el fichero está íntegro Y completo. Un truncado nunca es `ok` (salvo que se
+   * pase `allowTruncated` explícitamente): devuelve `ok:false`, `reason:"truncated"` e
+   * `integrityOk:true`, conservando `records`, `sha256`, etc. como diagnóstico.
+   */
   ok: boolean;
+  /** Presente cuando `ok` es false por una causa distinta de corrupción. */
+  reason?: "truncated";
+  /** Los bytes son íntegros (crc, sha, cadena, geometría) aunque el replay esté truncado. */
+  integrityOk?: boolean;
   error?: S9rError;
   bytes: number;
   sha256?: string;
@@ -36,7 +46,14 @@ export interface VerifyResult {
 
 export async function verifyFile(
   path: string,
-  opts: { fs?: S9rFs; expectSha256?: string; expectBattleId?: string; maxRawBytes?: number } = {},
+  opts: {
+    fs?: S9rFs;
+    expectSha256?: string;
+    expectBattleId?: string;
+    maxRawBytes?: number;
+    /** Acepta como `ok` un replay truncado de clase A (queda marcado en `truncated`). */
+    allowTruncated?: boolean;
+  } = {},
 ): Promise<VerifyResult> {
   const fs = opts.fs ?? nodeFs;
   let reader: S9rReader | undefined;
@@ -85,6 +102,7 @@ export async function verifyFile(
           if (nl !== records || raw[raw.length - 1] !== 10)
             throw new CorruptReplayError("records_mismatch", `frame en ${pos}: líneas distintas de las del índice`);
         }
+        if (type === FT.result) parseJson(raw, "resultado");
         h.update(hdr);
         h.update(payload);
         pos += FRAME_HEADER_LEN + fh.len;
@@ -101,8 +119,17 @@ export async function verifyFile(
       const sha = h.digest("hex");
       if (opts.expectSha256 !== undefined && sha !== opts.expectSha256)
         throw new CorruptReplayError("file_sha_mismatch", "sha256 del fichero distinto del esperado");
+      const truncated = index.truncated;
+      const incomplete = truncated && !opts.allowTruncated;
       return {
-        ok: true,
+        ok: !incomplete,
+        ...(incomplete
+          ? {
+              reason: "truncated" as const,
+              error: new TruncatedReplayError("truncated", "replay truncado: íntegro pero incompleto, no es válido"),
+            }
+          : {}),
+        integrityOk: true,
         bytes,
         sha256: sha,
         fragments: index.fragments.filter((f) => f.type === FT.data).length,

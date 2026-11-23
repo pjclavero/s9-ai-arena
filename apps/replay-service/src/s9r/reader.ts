@@ -152,7 +152,10 @@ export class S9rReader {
   async readResult(): Promise<Record<string, unknown> | null> {
     const i = this.index.fragments.findIndex((f) => f.type === FT.result);
     if (i < 0) return null;
-    return JSON.parse((await this.readFragment(i)).toString("utf8"));
+    const v = parseJson(await this.readFragment(i), "resultado");
+    if (typeof v !== "object" || v === null || Array.isArray(v))
+      throw new CorruptReplayError("bad_result", "el resultado no es un objeto JSON");
+    return v as Record<string, unknown>;
   }
 
   /** Índices de fragmentos de datos que cubren [fromTick, toTick]. */

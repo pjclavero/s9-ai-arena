@@ -3,7 +3,7 @@
  * fabricados, bombas de descompresión, permisos y publicación sin sobrescribir.
  * Cada test T<n> tiene mutante nombrado en apps/replay-service/scripts/s9r-mutants.mjs.
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,6 +15,9 @@ import {
   S9rWriter,
   WriterStateError,
   nodeFs,
+  IncompleteReplayError,
+  TruncatedReplayError,
+  publishPair,
   publishPartial,
   verifyFile,
   type S9rFs,
@@ -147,9 +150,19 @@ describe("T10 serialización interna del escritor", () => {
     const res = await Promise.allSettled(Array.from({ length: 100 }, (_, t) => w.append(rec(t), t)));
     const rejected = res.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
     expect(rejected.length).toBeGreaterThan(0);
-    for (const r of rejected) expect(r.reason).toMatchObject({ code: "backpressure" });
-    await w.close();
-    expect((await verifyFile(f)).ok).toBe(true);
+    expect(rejected.some((r) => r.reason.code === "backpressure")).toBe(true);
+    // tras la primera pérdida, el resto se rechaza para conservar el prefijo
+    for (const r of rejected) expect(["backpressure", "records_dropped"]).toContain(r.reason.code);
+    // los rechazados por contrapresión son registros PERDIDOS: no se puede sellar como completo
+    const accepted = res.filter((x) => x.status === "fulfilled").length;
+    await expect(w.close()).rejects.toMatchObject({ code: "records_dropped" });
+    const sum = await w.closeTruncated();
+    expect(sum.truncated).toBe(true);
+    expect(sum.records).toBe(accepted);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+    expect(v.records).toBe(accepted);
   });
 
   it("T10 un tick que no es entero se rechaza (no podría indexarse)", async () => {
@@ -181,9 +194,11 @@ describe("T11 límite de bytes y cierre", () => {
     const sum = await w.closeTruncated({ result: { endReason: "recording_limit" } });
     expect(sum.truncated).toBe(true);
     const v = await verifyFile(f);
-    expect(v.ok).toBe(true);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
     expect(v.truncated).toBe(true);
     expect(v.records!).toBeLessThan(500);
+    expect((await verifyFile(f, { allowTruncated: true })).ok).toBe(true);
     expect(sent).toBeGreaterThan(0);
   });
 });
@@ -356,5 +371,208 @@ describe("T15 publicación sin sobrescribir", () => {
     expect(r.header.battleId).toBe(winner);
     await r.close();
     expect(readFileSync(fin).length).toBeGreaterThan(0);
+  });
+});
+
+async function truncatedFile(path: string): Promise<void> {
+  const w = await newWriter(path, { maxBytes: 1200, emergencyBytes: 4096 });
+  for (let t = 0; t < 500; t++) {
+    try {
+      await w.append(rec(t), t);
+    } catch {
+      break;
+    }
+  }
+  await w.closeTruncated({ result: { endReason: "recording_limit" } });
+}
+async function completeFile(path: string): Promise<void> {
+  const w = await newWriter(path);
+  for (let t = 0; t < 30; t++) await w.append(rec(t), t);
+  await w.close({ result: { ok: true } });
+}
+
+describe("T16 un registro perdido impide sellar el fichero como completo", () => {
+  it("T16 40 appends sin await con contrapresión: close() rechaza, sólo closeTruncated; queda el prefijo aceptado", async () => {
+    const f = p("lossy.s9r");
+    const w = await newWriter(f, { fragmentBytes: 256, maxRecordBytes: 200, maxQueuedBytes: 600 });
+    const res = await Promise.allSettled(Array.from({ length: 40 }, (_, t) => w.append(rec(t), t)));
+    const accepted = res.filter((x) => x.status === "fulfilled").length;
+    expect(accepted).toBeGreaterThan(0);
+    expect(accepted).toBeLessThan(40);
+    await expect(w.close({ result: {} })).rejects.toMatchObject({ code: "records_dropped" });
+    await w.closeTruncated({ result: {} });
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+    const r = await S9rReader.open(f);
+    const got: string[] = [];
+    for await (const l of r.records()) got.push(l);
+    expect(got).toEqual(Array.from({ length: accepted }, (_, t) => rec(t)));
+    await r.close();
+  });
+
+  const causes: { name: string; line: () => string; tick: number; code: string }[] = [
+    {
+      name: "registro demasiado grande",
+      line: () => JSON.stringify({ pad: "x".repeat(400) }),
+      tick: 1,
+      code: "record_too_large",
+    },
+    { name: "registro con salto de línea", line: () => "a\nb", tick: 1, code: "record_has_newline" },
+    { name: "tick no entero", line: () => rec(1), tick: 1.5, code: "bad_tick" },
+  ];
+  for (const c of causes) {
+    it(`T16 ${c.name}: el append se rechaza (${c.code}), close() ya no puede sellar y el resultado es un prefijo truncado`, async () => {
+      const f = p("inv.s9r");
+      const w = await newWriter(f, { maxRecordBytes: 200 });
+      await w.append(rec(0), 0);
+      await expect(w.append(c.line(), c.tick)).rejects.toMatchObject({ code: c.code });
+      await expect(w.append(rec(2), 2)).rejects.toMatchObject({ code: "records_dropped" });
+      await expect(w.close()).rejects.toMatchObject({ code: "records_dropped" });
+      const sum = await w.closeTruncated();
+      expect(sum.truncated).toBe(true);
+      expect(sum.records).toBe(1);
+      expect((await verifyFile(f)).ok).toBe(false);
+    });
+  }
+});
+
+describe("T17 publicar exige un fichero íntegro y completo", () => {
+  it("T17 un parcial sin pie (proceso muerto a mitad) no se publica", async () => {
+    const part = p("dead.part");
+    const w = await newWriter(part);
+    for (let t = 0; t < 10; t++) await w.append(rec(t), t);
+    const fin = p("dead.s9r");
+    await expect(publishPartial(part, fin)).rejects.toBeInstanceOf(IncompleteReplayError);
+    expect(existsSync(fin)).toBe(false);
+    expect(existsSync(part)).toBe(true);
+    await w.abort();
+  });
+
+  it("T17 un fichero corrupto (cabecera alterada) no se publica", async () => {
+    const part = p("bad.part");
+    await completeFile(part);
+    const b = readFileSync(part);
+    b[8 + 9 + 1] ^= 0xff;
+    writeFileSync(part, b);
+    const fin = p("bad.s9r");
+    await expect(publishPartial(part, fin)).rejects.toBeInstanceOf(CorruptReplayError);
+    expect(existsSync(fin)).toBe(false);
+  });
+
+  it("T17 un truncado no se publica sin allowTruncated; con él sí y sigue marcado truncado", async () => {
+    const part = p("trunc.part");
+    await truncatedFile(part);
+    const fin = p("trunc.s9r");
+    await expect(publishPartial(part, fin)).rejects.toBeInstanceOf(TruncatedReplayError);
+    expect(existsSync(fin)).toBe(false);
+    await publishPartial(part, fin, { allowTruncated: true });
+    const v = await verifyFile(fin);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+  });
+
+  it("T17 publishPair comprueba ambos antes de publicar nada: una receta truncada no deja la vista publicada", async () => {
+    const vp = p("pair-v.part");
+    const rp = p("pair-r.part");
+    await completeFile(vp);
+    await truncatedFile(rp);
+    const vf = p("pair.s9v");
+    const rf = p("pair.s9r");
+    await expect(
+      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }),
+    ).rejects.toBeInstanceOf(TruncatedReplayError);
+    expect(existsSync(vf)).toBe(false);
+    expect(existsSync(rf)).toBe(false);
+  });
+
+  it("T17 con expectSha256 se verifica el fichero entero: un fragmento alterado no se publica", async () => {
+    const part = p("sha.part");
+    await completeFile(part);
+    const good = await verifyFile(part);
+    const r = await S9rReader.open(part);
+    const frag = r.index.fragments[0];
+    await r.close();
+    const fin = p("sha.s9r");
+    await expect(publishPartial(part, fin, { expectSha256: "0".repeat(64) })).rejects.toMatchObject({
+      code: "file_sha_mismatch",
+    });
+    const b = readFileSync(part);
+    b[frag.offset + 9 + 1] ^= 0x55;
+    writeFileSync(part, b);
+    await expect(publishPartial(part, fin, { expectSha256: good.sha256 })).rejects.toBeInstanceOf(CorruptReplayError);
+    expect(existsSync(fin)).toBe(false);
+  });
+});
+
+describe("T18 verifyFile: ok sólo si íntegro y completo", () => {
+  it("T18 un truncado devuelve ok:false con reason truncated y conserva el diagnóstico", async () => {
+    const f = p("v-trunc.s9r");
+    await truncatedFile(f);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+    expect(v.error).toBeInstanceOf(TruncatedReplayError);
+    expect(v.integrityOk).toBe(true);
+    expect(v.truncated).toBe(true);
+    expect(v.records).toBeGreaterThan(0);
+    expect(v.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(v.fragments).toBeGreaterThan(0);
+    const ok = await verifyFile(f, { allowTruncated: true });
+    expect(ok.ok).toBe(true);
+    expect(ok.truncated).toBe(true);
+  });
+  it("T18 uno completo devuelve ok:true e integrityOk", async () => {
+    const f = p("v-ok.s9r");
+    await completeFile(f);
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(true);
+    expect(v.integrityOk).toBe(true);
+    expect(v.reason).toBeUndefined();
+  });
+});
+
+describe("T19 durabilidad y resultado", () => {
+  it("T19 si falla el fsync tras escribir el pie, el fichero no queda como completo en su nombre", async () => {
+    const fs2: S9rFs = {
+      ...nodeFs,
+      create: async (path) => {
+        const fh = await nodeFs.create(path);
+        return {
+          ...fh,
+          sync: async () => {
+            throw Object.assign(new Error("EIO simulado"), { code: "EIO" });
+          },
+        };
+      },
+    };
+    const f = p("fsyncfail.s9r");
+    const w = await newWriter(f, {}, fs2);
+    await w.append(rec(0), 0);
+    await expect(w.close()).rejects.toMatchObject({ code: "storage_io" });
+    expect(existsSync(f)).toBe(false);
+    expect(existsSync(f + ".failed")).toBe(true);
+    await expect(publishPartial(f, p("x.s9r"))).rejects.toBeDefined();
+    await w.abort();
+    expect(existsSync(f + ".failed")).toBe(false);
+  });
+
+  it("T19 un frame de resultado que no es JSON: verifyFile y readResult dan error tipado, no SyntaxError", async () => {
+    const f = p("badresult.s9r");
+    await forge(f, {
+      fragments: [
+        { type: FT.data, raw: Buffer.from(rec(0) + "\n") },
+        { type: FT.result, raw: Buffer.from("esto no es json") },
+      ],
+    });
+    const v = await verifyFile(f);
+    expect(v.ok).toBe(false);
+    expect(v.error).toBeInstanceOf(CorruptReplayError);
+    expect(v.error!.code).toBe("bad_json");
+    const r = await S9rReader.open(f);
+    const e = await r.readResult().catch((x) => x);
+    expect(e).toBeInstanceOf(CorruptReplayError);
+    expect(e.code).toBe("bad_json");
+    await r.close();
   });
 });

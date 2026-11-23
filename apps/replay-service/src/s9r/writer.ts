@@ -88,6 +88,14 @@ export class S9rWriter {
   private queuedBytes = 0;
   /** Se activó el tope de bytes: faltan registros, sólo se puede cerrar con `closeTruncated`. */
   private limitHit = false;
+  /** Numeración de los `append` en orden de llamada (también los rechazados). */
+  private seq = 0;
+  /**
+   * Primer `append` que se PERDIÓ (contrapresión, registro inválido, tick no entero): desde
+   * ahí el fichero no puede sellarse como completo; sólo cabe `closeTruncated`. Los registros
+   * aceptados antes de la pérdida se escriben (el resultado es un prefijo).
+   */
+  private lostFromSeq: number | null = null;
   /** Pico observado del búfer sin comprimir (para métricas y tests). */
   peakBufferBytes = 0;
 
@@ -170,10 +178,14 @@ export class S9rWriter {
 
   /** Añade un registro (una línea JSON ya serializada o un objeto). Con contrapresión. */
   append(record: string | object, tick: number): Promise<void> {
+    const seq = this.seq++;
+    if (this.lostFromSeq !== null) return Promise.reject(this.lossError());
     const line = typeof record === "string" ? record : JSON.stringify(record);
     // Cota de memoria aunque el llamador no espere cada append: la cola no crece sin límite.
     const bytes = Buffer.byteLength(line) + 1;
     if (this.queuedBytes + bytes > this.o.maxQueuedBytes) {
+      // El registro se pierde: el fichero ya no puede sellarse como completo.
+      this.markLoss(seq);
       return Promise.reject(
         new WriterStateError("backpressure", `cola interna llena (${this.queuedBytes} B): espera cada append`),
       );
@@ -181,8 +193,18 @@ export class S9rWriter {
     this.queuedBytes += bytes;
     return this.enqueue(async () => {
       this.queuedBytes -= bytes;
-      await this.appendInner(line, tick);
+      await this.appendInner(line, tick, seq);
     });
+  }
+
+  private markLoss(seq: number): void {
+    if (this.lostFromSeq === null || seq < this.lostFromSeq) this.lostFromSeq = seq;
+  }
+  private lossError(): WriterStateError {
+    return new WriterStateError(
+      "records_dropped",
+      "se rechazó al menos un registro: el fichero no puede sellarse como completo; sólo closeTruncated()",
+    );
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -191,15 +213,21 @@ export class S9rWriter {
     return run;
   }
 
-  private async appendInner(line: string, tick: number): Promise<void> {
+  private async appendInner(line: string, tick: number, seq: number): Promise<void> {
     this.assertOpen();
-    if (!Number.isSafeInteger(tick)) throw new InvalidRecordError("bad_tick", `tick no entero: ${String(tick)}`);
-    this.assertNotLimited();
+    this.assertNoLimit();
+    // Tras una pérdida, los registros posteriores se rechazan para conservar el prefijo.
+    if (this.lostFromSeq !== null && seq >= this.lostFromSeq) throw this.lossError();
+    const reject = (e: InvalidRecordError): never => {
+      this.markLoss(seq);
+      throw e;
+    };
+    if (!Number.isSafeInteger(tick)) reject(new InvalidRecordError("bad_tick", `tick no entero: ${String(tick)}`));
     if (line.includes("\n"))
-      throw new InvalidRecordError("record_has_newline", "un registro no puede contener saltos de línea");
+      reject(new InvalidRecordError("record_has_newline", "un registro no puede contener saltos de línea"));
     const bytes = Buffer.byteLength(line) + 1;
     if (bytes > this.o.maxRecordBytes)
-      throw new InvalidRecordError("record_too_large", `registro de ${bytes} B > ${this.o.maxRecordBytes}`);
+      reject(new InvalidRecordError("record_too_large", `registro de ${bytes} B > ${this.o.maxRecordBytes}`));
     this.lines.push(line);
     this.bufBytes += bytes;
     this.bufRecords++;
@@ -216,7 +244,7 @@ export class S9rWriter {
 
   private async flushInner(): Promise<void> {
     this.assertOpen();
-    this.assertNotLimited();
+    this.assertNoLimit();
     if (this.bufRecords === 0) return;
     const raw = Buffer.from(this.lines.join("\n") + "\n");
     const meta = { firstTick: this.firstTick, lastTick: this.lastTick, records: this.bufRecords };
@@ -276,7 +304,19 @@ export class S9rWriter {
     });
   }
 
+  /** Falla si ya se superó el tope de bytes (no se puede escribir más). */
+  private assertNoLimit(): void {
+    if (this.limitHit) {
+      throw new WriterStateError(
+        "limit_hit",
+        "se superó el tope de bytes y se perdieron registros: sólo se puede cerrar con closeTruncated()",
+      );
+    }
+  }
+
+  /** Falla si se perdió algún registro (tope o rechazo): impide sellar como completo. */
   private assertNotLimited(): void {
+    if (this.lostFromSeq !== null) throw this.lossError();
     if (this.limitHit) {
       throw new WriterStateError(
         "limit_hit",
@@ -289,6 +329,14 @@ export class S9rWriter {
   closeTruncated(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
     return this.enqueue(async () => {
       this.assertOpen();
+      // Se conserva el prefijo aceptado: lo pendiente en el búfer se vuelca salvo que el tope lo impida.
+      if (!this.limitHit) {
+        try {
+          await this.flushInner();
+        } catch (e) {
+          if (!(e instanceof ReplayLimitExceededError)) throw e;
+        }
+      }
       this.lines = [];
       this.bufBytes = 0;
       this.bufRecords = 0;
@@ -333,8 +381,15 @@ export class S9rWriter {
       indexSha256: sha256(indexFrame),
     });
     await this.rawWrite(footer, "write_footer");
-    await this.guard("fsync", () => this.file.sync());
-    await this.guard("close", () => this.file.close());
+    // El pie ya está escrito: si el fsync/close falla, el fichero parecería completo sin serlo.
+    // Se aparta (renombrado a `.failed`) para que no pueda publicarse ni verificarse con su nombre.
+    try {
+      await this.guard("fsync", () => this.file.sync());
+      await this.guard("close", () => this.file.close());
+    } catch (e) {
+      await this.quarantine();
+      throw e;
+    }
     this.state = "closed";
     return {
       path: this.path,
@@ -345,6 +400,21 @@ export class S9rWriter {
       records: this.totalRecords,
       truncated: doc.truncated,
     };
+  }
+
+  private failedPath: string | null = null;
+  private async quarantine(): Promise<void> {
+    try {
+      await this.file.close();
+    } catch {
+      /* puede estar ya cerrado o roto */
+    }
+    try {
+      await this.fs.rename(this.path, this.path + ".failed");
+      this.failedPath = this.path + ".failed";
+    } catch {
+      /* si no se puede apartar, abort() lo borrará */
+    }
   }
 
   /** Descarta: cierra el descriptor y borra el parcial. Idempotente, nunca lanza. */
@@ -358,10 +428,13 @@ export class S9rWriter {
     } catch {
       /* ya puede estar cerrado o roto */
     }
-    try {
-      await this.fs.unlink(this.path);
-    } catch {
-      /* puede no existir */
+    for (const f of [this.path, this.failedPath]) {
+      if (f === null) continue;
+      try {
+        await this.fs.unlink(f);
+      } catch {
+        /* puede no existir */
+      }
     }
   }
 

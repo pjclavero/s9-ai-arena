@@ -15,6 +15,11 @@ export class S9rError extends Error {
 export class IncompleteReplayError extends S9rError {}
 /** Bytes que no cuadran con su crc, sha256, geometría o cadena. */
 export class CorruptReplayError extends S9rError {}
+/**
+ * El fichero está ÍNTEGRO pero es un replay truncado (bit `truncated`: faltan registros por
+ * un límite de clase A). Nunca es un replay válido; sólo se publica con `allowTruncated`.
+ */
+export class TruncatedReplayError extends S9rError {}
 /** Versión mayor o algoritmo que este lector no entiende. */
 export class UnsupportedFormatError extends S9rError {}
 /** Registro inválido (no es una línea, demasiado grande). */

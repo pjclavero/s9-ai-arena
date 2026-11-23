@@ -317,8 +317,13 @@ describe("T5 tope de bytes", () => {
     expect(sum.truncated).toBe(true);
     expect(sum.bytes).toBeLessThanOrEqual(1200 + 2048);
     const v = await verifyFile(f);
-    expect(v.ok).toBe(true);
+    // un truncado NUNCA es ok: íntegro pero incompleto, con el diagnóstico conservado
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe("truncated");
+    expect(v.integrityOk).toBe(true);
     expect(v.truncated).toBe(true);
+    expect(v.records).toBeGreaterThan(0);
+    expect((await verifyFile(f, { allowTruncated: true })).ok).toBe(true);
     const r = await S9rReader.open(f);
     expect(r.truncated).toBe(true);
     expect(r.index.fragments.filter((e) => e.type === 2).length).toBeGreaterThan(0);
@@ -443,8 +448,10 @@ describe("T7 búfer acotado", () => {
     for (let t = 0; t < 5000; t++) await w.append(rec(t, 0), t);
     expect(w.peakBufferBytes).toBeLessThan(4096 + 256);
     await expect(w.append("x".repeat(300), 1)).rejects.toBeInstanceOf(InvalidRecordError);
-    await expect(w.append("a\nb", 1)).rejects.toBeInstanceOf(InvalidRecordError);
-    await w.close();
+    // tras la primera pérdida el escritor no acepta más y no puede sellarse como completo
+    await expect(w.append("a\nb", 1)).rejects.toBeInstanceOf(WriterStateError);
+    await expect(w.close()).rejects.toMatchObject({ code: "records_dropped" });
+    await w.closeTruncated();
     await expect(w.append("{}", 1)).rejects.toBeInstanceOf(WriterStateError);
   });
 });

@@ -14,11 +14,49 @@
  * la limpia el janitor; no se deshace aquí).
  */
 import { dirname } from "node:path";
-import { WriterStateError, toStorageError } from "./errors.js";
+import { TruncatedReplayError, WriterStateError, toStorageError } from "./errors.js";
+import { S9rReader } from "./reader.js";
+import { verifyFile } from "./verify.js";
 import { nodeFs, type S9rFs } from "./io.js";
 
-export async function publishPartial(partialPath: string, finalPath: string, opts: { fs?: S9rFs } = {}): Promise<void> {
+export interface PublishOptions {
+  fs?: S9rFs;
+  /** Publica un replay truncado (clase A). Explícito y nombrado: por defecto se rechaza. */
+  allowTruncated?: boolean;
+  /** Si se indica, se hace una verificación COMPLETA (sha256 del fichero incluido) antes de publicar. */
+  expectSha256?: string;
+}
+
+/**
+ * Comprobación OBLIGATORIA previa a publicar: el fichero debe tener pie válido, índice y
+ * cadena correctos (`S9rReader.open`). Un parcial sin pie o corrupto lanza
+ * `IncompleteReplayError`/`CorruptReplayError`; un truncado lanza `TruncatedReplayError`
+ * salvo `allowTruncated`. Con `expectSha256` se verifica además todo el fichero.
+ */
+export async function assertPublishable(path: string, opts: PublishOptions = {}): Promise<void> {
+  const r = await S9rReader.open(path, { fs: opts.fs });
+  const truncated = r.truncated;
+  await r.close();
+  if (truncated && !opts.allowTruncated) {
+    throw new TruncatedReplayError("truncated", "replay truncado: no se publica sin allowTruncated explícito");
+  }
+  if (opts.expectSha256 !== undefined) {
+    const v = await verifyFile(path, {
+      fs: opts.fs,
+      expectSha256: opts.expectSha256,
+      allowTruncated: opts.allowTruncated,
+    });
+    if (!v.ok) throw v.error!;
+  }
+}
+
+export async function publishPartial(partialPath: string, finalPath: string, opts: PublishOptions = {}): Promise<void> {
   const fs = opts.fs ?? nodeFs;
+  await assertPublishable(partialPath, opts);
+  await linkPublish(partialPath, finalPath, fs);
+}
+
+async function linkPublish(partialPath: string, finalPath: string, fs: S9rFs): Promise<void> {
   try {
     await fs.link(partialPath, finalPath);
   } catch (e) {
@@ -46,9 +84,13 @@ export interface PublishPair {
 }
 
 /** Vista primero, receta al final. */
-export async function publishPair(pair: PublishPair, opts: { fs?: S9rFs } = {}): Promise<void> {
-  if (pair.view) await publishPartial(pair.view.partial, pair.view.final, opts);
-  await publishPartial(pair.recipe.partial, pair.recipe.final, opts);
+export async function publishPair(pair: PublishPair, opts: PublishOptions = {}): Promise<void> {
+  const fs = opts.fs ?? nodeFs;
+  // Se comprueban AMBOS antes de publicar nada: no se deja una vista publicada con receta inválida.
+  if (pair.view) await assertPublishable(pair.view.partial, { ...opts, expectSha256: undefined });
+  await assertPublishable(pair.recipe.partial, opts);
+  if (pair.view) await linkPublish(pair.view.partial, pair.view.final, fs);
+  await linkPublish(pair.recipe.partial, pair.recipe.final, fs);
 }
 
 /** Borra un parcial; idempotente. */
