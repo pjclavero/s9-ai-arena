@@ -124,7 +124,8 @@ function welcomeCapturingDriver(welcomes: Map<string, any>, specs: Map<string, a
         );
         server.start();
         const result = await server.waitForResult();
-        return { result, replay: server.getReplay() };
+        // V1 REPLAYS PR-3 · el replay lo graba el ReplayRecorder del ejecutor (el motor ya no lo retiene).
+        return { result };
       } finally {
         for (const ws of sockets) ws.close();
         server.stop();

@@ -2,18 +2,18 @@
  * T8.1 · CLI del replay-service.
  *
  *   npx tsx apps/replay-service/src/cli.ts verify <battleId> [--dir <dir>]
- *   npx tsx apps/replay-service/src/cli.ts ingest <archivo.jsonl> [--dir <dir>] [--official]
- *   npx tsx apps/replay-service/src/cli.ts sweep [--dir <dir>]
- *   npx tsx apps/replay-service/src/cli.ts serve [--dir <dir>] [--port <n>]
+ *   npx tsx apps/replay-service/src/cli.ts verify --file <receta.s9r>
  *
- * `verify <id>` es el criterio del cap. 28: re-simula con la versión de motor
- * registrada y comprueba que resultado y hashes coinciden con el oficial.
+ * `verify` es el criterio del cap. 28: re-simula con la versión de motor registrada en la
+ * cabecera y comprueba que resultado, hashes intermedios y checkpoints coinciden con el oficial.
+ * V1 REPLAYS PR-4 · lee la RECETA S9R/1 por fragmentos (`<dir>/<battleId>.<intento>.s9r`; si hay
+ * varias, la del intento más alto). `ingest`, `sweep` y `serve` trabajaban con el formato JSONL
+ * anterior (corte D-OP-30): están RETIRADOS y responden con error (PR-4b los quita del código).
  */
-import { readFileSync } from "node:fs";
-import { fromJsonl } from "../../arena-engine/src/replay.js";
-import { ingestReplay, sweepRetention, verifyStored } from "./store.js";
-import { createReplayServer } from "./server.js";
-import { resolveIngestSecretFromEnv } from "./auth.js";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { verifyFile } from "./s9r/verify.js";
+import { verifyRecipePath } from "./recipe-verify.js";
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -22,55 +22,51 @@ function flag(args: string[], name: string): string | undefined {
 
 const DEFAULT_DIR = process.env.ARENA_REPLAYS_DIR ?? "data/arena_replays";
 
+/** Receta publicada de una batalla en `dir` (intento más alto), o null. */
+function recipeFileFor(dir: string, battleId: string): string | null {
+  let best: { n: number; f: string } | null = null;
+  for (const f of readdirSync(dir)) {
+    const m = /^(.+)\.(\d+)\.s9r$/.exec(f);
+    if (!m || m[1] !== battleId) continue;
+    const n = Number(m[2]);
+    if (!best || n > best.n) best = { n, f };
+  }
+  return best ? join(dir, best.f) : null;
+}
+
 async function main(): Promise<number> {
   const [cmd, ...args] = process.argv.slice(2);
   const dir = flag(args, "--dir") ?? DEFAULT_DIR;
 
   switch (cmd) {
     case "verify": {
-      const battleId = args[0];
-      if (!battleId) throw new Error("uso: verify <battleId> [--dir <dir>]");
-      const r = await verifyStored(dir, battleId);
-      console.log(JSON.stringify(r, null, 2));
-      return r.valid && r.verification?.matches ? 0 : 1;
-    }
-    case "ingest": {
-      const file = args[0];
-      if (!file) throw new Error("uso: ingest <archivo.jsonl> [--dir <dir>] [--official]");
-      const replay = fromJsonl(readFileSync(file, "utf8"));
-      const stored = ingestReplay(dir, replay, { official: args.includes("--official") });
+      const file = flag(args, "--file") ?? (args[0] && !args[0].startsWith("--") ? recipeFileFor(dir, args[0]) : null);
+      if (!file) throw new Error("uso: verify <battleId> [--dir <dir>] | verify --file <receta.s9r>");
+      const integrity = await verifyFile(file);
+      if (!integrity.ok) {
+        console.log(JSON.stringify({ file, valid: false, reason: integrity.reason ?? integrity.error?.code }, null, 2));
+        return 1;
+      }
+      const { verification } = await verifyRecipePath(file);
+      const valid = verification.rejected === null;
       console.log(
-        JSON.stringify({ battleId: stored.index.battleId, path: stored.path, sha256: stored.index.sha256 }, null, 2),
+        JSON.stringify({ file, sha256: integrity.sha256, valid, reason: verification.rejected, verification }, null, 2),
       );
-      return 0;
+      return valid && verification.matches ? 0 : 1;
     }
-    case "sweep": {
-      console.log(JSON.stringify(sweepRetention(dir), null, 2));
-      return 0;
-    }
-    case "serve": {
-      const port = Number(flag(args, "--port") ?? process.env.PORT ?? 8082);
-      // B8 · mismo criterio que el entrypoint de servicio (main.ts): la escritura
-      // exige `REPLAY_INGEST_SECRET[_FILE]`; sin él, 401 (nunca "abierto").
-      const internalSecret = resolveIngestSecretFromEnv(process.env);
-      createReplayServer({ dir, internalSecret }).listen(port, () => {
-        console.log(
-          `replay-service escuchando en :${port}, dir=${dir}` +
-            (internalSecret ? "" : " — SIN secreto de ingesta: la escritura responderá 401"),
-        );
-      });
-      return -1; // no salir
-    }
+    case "ingest":
+    case "sweep":
+    case "serve":
+      console.error(`'${cmd}' retirado: trabajaba con el formato de replay anterior (corte D-OP-30).`);
+      return 2;
     default:
-      console.error("comandos: verify | ingest | sweep | serve");
+      console.error("comandos: verify");
       return 2;
   }
 }
 
 main()
-  .then((code) => {
-    if (code >= 0) process.exit(code);
-  })
+  .then((code) => process.exit(code))
   .catch((e) => {
     console.error(e.message);
     process.exit(2);

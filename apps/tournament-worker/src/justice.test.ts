@@ -9,7 +9,8 @@
  *    batallas (usa el catálogo congelado).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -19,8 +20,7 @@ import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../api/src/db/seeds/d
 import { tokenFor } from "../../api/src/testing/helpers.js";
 import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
-import { fromJsonl, verify } from "../../arena-engine/src/replay.js";
-import { decompress } from "../../replay-service/src/format.js";
+import { verifyRecipePath } from "../../replay-service/src/recipe-verify.js";
 import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { commitSeedBatch, deriveBattleSeed } from "./scheduler.js";
@@ -189,11 +189,16 @@ describe("T9.4 · commit-reveal de semillas", () => {
       expect(orgVerify.body.matches).toBe(true);
       const replayRes = await request(app).get(`/replays/${b.id}`).set("Authorization", `Bearer ${admin}`).buffer(true);
       expect(replayRes.status).toBe(200);
-      // H2: el worker archiva por el almacén de E8 (comprimido); se descomprime como el visor.
-      const replay = fromJsonl(decompress(Buffer.from(replayRes.body)).toString("utf8"));
-      const verdict = await verify(replay);
+      // V1 REPLAYS PR-4 · el crudo es la RECETA S9R/1: se guarda tal cual y se verifica fuera del
+      // servidor con verify() del motor leyéndola por fragmentos. Mismas aserciones que con el
+      // JSONL: re-simula y reproduce el hash final de la auditoría; además, el sha anunciado.
+      const body = Buffer.from(replayRes.body);
+      expect(createHash("sha256").update(body).digest("hex")).toBe(replayRes.headers["x-replay-sha256"]);
+      const local = join(mkdtempSync(join(tmpdir(), "e9-justice-dl-")), `${b.id}.s9r`);
+      writeFileSync(local, body);
+      const { verification: verdict } = await verifyRecipePath(local, { expectBattleId: b.id });
       expect(verdict.matches).toBe(true);
-      expect(verdict.recomputedResult.finalStateHash).toBe(a.finalStateHash);
+      expect(verdict.recomputedResult!.finalStateHash).toBe(a.finalStateHash);
     }
   }, 120_000);
 });

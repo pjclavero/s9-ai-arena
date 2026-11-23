@@ -12,7 +12,7 @@
  * staging con Docker y queda documentado en el acta.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -37,6 +37,8 @@ import {
 import { InfrastructureFailure } from "../../apps/tournament-worker/src/errors.js";
 import { createBots, insertScheduledBattle, type TestBot } from "../../apps/tournament-worker/src/testing/fixtures.js";
 import { RedisSignal } from "../../apps/tournament-worker/src/redis-signal.js";
+import { ReplayRecorder } from "../../apps/replay-service/src/s9r/recorder.js";
+import { faultFs } from "../../apps/replay-service/tests/s9r/fault-fs.js";
 import { loadRuleset } from "../../packages/game-rules/index.js";
 import { initPhysics } from "../../apps/arena-engine/src/sim/physics.js";
 import { Battle } from "../../apps/arena-engine/src/sim/battle.js";
@@ -157,15 +159,26 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
 
   // ── GD-3 · llenar el disco de replays ─────────────────────────────────────
   it("GD-3: no se puede escribir el replay → infraestructura, la batalla NO queda 'finished' sin replay (19.2/23.1)", async () => {
-    // replaysDir apunta BAJO un archivo: mkdir/writeFile fallan (ENOTDIR), como un disco lleno.
-    const fileAsDir = join(mkdtempSync(join(tmpdir(), "gd3-")), "occupied");
-    writeFileSync(fileAsDir, "no soy un directorio");
-    const replaysDir = join(fileAsDir, "replays");
+    // V1 REPLAYS PR-3 · el replay se graba en S9R/1 durante la batalla y se PUBLICA (link atómico) al
+    // cerrarla. Aquí el disco de replays está lleno al publicar (ENOSPC en el enlace): rollback y fallo
+    // técnico. `storage_unavailable` sigue la política de reintento existente (3 intentos); agotados, la
+    // batalla queda para REVISIÓN (failed/infrastructure), nunca 'finished' sin su replay (23.1).
+    const replaysDir = mkdtempSync(join(tmpdir(), "gd3-"));
+    const fullDisk = faultFs({ failLinkTo: replaysDir, errCode: "ENOSPC" });
 
     const log = new Map<string, number>();
-    // El ejecutor entrega un replay REAL para forzar la escritura a disco.
+    // El ejecutor entrega una grabación S9R/1 REAL (cerrada, con su prueba) para forzar la publicación.
     const executor = async (ctx: BattleContext): Promise<BattleExecution> => {
       log.set(ctx.battle.id, (log.get(ctx.battle.id) ?? 0) + 1);
+      const rec = await ReplayRecorder.create({
+        dir: replaysDir,
+        battleId: ctx.battle.id,
+        attempt: Number(ctx.battle.run_attempts ?? 0),
+        owner: String(ctx.battle.claimed_by),
+        recipeHeader: {},
+        viewHeader: {},
+      });
+      rec.command({ tick: 0, vehicleId: "veh_1", command: {} });
       return {
         winner: "A",
         ticks: 10,
@@ -173,7 +186,7 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
         finalStateHash: "h",
         disqualified: [],
         versions: { engine: "gameday" },
-        replayJsonl: '{"header":{}}\n',
+        recording: await rec.finish({ ticks: 10 }),
       };
     };
     const id = await insertScheduledBattle(h.db, bots[0], bots[1], { seed: "gd3" });
@@ -181,19 +194,26 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     const w = new TournamentWorker({
       db: h.db,
       workerId: "gd3-w",
-      handlers: { run_battle: makeRunBattleHandler({ executor, replaysDir }) },
+      handlers: { run_battle: makeRunBattleHandler({ executor, replaysDir, replayFs: fullDisk }) },
       onExhausted: (job) => markBattleForReview(h.db, job),
       lockTimeoutMs: 1000,
     });
-    // El handler revienta al escribir el replay: el error se clasifica y la
-    // batalla queda para REVISIÓN MANUAL (failed/infrastructure), nunca
-    // 'finished' con un resultado sin replay oficial (23.1).
-    const processed = await w.drain(1);
-    expect(processed).toBe(1);
+    // El handler revienta al publicar el replay: el error se clasifica (infraestructura) y, agotados los
+    // reintentos, la batalla queda para REVISIÓN MANUAL (failed/infrastructure).
+    for (let i = 1; i <= 5; i++) await w.drain(1, new Date(Date.now() + i * 300_000));
+    expect(log.get(id)).toBe(3);
     const b = await h.db("battles").where({ id }).first();
     expect(b.status).not.toBe("finished");
     expect(b.status).toBe("failed");
     expect(b.failure_kind).toBe("infrastructure");
+    expect(b.replay_ref).toBeNull();
+    const job = await h
+      .db("jobs")
+      .where({ dedupe_key: `gd3:${id}` })
+      .first();
+    expect(job.last_error).toMatch(/storage_unavailable.*replay_publish_failed/);
+    expect(readdirSync(replaysDir).filter((f) => f !== ".partial")).toEqual([]);
+    expect(readdirSync(join(replaysDir, ".partial"))).toEqual([]);
   });
 
   // ── GD-4 · caída de Redis ─────────────────────────────────────────────────

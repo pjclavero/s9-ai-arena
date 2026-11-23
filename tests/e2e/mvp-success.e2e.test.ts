@@ -51,7 +51,11 @@ import { replayFromBattle, verify, type Replay } from "../../apps/arena-engine/s
 import { HunterBot, FlagRunnerBot } from "../../apps/arena-engine/src/stubs.js";
 import { toEngineMap } from "../../apps/map-service/src/to-engine-map.js";
 import type { InternalMap } from "../../apps/map-service/src/types.js";
-import { ingestReplay, type StoredReplay } from "../../apps/replay-service/src/store.js";
+import {
+  registerS9rReplay,
+  writeS9rReplay,
+  type S9rFixture as StoredReplay,
+} from "../../apps/replay-service/src/testing/s9r-fixture.js";
 import { runStatsJob } from "../../apps/replay-service/src/stats.js";
 import { createPublishedBot } from "../../apps/tournament-worker/src/testing/fixtures.js";
 
@@ -341,19 +345,21 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     battle.free();
     state.battle = null;
 
-    // Ingesta REAL del replay-service (T8.1) + referencia en la BD (política 23.1).
-    state.stored = ingestReplay(replaysDir, state.replay, { official: true });
+    // V1 REPLAYS PR-4 · grabado S9R/1 con el MISMO grabador y publicación que el worker + referencia
+    // en la BD (política 23.1).
+    state.stored = await writeS9rReplay(replaysDir, state.replay);
     await h
       .db("battles")
       .where({ id: state.battleDbId })
       .update({
         status: "finished",
         replay_ref: state.stored.path,
-        replay_hash: state.stored.index.sha256,
+        replay_hash: state.stored.sha256,
         final_state_hash: state.result.finalStateHash,
         engine_versions: JSON.stringify(state.replay.header.versions),
         result: JSON.stringify({ winner: state.result.winner, score: state.result.score, ticks: state.result.ticks }),
       });
+    await registerS9rReplay(h.db, state.battleDbId!, state.stored, { class: "official" });
 
     // Re-simulación directa con el motor (verify de E2): coincide tick a tick.
     const direct = await verify(state.replay);
@@ -382,7 +388,7 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
 
     evidence.paso5 = {
       replayPath: state.stored.path,
-      replaySha256: state.stored.index.sha256,
+      replaySha256: state.stored.sha256,
       officialHash: viaApi.body.officialHash,
       recomputedHash: viaApi.body.recomputedHash,
       matches: viaApi.body.matches,

@@ -7,7 +7,6 @@
  */
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
@@ -23,11 +22,9 @@ import type { BattleRunConfig } from "../battle-run.js";
 import { flagSource } from "../runtime-settings.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
-import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
+import { PROJECTED_HTTP_CACHE_CONTROL, projectedEtag } from "../replay-projection.js";
 import { projectBotStats } from "../../../../packages/projection/index.js";
-import { viewerMetaOf } from "./replays.js";
-import { fromJsonl } from "../../../arena-engine/src/replay.js";
-import { decompress, sha256 } from "../../../replay-service/src/format.js";
+import { isS9rReplayRef, openView, streamPublicDocument, viewerMetaFromView, whereS9rReplay } from "../replay-s9r.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -190,7 +187,8 @@ export function battleToJson(
     createdAt: b.created_at ? new Date(b.created_at as string).toISOString() : undefined,
     startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
-    replayAvailable: Boolean(b.replay_ref),
+    // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
+    replayAvailable: isS9rReplayRef(b.replay_ref),
     replayHash: b.replay_hash ?? undefined,
     // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
     rules: rulesToJson(rulesOf(b)),
@@ -240,7 +238,8 @@ function publicReplayBattleToJson(b: Record<string, unknown>, participants: Reco
       outcome: p.outcome ?? undefined,
     })),
     result: result ? { score: result.score, ticks: result.ticks } : undefined,
-    replayAvailable: Boolean(b.replay_ref),
+    // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
+    replayAvailable: isS9rReplayRef(b.replay_ref),
   };
 }
 
@@ -253,9 +252,12 @@ function parsePublicReplayLimit(raw: unknown): number {
 
 async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
   // PRC (TD-004) · mismo predicado público que el listado y que el visor.
-  const battle = await wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
-    .where({ "battles.id": id })
-    .whereNotNull("battles.replay_ref")
+  // Diseño §8 · sólo recetas S9R/1 (predicado único `whereS9rReplay`).
+  const battle = await whereS9rReplay(
+    wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
+      .where({ "battles.id": id })
+      .whereNotNull("battles.replay_ref"),
+  )
     .select(
       "battles.id as id",
       "battles.status as status",
@@ -489,8 +491,12 @@ export function battleRoutes(
       const cursor = decodeCursor(req.query.cursor as string | undefined);
       // PRC (TD-004) · «público» = finished + ningún bot participante no-público
       // (replay-access.ts). Activar la capability NO publica todos los ficheros.
-      let q = wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
-        .whereNotNull("battles.replay_ref")
+      // Diseño §8 · sólo recetas S9R/1 (predicado único `whereS9rReplay`).
+      let q = whereS9rReplay(
+        wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id")).whereNotNull(
+          "battles.replay_ref",
+        ),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",
@@ -555,23 +561,28 @@ export function battleRoutes(
       // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
       // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
       // competición (replay-projection.ts), igual para todos los visitantes.
-      let doc: Record<string, unknown>;
-      let sha = "";
+      // V1 REPLAYS PR-4 · sólo replays S9R/1 (corte D-OP-30); el documento proyectado se
+      // ESCRIBE en streaming recorriendo la vista por fragmentos (nunca entero en memoria).
+      const view = await openView(db, battle);
+      if (!view) throw notFound("Replay no disponible");
       try {
-        const bytes = await readFile(battle.replay_ref as string);
-        sha = sha256(bytes);
-        const replay = fromJsonl(decompress(bytes).toString("utf8"));
-        const meta = await viewerMetaOf(db, battle, sha);
-        doc = projectReplayDocument(replay, meta, sha);
-      } catch {
-        throw notFound("Replay no disponible");
+        const meta = await viewerMetaFromView(db, view.header);
+        const sha = String(battle.replay_hash ?? "");
+        // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
+        res
+          .status(200)
+          .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
+          .setHeader("ETag", projectedEtag("public-replay-download", sha))
+          .setHeader("Content-Type", "application/json; charset=utf-8");
+        await streamPublicDocument(res, battle, view, meta);
+      } catch (e) {
+        if (!res.headersSent || !res.writableEnded) {
+          if (res.headersSent) res.destroy(e as Error);
+          else throw notFound("Replay no disponible");
+        }
+      } finally {
+        await view.close();
       }
-      // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
-      res
-        .status(200)
-        .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
-        .setHeader("ETag", projectedEtag("public-replay-download", sha))
-        .json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );
@@ -828,7 +839,7 @@ export function battleRoutes(
     let status: "ready" | "pending" | "unavailable" = "unavailable";
     if (rows.length > 0) status = "ready";
     else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
-    else if (battle.status === "finished" && battle.replay_ref) status = "pending";
+    else if (battle.status === "finished" && isS9rReplayRef(battle.replay_ref)) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
     for (const [team, t] of teams) {

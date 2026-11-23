@@ -26,7 +26,7 @@ import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
+import { writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -83,7 +83,7 @@ async function newBot(key: string, ownerId: string, visibility: string) {
 
 async function newBattle(botKeys: [string, string], createdAt: string): Promise<string> {
   const id = randomUUID();
-  const stored = ingestReplay(dir, { ...base, header: { ...base.header, battleId: id } }, { official: false });
+  const stored = await writeS9rReplay(dir, { ...base, header: { ...base.header, battleId: id } });
   await h.db("battles").insert({
     id,
     status: "finished",
@@ -94,7 +94,7 @@ async function newBattle(botKeys: [string, string], createdAt: string): Promise<
     map_version: 1,
     seed: "eq1-secret-seed",
     replay_ref: stored.path,
-    replay_hash: stored.index.sha256,
+    replay_hash: stored.sha256,
     final_state_hash: base.result.finalStateHash,
     result: JSON.stringify({ score: base.result.score, ticks: base.result.ticks, winner: "A" }),
     created_at: createdAt,

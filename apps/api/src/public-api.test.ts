@@ -86,7 +86,8 @@ beforeAll(async () => {
 
   const replayDir = mkdtempSync(join(tmpdir(), "e7-replays-"));
   replayBytes = Buffer.from("replay-comprimido-de-prueba");
-  const replayPath = join(replayDir, "battle.replay.zst");
+  // V1 REPLAYS PR-4 · sólo una receta S9R/1 (`.s9r`) es un replay; el crudo se sirve tal cual (bytes opacos).
+  const replayPath = join(replayDir, "battle.1.s9r");
   writeFileSync(replayPath, replayBytes);
   const [done] = await h
     .db("battles")
