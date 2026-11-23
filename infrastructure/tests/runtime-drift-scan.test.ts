@@ -287,8 +287,10 @@ describe("hechos reales de producción (fixture capturado del daemon)", () => {
     // lo que este caso protege (normalización del prefijo).
     // EQ5b · y los dos de Administración → Streaming (sello de claves y control
     // interno del streamer), tampoco desplegados.
+    // V1 BLOCK-RUN · y el secreto interno de arena-engine, que el compose nuevo ya no
+    // monta en la API pero el contenedor vivo aún lleva (hasta desplegar).
     expect(por("api").spec_drift).toBe(
-      "secreto ausente: artifact_verify_key,stream_secrets_public,streamer_control_secret",
+      "secreto ausente: artifact_verify_key,stream_secrets_public,streamer_control_secret · secreto no declarado: arena_engine_internal_secret",
     );
   });
 
