@@ -14,6 +14,7 @@ import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCu
 import {
   assertTournamentEligible,
   assertVersionsEligible,
+  assertWithinTournamentBudget,
   canonicalUuid,
   eligibilityKey,
   entryCompetitionGate,
@@ -347,7 +348,12 @@ export function tournamentRoutes(
       // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
       // inscribe TAL CUAL: ni se clona, ni se republica, ni se descongela.
       // OLA 2 (EQUIPMENT_PRIVATE) · sólo el dueño llega aquí: ve el motivo real de su loadout.
-      await assertTournamentEligible(db, v, { userId: req.auth!.userId, staff: false });
+      await assertTournamentEligible(
+        db,
+        v,
+        { userId: req.auth!.userId, staff: false },
+        t.budget_credits as number | null | undefined,
+      );
       // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente que ya no compite se
       // puede cambiar por otra versión válida (nunca se sustituye sola).
       const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
@@ -529,6 +535,10 @@ export function tournamentRoutes(
       }
       // OLA 2 (EQUIPMENT_PRIVATE) · el detalle del 409 sólo para los bots propios del solicitante.
       await assertVersionsEligible(trx, roster, { userId, staff: false });
+      await assertWithinTournamentBudget(trx, roster, t.budget_credits as number | null | undefined, {
+        userId,
+        staff: false,
+      }); // B4
       if (await trx("entries").where({ tournament_id: t.id, team_id: teamId }).first()) {
         throw conflict("team_already_entered", "El equipo ya está inscrito en este torneo");
       }
@@ -797,7 +807,7 @@ export function tournamentRoutes(
         throw conflict("already_entered", "El bot ya está inscrito: retira antes la autorización para cambiarla");
       }
       const v = await tx("bot_versions").where({ bot_id: botId, version }).first();
-      await assertTournamentEligible(tx, v, { userId, staff: false }); // la regla única de #283 (estado + loadout)
+      await assertTournamentEligible(tx, v, { userId, staff: false }, t.budget_credits as number | null | undefined); // la regla única de #283 (estado + loadout)
       await tx("team_entry_consents")
         .insert({ tournament_id: t.id, bot_id: botId, team_id: teamId, version, owner_id: userId })
         .onConflict(["tournament_id", "bot_id"])
