@@ -146,3 +146,20 @@ export async function runIsolatedCases<T>(
   }
   return out;
 }
+
+/**
+ * SELFTEST_DISPLAY = ":N" (o "N", con sufijo ".pantalla" opcional): número base del display; el
+ * positivo usa N y el negativo N+1. Mal formado => error CLARO (nunca `NaN` ni un display raro).
+ */
+export function parseSelftestDisplay(raw: string | undefined, fallback = 95): number {
+  if (raw === undefined || raw === "") return fallback;
+  const m = /^:?(\d{1,5})(?:\.\d+)?$/.exec(raw);
+  const n = m ? Number(m[1]) : NaN;
+  // N y N+1 deben ser displays X validos (< 32000) y no colisionar con ":0".
+  if (!m || n < 1 || n + 1 >= 32000) {
+    throw new Error(
+      `SELFTEST_DISPLAY mal formado (${JSON.stringify(raw)}): se espera ":N" con N entero entre 1 y 31998`,
+    );
+  }
+  return n;
+}

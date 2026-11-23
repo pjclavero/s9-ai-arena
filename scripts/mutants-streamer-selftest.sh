@@ -60,6 +60,9 @@ mutant M5-sin-parar-si-falla "PARA_AUNQUE_FALLE" "$D" \
 # M6 · la autoprueba vuelve a levantar su propio Xvfb a mano (sin pasar por startDisplay/readiness).
 mutant M6-selftest-xvfb-a-mano "SELFTEST_CABLEADO" "$S" \
   '(display) => startDisplay(display),' '(display) => startDisplay(display, { spawnXvfb: () => spawn("Xvfb", [display]) }),'
+# M7 · SELFTEST_DISPLAY mal formado vuelve a ser NaN (sin validar).
+mutant M7-display-sin-validar "DISPLAY_MAL_FORMADO" "$D" \
+  'if (!m || n < 1 || n + 1 >= 32000) {' 'if (false) {'
 
 git diff --quiet -- "$D" "$S" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"

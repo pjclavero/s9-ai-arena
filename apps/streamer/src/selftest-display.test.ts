@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   canConnect,
   displaySocketPath,
+  parseSelftestDisplay,
   runIsolatedCases,
   startDisplay,
   waitForDisplay,
@@ -225,5 +226,20 @@ describe("render-selftest.ts usa el display aislado", () => {
     expect(src).toMatch(/startDisplay\(/);
     expect(src).not.toMatch(/spawn\(\s*"Xvfb"/);
     expect(src).not.toMatch(/existsSync\(/);
+  });
+});
+
+describe("parseSelftestDisplay", () => {
+  it("DISPLAY_PARSEO: acepta :N, N y :N.0; por defecto 95", () => {
+    expect(parseSelftestDisplay(undefined)).toBe(95);
+    expect(parseSelftestDisplay("")).toBe(95);
+    expect(parseSelftestDisplay(":96")).toBe(96);
+    expect(parseSelftestDisplay("97")).toBe(97);
+    expect(parseSelftestDisplay(":98.0")).toBe(98);
+  });
+  it("DISPLAY_MAL_FORMADO: un valor mal formado da un error claro, no NaN", () => {
+    for (const v of ["abc", ":", ":x1", "-5", ":0", "1e3", ":95:1", " :95", ":99999", ":31999"]) {
+      expect(() => parseSelftestDisplay(v), v).toThrow(/SELFTEST_DISPLAY mal formado/);
+    }
   });
 });

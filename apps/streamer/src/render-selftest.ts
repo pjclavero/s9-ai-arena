@@ -27,14 +27,12 @@ import {
   splitGrayFrames,
 } from "./frame-check.js";
 import { realSpawner } from "./main.js";
-import { runIsolatedCases, startDisplay } from "./selftest-display.js";
+import { parseSelftestDisplay, runIsolatedCases, startDisplay } from "./selftest-display.js";
 import { StreamSupervisor } from "./supervisor.js";
 
 // Un Xvfb NUEVO por caso (selftest-display.ts): el positivo en BASE y el negativo en BASE+1.
 // Compartir uno entre casos fue la causa del flaky «Missing X server or $DISPLAY» del negativo
 // (Xvfb se reinicia al irse su último cliente; ver selftest-display.ts).
-const BASE_DISPLAY = Number((process.env.SELFTEST_DISPLAY ?? ":95").replace(/^:/, "").split(".")[0]);
-const displayOf = (i: number) => `:${BASE_DISPLAY + i}`;
 // HOME PROPIO y desechable: el perfil de Chromium vive en $HOME/.config/chromium. Si la
 // autoprueba usara el HOME de `streamer`, su perfil (con el SingletonLock del Chromium
 // que se para aquí, «buildkitsandbox») quedaría DENTRO DE LA IMAGEN y el Chromium real
@@ -153,6 +151,8 @@ async function selftest(): Promise<number> {
   mkdirSync(join(DIR, "home"), { recursive: true });
   let rc = 1;
   try {
+    const base = parseSelftestDisplay(process.env.SELFTEST_DISPLAY);
+    const displayOf = (i: number) => `:${base + i}`;
     const [positive, negative] = await runIsolatedCases(
       [
         { name: "ok", display: displayOf(0) },
