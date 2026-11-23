@@ -37,7 +37,12 @@ PY
 mutant M1-xvfb-sin-noreset "XVFB_NORESET" "$X" '"-nolisten", "tcp", "-noreset"]' '"-nolisten", "tcp"]'
 mutant M2-listo-por-fichero "XVFB_LISTO_ES_ACEPTAR" "$X" 'if (exists(this.sockPath) && (await accepts(this.sockPath))) return;' 'if (exists(this.sockPath)) return;'
 mutant M3-entrypoint-sin-noreset "ENTRYPOINT_NORESET" "$E" '-nolisten tcp -noreset &' '-nolisten tcp &'
-mutant M4-entrypoint-listo-por-fichero "ENTRYPOINT_LISTO_ES_ACEPTAR" "$E" 'require("net").connect(process.argv[1])' 'require("fs").statSync(process.argv[1])'
+mutant M4-entrypoint-listo-por-fichero "ENTRYPOINT_ESPERA_LISTEN" "$E" '&& node -e "$PROBE_JS" "$X_SOCK" 2>/dev/null; then' '; then'
+mutant M5-exists-cambia-el-defecto "XVFB_EXISTS_NO_CAMBIA_EL_DEFECTO" "$X" 'this.o.accepts ?? canConnectX' 'this.o.accepts ?? (this.o.exists ? async () => true : canConnectX)'
+mutant M6-entrypoint-bucle-sin-plazo "ENTRYPOINT_PLAZO_ACOTADO" "$E" 'while [ "$SECONDS" -lt "$deadline" ]; do' 'while true; do'
+mutant M7-entrypoint-sin-comprobar-node "ENTRYPOINT_SIN_NODE" "$E" "command -v node >/dev/null 2>&1 || {" "true || {"
+mutant M8-entrypoint-sondeo-sin-timeout "ENTRYPOINT_SONDEO_CON_TIMEOUT" "$E" 'const t=setTimeout(()=>process.exit(1),1000);' 'const t=null;'
+mutant M9-entrypoint-plazo-sin-validar "ENTRYPOINT_PLAZO_INVALIDO" "$E" "    '' | *[!0-9]*)" "    NUNCA)"
 
 git diff --quiet -- "$X" "$E" || { echo "ÁRBOL SUCIO tras los mutantes"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"

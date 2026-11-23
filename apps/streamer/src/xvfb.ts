@@ -69,8 +69,9 @@ export interface XvfbOptions {
   /** Directorio de sockets X (def. /tmp/.X11-unix; tests). */
   sockDir?: string;
   /**
-   * ¿acepta el socket una conexión? Por defecto, un connect() real; si se inyecta `exists`
-   * (sistema de ficheros simulado, sin servidor X) el valor por defecto es «sí».
+   * ¿acepta el socket una conexión? Por defecto SIEMPRE un connect() real (`canConnectX`),
+   * también si se inyecta `exists`: un test con ficheros simulados debe pedir `accepts` de
+   * forma explícita para saltarse la sonda.
    */
   accepts?: (sockPath: string) => Promise<boolean>;
   readFile?: (p: string) => string;
@@ -161,7 +162,7 @@ export class XvfbDisplay implements DisplayManager {
     if (!this.clearStale()) throw new Error(`el display ${this.o.display} ya lo usa un Xvfb vivo ajeno`);
     const exists = this.o.exists ?? existsSync;
     const sleep = this.o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-    const accepts = this.o.accepts ?? (this.o.exists ? async () => true : canConnectX);
+    const accepts = this.o.accepts ?? canConnectX;
     const proc = this.o.spawner(this.o.xvfbBin ?? "Xvfb", xvfbArgs(this.o.display, this.o.width, this.o.height));
     this.proc = proc;
     this.exited = false;

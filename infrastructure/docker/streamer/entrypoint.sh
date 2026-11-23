@@ -27,7 +27,7 @@ if [ "${STREAMER_XVFB_ON_DEMAND:-1}" = "0" ]; then
   DISPLAY_NUM="${DISPLAY#:}"
   DISPLAY_NUM="${DISPLAY_NUM%%.*}"
   X_LOCK="/tmp/.X${DISPLAY_NUM}-lock"
-  X_SOCK="/tmp/.X11-unix/X${DISPLAY_NUM}"
+  X_SOCK="${X11_SOCKET_DIR:-/tmp/.X11-unix}/X${DISPLAY_NUM}"
 
   # #251 · Tras un `docker restart` el sistema de ficheros del contenedor se conserva, y con él
   # el lock y el socket del Xvfb anterior: Xvfb se negaba a arrancar («Server is already active
@@ -46,29 +46,52 @@ if [ "${STREAMER_XVFB_ON_DEMAND:-1}" = "0" ]; then
     rm -f "$X_SOCK" # socket sin lock: de un Xvfb que ya no existe
   fi
 
+  READY_S="${STREAMER_XVFB_READY_TIMEOUT_S:-10}"
+  case "$READY_S" in
+    '' | *[!0-9]*)
+      echo "entrypoint: STREAMER_XVFB_READY_TIMEOUT_S inválido ('$READY_S'): entero entre 1 y 120" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$((10#$READY_S))" -lt 1 ] || [ "$((10#$READY_S))" -gt 120 ]; then
+    echo "entrypoint: STREAMER_XVFB_READY_TIMEOUT_S fuera de rango ('$READY_S'): entero entre 1 y 120" >&2
+    exit 1
+  fi
+  READY_S=$((10#$READY_S))
+  command -v node >/dev/null 2>&1 || {
+    echo "entrypoint: falta 'node' en el PATH (hace falta para sondear el socket de Xvfb y para el supervisor)" >&2
+    exit 1
+  }
+
   # -noreset: sin él Xvfb reinicia el servidor al irse el último cliente y un Chromium relanzado
   # en esa ventana recibe «Missing X server or $DISPLAY» (flaky AUD2-13).
   Xvfb "$DISPLAY" -screen 0 "${STREAM_WIDTH}x${STREAM_HEIGHT}x24" -nolisten tcp -noreset &
   XVFB_PID=$!
   trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
 
-  # Espera a que ESTE Xvfb esté vivo y su socket exista. Si muere, se falla cerrado: un
-  # supervisor sin display aceptaría órdenes que nunca podría cumplir.
+  # Espera a que ESTE Xvfb esté vivo y su socket ACEPTE una conexión (el fichero aparece en
+  # bind(), antes de listen()). Si muere o no acepta a tiempo, se falla cerrado: un supervisor
+  # sin display aceptaría órdenes que nunca podría cumplir.
+  # PLAZO TOTAL ACOTADO Y DOCUMENTADO: STREAMER_XVFB_READY_TIMEOUT_S segundos (def. 10, 1..120).
+  # Cada sondeo lleva su PROPIO timeout (1 s, dentro del JS): un socket que no responde no
+  # puede colgar el arranque.
+  PROBE_JS='const s=require("net").connect(process.argv[1]);const t=setTimeout(()=>process.exit(1),1000);s.on("connect",()=>{clearTimeout(t);process.exit(0)});s.on("error",()=>process.exit(1))'
   ready=0
-  for _ in $(seq 1 50); do
+  deadline=$((SECONDS + READY_S))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if ! kill -0 "$XVFB_PID" 2>/dev/null; then
       echo "entrypoint: Xvfb terminó al arrancar en :$DISPLAY_NUM" >&2
       exit 1
     fi
-    # Listo = el socket ACEPTA una conexión (el fichero aparece en bind(), antes de listen()).
-    if [ -S "$X_SOCK" ] && node -e 'require("net").connect(process.argv[1]).on("connect",()=>process.exit(0)).on("error",()=>process.exit(1))' "$X_SOCK" 2>/dev/null; then
+    # Listo = el socket ACEPTA una conexión.
+    if [ -S "$X_SOCK" ] && node -e "$PROBE_JS" "$X_SOCK" 2>/dev/null; then
       ready=1
       break
     fi
     sleep 0.1
   done
   if [ "$ready" != 1 ]; then
-    echo "entrypoint: Xvfb no creó $X_SOCK a tiempo" >&2
+    echo "entrypoint: Xvfb no aceptó conexiones en $X_SOCK tras ${READY_S}s (socket ausente o sin escuchar)" >&2
     exit 1
   fi
 fi
