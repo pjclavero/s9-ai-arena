@@ -37,6 +37,65 @@ async function freePort(): Promise<number> {
   });
 }
 
+/** El puerto elegido lo ocupó otro proceso entre `freePort()` y el arranque (TOCTOU). */
+export class PortBusyError extends Error {}
+
+/**
+ * `freePort()` cierra el puerto antes de que el servidor lo abra: otro proceso (otro fichero de
+ * test en paralelo) puede quedárselo en ese hueco. Se relanza SÓLO si `isBusy(error)` confirma
+ * que el fallo es ese (y con tope); cualquier otro error se propaga tal cual.
+ */
+export async function startOnFreePort<T>(
+  launch: (port: number) => Promise<T>,
+  opts: { isBusy: (e: unknown) => boolean; pickPort?: () => Promise<number>; maxAttempts?: number },
+): Promise<{ value: T; port: number; attempts: number }> {
+  const pick = opts.pickPort ?? freePort;
+  const max = opts.maxAttempts ?? 5;
+  for (let attempt = 1; ; attempt++) {
+    const port = await pick();
+    try {
+      return { value: await launch(port), port, attempts: attempt };
+    } catch (e) {
+      if (!opts.isBusy(e) || attempt >= max) throw e;
+    }
+  }
+}
+
+/**
+ * Un intento de arranque del clúster embebido. `embedded-postgres` rechaza con `undefined` si el
+ * proceso sale pronto; la causa sólo está en sus logs, que se capturan para distinguir «puerto
+ * ocupado» de cualquier otro fallo. En fallo no deja el directorio de datos.
+ */
+const BUSY_IPV4 = /could not bind IPv4 address[^\n]*address already in use/i;
+const BUSY_ANY = /address already in use|could not create any TCP\/IP sockets/i;
+
+export async function launchEmbedded(port: number): Promise<EmbeddedPostgres & { dataDir: string }> {
+  const dataDir = mkdtempSync(join(tmpdir(), "e7-pg-"));
+  let logs = "";
+  const pg = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "postgres",
+    password: "postgres",
+    port,
+    persistent: false,
+    onLog: (m: unknown) => void (logs += String(m)),
+  });
+  try {
+    await pg.initialise();
+    await pg.start();
+    // Postgres arranca aunque falle UNA dirección: si 127.0.0.1:puerto es de otro proceso pero
+    // `::` queda libre, «arranca» y el test acabaría hablando con el proceso equivocado.
+    if (BUSY_IPV4.test(logs)) throw new PortBusyError("dirección IPv4 ocupada");
+  } catch (e) {
+    await pg.stop().catch(() => {});
+    rmSync(dataDir, { recursive: true, force: true });
+    if (e instanceof PortBusyError || BUSY_ANY.test(logs))
+      throw new PortBusyError(`puerto ${port} ocupado: ${logs.slice(-300)}`);
+    throw e ?? new Error(`el clúster embebido salió al arrancar: ${logs.slice(-500)}`);
+  }
+  return Object.assign(pg, { dataDir });
+}
+
 export interface TestDbHandle {
   db: Db;
   url: string;
@@ -88,17 +147,11 @@ export async function startTestDb(opts: { migrate?: boolean } = {}): Promise<Tes
   const external = process.env.DATABASE_URL;
   if (external) return startExternalTestDb(external, opts);
 
-  const port = await freePort();
-  const dataDir = mkdtempSync(join(tmpdir(), "e7-pg-"));
-  const pg = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    user: "postgres",
-    password: "postgres",
+  const {
+    value: pg,
     port,
-    persistent: false,
-  });
-  await pg.initialise();
-  await pg.start();
+    dataDir,
+  } = await startOnFreePort(launchEmbedded, { isBusy: (e) => e instanceof PortBusyError });
   await pg.createDatabase("arena_test");
 
   const url = `postgres://postgres:postgres@127.0.0.1:${port}/arena_test`;
