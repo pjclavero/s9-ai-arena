@@ -217,6 +217,8 @@ services:
       # sigue en 503 runner_unavailable aunque S9_ENABLE_REAL_BATTLE_RUNS=1
       # (que sigue apagada por defecto y NO se enciende aquí).
       ARENA_ENGINE_URL: ${ARENA_ENGINE_URL:-http://arena-engine:8081}
+      # V1 · RESIDUO: ya no se monta ese secreto en la API (el fichero no existe aquí);
+      # se conserva sólo porque el modelo de readiness aún lo declara (TD-074).
       ARENA_ENGINE_SHARED_SECRET_FILE: /run/secrets/arena_engine_internal_secret
       S9_ENABLE_REAL_BATTLE_RUNS: ${S9_ENABLE_REAL_BATTLE_RUNS:-}
       # CARRIL I · techo de batallas REALES simultáneas (límite de recursos del
@@ -248,7 +250,9 @@ services:
       STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
       STREAM_SECRETS_PUBLIC_KEY_FILE: /run/secrets/stream_secrets_public
       STREAMER_BROADCAST_BASE_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
-    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public]
+    # V1 · SIN arena_engine_internal_secret: la API ya no llama a POST /run de
+    # arena-engine (launcher HTTP retirado de server.ts) y no debe poder hacerlo.
+    secrets: [postgres_password, jwt_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public]
     volumes:
       # B7 · SOLO LECTURA, y justificado por el código: getReplay y
       # verifyReplay (apps/api/src/routes/battles.ts) hacen

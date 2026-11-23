@@ -59,6 +59,13 @@ export interface ArenaEngineServiceConfig {
    * Nunca se loguea ni se devuelve en respuestas.
    */
   internalSecret?: string;
+  /**
+   * V1 · Interruptor de `POST /run` (vía LEGADA, fuera de V1). Sólo `true` lo
+   * monta como activo; por defecto (undefined/false) responde 404 ANTES de
+   * mirar la credencial. El worker NO usa esta vía: ejecuta con su propio
+   * límite de concurrencia, que `/run` se saltaría. A retirar después de V1.
+   */
+  runEnabled?: boolean;
 }
 
 /** Cuerpo aceptado por `POST /run`: la config de la batalla, SIN las piezas de
@@ -262,6 +269,12 @@ export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): ex
   mountVersionEndpoint(app, "arena-engine");
 
   app.post("/run", async (req: Request, res: Response) => {
+    // V1 · vía legada APAGADA por defecto: 404 genérico ANTES de la credencial,
+    // sin revelar que la ruta existe, ni el runner ni el secreto.
+    if (cfg.runEnabled !== true) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
     // B2 · autenticación interna PRIMERO: sin credencial válida, ni siquiera se
     // revela si hay runner cableado o no (misma respuesta 401 en ambos casos).
     const provided = req.header("x-arena-engine-auth");
@@ -358,6 +371,13 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+/** V1 · `ARENA_ENGINE_RUN_ENABLED` sólo vale `1` o `true` (sin distinguir mayúsculas);
+ *  cualquier otra cosa, incluida la ausencia, deja `POST /run` apagado. */
+export function isRunEnabled(env: NodeJS.ProcessEnv): boolean {
+  const v = (env.ARENA_ENGINE_RUN_ENABLED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true";
+}
+
 /**
  * B2 · Resuelve la config del servicio desde el entorno.
  *
@@ -393,6 +413,7 @@ export function serviceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Aren
     network: env.ARENA_NETWORK || undefined,
     engineHost: env.ARENA_ENGINE_HOST || undefined,
     internalSecret: resolveInternalSecretFromEnv(env),
+    runEnabled: isRunEnabled(env),
     runner,
   };
 }

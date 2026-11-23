@@ -20,7 +20,11 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { WebSocket } from "ws";
 import { initPhysics } from "../src/sim/physics.js";
-import { createArenaEngineService, serviceConfigFromEnv } from "../src/service.js";
+import {
+  createArenaEngineService as createArenaEngineServiceReal,
+  serviceConfigFromEnv,
+  type ArenaEngineServiceConfig,
+} from "../src/service.js";
 import { DEFAULT_LIMITS } from "../../bot-manager/src/container-runner.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../bot-manager/src/container-runner.js";
 // Solo en TESTS: el pipeline de mapas de E4 (documento del catálogo → ArenaMap).
@@ -118,6 +122,12 @@ const SMOKE_BOTS = [
 
 const SECRET = "test-internal-secret-1234567890";
 const AUTH_HEADER = "x-arena-engine-auth";
+
+/** V1 · `/run` está APAGADO por defecto; los tests de su comportamiento lo
+ *  encienden SÓLO aquí (entorno de test). Los del interruptor usan `...Real`. */
+function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}) {
+  return createArenaEngineServiceReal({ runEnabled: true, ...cfg });
+}
 
 function runRequestBody(battleId: string) {
   return {
@@ -643,5 +653,53 @@ describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
     const cfg = serviceConfigFromEnv({});
     expect(cfg.network).toBeUndefined();
     expect(cfg.engineHost).toBeUndefined();
+  });
+});
+
+describe("V1 · interruptor ARENA_ENGINE_RUN_ENABLED de POST /run (vía legada, fuera de V1)", () => {
+  const WORKING = { runner: inProcessRunner(), internalSecret: SECRET, engineHost: "127.0.0.1" };
+
+  it("V1-RUN-OFF-404: apagado (por defecto) responde 404 incluso con secreto VÁLIDO y runner cableado", async () => {
+    const app = createArenaEngineServiceReal(WORKING);
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(runRequestBody("v1_off"));
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "not_found" });
+  });
+
+  it("V1-RUN-OFF-SIN-REVELAR: apagado, la respuesta es idéntica con y sin credencial y con y sin runner", async () => {
+    const bodies = [];
+    for (const [cfg, hdr] of [
+      [WORKING, SECRET],
+      [WORKING, "mala"],
+      [{ internalSecret: SECRET }, SECRET],
+      [{}, undefined],
+    ] as const) {
+      const r = request(createArenaEngineServiceReal({ ...cfg })).post("/run");
+      const res = await (hdr ? r.set(AUTH_HEADER, hdr) : r).send(runRequestBody("v1_off2"));
+      bodies.push([res.status, res.body]);
+    }
+    for (const b of bodies) expect(b).toEqual([404, { error: "not_found" }]);
+  });
+
+  it("V1-RUN-OFF-ENV: serviceConfigFromEnv deja /run apagado salvo `1`/`true`", () => {
+    for (const v of [undefined, "", "0", "false", "yes", "2", "on"]) {
+      expect(serviceConfigFromEnv({ ARENA_ENGINE_RUN_ENABLED: v }).runEnabled, String(v)).toBe(false);
+    }
+    for (const v of ["1", "true", "TRUE", " true "]) {
+      expect(serviceConfigFromEnv({ ARENA_ENGINE_RUN_ENABLED: v }).runEnabled, v).toBe(true);
+    }
+  });
+
+  it("V1-RUN-ON-COMPORTAMIENTO: encendido conserva 401 sin credencial y 200 con credencial y runner", async () => {
+    const app = createArenaEngineServiceReal({ ...WORKING, runEnabled: true });
+    const sin = await request(app).post("/run").send(runRequestBody("v1_on_a"));
+    expect(sin.status).toBe(401);
+    const con = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(runRequestBody("v1_on_b"));
+    expect(con.status).toBe(200);
+  });
+
+  it("V1-RUN-OFF-HEALTHZ: apagar /run no afecta a /healthz", async () => {
+    const res = await request(createArenaEngineServiceReal({})).get("/healthz");
+    expect(res.status).toBe(200);
   });
 });
