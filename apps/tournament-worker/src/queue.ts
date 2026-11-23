@@ -21,6 +21,7 @@
  *    manual). Las derrotas deportivas terminan el trabajo en `done`.
  */
 import type { Knex } from "knex";
+import { workerMetrics } from "./worker-metrics.js";
 import { classifyFailure, hasOwnRetryPolicy, retryPolicyFor, type FailureCode } from "./errors.js";
 
 export type JobKind = "generate_schedule" | "run_battle" | "process_result" | "update_standings" | "tournament_dry_run";
@@ -74,12 +75,20 @@ export async function enqueueJob(
   return rows.length > 0 ? (rows[0].id as string) : null;
 }
 
+/** Lock vencido por defecto: ÚNICO valor para el claim, el aparcado y el barrido de huérfanos (R329-10). */
+export const DEFAULT_LOCK_TIMEOUT_MS = 60_000;
+
 export interface ClaimOptions {
   workerId: string;
   kinds?: JobKind[];
   /** Un `running` más viejo que esto se considera huérfano (worker muerto). */
   lockTimeoutMs?: number;
   now?: Date;
+  /**
+   * V1-P0 (H1) · se invoca con los trabajos que ESTE claim ha aparcado (`needs_review`) para que el
+   * llamador cierre su torneo (`onExhausted`) de inmediato, sin esperar al rescate periódico.
+   */
+  onParked?: (parked: JobRow[]) => Promise<void> | void;
 }
 
 /**
@@ -88,12 +97,17 @@ export interface ClaimOptions {
  * fila son imposibles (el segundo la salta o ve el nuevo estado `running`).
  */
 export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | null> {
-  const lockTimeoutMs = opts.lockTimeoutMs ?? 60_000;
+  const lockTimeoutMs = opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const now = opts.now ?? new Date();
   const kinds = opts.kinds ?? JOB_KINDS;
   const staleBefore = new Date(now.getTime() - lockTimeoutMs);
+  // V1-P0 · un `running` huérfano que YA agotó `max_attempts` NO se re-reclama: en la MISMA sentencia
+  // (PARK_EXHAUSTED_CTES) pasa a `needs_review` y su batalla a `failed` antes de elegir trabajo. El
+  // mismo límite está además en el WHERE del claim, de modo que ni una carrera lo deja reclamable.
   const rows = await db.raw(
     `
+    ${PARK_EXHAUSTED_CTES},
+    claimed AS (
     UPDATE jobs SET
       status = 'running',
       locked_by = :workerId,
@@ -110,17 +124,170 @@ export async function claimJob(db: Knex, opts: ClaimOptions): Promise<JobRow | n
         AND run_after <= GREATEST(CAST(:now AS timestamptz), now())
         AND (
           status = 'queued'
-          OR (status = 'running' AND locked_at < :staleBefore)
+          OR (status = 'running' AND locked_at < :staleBefore AND attempts < max_attempts)
         )
       ORDER BY created_at, id
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
     RETURNING *
+    )
+    SELECT 'claimed' AS _src, c.* FROM claimed c
+    UNION ALL
+    SELECT 'parked' AS _src, p.* FROM parked p
     `,
-    { workerId: opts.workerId, now, kinds, staleBefore },
+    { workerId: opts.workerId, now, kinds, staleBefore, parkMsg: PARK_MESSAGE, parkReason: EXHAUSTED_ORPHAN_REASON },
   );
-  return (rows.rows?.[0] as JobRow | undefined) ?? null;
+  const all = (rows.rows ?? []) as (JobRow & { _src?: string })[];
+  const strip = ({ _src, ...j }: JobRow & { _src?: string }): JobRow => (void _src, j as JobRow);
+  const parked = all.filter((r) => r._src === "parked").map(strip);
+  const job = all.filter((r) => r._src !== "parked").map(strip)[0] ?? null;
+  // H1/H2 · los aparcados por ESTE claim se cuentan y se notifican (cierre inmediato del torneo).
+  if (parked.length) {
+    workerMetrics.inc("jobs_parked_total", parked.length);
+    try {
+      await opts.onParked?.(parked);
+    } catch (err) {
+      // Un callback que falla NO puede perder el trabajo YA reclamado en este mismo claim (R329-05).
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "tournament-worker",
+          msg: "on_parked_error",
+          err: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }
+  if (job && job.attempts > 1) workerMetrics.inc("job_retries_total");
+  return job;
+}
+
+/** Motivo que queda en `jobs.last_error` / `audit_log` cuando se agotan los intentos de un huérfano. */
+export const EXHAUSTED_ORPHAN_REASON = "intentos agotados con el lease vencido (worker caído o reiniciado en bucle)";
+
+/**
+ * Marca la batalla como `failed` por infraestructura SI sigue siendo una batalla sin dueño vivo
+ * (`scheduled`, o `running` con el lease vencido o ausente). Idempotente: sobre una batalla ya
+ * terminada, o con lease vivo de otro titular, no escribe nada. Devuelve true si la cerró.
+ * Escribe un `audit_log` (sólo inserción) con el motivo; NO inventa resultado deportivo.
+ */
+export async function failBattleInfrastructure(
+  trx: Knex | Knex.Transaction,
+  battleId: string,
+  reason: string,
+  action = "worker.battle_failed_infrastructure",
+): Promise<boolean> {
+  const res = await trx.raw(
+    `
+    UPDATE battles SET
+      status = 'failed',
+      failure_kind = 'infrastructure',
+      claimed_by = NULL,
+      lease_expires_at = NULL
+    WHERE id = :battleId
+      AND (
+        status = 'scheduled'
+        OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
+      )
+    RETURNING id, run_attempts
+    `,
+    { battleId },
+  );
+  const row = res.rows?.[0] as { id: string; run_attempts: number } | undefined;
+  if (!row) return false;
+  await trx("audit_log").insert({
+    action,
+    target: `battle:${battleId}`,
+    detail: JSON.stringify({ reason, failureKind: "infrastructure", runAttempts: row.run_attempts }),
+  });
+  return true;
+}
+
+const PARK_MESSAGE = `[worker_died] ${EXHAUSTED_ORPHAN_REASON}`;
+
+/**
+ * Fragmento SQL ÚNICO (compartido por `claimJob` y `parkExhaustedStaleJobs`, sin lógica duplicada):
+ * los trabajos `running` con el lock vencido que YA agotaron `max_attempts` pasan a `needs_review`;
+ * si son `run_battle`, su batalla (sin dueño vivo) pasa a `failed`/infraestructura; y ambos dejan
+ * rastro en `audit_log`. Una sola sentencia ⇒ atómico, idempotente (la 2.ª pasada no encuentra
+ * nada) y sin transacción explícita (los tests con una BD simulada siguen contando UN claim).
+ * Binds: kinds, staleBefore, now, parkMsg, parkReason.
+ */
+const PARK_EXHAUSTED_CTES = `
+  WITH parked AS (
+    UPDATE jobs SET
+      status = 'needs_review',
+      locked_by = NULL,
+      locked_at = NULL,
+      last_error = :parkMsg,
+      error_class = 'infrastructure',
+      updated_at = :now
+    WHERE id IN (
+      SELECT id FROM jobs
+      WHERE kind = ANY(:kinds)
+        AND status = 'running'
+        AND locked_at < :staleBefore
+        AND attempts >= max_attempts
+      ORDER BY created_at, id
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *
+  ),
+  failed_battles AS (
+    UPDATE battles b SET
+      status = 'failed',
+      failure_kind = 'infrastructure',
+      claimed_by = NULL,
+      lease_expires_at = NULL
+    FROM parked p
+    WHERE p.kind = 'run_battle'
+      -- Comparacion como TEXTO, sin CAST a uuid no hay orden de evaluacion que pueda hacer fallar la
+      -- sentencia entera por un payload mal formado (R329-04).
+      AND CAST(b.id AS text) = (p.payload->>'battleId')
+      AND (
+        b.status = 'scheduled'
+        OR (b.status = 'running' AND (b.lease_expires_at IS NULL OR b.lease_expires_at < now()))
+      )
+    RETURNING b.id, b.run_attempts
+  ),
+  audit_jobs AS (
+    INSERT INTO audit_log (action, target, detail)
+    SELECT 'worker.job_exhausted', 'job:' || p.id,
+           jsonb_build_object('kind', p.kind, 'attempts', p.attempts, 'maxAttempts', p.max_attempts,
+                              'reason', CAST(:parkReason AS text))
+    FROM parked p
+  ),
+  audit_battles AS (
+    INSERT INTO audit_log (action, target, detail)
+    SELECT 'worker.battle_failed_infrastructure', 'battle:' || f.id,
+           jsonb_build_object('reason', CAST(:parkReason AS text), 'failureKind', 'infrastructure',
+                              'runAttempts', f.run_attempts)
+    FROM failed_battles f
+  )
+`;
+
+/**
+ * Barrido de la cola: aparca los huérfanos con intentos agotados (ver PARK_EXHAUSTED_CTES).
+ * Reutilizable por rutas admin de reintento/cancelación y por el barrido periódico. Devuelve los
+ * trabajos aparcados (con su fila ya actualizada) para que el llamador cierre el torneo.
+ */
+export async function parkExhaustedStaleJobs(
+  db: Knex,
+  opts: { kinds?: JobKind[]; lockTimeoutMs?: number; now?: Date } = {},
+): Promise<JobRow[]> {
+  const now = opts.now ?? new Date();
+  const staleBefore = new Date(now.getTime() - (opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS));
+  const res = await db.raw(`${PARK_EXHAUSTED_CTES} SELECT * FROM parked`, {
+    kinds: opts.kinds ?? JOB_KINDS,
+    staleBefore,
+    now,
+    parkMsg: PARK_MESSAGE,
+    parkReason: EXHAUSTED_ORPHAN_REASON,
+  });
+  const parked = res.rows as JobRow[];
+  if (parked.length) workerMetrics.inc("jobs_parked_total", parked.length);
+  return parked;
 }
 
 /** El trabajo terminó bien (o con derrota deportiva ya registrada en la batalla). */

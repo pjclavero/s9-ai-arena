@@ -39,6 +39,7 @@ import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
 import { buildBattleRules, compositionViewer, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
+import { CTF_DISABLED_CODE, CTF_DISABLED_REASON, CTF_MODE, ctfPracticeEnabledFromEnv } from "../ctf-practice.js";
 import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
@@ -615,6 +616,12 @@ export function battleRoutes(
     const { mode, rulesetId, mapId, mapVersion, seed, participants } = req.body ?? {};
     if (!["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"].includes(mode)) {
       throw badRequest("mode inválido");
+    }
+    // V1 · BLOQUEO TEMPORAL de CTF (S9_CTF_PRACTICE_ENABLED). Antes de cualquier otra
+    // comprobación: cubre reglas clásicas, preset y personalizado (el modo de las reglas
+    // debe coincidir con `mode`, rules_mode_mismatch).
+    if (mode === CTF_MODE && !ctfPracticeEnabledFromEnv()) {
+      throw new ApiError(400, CTF_DISABLED_CODE, CTF_DISABLED_REASON);
     }
     if (!Array.isArray(participants) || participants.length < 1 || participants.length > 8) {
       throw badRequest("participants: entre 1 y 8");

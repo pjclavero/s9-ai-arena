@@ -17,7 +17,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
-import { killAllServices, killTree, spawnService } from "../../../packages/test-process/index.js";
+import { killAllServices, killTree } from "../../../packages/test-process/index.js";
+import { runMain as runMainProc, startMain } from "./support/spawn-main.js";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -944,39 +945,19 @@ describe("RC2 · bind y configuración: fallan CERRADO", () => {
 const TSX = join(REPO, "node_modules", ".bin", "tsx");
 const MAIN = join(REPO, "apps", "bot-manager", "src", "docker-proxy-main.ts");
 
-async function freePort(): Promise<number> {
-  const s = net.createServer();
-  await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-  const port = (s.address() as AddressInfo).port;
-  await new Promise<void>((r) => s.close(() => r()));
-  return port;
+const MAIN_OPTS = { command: TSX, args: [MAIN], baseEnv: { DOCKER_SOCKET: "/nonexistent.sock" } };
+
+/** Casos que terminan solos (exit 78): se espera a la salida del proceso. */
+function runMain(env: Record<string, string>) {
+  return runMainProc(env, MAIN_OPTS);
 }
 
-function runMain(env: Record<string, string>, untilLog?: RegExp, timeoutMs = 20_000) {
-  const child = spawnService(TSX, [MAIN], {
-    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DOCKER_SOCKET: "/nonexistent.sock", ...env },
-    stdio: ["ignore", "pipe", "pipe"],
+/** Casos que arrancan: puerto libre + espera a «escuchando», con relanzamiento SÓLO ante EADDRINUSE. */
+function startProxy(env: Record<string, string>) {
+  return startMain((port) => ({ ...env, DOCKER_PROXY_PORT: String(port) }), {
+    ...MAIN_OPTS,
+    untilLog: /proxy de Docker escuchando/,
   });
-  let out = "";
-  child.stdout.on("data", (c) => (out += c));
-  child.stderr.on("data", (c) => (out += c));
-  const exited = new Promise<number | null>((r) => child.on("exit", (code) => r(code)));
-  const ready = new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`timeout esperando ${untilLog}: ${out}`)), timeoutMs);
-    const check = () => {
-      if (untilLog && untilLog.test(out)) {
-        clearTimeout(t);
-        resolve();
-      }
-    };
-    child.stdout.on("data", check);
-    void exited.then(() => {
-      clearTimeout(t);
-      if (untilLog && !untilLog.test(out)) reject(new Error(`salió antes de ${untilLog}: ${out}`));
-      else resolve();
-    });
-  });
-  return { child, exited, ready, output: () => out };
 }
 
 describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn real)", () => {
@@ -994,6 +975,7 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
     async (_l, env) => {
       const p = runMain(env as Record<string, string>);
       const code = await p.exited;
+      await p.closed; // `exit` puede llegar antes de la cola de la tubería
       expect(code).toBe(78);
       expect(p.output()).toMatch(/configuración rechazada/);
       expect(p.output()).not.toMatch(/escuchando/);
@@ -1002,21 +984,16 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
   );
 
   it("bind en loopback con clientes 10.89.250.0/24: arranca, pero a un cliente loopback le da 403 (el main cablea el control)", async () => {
-    const port = await freePort();
-    const p = runMain(
-      {
-        DOCKER_PROXY_BIND: "127.0.0.1",
-        DOCKER_PROXY_PORT: String(port),
-        DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24",
-      },
-      /proxy de Docker escuchando/,
-    );
+    const { p, port } = await startProxy({
+      DOCKER_PROXY_BIND: "127.0.0.1",
+      DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24",
+    });
     try {
-      await p.ready;
       const res = await fetch(`http://127.0.0.1:${port}/containers/${ID_A}/json`);
       expect(res.status).toBe(403);
       expect((await res.json()).message).toMatch(/cliente no autorizado/);
-      expect(p.output()).toMatch(/"allowed":false.*cliente no autorizado: 127\.0\.0\.1/);
+      // La línea de log viaja por la tubería del hijo, no por el socket HTTP: se ESPERA a ella.
+      await p.waitFor(/"allowed":false.*cliente no autorizado: 127\.0\.0\.1/);
     } finally {
       await killTree(p.child, "SIGTERM");
       await p.exited;
@@ -1024,18 +1001,12 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
   }, 30_000);
 
   it("DOCKER_PROXY_DENIED_CLIENTS llega al servidor: origen admitido por CIDR pero excluido → 403", async () => {
-    const port = await freePort();
-    const p = runMain(
-      {
-        DOCKER_PROXY_BIND: "127.0.0.1",
-        DOCKER_PROXY_PORT: String(port),
-        DOCKER_PROXY_ALLOWED_CLIENTS: "127.0.0.0/8",
-        DOCKER_PROXY_DENIED_CLIENTS: "127.0.0.1",
-      },
-      /proxy de Docker escuchando/,
-    );
+    const { p, port } = await startProxy({
+      DOCKER_PROXY_BIND: "127.0.0.1",
+      DOCKER_PROXY_ALLOWED_CLIENTS: "127.0.0.0/8",
+      DOCKER_PROXY_DENIED_CLIENTS: "127.0.0.1",
+    });
     try {
-      await p.ready;
       const res = await fetch(`http://127.0.0.1:${port}/containers/${ID_A}/json`);
       expect(res.status).toBe(403);
       expect((await res.json()).message).toMatch(/cliente no autorizado/);
@@ -1046,13 +1017,8 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
   }, 30_000);
 
   it("bind en loopback sin clientes: arranca (golden path de la CI), denegaciones de política y anuncio de la allowlist", async () => {
-    const port = await freePort();
-    const p = runMain(
-      { DOCKER_PROXY_BIND: "127.0.0.1", DOCKER_PROXY_PORT: String(port) },
-      /proxy de Docker escuchando/,
-    );
+    const { p, port } = await startProxy({ DOCKER_PROXY_BIND: "127.0.0.1" });
     try {
-      await p.ready;
       const res = await fetch(`http://127.0.0.1:${port}/containers/create?name=rc2px-x`, {
         method: "POST",
         headers: { "content-type": "application/json" },
