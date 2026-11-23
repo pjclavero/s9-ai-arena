@@ -8,30 +8,26 @@
  * `replay.spec.ts` «pausa»: tras `data-state=paused`, `data-tick` pasó de 108 a
  * 110 sin que el reproductor avanzara — era el publicador poniéndose al día.
  *
- * Determinista: replay REAL (motor + replay-service), precargado en memoria, y
+ * Determinista: replay REAL (motor + S9R/1 servido con los lectores de la API,
+ * tests/s9r-replay-source.ts; V1 REPLAYS PR-4b), precargado en memoria, y
  * reloj falso (rAF, timers y performance.now) para fijar el instante de la pausa
  * entre dos publicaciones.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import request from "supertest";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { IdleBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
-import { createReplayServer } from "../../replay-service/src/server.js";
+import { hostS9rReplays } from "./s9r-replay-source.js";
 import type { ReplayIndexData, ReplaySegment, ReplaySource } from "../src/viewer/replay-player.js";
 
 const BATTLE = "pause-tick";
 const TICKS = 900;
 
 // Fuente en memoria (sin E/S durante el render): se rellena en beforeAll con el
-// índice y TODOS los segmentos servidos por el replay-service real.
+// índice y TODOS los segmentos servidos por los lectores S9R reales.
 const memory: { index: ReplayIndexData | null; segments: Map<string, ReplaySegment> } = {
   index: null,
   segments: new Map(),
@@ -63,8 +59,6 @@ vi.mock("../src/viewer/PhaserViewer.js", () => ({
   waitForViewerScene: async () => sceneStub,
 }));
 
-let dir: string;
-
 beforeAll(async () => {
   await initPhysics();
   const replay = await record(
@@ -83,11 +77,10 @@ beforeAll(async () => {
       b.attachBot("v_blue", new IdleBot("bot_blue"));
     },
   );
-  dir = mkdtempSync(join(tmpdir(), "replay-pause-"));
-  ingestReplay(dir, replay, { official: true });
-  const app = createReplayServer({ dir });
-  const idx = await request(app).get(`/replays/${BATTLE}/index`);
-  expect(idx.status).toBe(200);
+  const host = await hostS9rReplays([replay]);
+  const idxRes = await host.fetchImpl(`/replays/${BATTLE}/index`);
+  expect(idxRes.status).toBe(200);
+  const idx = { body: await idxRes.json() };
   memory.index = idx.body;
   // Precarga de todos los trozos que puede pedir el reproductor. CHUNK_TICKS = 600
   // en replay-player.ts (no exportado): los rangos son [c·600, min((c+1)·600−1, ticks)].
@@ -95,16 +88,16 @@ beforeAll(async () => {
   const total: number = idx.body.ticks;
   for (let from = 0; from <= total; from += CHUNK_TICKS) {
     const to = Math.min(from + CHUNK_TICKS - 1, total);
-    const seg = await request(app).get(`/replays/${BATTLE}/segment?fromTick=${from}&toTick=${to}`);
+    const seg = await host.fetchImpl(`/replays/${BATTLE}/segment?fromTick=${from}&toTick=${to}`);
     expect(seg.status).toBe(200);
-    memory.segments.set(`${from}-${to}`, seg.body);
+    memory.segments.set(`${from}-${to}`, await seg.json());
   }
+  await host.close();
 }, 60_000);
 
 afterAll(() => {
   cleanup();
   vi.useRealTimers();
-  if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("ReplayPage · pausa", () => {

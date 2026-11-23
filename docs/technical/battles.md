@@ -42,8 +42,8 @@ Una **batalla** es una simulación del motor 2D ([engine.md](engine.md)) entre 1
 | Sandbox de bots | `apps/bot-manager/src/{docker-proxy,container-runner}.ts` | `ProxyContainerRunner` → `s9-docker-proxy` → un contenedor por bot (tabla 18.2) |
 | Proveedor de lanzamiento | `apps/tournament-worker/src/bot-launch-provider.ts` → `apps/bot-manager/src/bot-launch.ts` (DEV-A) | Dice QUÉ lanzar por (bot, versión): imagen fijada, env, cmd (artefacto firmado) |
 | Motor | `apps/arena-engine/src/sim/*`, `protocol-server.ts` | Simulación determinista + protocolo arena/1 por WebSocket |
-| replay-service | `apps/replay-service/src/*` | Almacén de replays + estadísticas re-simuladas ([replays.md](replays.md)) |
-| Camino legado | `apps/api/src/battle-run.ts`, `services/battle-run-http-launcher.ts`, `apps/arena-engine/src/service.ts` | **Ya no lo usa nadie**: `POST /battles/{id}/run` delega en la cola. Queda como librería probada |
+| replay-service | `apps/replay-service/src/*` | Formato S9R/1, publicación (librería que usa el worker) + estadísticas re-simuladas ([replays.md](replays.md)) |
+| Camino legado | `apps/api/src/battle-run.ts`, `services/battle-run-http-launcher.ts`, `apps/arena-engine/src/service.ts` | **Ya no lo usa nadie**: `POST /battles/{id}/run` delega en la cola. Queda como librería probada; **no publica replays** ([abajo](#publicación-del-replay-sólo-el-worker)) |
 
 ## Flujo de datos paso a paso
 
@@ -118,11 +118,21 @@ RETURNING *
 En **una transacción**:
 
 1. `UPDATE battles SET status='finished', finished_at, failure_kind, result, final_state_hash, engine_versions, lease_expires_at=NULL WHERE id AND status='running' AND claimed_by=:owner`. **Si no es exactamente 1 fila → rollback y no se escribe nada** (otro titular la cerró o recuperó).
-2. Ingesta del replay (`ingestReplay`) **dentro** de la transacción, con la fila bloqueada: un finalizador perdedor nunca pisa `<battleId>.replay`. `replay_ref`, `replay_hash`.
+2. Publicación del replay S9R/1 (`publishRecording` → fila `replay_artifacts` + `publishPair` con prueba de cierre) como **último** paso de la transacción, sólo si el `UPDATE` del paso 1 casó: un finalizador perdedor nunca publica, y cada intento usa su propio nombre (`<battleId>.<intento>.s9r`/`.s9v`), sin sobrescribir. `replay_ref`, `replay_hash`. Un fallo es `storage_unavailable` (fallo técnico, rollback).
 3. `participants.outcome` (`win|loss|draw|disqualified`), `participants.cpu_ms` (sólo si se midió; nunca una estimación) y `participants.diagnostics` (forma `bot-diagnostics/v1`, migración `014_battle_diagnostics`). `runStatsJob` no la borra al reprocesar.
 4. `jobs.process_result` con `dedupe_key=process_result:<id>`.
 
 Después, `runStatsJob` (re-simulación del replay) escribe `battle_stats` (forma canónica: daño, disparos, aciertos, precisión, kills, banderas, minas, timeouts, `perModule`, `cpuMs` desde `participants.cpu_ms`).
+
+### Publicación del replay: sólo el worker
+
+**El único camino que publica replays es el tournament-worker**, en `finishBattle` (paso 8). No hay otro productor:
+
+- el **replay-service** no tiene rutas de escritura (`POST /replays/:id`, `/retention/sweep` y su credencial se retiraron en V1 REPLAYS PR-4b; 404 con o sin credencial);
+- el **lanzador HTTP de la API** (`services/battle-run-http-launcher.ts`, camino legado que nada cablea en producción: `apps/api/src/server.ts` no lo monta) conserva sus guardas —identidad del replay (`header.battleId`) y `verifyAndRecompute`— pero **nunca archiva**: devuelve siempre `replay.ingested: false` y, con `REPLAY_INGEST_REQUIRED=1`, la batalla es `failed`;
+- el arnés de smoke (`scripts/e2e-real-battle-smoke.ts`) y las herramientas escriben S9R/1 en su propio directorio, fuera de `battles`, y no aparecen en la plataforma.
+
+Deuda post-V1: retirar el lanzador entero (riesgo RB-R4: la ruta API → arena-engine `/run` queda fuera de la concurrencia del worker mientras exista). Las variables `REPLAY_SERVICE_URL`, `REPLAY_INGEST_REQUIRED` y `REPLAY_INGEST_SECRET_FILE` del Compose ya no tienen efecto en el replay-service.
 
 ### 9. Replay y visor
 

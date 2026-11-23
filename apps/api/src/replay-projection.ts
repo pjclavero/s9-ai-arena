@@ -28,7 +28,7 @@
  * cuantizado (hullLevel) y equipamiento privado (R2: sin ranuras, sin hullHpMax,
  * sin chasis en la nómina). El mapping se calcula UNA vez sobre todo el stream: un
  * segmento usa los mismos ids que el documento completo. Nunca: semilla, ruleset completo,
- * comandos (ni con `debugOpen`), `radio[].data`, `deployMine`, `participants[].spec`,
+ * comandos (la capa `debugOpen` está retirada), `radio[].data`, `deployMine`, `participants[].spec`,
  * hashes por tick, ni metadatos del almacén (sha, algoritmo, caducidad, ruta).
  * Sin semilla ni comandos la batalla NO se puede re-simular con lo publicado.
  */
@@ -228,8 +228,8 @@ export function projectEvents(events: unknown, meta: ViewerMeta | null = null): 
 
 /**
  * Índice PROYECTADO para el visor: sólo lo que el reproductor usa para pintar y
- * saltar. Sin sha/algoritmo/caducidad/checksum de mapa/versiones; `debugOpen`
- * siempre false (los comandos nunca salen proyectados).
+ * saltar. Sin sha/algoritmo/caducidad/checksum de mapa/versiones; sin capa de
+ * depuración (`debugOpen` retirado en V1 REPLAYS PR-4b: los comandos nunca salen).
  */
 export function projectIndex(index: any, meta: ViewerMeta | null, header: any = null): Record<string, unknown> {
   const pr = rosterProjector(String(index?.battleId ?? ""), header ?? {}, meta);
@@ -247,7 +247,6 @@ export function projectIndex(index: any, meta: ViewerMeta | null, header: any = 
     result: pr.projectResult(index?.result),
     official: index?.official === true,
     ...(typeof index?.createdAt === "string" ? { createdAt: index.createdAt } : {}),
-    debugOpen: false,
     ...(meta ? { world: scrub(meta.world), roster: pr.projectRoster() } : {}),
   };
 }

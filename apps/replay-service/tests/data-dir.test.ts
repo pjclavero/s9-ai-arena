@@ -18,7 +18,9 @@ import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { checkWritableDataDir, dataDirFailureLog } from "../src/data-dir.js";
-import { ingestReplay } from "../src/store.js";
+// V1 REPLAYS PR-4b · el escritor real de replays es el del worker (S9R/1): `writeS9rReplay` usa
+// el MISMO ReplayRecorder + publicación.
+import { writeS9rReplay } from "../src/testing/s9r-fixture.js";
 
 let replay: Replay;
 
@@ -60,10 +62,10 @@ function escribible(): string {
 }
 
 describe("B7 · el defecto de VM108 es reproducible", () => {
-  it("sobre un directorio sin permiso de escritura, ingestReplay muere con EACCES", () => {
+  it("sobre un directorio sin permiso de escritura, la grabación del replay muere con EACCES", async () => {
     const dir = noEscribible();
     // Esto es EXACTAMENTE lo que hacía el servicio en producción diez días.
-    expect(() => ingestReplay(dir, replay, { official: true })).toThrow(/EACCES|permission denied/i);
+    await expect(writeS9rReplay(dir, replay)).rejects.toThrow(/EACCES|permission denied/i);
     expect(readdirSync(dir)).toEqual([]);
   });
 });
@@ -75,12 +77,12 @@ describe("B7 · checkWritableDataDir", () => {
     expect(check.reason).toMatch(/EACCES|permission denied/i);
   });
 
-  it("acepta un directorio escribible y lo deja limpio (la sonda no deja basura)", () => {
+  it("acepta un directorio escribible y lo deja limpio (la sonda no deja basura)", async () => {
     const dir = escribible();
     expect(checkWritableDataDir(dir)).toEqual({ ok: true });
     expect(readdirSync(dir)).toEqual([]);
     // Y sobre ese mismo directorio la ingesta real SÍ funciona.
-    const stored = ingestReplay(dir, replay, { official: true });
+    const stored = await writeS9rReplay(dir, replay);
     expect(existsSync(stored.path)).toBe(true);
   });
 

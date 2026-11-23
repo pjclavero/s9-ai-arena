@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { record, toJsonl, type Replay } from "../../arena-engine/src/replay.js";
+import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { killTree, spawnService } from "../../../packages/test-process/index.js";
@@ -70,7 +70,8 @@ beforeAll(async () => {
       b.attachBot("v_blue", new HunterBot("bot_blue"));
     },
   );
-  jsonl = toJsonl(replay);
+  // Cuerpo cualquiera para las rutas retiradas (ya no existe formato de ingesta).
+  jsonl = JSON.stringify(replay);
 });
 
 // EQ1 · se mata el ÁRBOL (envoltorio tsx + servicio + sus hijos), no sólo el envoltorio.
@@ -223,7 +224,7 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
 /**
  * B8 · Fail-closed comprobado sobre el PROCESO REAL, no sobre la app en memoria.
  *
- * `ingest-auth.test.ts` prueba `createReplayServer()` con supertest. Esto es un
+ * (Histórico B8: `ingest-auth.test.ts` probaba la app en memoria; retirado en V1 REPLAYS PR-4b con la ingesta.) Esto es un
  * escalón más arriba y más cerca del contenedor: arranca `src/main.ts` como
  * proceso (el mismo `SERVICE_ENTRY` que fija el Compose), sin
  * `REPLAY_INGEST_SECRET` en el entorno — el despiste realista del operador — y

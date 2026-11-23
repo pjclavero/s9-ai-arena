@@ -48,7 +48,7 @@ Ningún valor secreto aparece aquí.
 | `S9_ENABLE_REAL_BATTLE_RUNS` | `api` | vacío (apagado) | no | **legado**: sólo cambia `realBattleRuns.enabled` en `/system/status`; `POST /battles/{id}/run` ya sólo delega en la cola |
 | `S9_MAX_CONCURRENT_REAL_BATTLE_RUNS` | `api` | vacío | no | límite de `/run` concurrentes |
 | `REPLAY_SERVICE_URL` | `api` | `http://replay-service:8083` | no | ingesta del replay del camino `/run` |
-| `REPLAY_INGEST_REQUIRED` | `api` | vacío | no | `1` = la batalla falla si la ingesta falla |
+| `REPLAY_INGEST_REQUIRED` | `api` | vacío | no | camino legado `/run` (apagado): `1` = la batalla es `failed` (la ingesta está retirada desde V1 REPLAYS PR-4b; nunca hay archivo) |
 | `DOCKER_PROXY_URL` | `tournament-worker` | vacío (sin defecto a propósito) | **sí** para ejecutar batallas | vacío = el worker NO reclama `run_battle` y lo anuncia al arrancar (`battleExecution: disabled`); con valor, ejecuta cada batalla con el artefacto firmado de cada bot |
 | `DOCKER_PROXY_URL` | `bot-build-worker` | `http://docker-proxy.internal:2375` | **sí** para validar bots | sin proxy, todo build se rechaza «sandbox no verificado» |
 | `DOCKER_PROXY_URL` | `arena-engine` | vacío | no | camino legado; vacío = el motor no lanza contenedores |
@@ -120,7 +120,7 @@ Ficheros en `infrastructure/secrets/` (generados por `init-secrets.sh`), montado
 | `postgres_password` | postgres, api, tournament-worker, bot-build-worker, map-service, replay-service, backup (y postgres-exporter en `observability`) | `POSTGRES_PASSWORD_FILE` / `PGPASSWORD_FILE` |
 | `jwt_secret` | api, tournament-worker (verifica el ticket de espectador, TD-028) | `JWT_SECRET_FILE` |
 | `arena_engine_internal_secret` | api, arena-engine | `ARENA_ENGINE_SHARED_SECRET_FILE` / `ARENA_ENGINE_INTERNAL_SECRET_FILE` |
-| `replay_ingest_secret` | api, replay-service | `REPLAY_INGEST_SECRET_FILE` |
+| `replay_ingest_secret` | api, replay-service (**sin efecto** desde V1 REPLAYS PR-4b: nadie lo lee; retirarlo del Compose es deuda post-V1) | `REPLAY_INGEST_SECRET_FILE` |
 | `artifact_signing_key` | bot-build-worker (firma) | `ARTIFACT_SIGNING_KEY_FILE` |
 | `artifact_verify_key` (pública, PEM SPKI; la deriva `init-secrets.sh` de la anterior) | api (`/keys/artifact-signing`), tournament-worker (verifica antes de lanzar) | `ARTIFACT_VERIFY_KEY_FILE` |
 | `restic_password`, `restic_ssh_key`, `restic_ssh_known_hosts` | backup | `RESTIC_PASSWORD_FILE`, `RESTIC_SSH_KEY_FILE`, `RESTIC_SSH_KNOWN_HOSTS_FILE` |
@@ -154,8 +154,8 @@ sea la copia de root y que nada de lo que ejecuta o lee el proxy sea escribible 
 ## Variables sólo de desarrollo y tests
 
 `ARENA_DEV_INSECURE_SECRETS=1` (secretos efímeros por proceso), `RUN_SLOW=1`, `REDIS_TEST_URL`,
-`S9_RUN_REAL_DOCKER_E2E`, `SMOKE_*`, `REPLAY_INGEST_ENABLED`, `REPLAY_INGEST_RETRIES` (estas dos
-las lee sólo `scripts/e2e-real-battle-smoke.ts`, no la API). Ver
+`S9_RUN_REAL_DOCKER_E2E`, `SMOKE_*`, `REPLAY_OUT_DIR`, `REPLAY_VERIFY_REQUIRED` (estas dos las lee
+sólo `scripts/e2e-real-battle-smoke.ts`; `REPLAY_INGEST_ENABLED`/`RETRIES` se retiraron con la ingesta en V1 REPLAYS PR-4b). Ver
 [../development/testing.md](../development/testing.md). **Nunca** en producción.
 
 ## Errores / limitaciones
@@ -182,6 +182,6 @@ las lee sólo `scripts/e2e-real-battle-smoke.ts`, no la API). Ver
 | `SPECTATE_WS_URL` relativa aceptada; `ws://` y `//host` rechazadas en producción | CODE_VERIFIED | `apps/api/src/routes/battles.ts` (`spectateWsBase`); `apps/api/src/public-api.test.ts` (R2.6) |
 | `TRUST_PROXY_HOPS`: compose `1`, código `0` si falta, `0..8`, inválido no arranca | CODE_VERIFIED | `apps/api/src/middleware/proxy-trust.ts:15-27`; `server.ts:20` |
 | `/run` ya no ejecuta; la API no cablea el launcher HTTP | CODE_VERIFIED | `apps/api/src/server.ts`; `apps/api/src/server-wiring.test.ts` (AST) |
-| `REPLAY_INGEST_ENABLED/RETRIES` sólo en el smoke | CODE_VERIFIED | `scripts/e2e-real-battle-smoke.ts:151,157`; `battle-run-http-launcher.ts:367-370` |
+| `REPLAY_OUT_DIR`/`REPLAY_VERIFY_REQUIRED` sólo en el smoke (ingesta retirada, PR-4b) | CODE_VERIFIED | `scripts/e2e-real-battle-smoke.ts` (`readHarnessConfig`) |
 | `/system/status` lee `GIT_COMMIT`/`COMMIT_SHA` | CODE_VERIFIED | `apps/api/src/routes/system.ts:50-51` |
 | Secreto de ticket derivado por HKDF | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:84-97` |

@@ -10,15 +10,18 @@ import { initPhysics } from "../src/sim/physics.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { mvpArena, gunnerLoadout, scoutLoadout } from "../src/fixtures.js";
 import { CircleBot, ForwardBot, HunterBot } from "../src/stubs.js";
-import {
-  compareStateHashes,
-  fromJsonl,
-  headerIncompatibility,
-  record,
-  toJsonl,
-  verify,
-  type Replay,
-} from "../src/replay.js";
+import { compareStateHashes, headerIncompatibility, record, verify, type Replay } from "../src/replay.js";
+import { readS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+/** V1 REPLAYS PR-4b · round-trip por S9R/1 (el formato real en disco), no por JSONL. */
+async function s9rRoundTrip(r: any): Promise<any> {
+  return readS9rReplay((await writeS9rReplay(mkdtempSync(joinPath(tmpdir(), "s9r-rt-")), r)).path);
+}
+import { RecipeCursor } from "../../replay-service/src/s9r/recipe.js";
+import { S9rWriter } from "../../replay-service/src/s9r/writer.js";
+import { CorruptReplayError } from "../../replay-service/src/s9r/errors.js";
 import { restoreFromReplayCheckpoint } from "../src/checkpoint.js";
 import { deriveStreamState, ReadOnlyRng, Rng, RngReadOnlyError, RngStreams, RNG_STREAM_NAMES } from "../src/rng.js";
 import { canonicalize, computeStateHash, hashFromComponents, STATE_HASH_COMPONENTS } from "../src/sim/state-hash.js";
@@ -81,32 +84,53 @@ describe("replay v2: formato", () => {
     expect(Object.keys(last.components)).toEqual([...STATE_HASH_COMPONENTS]);
   });
 
-  it("round-trip JSONL exacto y verificable", async () => {
-    const back = fromJsonl(toJsonl(base));
+  it("round-trip S9R/1 exacto y verificable", async () => {
+    const back = await s9rRoundTrip(base);
     expect(back).toEqual(base);
     const v = await verify(back);
     expect(v.mismatches).toEqual([]);
     expect(v.matches).toBe(true);
   });
 
-  it("formatVersion 1 (replays antiguos) se RECHAZA al leer", () => {
-    const lines = toJsonl(base).split("\n");
-    lines[0] = lines[0].replace('"formatVersion":2', '"formatVersion":1');
-    expect(() => fromJsonl(lines.join("\n"))).toThrow(/^format_version_mismatch/);
+  it("formatVersion 1 (replays antiguos) se RECHAZA: motivo único unsupported_format, sin re-simular", async () => {
+    const old = clone(base);
+    (old.header as any).formatVersion = 1;
+    expect(headerIncompatibility(old.header)).toMatch(/^unsupported_format/);
+    const v = await verify(old);
+    expect(v.matches).toBe(false);
+    expect(v.rejected).toMatch(/^unsupported_format/);
+    expect(v.recomputedResult).toBeNull();
   });
 
-  it("registro desconocido, cabecera duplicada o registro antes de cabecera = corrupción", () => {
-    const j = toJsonl(base);
-    expect(() => fromJsonl(j + '{"t":"raro"}\n')).toThrow(/registro desconocido/);
-    const first = j.split("\n")[0];
-    expect(() => fromJsonl(j + first + "\n")).toThrow(/más de una cabecera/);
-    expect(() => fromJsonl('{"t":"cmd","tick":0}\n' + j)).toThrow(/antes de la cabecera/);
+  it("registro desconocido, o comando «=» sin comando previo, en la receta = corrupción (nunca se salta)", async () => {
+    // S9R/1: la cabecera es el primer frame del contenedor y no puede duplicarse ni ir detrás
+    // (lo valida el lector: s9r-hardening T12). Los registros de un fragmento, sí:
+    for (const bad of ['{"k":"raro","t":1}', '{"k":"c","t":1,"v":"veh_1","=":1}']) {
+      const dir = mkdtempSync(joinPath(tmpdir(), "s9r-bad-"));
+      mkdirSync(joinPath(dir, ".partial"));
+      const p = joinPath(dir, ".partial", "x.s9r.part");
+      const w = await S9rWriter.create(p, {
+        kind: "R",
+        header: { ...base.header, s9r: { content: "s9.replay.recipe/v1" } } as any,
+        maxBytes: 1 << 24,
+      });
+      await w.append(bad, 1);
+      await w.close({ result: base.result as any });
+      const cursor = await RecipeCursor.open(p);
+      await expect(cursor.ensure(1)).rejects.toBeInstanceOf(CorruptReplayError);
+      await cursor.close();
+    }
   });
 
-  it("un payload con su propia clave t no se serializa", () => {
+  it("un payload con su propia clave k o t viaja intacto (sin ambigüedad: va anidado en `c`)", async () => {
     const r = clone(base);
-    (r.commands as any).push({ tick: 0, vehicleId: "veh_1", command: {}, t: "result" });
-    expect(() => toJsonl(r)).toThrow(/clave "t"/);
+    (r.commands as any).push({ tick: r.commands.at(-1)!.tick, vehicleId: "veh_x", command: { k: "h", t: "result" } });
+    const back = await s9rRoundTrip(r);
+    expect(back.commands.at(-1)).toEqual({
+      tick: r.commands.at(-1)!.tick,
+      vehicleId: "veh_x",
+      command: { k: "h", t: "result" },
+    });
   });
 
   it("la cadencia de hash NO estándar viaja en la cabecera y la re-simulación la respeta (P3-2)", async () => {

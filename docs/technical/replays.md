@@ -2,12 +2,12 @@
 
 ## Resumen
 
-Cada batalla terminada deja un **replay**: el JSONL del motor, comprimido, más un índice. Se guarda **en disco** (volumen de replays). No hay tabla de replays: la BD sólo guarda la referencia en `battles.replay_ref` y `battles.replay_hash`.
+Cada batalla terminada deja un **replay** en formato **S9R/1**: una **receta** (`<battleId>.<intento>.s9r`) y una **vista** (`<battleId>.<intento>.s9v`) en el volumen de replays. La BD guarda la referencia en `battles.replay_ref` / `battles.replay_hash` y el inventario en `replay_artifacts` (migración 024).
 
-Lo escribe el `tournament-worker` usando la librería del replay-service. Desde la fase *Production Readiness* (2026-10, PR #158, incluida en el commit de producción RC5.5) lo sirve **un solo camino** hacia el navegador:
+Lo publica **sólo** el `tournament-worker`, dentro de la transacción de cierre de la batalla (V1 REPLAYS). Ningún otro camino publica replays: el replay-service ya no ingiere (V1 REPLAYS PR-4b) y el lanzador HTTP de la API, apagado, no archiva nada ([battles.md](battles.md#publicación-del-replay-sólo-el-worker)). Desde la fase *Production Readiness* (2026-10, PR #158, incluida en el commit de producción RC5.5) lo sirve **un solo camino** hacia el navegador:
 
 - la **API** (`/api/v1/replays`, `/api/v1/replays/{id}`, `/index`, `/segment`, `/verify` y `/api/v1/public/replays*`), que aplica la [política de acceso](#autorización-de-acceso-td-004) **antes** de abrir ningún fichero;
-- el **replay-service** queda **interno**: el gateway responde 404 en `/replays*` y sólo lo alcanza la red `platform` (ingesta del worker con su secreto, diagnóstico de operador).
+- el **replay-service** queda **interno** y sin rutas de replay (sólo `/healthz` y `/version`); el gateway responde 404 en `/replays*`.
 
 Antes ([TD-004](../roadmap/technical-debt.md#td-004)) el gateway hacía *proxy* de `/replays/*` al replay-service **sin autenticar**: cualquiera bajaba inventario, fichero, índice y segmentos, también de batallas privadas, aunque la API anunciara `enabled:false`. En la integración del cierre funcional (`integration/functional-closure`) la lista web ya no sufre la redirección 301 a `http://` ([TD-014](../roadmap/technical-debt.md#td-014)) y el reproductor web arranca y reproduce en navegador real ([TD-009](../roadmap/technical-debt.md#td-009)).
 
@@ -16,7 +16,7 @@ Antes ([TD-004](../roadmap/technical-debt.md#td-004)) el gateway hacía *proxy* 
 - [Qué es](#qué-es)
 - [Formato](#formato)
 - [Almacenamiento e índice](#almacenamiento-e-índice)
-- [Escritura (ingesta)](#escritura-ingesta)
+- [Escritura (publicación)](#escritura-publicación)
 - [Autorización de acceso (TD-004)](#autorización-de-acceso-td-004)
 - [Replay crudo y proyección pública (PRE-1)](#replay-crudo-y-proyección-pública-pre-1)
 - [Lectura: API](#lectura-api)
@@ -35,30 +35,29 @@ Un replay es la **receta** de la batalla, no un vídeo: cabecera (semilla, rules
 
 ## Formato
 
-- **JSONL** (`apps/arena-engine/src/replay.ts`): una línea por registro con `t ∈ header | cmd | evt | snap | hash | result`.
-- **Compresión** (`apps/replay-service/src/format.ts`): zstd si el runtime lo trae (Node ≥ 22.15); si no, gzip. El índice registra el algoritmo usado.
-- **Keyframes**: uno cada 30 snapshots (≈ cada 3 s a 10 Hz). Los snapshots son estado completo, así que basta con empezar en el anterior.
+- **S9R/1** (`apps/replay-service/src/s9r/`): contenedor por **fragmentos** con índice y pie, verificable por partes (`verifyFile`).
+  - **Receta** `.s9r`: cabecera (semilla, ruleset, mapa, participantes, versiones), comandos, hashes de estado y checkpoints. Es lo que permite re-simular (`RecipeCursor`, comandos fragmento a fragmento).
+  - **Vista** `.s9v`: snapshots públicos, eventos y keyframes, que es lo que pinta el visor (`ViewReader`, lectura por rangos).
+- El **JSONL v2** de fichero entero (`toJsonl`/`fromJsonl`) y la compresión zstd/gzip del almacén anterior están **retirados** (corte D-OP-30, V1 REPLAYS PR-4b). Una referencia que no es `.s9r` es «sin replay» (404 uniforme).
+- **Keyframes**: en el resumen de la vista; un segmento arranca en el keyframe anterior al tick pedido.
+
+El servicio arranca sólo si el directorio es escribible (`requireWritableDataDir`).
 
 ## Almacenamiento e índice
 
-En `REPLAYS_DIR` (`/data/replays` por defecto, volumen compartido entre el worker y el replay-service):
+En `REPLAYS_DIR` (`/data/replays` por defecto; el worker lo monta en escritura y la API en sólo lectura):
 
-- `<battleId>.replay`: el JSONL comprimido. Su ruta es la que va a `battles.replay_ref`.
-- `<battleId>.replay.json`: `StoredReplayIndex`:
-  - identidad e integridad: `formatVersion`, `battleId`, `algo`, `sha256` (del fichero **comprimido**) y `sizeBytes`;
-  - retención: `official`, `createdAt` y `expiresAt` (`null` si es oficial);
-  - contenido: `ticks`, `snapshotCount`, `versions`, `mapChecksum` y `keyframes[]`;
-  - `result` con `winner`, `ticks`, `score` y `finalStateHash`;
-  - `debugOpen`.
+- `<battleId>.<intento>.s9r` (receta) y `<battleId>.<intento>.s9v` (vista). La ruta de la receta va a `battles.replay_ref`; su sha256 a `battles.replay_hash`.
+- `replay_artifacts` (BD): una fila por replay publicado con su estado (`published`), clase (`official` / `tournament` / `practice`), rutas y sha256 de receta y vista. La API sólo sirve una vista cuyo sha256 coincide con `view_sha256`.
+- El índice que ve el visor se calcula al vuelo del resumen de la vista (`storeIndexOf` / `projectIndex`): `ticks`, `snapshotCount`, `keyframes`, `result`, `official`, `createdAt`. **Ya no lleva `debugOpen`** (capa retirada, V1 REPLAYS PR-4b).
 
 El volumen entra en la copia de seguridad que documenta C ([backup.md](../operations/backup.md)).
 
-## Escritura (ingesta)
+## Escritura (publicación)
 
-1. **Camino activo**: `finishBattle` del worker llama a `ingestReplay(replaysDir, replay, {official})`, que valida, comprime y escribe los dos ficheros. Después `battles.replay_ref` y `replay_hash` quedan en la misma transacción que el resultado ([battles.md](battles.md#battle_result-forma-de-battlesresult)).
-2. **Por HTTP**: `POST /replays/{battleId}` en el replay-service, con cuerpo JSONL. Exige la cabecera `x-replay-ingest-auth` con el secreto interno (`REPLAY_INGEST_SECRET[_FILE]`). Sin secreto configurado, **toda escritura responde 401**. Lo usa el launcher del camino real (apagado).
-
-El servicio arranca sólo si el directorio es escribible (`requireWritableDataDir`).
+1. **Único camino**: el worker graba la batalla con `ReplayRecorder` (cola acotada) y, en `finishBattle`, como último paso de la transacción y sólo si su `UPDATE … WHERE claimed_by` casó, llama a `publishRecording` (`apps/replay-service/src/artifacts.ts`): fila `replay_artifacts`, `replay_ref`/`replay_hash` y `publishPair` con las pruebas de cierre del escritor (vista primero, receta al final, sin sobrescribir). Un fallo es `storage_unavailable` y hace rollback ([battles.md](battles.md#battle_result-forma-de-battlesresult)).
+2. **Retirado (V1 REPLAYS PR-4b)**: `POST /replays/{battleId}` del replay-service (JSONL con `x-replay-ingest-auth`), `ingestReplay`, la credencial `REPLAY_INGEST_SECRET[_FILE]` y la CLI `ingest`. El lanzador HTTP de la API (apagado) conserva sus guardas pero nunca archiva (`ingested:false`; estricto ⇒ `failed`).
+3. Herramientas y tests escriben replays con `apps/replay-service/src/s9r/replay-file.ts` (`writeS9rReplay` / `readS9rReplay`), que usa el mismo grabador y publicación que el worker.
 
 ## Autorización de acceso (TD-004)
 
@@ -103,15 +102,15 @@ Nadie más: ni `organizer` (aunque sea el creador del torneo: lee, pero recibe l
 - snapshots públicos del motor (posiciones, rumbo, vida, módulos por ranura y estado, proyectiles, marcador, objetivos del modo);
 - eventos públicos (marcador, destrucciones, minas que **explotan**, banderas, zonas, juggernaut, prórroga, límite técnico); un tipo de evento nuevo no sale hasta añadirlo a la lista a propósito;
 - resultado deportivo (ganador, motivo de fin, ticks, marcador y hash final, que permite auditar con `verify`);
-- para el reproductor: `ticks`, `snapshotCount`, `keyframes`, `official`, `createdAt` y `debugOpen: false`.
+- para el reproductor: `ticks`, `snapshotCount`, `keyframes`, `official` y `createdAt` (sin `debugOpen`: la capa de depuración se retiró en V1 REPLAYS PR-4b).
 
-**Qué no lleva nunca**: semilla, ruleset completo, comandos de los bots (tampoco con `debugOpen`), carga de radio, despliegue de minas, `participants[].spec` (loadout), eventos privados de un bot (impactos recibidos, acciones rechazadas…), hashes por tick ni metadatos de almacén (sha, algoritmo, tamaño, caducidad, checksum del mapa, rutas). Lo publicado **no permite re-simular** la batalla porque no contiene los **comandos** privados de los bots: sin ellos, ni siquiera conociendo la semilla se reproduce el resultado. La seguridad de la proyección no depende de ocultar la semilla (la vista de auditoría de batalla puede revelarla; ver #264).
+**Qué no lleva nunca**: semilla, ruleset completo, comandos de los bots, carga de radio, despliegue de minas, `participants[].spec` (loadout), eventos privados de un bot (impactos recibidos, acciones rechazadas…), hashes por tick ni metadatos de almacén (sha, algoritmo, tamaño, caducidad, checksum del mapa, rutas). Lo publicado **no permite re-simular** la batalla porque no contiene los **comandos** privados de los bots: sin ellos, ni siquiera conociendo la semilla se reproduce el resultado. La seguridad de la proyección no depende de ocultar la semilla (la vista de auditoría de batalla puede revelarla; ver #264).
 
 | Recurso | Con crudo | Sin crudo (lector autorizado) |
 |---|---|---|
-| `GET /replays/{id}` | fichero comprimido | 404 uniforme |
+| `GET /replays/{id}` | receta `.s9r` en streaming | 404 uniforme |
 | `GET /replays/{id}/index` | índice de almacén + mundo + nómina | índice proyectado (`projection: "s9.replay.public-competition.v2"`) |
-| `GET /replays/{id}/segment` | segmento tal cual (comandos sólo con `debugOpen`) | segmento proyectado, sin comandos |
+| `GET /replays/{id}/segment` | segmento de la vista tal cual (nunca comandos) | segmento proyectado, sin comandos |
 | `POST /replays/{id}/verify` | booleano y hashes | igual (no entrega contenido) |
 | `GET /public/replays/{id}/download` | — (ruta pública) | documento JSON proyectado completo, para todos (admin incluido) |
 
@@ -124,9 +123,9 @@ El reproductor web consume sólo índice y segmentos y funciona igual con la pro
 | Ruta | Rol mínimo | Nota |
 |---|---|---|
 | `GET /api/v1/replays?limit=&cursor=` | `user` (anónimo ⇒ 401) | `{items:[{battleId, ticks, winner, official, createdAt, sizeBytes}], nextCursor}`: sólo lo que el usuario puede leer. Sale de `battles`, no del inventario de ficheros |
-| `GET /api/v1/replays/{id}` | visitante (cuota anónima) | Fichero comprimido (`battles.replay_ref`), **sólo con acceso al crudo** ([PRE-1](#replay-crudo-y-proyección-pública-pre-1)) |
-| `GET /api/v1/replays/{id}/index` | visitante (cuota anónima) | El índice (`<replay_ref>.json`) con acceso al crudo; si no, el índice proyectado |
-| `GET /api/v1/replays/{id}/segment?fromTick&toTick` | visitante (cuota anónima) | Snapshots y eventos desde el keyframe anterior; con acceso al crudo, `commands` sólo con `debugOpen`; sin él, proyectado y sin comandos. Comprueba el sha256 del índice antes de decodificar; caché acotada (8 replays) por proceso |
+| `GET /api/v1/replays/{id}` | visitante (cuota anónima) | Receta `.s9r` (`battles.replay_ref`) en streaming, **sólo con acceso al crudo** ([PRE-1](#replay-crudo-y-proyección-pública-pre-1)) |
+| `GET /api/v1/replays/{id}/index` | visitante (cuota anónima) | Índice de almacén (del resumen de la vista) con acceso al crudo; si no, el índice proyectado. Sin `debugOpen` |
+| `GET /api/v1/replays/{id}/segment?fromTick&toTick` | visitante (cuota anónima) | Snapshots y eventos desde el keyframe anterior, leídos sólo de los fragmentos que cubren el rango (máx. 1200 ticks; por defecto 600). Nunca comandos. Con acceso al crudo, tal cual; sin él, proyectado. La vista se abre sólo si su sha256 coincide con `replay_artifacts.view_sha256` |
 | `POST /api/v1/replays/{id}/verify` | visitante (cuota propia) | Ver [abajo](#verificación-de-un-replay) |
 | `GET /api/v1/public/replays`, `/{id}`, `/{id}/download` | visitante | Sólo con el acceso público a replays activado (ajuste de runtime; la variable es el valor inicial) y el predicado público; con la bandera apagada, `{enabled:false, items:[]}` o 404. Proyección sin seed ni ruta interna; `/download` entrega el documento proyectado en JSON, nunca el fichero crudo |
 
@@ -134,54 +133,49 @@ La API monta el volumen de replays en sólo lectura (`arena_replays:/data/replay
 
 ## Lectura: replay-service (interno)
 
-`apps/replay-service/src/server.ts`. **No es alcanzable desde el gateway** desde TD-004; sólo por la red interna `platform`. Las lecturas no llevan credencial (riesgo residual: cualquier servicio de `platform` puede leerlas). El cálculo de segmentos es la misma función que usa la API (`apps/replay-service/src/segment.ts`).
+Desde V1 REPLAYS PR-4 el replay-service **no sirve replays** y desde PR-4b su código de rutas antiguas está **retirado** (`server.ts`, `store.ts`, `segment.ts`, `auth.ts`). El proceso (`apps/replay-service/src/main.ts`) sólo expone:
 
 | Ruta | Respuesta |
 |---|---|
-| `GET /replays?limit=&order=` | Inventario completo leído de los índices |
-| `GET /replays/{id}` | Fichero comprimido; admite `Range` (206/416); cabecera `X-Replay-Sha256` |
-| `GET /replays/{id}/index` | El índice |
-| `GET /replays/{id}/segment?fromTick&toTick` | Segmento |
-| `POST /replays/{id}` | Ingesta (con credencial) |
-| `POST /replays/{id}/verify` | Re-simulación (sin credencial) |
-| `POST /retention/sweep` | Borrado de caducados (con credencial) |
 | `GET /healthz` | Estado del servicio |
+| `GET /version` | Identidad de build |
+
+Cualquier `/replays*` o `/retention/sweep` responde 404, con o sin credencial (`apps/replay-service/tests/service-bootstrap.test.ts`). La CLI conserva `verify` (receta S9R/1); `ingest`, `sweep` y `serve` ya no existen.
 
 ## Verificación de un replay
 
-`verifyReplay` (API):
+`verifyReplay` (API, `verifyRecipe` en `apps/api/src/replay-s9r.ts`):
 
-1. Compara el sha256 del fichero con `battles.replay_hash`; si no coincide, `checksum_mismatch`.
-2. Descomprime y parsea; si falla, `corrupt_file`.
-3. Re-simula (`verifyLoaded`).
-4. Exige que `final_state_hash` de la BD coincida con el del fichero.
+1. Integridad completa de la receta contra `battles.replay_hash`, en una pasada en streaming; si no coincide, `checksum_mismatch`; si el contenedor es inválido, `corrupt_file`.
+2. Re-simula con `RecipeCursor` (comandos por fragmentos) y compara hashes intermedios, checkpoints y resultado.
+3. Exige que `final_state_hash` de la BD coincida con el de la receta.
 
-Responde `{matches, valid, officialHash, recomputedHash, reason, message, divergedAtTick}`. Un replay grabado con otra versión del motor da `valid=false`, `reason=engine_version_mismatch` y un `message` que lo explica: no se puede re-simular, pero **no** está manipulado ([ADR-019](../adr/ADR-019-perimetro-y-version-del-motor.md)). Exige poder leer el replay (misma política). Re-simular es caro: la API lo limita con cuota anónima; la ruta del replay-service ya no es alcanzable desde fuera.
+Responde `{matches, valid, officialHash, recomputedHash, reason, message, divergedAtTick}`. Un replay grabado con otra versión del motor da `valid=false`, `reason=engine_version_mismatch` y un `message` que lo explica: no se puede re-simular, pero **no** está manipulado ([ADR-019](../adr/ADR-019-perimetro-y-version-del-motor.md)). Un formato anterior da `unsupported_format`. Exige poder leer el replay (misma política). Re-simular es caro: la API lo limita con cuota anónima.
 
 ## Retención
 
-- Los replays no oficiales (práctica) se crean con `expiresAt = createdAt + 7 días`; los oficiales nunca caducan.
-- `sweepRetention` borra los caducados, pero **ningún proceso del repositorio lo programa**. Sólo existen la ruta autenticada y la CLI (`apps/replay-service/src/cli.ts`). En la práctica no se borra nada.
+- La retención del almacén anterior (`expiresAt` de 7 días, `sweepRetention`, `POST /retention/sweep`) se **retiró** con él (V1 REPLAYS PR-4b). Nunca estuvo programada.
+- La clase de cada replay queda en `replay_artifacts` (`official` / `tournament` / `practice`); el janitor que aplicará la retención sobre S9R/1 es trabajo de PR-6. Hoy no se borra nada.
 
 ## Gobernanza actual
 
 - **Acceso** (PR #158, incluida en el commit de producción RC5.5): una autoridad (la API) y el gateway cerrado en `/replays*`; ver [Autorización de acceso](#autorización-de-acceso-td-004) y [TD-004](../roadmap/technical-debt.md#td-004) (cerrada).
 - **Esquema**: ninguna respuesta de replay redirige; `absolute_redirect off` en cada `server` y `/replays` responde 404 sin `Location` ([TD-014](../roadmap/technical-debt.md#td-014)).
-- **Escritura**: la ingesta y el barrido están autenticados. El cuerpo se lee entero (hasta 64 MB) antes del 401.
+- **Escritura**: sólo el worker publica (dentro de la transacción de cierre, con prueba de cierre). No existe ninguna ruta HTTP de escritura de replays.
 
 ## Errores / limitaciones
 
-- Un replay sin fila de batalla (por ejemplo, el de un arnés) ya no aparece en la lista web (sale de `battles`); sigue en el inventario interno del replay-service.
-- La caché de segmentos de la API es por proceso y acotada (8 replays); la del replay-service interno no tiene límite.
-- Las lecturas del replay-service no exigen credencial dentro de la red `platform`.
-- No hay retención programada.
+- Un replay sin fila de batalla (por ejemplo, el del arnés de smoke) no aparece en la web: sólo se lista lo que está en `battles`.
+- Las referencias de formato anterior (`.replay` JSONL) son «sin replay» (D-OP-30): no se sirven ni se verifican.
+- No hay retención programada (PR-6).
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: generación e ingesta, índice, segmentos, descarga con `Range` y verificación por re-simulación (`matches:true` en la auditoría).
+- **FUNCIONA ACTUALMENTE (V1 REPLAYS)**: publicación S9R/1 por el worker, índice, segmentos por fragmentos, descarga de la receta en streaming y verificación por re-simulación.
 - **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real.
 - **FUNCIONA ACTUALMENTE (PR #158, incluida en el commit de producción RC5.5)**: autorización de replays (TD-004) probada a través del gateway real y en navegador real; con el replay-service parado los replays siguen leyéndose (la API lee el volumen).
-- **PENDIENTE**: retención programada y apertura de `debugOpen` por el dueño (no hay pantalla).
+- **RETIRADO (V1 REPLAYS PR-4b, decisión del operador)**: la capa de depuración del replay (`debugOpen`, comandos de los bots en el visor). Cambio de contrato registrado en [known-issues](../roadmap/known-issues.md).
+- **PENDIENTE**: retención programada (janitor de PR-6).
 
 ## Documentación relacionada
 
@@ -197,10 +191,10 @@ Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| Ficheros `.replay` y `.replay.json`; sha256 del comprimido | CODE_VERIFIED | `apps/replay-service/src/store.ts:42-46,81-122`; `format.ts:65-90` |
-| zstd o gzip; keyframe cada 30 | CODE_VERIFIED | `format.ts:30-38,94-100` |
-| El worker ingiere y guarda `replay_ref` y `replay_hash` | CODE_VERIFIED | `apps/tournament-worker/src/battle-runner.ts:240-271` |
-| Rutas del replay-service; escritura con secreto | CODE_VERIFIED | `apps/replay-service/src/server.ts`; `main.ts:27-45` |
+| Receta `.s9r` + vista `.s9v` S9R/1; fila `replay_artifacts` | CODE_VERIFIED | `apps/replay-service/src/s9r/`; `apps/replay-service/src/artifacts.ts` (`publishRecording`) |
+| Sólo el worker publica, en la transacción de cierre | CODE_VERIFIED | `apps/tournament-worker/src/battle-runner.ts` (`finishBattle` → `publishRecording`) |
+| El replay-service no tiene rutas de replay (404 con o sin credencial) | TEST_VERIFIED | `apps/replay-service/src/main.ts`; `apps/replay-service/tests/service-bootstrap.test.ts` |
+| Sin capa de depuración (`debugOpen`) en índice ni reproductor | TEST_VERIFIED | `apps/api/src/pre1-replay-projection.test.ts`; `apps/web/tests/replay-player.test.ts` |
 | (TD-004) Política única de acceso | CODE_VERIFIED | `apps/api/src/replay-access.ts:40-118` |
 | (TD-004) Rutas de lectura de la API y `no-store` | CODE_VERIFIED | `apps/api/src/routes/replays.ts:31,55,104,122,133,154`; contrato `apps/api/openapi.yaml` 0.9.0 |
 | (TD-004) Predicado público en `/public/replays*` | CODE_VERIFIED | `apps/api/src/routes/battles.ts:159,292` |
@@ -208,7 +202,6 @@ Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional
 | (TD-004) Matriz actor × batalla × recurso | TEST_VERIFIED | `apps/api/src/td004-replay-access.test.ts` (87/87, rc=0; mutaciones de política ⇒ rojo) |
 | (TD-004) Anónimo 404 / participante 200 por nginx real | RUNTIME_VERIFIED (entorno aislado) | `infrastructure/gateway/tests/replay-gateway.test.ts` (11/11, rc=0; re-exponer el `proxy_pass` ⇒ 5 rojos, rc=1) |
 | (TD-004) La web lee por la API con sesión | CODE_VERIFIED | `apps/web/src/pages/ReplayPage.tsx:33,50`; `ReplaysPage.tsx:30`; `App.tsx:206` |
-| 7 días de TTL; barrido sin programar | CODE_VERIFIED | `store.ts:22,255-270`; búsqueda de `retention/sweep` (sólo ruta, CLI y comentario de compose) |
 | Lecturas anónimas 200 en producción con `enabled:false` (antes de TD-004, en la medición del 2026-10-15; hoy cerrada por el PR #158) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 (GET anónimos) |
 | 301 a http y bloqueo por contenido mixto (base) | RUNTIME_VERIFIED | Auditoría B pasada 2 §4 (navegador real) |
 | Sin redirección en `/replays` (FC-D; desde TD-004, 404 sin `Location`) | RUNTIME_VERIFIED | `tests/browser/specs/replay.spec.ts`; `infrastructure/gateway/tests/replay-gateway.test.ts` (SEC-9) |

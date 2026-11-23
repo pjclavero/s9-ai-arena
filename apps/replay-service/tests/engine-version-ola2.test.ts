@@ -19,11 +19,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { fromJsonl, record, toJsonl, type Replay } from "../../arena-engine/src/replay.js";
+import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import engineDeps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
-import { ingestReplay, verifyStored } from "../src/store.js";
+// V1 REPLAYS PR-4b · sobre S9R/1: receta grabada con el grabador del worker y verify por fragmentos
+// (`verifyRecipePath`); el mensaje para personas lo da el verify de la API (`verifyRecipe`).
+import { writeS9rReplay } from "../src/testing/s9r-fixture.js";
+import { verifyRecipePath } from "../src/recipe-verify.js";
+import { verifyRecipe } from "../../api/src/replay-s9r.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -55,37 +59,35 @@ describe("ADR-024 · motor 0.5.0 (OLA 2)", () => {
     expect(engineDeps.engine.version).toBe("0.5.0");
     const replay = await recordBattle("dm_practice@1", "adr024_cur");
     expect(replay.header.versions.engine).toBe("0.5.0");
-    const dir = tmp();
-    ingestReplay(dir, replay, { official: true });
-    const r = await verifyStored(dir, replay.header.battleId);
-    expect(r.valid).toBe(true);
-    expect(r.verification!.matches).toBe(true);
+    const fx = await writeS9rReplay(tmp(), replay);
+    const { verification } = await verifyRecipePath(fx.path);
+    expect(verification.rejected).toBeNull();
+    expect(verification.matches).toBe(true);
   });
 
   it("un replay v2 de 0.4.0 da engine_version_mismatch y nunca llega a re-simular", async () => {
-    const replay = fromJsonl(toJsonl(await recordBattle("dm_practice@1", "adr024_v040")));
+    const replay: Replay = structuredClone(await recordBattle("dm_practice@1", "adr024_v040"));
     replay.header.versions = { ...replay.header.versions, engine: "0.4.0" };
-    const dir = tmp();
-    ingestReplay(dir, replay, { official: true });
-    const r = await verifyStored(dir, replay.header.battleId);
+    const fx = await writeS9rReplay(tmp(), replay);
+    const { verification } = await verifyRecipePath(fx.path);
+    expect(verification.rejected).toBe("engine_version_mismatch: replay=0.4.0, motor=0.5.0");
+    expect(verification.recomputedResult).toBeNull(); // nunca llega a re-simular
+    const r: any = await verifyRecipe({ replay_ref: fx.path, replay_hash: fx.sha256 });
     expect(r.valid).toBe(false);
     expect(r.reason).toBe("engine_version_mismatch: replay=0.4.0, motor=0.5.0");
-    expect(r.verification).toBeNull();
     expect(r.message).toMatch(/0\.4\.0; la actual es 0\.5\.0/);
     expect(r.message).toMatch(/NO significa que esté manipulado/);
   });
 
   it("un replay v2 de 0.4.0 con respawn y sin política de rearme: la versión manda antes que rules_incomplete", async () => {
-    const replay = fromJsonl(toJsonl(await recordBattle("tdm_mvp@1", "adr024_rearm")));
+    const replay: Replay = structuredClone(await recordBattle("tdm_mvp@1", "adr024_rearm"));
     expect(replay.header.ruleset.respawn.enabled).toBe(true);
     // Así eran las cabeceras v2 anteriores a G3: sin `rearmPolicy`.
     delete (replay.header.ruleset.respawn as { rearmPolicy?: string }).rearmPolicy;
     replay.header.versions = { ...replay.header.versions, engine: "0.4.0" };
-    const dir = tmp();
-    ingestReplay(dir, replay, { official: true });
-    const r = await verifyStored(dir, replay.header.battleId);
-    expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/^engine_version_mismatch: replay=0\.4\.0, motor=0\.5\.0/);
-    expect(r.verification).toBeNull();
+    const fx = await writeS9rReplay(tmp(), replay);
+    const { verification } = await verifyRecipePath(fx.path);
+    expect(verification.rejected).toMatch(/^engine_version_mismatch: replay=0\.4\.0, motor=0\.5\.0/);
+    expect(verification.recomputedResult).toBeNull();
   });
 });

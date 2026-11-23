@@ -51,7 +51,6 @@ function makeSource(totalTicks: number): ReplaySource {
       snapshotCount: snapshots.length,
       keyframes: [{ tick: 0, snapshotIndex: 0 }],
       result: { winner: "red", ticks: totalTicks, score: {}, finalStateHash: "h" },
-      debugOpen: false,
     }),
     segment: async (fromTick, toTick) => ({
       fromKeyframeTick: fromTick,

@@ -7,8 +7,10 @@
  * nginx-behind-proxy.conf (TLS fuera)— a las que SÓLO se les sustituyen los
  * nombres de servicio Docker por 127.0.0.1:<puerto>, los `listen` y el
  * resolver. Todas las `location` son las del repo. Detrás: la API real
- * (createApp + PostgreSQL embebido) y el replay-service REAL sirviendo el MISMO
- * directorio de replays.
+ * (createApp + PostgreSQL embebido) y, como upstream de `replay-service:8083`, un
+ * servidor FUGADO que entrega cualquier replay a cualquiera (V1 REPLAYS PR-4b: el
+ * replay-service real ya no tiene rutas de replay; un upstream que sí las tuviera es
+ * el peor caso para la mutación SEC-8).
  *
  * Comprueba (SPEC DEV-SEC):
  *  - SEC-4 anónimo por el gateway: /replays, /replays/, /replays/<id>, /index,
@@ -22,9 +24,9 @@
  *
  * SEC-8 · MUTACIÓN: devolver a `location /replays/` su `proxy_pass` al
  * replay-service (lo que había antes de TD-004) pone ROJO este fichero, porque
- * el replay-service real entrega el índice del replay PRIVADO al anónimo. Por
- * eso la sustitución de `replay-service:8083` es OPCIONAL aquí: la conf buena no
- * lo menciona, la mutada sí, y el test la conecta al servicio real.
+ * el upstream fugado entrega el índice del replay PRIVADO al anónimo. Por eso la
+ * sustitución de `replay-service:8083` es OPCIONAL aquí: la conf buena no lo
+ * menciona, la mutada sí, y el test la conecta al upstream fugado.
  *
  * Opt-in (necesita Docker y la imagen nginx): S9_RUN_GATEWAY_SECURITY_E2E=1.
  * Sin él, el fichero se SALTA, y saltado NO es verde. Recursos Docker con
@@ -45,7 +47,6 @@ import { startTestDb, type TestDbHandle } from "../../../apps/api/src/testing/te
 import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../../apps/api/src/db/seeds/dev.js";
 import { tokenFor } from "../../../apps/api/src/testing/helpers.js";
 import { createApp } from "../../../apps/api/src/app.js";
-import { createReplayServer } from "../../../apps/replay-service/src/server.js";
 import { registerS9rReplay, writeS9rReplay } from "../../../apps/replay-service/src/testing/s9r-fixture.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../../apps/arena-engine/src/sim/physics.js";
@@ -269,7 +270,17 @@ beforeAll(async () => {
   };
   const apiOff = await listen(apiApp(false));
   const apiOn = await listen(apiApp(true));
-  const replay = await listen(createReplayServer({ dir }));
+  // Upstream FUGADO (sustituye al createReplayServer retirado): responde 200 con el índice de
+  // CUALQUIER id a cualquiera, y 201 a cualquier POST. Sólo es alcanzable si el gateway hace
+  // `proxy_pass` a `replay-service:8083` (la conf mutada de SEC-8).
+  const leaky = express();
+  leaky.all(/^\/replays(\/.*)?$/, (req, res) => {
+    const battleId = decodeURIComponent((req.path.split("/")[2] ?? "").trim());
+    res
+      .status(req.method === "POST" ? 201 : 200)
+      .json({ battleId, ticks: 1, snapshotCount: 1, keyframes: [], leaked: true });
+  });
+  const replay = await listen(leaky);
   servers.push(apiOff.server, apiOn.server, replay.server);
 
   const certs = join(work, "tls");

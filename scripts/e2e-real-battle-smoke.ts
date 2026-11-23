@@ -5,7 +5,7 @@
  * A diferencia de `apps/bot-manager/tests/container-battle.test.ts` (runner MOCK en
  * proceso, para CI sin Docker), este arnés usa `ProxyContainerRunner` para lanzar los
  * bots como CONTENEDORES REALES a través de `s9-docker-proxy`. Ejecuta una batalla
- * smoke con 2 runtimes reales, recoge el `BattleResult` y escribe el `Replay` a disco.
+ * smoke con 2 runtimes reales, recoge el `BattleResult` y publica el `Replay` en S9R/1.
  *
  * ⚠️ Ejecuta CÓDIGO NO CONFIABLE en contenedores reales. Por eso es OPT-IN y NUNCA
  * corre en el CI normal: exige `S9_RUN_REAL_DOCKER_E2E=1`. La lógica (parseo de
@@ -24,20 +24,22 @@
  *   SMOKE_SEED              semilla (def. e2e-real-smoke).
  *   SMOKE_MAP               empty|mvp|ctf (def. empty).
  *   SMOKE_TIMEOUT_MS        timeout global (def. 120000).
- *   REPLAY_OUT              ruta de salida del replay (def. /data/replays/e2e-real-smoke.jsonl).
- *   REPLAY_SERVICE_URL      (opcional, R7) si se define, ingesta el replay en el
- *                           replay-service (POST /replays/:battleId) → recurso gestionado
- *                           visible por el visor y GET /replays/{battleId}.
+ *   REPLAY_OUT_DIR          directorio del replay S9R/1 (def. /data/replays/e2e-real-smoke).
+ *   REPLAY_VERIFY_REQUIRED  "1": un replay que no verifica hace fallar el arnés (también
+ *                           REPLAY_INGEST_REQUIRED=1, nombre anterior). La ingesta HTTP en el
+ *                           replay-service (REPLAY_SERVICE_URL) está RETIRADA (V1 REPLAYS PR-4b).
  */
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { runContainerBattle, type ContainerBattleBot } from "../apps/bot-manager/src/container-battle.js";
 import { ProxyContainerRunner } from "../apps/bot-manager/src/docker-proxy.js";
 import type { ContainerRunner } from "../apps/bot-manager/src/container-runner.js";
-import { toJsonl, verify, type Replay } from "../apps/arena-engine/src/replay.js";
-import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../apps/replay-service/src/auth.js";
+import type { Replay } from "../apps/arena-engine/src/replay.js";
+// V1 REPLAYS PR-4b · el replay se escribe en S9R/1 (mismo grabador y publicación que el worker) y se
+// verifica por fragmentos. La ingesta HTTP en el replay-service (JSONL) está RETIRADA (D-OP-30).
+import { writeS9rReplay } from "../apps/replay-service/src/s9r/replay-file.js";
+import { verifyRecipePath } from "../apps/replay-service/src/recipe-verify.js";
 import type { BattleResult } from "../apps/arena-engine/src/sim/battle.js";
 import { initPhysics } from "../apps/arena-engine/src/sim/physics.js";
 
@@ -50,85 +52,10 @@ export interface SmokeHarnessConfig {
   seed: string;
   mapName: "empty" | "mvp" | "ctf";
   timeoutMs: number;
-  replayOut: string;
-  /**
-   * R7 · Si se define, el replay real se INGESTA en el replay-service (POST
-   * /replays/:battleId), pasando de fichero suelto a recurso gestionado que el
-   * visor y la API (`GET /replays/{battleId}`) ya saben servir. Opcional: si no se
-   * define, solo se escribe a disco (comportamiento previo). Best-effort: un fallo
-   * de ingesta NO invalida la batalla, solo se reporta.
-   */
-  replayServiceUrl?: string;
-  /**
-   * B8 · Credencial interna de escritura del replay-service
-   * (`REPLAY_INGEST_SECRET[_FILE]`, cabecera `x-replay-ingest-auth`). Desde B8 la
-   * ingesta es una ruta AUTENTICADA: sin ella el servicio responde 401 y el
-   * arnés lo reporta como ingesta fallida — nunca como éxito. Va en la config
-   * (no leída de `process.env` a escondidas dentro de la función de ingesta)
-   * para que sea explícita y testeable.
-   */
-  replayIngestSecret?: string;
-  /** R7-A · si true, un fallo de ingesta (o un replay que no verifica) hace fallar el
-   *  resultado operativo (modo estricto). Por defecto false (best-effort). */
-  replayIngestRequired: boolean;
-  /** R7-A · reintentos de la ingesta ante fallo transitorio. Def. 2. */
-  replayIngestRetries: number;
-  /** R7-A · timeout por intento de ingesta (ms). Def. 10000. */
-  replayIngestTimeoutMs: number;
-}
-
-export interface ReplayIngestResult {
-  ok: boolean;
-  status: number;
-  /** Cuerpo de respuesta del servicio (sha256/path/official) o el error. */
-  body: unknown;
-  /** Nº de intentos realizados (R7-A). */
-  attempts?: number;
-  /** true si el replay verificó localmente antes de ingestar (R7-A). */
-  verified?: boolean;
-}
-
-/**
- * R7 · Ingesta un replay (JSONL) en el replay-service vía POST /replays/:battleId.
- * El servicio valida que `header.battleId` coincide y almacena+indexa. El mismo JSONL
- * que se escribe a disco es el que se envía (Content-Type ndjson).
- */
-export async function ingestReplayToService(
-  serviceUrl: string,
-  battleId: string,
-  jsonl: string,
-  timeoutMs = 10000,
-  /** B8 · credencial interna de escritura del replay-service. Sin ella la ingesta responde 401. */
-  ingestSecret?: string,
-): Promise<ReplayIngestResult> {
-  const url = new URL(`/replays/${encodeURIComponent(battleId)}`, serviceUrl);
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-ndjson",
-        // B8 · la ingesta es una ruta AUTENTICADA. Si no hay secreto configurado
-        // se manda la cabecera vacía y el servicio responde 401: el arnés lo
-        // reporta como ingesta fallida, que es la verdad, en vez de fingir éxito.
-        [REPLAY_INGEST_AUTH_HEADER]: ingestSecret ?? "",
-      },
-      body: jsonl,
-      signal: ac.signal,
-    });
-  } finally {
-    clearTimeout(t);
-  }
-  const text = await res.text();
-  let body: unknown = text;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    /* deja el texto crudo */
-  }
-  return { ok: res.status === 201, status: res.status, body };
+  /** Directorio donde se publica el replay S9R/1 (`<battleId>.1.s9r` + `.s9v`). */
+  replayOutDir: string;
+  /** Si true, un replay que no verifica hace FALLAR el resultado operativo (modo estricto). */
+  replayVerifyRequired: boolean;
 }
 
 /** Lee y valida la configuración del entorno. Falla cerrado si falta el digest. */
@@ -146,30 +73,25 @@ export function readHarnessConfig(env: NodeJS.ProcessEnv): SmokeHarnessConfig {
     seed: env.SMOKE_SEED ?? "e2e-real-smoke",
     mapName: map,
     timeoutMs: Number(env.SMOKE_TIMEOUT_MS ?? "120000"),
-    replayOut: env.REPLAY_OUT ?? "/data/replays/e2e-real-smoke.jsonl",
-    // R7-A · la ingesta se activa con REPLAY_SERVICE_URL, salvo REPLAY_INGEST_ENABLED=0.
-    ...(env.REPLAY_SERVICE_URL && env.REPLAY_INGEST_ENABLED !== "0"
-      ? { replayServiceUrl: env.REPLAY_SERVICE_URL }
-      : {}),
-    // B8 · credencial de ingesta (fichero con precedencia sobre la variable).
-    ...(resolveIngestSecretFromEnv(env) ? { replayIngestSecret: resolveIngestSecretFromEnv(env)! } : {}),
-    replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
-    replayIngestRetries: Number(env.REPLAY_INGEST_RETRIES ?? "2"),
-    replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? "10000"),
+    replayOutDir: env.REPLAY_OUT_DIR ?? "/data/replays/e2e-real-smoke",
+    // Mismo nombre de variable que antes para el modo estricto (ahora: verificación local).
+    replayVerifyRequired: env.REPLAY_VERIFY_REQUIRED === "1" || env.REPLAY_INGEST_REQUIRED === "1",
   };
 }
 
 export interface SmokeHarnessOutcome {
   result: BattleResult;
   replay: Replay;
+  /** Receta S9R/1 publicada. */
   replayPath: string;
-  /** R7 · Resultado de la ingesta en el replay-service, si se configuró. */
-  ingest?: ReplayIngestResult;
+  viewPath: string;
+  /** Re-simulación local de la receta (por fragmentos): ¿reproduce el resultado oficial? */
+  verified: boolean;
 }
 
 /**
- * Orquesta la batalla smoke con el `ContainerRunner` dado (real o inyectado en tests) y
- * escribe el replay a disco. La limpieza de contenedores la garantiza runContainerBattle.
+ * Orquesta la batalla smoke con el `ContainerRunner` dado (real o inyectado en tests), publica el
+ * replay en S9R/1 y lo verifica. La limpieza de contenedores la garantiza runContainerBattle.
  */
 export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: ContainerRunner): Promise<SmokeHarnessOutcome> {
   await initPhysics();
@@ -190,51 +112,15 @@ export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: Container
     engineHost: cfg.engineHost,
     overallTimeoutMs: cfg.timeoutMs,
   });
-  const jsonl = toJsonl(replay);
-  mkdirSync(dirname(cfg.replayOut), { recursive: true });
-  writeFileSync(cfg.replayOut, jsonl, "utf8");
-
-  const outcome: SmokeHarnessOutcome = { result, replay, replayPath: cfg.replayOut };
-
-  // R7-A · Ingesta en el replay-service (recurso gestionado + visor).
-  if (cfg.replayServiceUrl) {
-    // No ingestar un replay que no verifica localmente (verify() re-simula y compara el
-    // hash final): evita meter datos falsos en el servicio.
-    const v = await verify(replay);
-    if (!v.matches) {
-      outcome.ingest = { ok: false, status: 0, body: "replay no verifica (verify_matches=false)", verified: false };
-      if (cfg.replayIngestRequired) {
-        throw new Error("REPLAY_INGEST_REQUIRED=1 y el replay no verifica: resultado operativo FALLIDO");
-      }
-    } else {
-      let last: ReplayIngestResult = { ok: false, status: 0, body: "sin intentos", verified: true };
-      const attempts = Math.max(1, cfg.replayIngestRetries + 1);
-      for (let i = 1; i <= attempts; i++) {
-        try {
-          last = await ingestReplayToService(
-            cfg.replayServiceUrl,
-            battleId,
-            jsonl,
-            cfg.replayIngestTimeoutMs,
-            cfg.replayIngestSecret,
-          );
-        } catch (e) {
-          last = { ok: false, status: 0, body: (e as Error).message };
-        }
-        last.attempts = i;
-        last.verified = true;
-        if (last.ok) break;
-        if (i < attempts) await new Promise((r) => setTimeout(r, 500 * i));
-      }
-      outcome.ingest = last;
-      if (!last.ok && cfg.replayIngestRequired) {
-        throw new Error(
-          `REPLAY_INGEST_REQUIRED=1 y la ingesta falló tras ${last.attempts} intento(s) (status ${last.status})`,
-        );
-      }
-    }
+  mkdirSync(cfg.replayOutDir, { recursive: true });
+  const fx = await writeS9rReplay(cfg.replayOutDir, replay);
+  // No se da por bueno un replay que no verifica (re-simula la receta y compara hashes y resultado).
+  const { verification } = await verifyRecipePath(fx.path);
+  const verified = verification.matches;
+  if (!verified && cfg.replayVerifyRequired) {
+    throw new Error("REPLAY_VERIFY_REQUIRED=1 y el replay no verifica: resultado operativo FALLIDO");
   }
-  return outcome;
+  return { result, replay, replayPath: fx.path, viewPath: fx.viewPath, verified };
 }
 
 // --------------------------------------------------------------------------- CLI
@@ -251,7 +137,7 @@ if (isMain) {
   const cfg = readHarnessConfig(process.env);
   const runner = new ProxyContainerRunner(cfg.dockerProxyUrl);
   runSmokeHarness(cfg, runner)
-    .then(({ result, replayPath, ingest }) => {
+    .then(({ result, replayPath, verified }) => {
       console.log(
         JSON.stringify({
           event: "result",
@@ -260,8 +146,7 @@ if (isMain) {
           finalStateHash: result.finalStateHash,
           disqualified: result.disqualified,
           replayPath,
-          ingested: ingest ? ingest.ok : undefined,
-          ingestStatus: ingest ? ingest.status : undefined,
+          verified,
         }),
       );
       process.exit(0);
