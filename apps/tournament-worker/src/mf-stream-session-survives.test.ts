@@ -57,6 +57,7 @@ function liveSession() {
     readyTimeoutMs: 200,
     stopGraceMs: 20,
     exists: (p) => files.has(p),
+    accepts: async () => true, // fichero simulado: sin servidor X real
     readFile: () => {
       throw new Error("no existe");
     },
