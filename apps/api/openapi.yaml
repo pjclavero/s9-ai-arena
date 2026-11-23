@@ -123,6 +123,8 @@ info:
   # bots sueltos (409 team_enrollment_required; la sustitución de una versión pendiente no
   # elegible sigue). closeEntries revalida pertenencia (409 team_roster_changed) y estado de cada
   # versión (entries_not_eligible también si quedó suspendida o retirada), y es atómico.
+  # 0.25.0 · B3 (V1, D-OP-9, sin versión nueva): createTournament responde 400 tournament_mode_not_allowed para
+  # capture_the_flag y zone_control (los torneos ya creados con esos modos se leen igual).
   # Ronda 2: equipos de VARIOS dueños con autorización explícita por bot y versión
   # (listTeamEntryConsents, putTeamEntryConsent, deleteTeamEntryConsent; 409
   # team_consent_required en enterTournamentTeam); predicado único «compite» compartido por el
@@ -1125,7 +1127,7 @@ paths:
             schema: { $ref: '#/components/schemas/TournamentInput' }
       responses:
         '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
-        '400': { description: 'Datos inválidos · ADR-022 rules_invalid / rules_team_size', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: 'Datos inválidos · tournament_mode_not_allowed (B3: capture_the_flag y zone_control no se admiten en torneos; detalle mode y allowedModes) · ADR-022 rules_invalid / rules_team_size', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'ADR-022 · rules_mode_mismatch (el preset juega otro modo)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/entries:
@@ -2761,7 +2763,14 @@ components:
       properties:
         name: { type: string, maxLength: 64 }
         format: { enum: [league, round_robin, single_elimination, double_elimination, swiss, teams] }
-        mode: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+        mode:
+          enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control]
+          description: >-
+            Sólo `deathmatch` y `team_deathmatch` se admiten en torneos (V1, D-OP-9). `capture_the_flag` y
+            `zone_control` siguen en el enum por compatibilidad del esquema (existen torneos antiguos con
+            esos modos y se leen igual), pero crear uno responde 400 `tournament_mode_not_allowed` con
+            `mode` y `allowedModes`. Lo mismo vale si el `rulesetId` resuelve a un ruleset del motor de
+            otro modo. Las batallas sueltas NO dependen de esta restricción.
         rulesetId: { type: string }
         budgetCredits:
           type: integer

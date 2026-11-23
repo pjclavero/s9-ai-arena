@@ -65,7 +65,7 @@ export const MODE_DEFAULT_ENGINE_RULESET: ReadonlyMap<string, string> = new Map(
  * `undefined` si no hay fila, no hay config, o el campo no es una cadena.
  * NO valida que el ruleset exista: eso lo hace `loadRuleset` aguas abajo.
  */
-function engineRulesetIdFromRow(row: Record<string, unknown> | undefined): string | undefined {
+export function engineRulesetIdFromRow(row: Record<string, unknown> | undefined): string | undefined {
   if (!row) return undefined;
   let config: unknown = row.config;
   if (typeof config === "string") {

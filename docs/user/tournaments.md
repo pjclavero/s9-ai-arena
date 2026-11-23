@@ -36,7 +36,7 @@ En «Crear torneo»:
 |---|---|
 | **Nombre** | Hasta 64 caracteres. |
 | **Formato** | Los de la tabla de arriba. |
-| **Modo** | En V1 los torneos se juegan en **Deathmatch** y **Deathmatch por equipos** (2 vs 2, 3 vs 3 y 4 vs 4). El formulario también ofrece *Captura la bandera* y *Control de zona*, pero **no los uses en torneos**: el torneo se crea y se queda sin batallas jugables ([Modos de juego](game-modes.md)). |
+| **Modo** | En V1 los torneos se juegan en **Deathmatch** y **Deathmatch por equipos** (2 vs 2, 3 vs 3 y 4 vs 4). *Captura la bandera* y *Control de zona* **no se pueden usar en torneos** en esta versión: el formulario no los ofrece y la API rechaza crear un torneo con ellos (error `tournament_mode_not_allowed`, 400). Siguen disponibles en batallas sueltas ([Modos de juego](game-modes.md)). |
 | **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
 | **Tamaño** | Sólo en torneos **Por equipos** de **Deathmatch por equipos**: 2 vs 2, 3 vs 3 o 4 vs 4. Fija cuántos bots inscribe cada equipo. |
 | **Retransmisión pública** | Si se marca, las batallas del torneo se pueden ver y emitir en público con los datos de competición de cada bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. **No se puede cambiar después** ([Visibilidad](visibility.md)). |
@@ -99,6 +99,6 @@ El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el eq
 ## Cosas a tener en cuenta
 
 - Si una batalla de un torneo falla por un problema técnico y agota sus reintentos, queda como «falló», **no puntúa ni mueve el rating**, y el torneo sigue y termina igualmente. En una eliminatoria avanza el mejor cabeza de serie; si era la final, el torneo termina sin campeón.
-- **Captura la bandera y Control de zona no están soportados en torneos** (no se anuncian como funcionales en V1): el modo se acepta al crear con reglas clásicas, pero la batalla falla al arrancar y el torneo termina sin campeón.
+- **Captura la bandera y Control de zona no están soportados en torneos** (no se anuncian como funcionales en V1): crear uno responde 400 `tournament_mode_not_allowed` (también con un preset, reglas personalizadas o un ruleset de esos modos). Los torneos antiguos creados con esos modos siguen visibles y no se modifican, pero **no avanzan**: al cerrar inscripciones el calendario no se genera y el trabajo queda en revisión manual.
 
 Siguiente: [Ranking](rankings.md) · [Batallas](battles.md).

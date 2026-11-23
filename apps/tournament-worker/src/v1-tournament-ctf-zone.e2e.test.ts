@@ -1,10 +1,12 @@
 /**
- * V1-C · CARACTERIZACIÓN de CTF y control de zona en torneos (D-OP-2: FUERA de V1, no se
- * implementan). Estos tests NO validan esos modos: fijan lo que la API hace HOY con ellos, para
- * que cualquier cambio (rechazo limpio, o que empiecen a jugarse) ponga un test en rojo y obligue a
- * revisar la decisión de alcance.
+ * V1-C / B3 · CTF y control de zona en torneos (D-OP-2 / D-OP-9: FUERA de V1).
  *
- * Etiquetas `V1C_*` para el script de mutantes.
+ * Antes (V1-C) este fichero CARACTERIZABA que la API los aceptaba y que la batalla fallaba al
+ * jugar. Con B3 la API los RECHAZA al crear (400 `tournament_mode_not_allowed`) y el scheduler no
+ * programa nada para un torneo antiguo con esos modos. Estos tests no validan CTF ni zona como
+ * jugables: fijan el rechazo, el trato de los torneos históricos y el fallo técnico del worker.
+ *
+ * Etiquetas `V1C_*` para el script de mutantes (scripts/v1-b3-tournament-modes-mutants.py).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -68,8 +70,11 @@ const createT = (body: Record<string, unknown>) =>
     .set(as(organizer))
     .send({ name: `v1c-ctfzone-${++seq}`, roundsPerPairing: 1, ...body });
 
-async function playClassic(mode: string, rulesetId: string) {
-  const r = await createT({ format: "round_robin", mode, rulesetId });
+async function seedClosedDmTournament() {
+  // Torneo ANTERIOR a la restricción: se crea como Deathmatch (la API ya no deja otra cosa) y se
+  // reescribe su modo en la fila, como si lo hubiera creado una versión previa. Se cierra la
+  // inscripción, que encola `generate_schedule`.
+  const r = await createT({ format: "round_robin", mode: "deathmatch", rulesetId: "deathmatch-mvp" });
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   const bots: TestBot[] = [];
   for (let i = 0; i < 2; i++) bots.push(await createPublishedBot(h.db, `cz-${++seq}`, { ownerId: developerId }));
@@ -82,33 +87,32 @@ async function playClassic(mode: string, rulesetId: string) {
   }
   const c = await request(app).post(`/tournaments/${r.body.id}/actions/close-entries`).set(as(organizer)).send({});
   expect(c.status, JSON.stringify(c.body)).toBe(200);
+  return r.body.id as string;
+}
+
+async function drainWithRetries(tournamentId: string) {
   await drainAll();
-  // Los reintentos del trabajo esperan un backoff: se adelanta el reloj de la cola hasta agotarlos.
-  let rounds = 0;
-  for (; rounds < 15; rounds++) {
-    const st = (await h.db("tournaments").where({ id: r.body.id }).first()) as Row;
-    if (st.state === "finished" || st.state === "cancelled") break;
+  // Los reintentos esperan un backoff: se adelanta el reloj de la cola hasta agotarlos.
+  for (let i = 0; i < 15; i++) {
+    const open = await h.db("jobs").whereIn("status", ["queued", "running"]);
+    if (open.length === 0) break;
     await h
       .db("jobs")
       .where({ status: "queued" })
       .update({ run_after: new Date(Date.now() - 1000) });
     await drainAll();
   }
-  const t: Row & { retryRounds: number } = {
-    ...((await h.db("tournaments").where({ id: r.body.id }).first()) as Row),
-    retryRounds: rounds,
-  };
-  const battles = (await h.db("battles").where({ tournament_id: r.body.id })) as Row[];
-  const ids = new Set(battles.map((b) => b.id as string));
-  const jobs = ((await h.db("jobs").where({ status: "needs_review", kind: "run_battle" })) as Row[]).filter((j) => {
-    const pl = typeof j.payload === "string" ? JSON.parse(j.payload) : (j.payload as { battleId?: string });
-    return ids.has(String(pl.battleId));
+  const battles = (await h.db("battles").where({ tournament_id: tournamentId })) as Row[];
+  const t = (await h.db("tournaments").where({ id: tournamentId }).first()) as Row;
+  const jobs = ((await h.db("jobs").where({ kind: "generate_schedule" })) as Row[]).filter((j) => {
+    const pl = typeof j.payload === "string" ? JSON.parse(j.payload) : (j.payload as { tournamentId?: string });
+    return pl.tournamentId === tournamentId;
   });
-  return { t, battles, jobs };
+  return { battles, t, jobs };
 }
 
-describe("V1-C · CTF y control de zona en torneos (caracterización, fuera de V1)", () => {
-  it("V1C_CTF_preset_rejected · el preset CTF se rechaza al crear el torneo (400 rules_invalid)", async () => {
+describe("V1-C · B3 · CTF y control de zona FUERA de los torneos", () => {
+  it("V1C_CTF_preset_rejected · el preset CTF se rechaza al crear el torneo (400 tournament_mode_not_allowed)", async () => {
     const r = await createT({
       format: "round_robin",
       mode: "capture_the_flag",
@@ -116,39 +120,51 @@ describe("V1-C · CTF y control de zona en torneos (caracterización, fuera de V
       rules: { preset: "ctf", teamSize: 2 },
     });
     expect(r.status).toBe(400);
-    expect(JSON.stringify(r.body)).toMatch(/rules_invalid/);
-    expect(JSON.stringify(r.body)).toMatch(/CTF todav/);
+    expect(r.body.error).toBe("tournament_mode_not_allowed");
   });
 
-  it("V1C_CTF_classic_accepted · CTF CLÁSICO (sin `rules`) se acepta al crear el torneo: 201", async () => {
+  it("V1C_CTF_classic_rejected · CTF CLÁSICO (sin `rules`) se rechaza al crear: 400 tournament_mode_not_allowed y ninguna fila", async () => {
+    const before = Number((await h.db("tournaments").count("* as n").first())?.n);
     const r = await createT({ format: "round_robin", mode: "capture_the_flag", rulesetId: "capture-the-flag-mvp" });
-    expect(r.status, JSON.stringify(r.body)).toBe(201);
-    expect(r.body.mode).toBe("capture_the_flag");
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expect(r.body.error).toBe("tournament_mode_not_allowed");
+    expect(r.body.allowedModes).toEqual(["deathmatch", "team_deathmatch"]);
+    expect(Number((await h.db("tournaments").count("* as n").first())?.n)).toBe(before);
   });
 
-  it("V1C_ZONE_classic_accepted · control de zona CLÁSICO se acepta al crear el torneo: 201", async () => {
+  it("V1C_ZONE_classic_rejected · control de zona CLÁSICO se rechaza al crear: 400 tournament_mode_not_allowed", async () => {
     const r = await createT({ format: "round_robin", mode: "zone_control", rulesetId: "zone-control-mvp" });
-    expect(r.status, JSON.stringify(r.body)).toBe(201);
-    expect(r.body.mode).toBe("zone_control");
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expect(r.body.error).toBe("tournament_mode_not_allowed");
   });
 
-  it("V1C_CTF_classic_fails · un CTF clásico se juega UNA vez y falla: batalla failed por incompatibilidad mapa/modo, torneo cerrado SIN campeón", async () => {
-    const { t, battles, jobs } = await playClassic("capture_the_flag", "capture-the-flag-mvp");
-    // El mapa por defecto no tiene bandera ni base: el motor se niega a arrancar (3 intentos).
-    expect(battles.map((b) => b.status)).toEqual(["failed"]);
+  it("V1C_CTF_historic_not_scheduled · un torneo ANTIGUO con CTF no genera calendario ni batallas: fallo técnico claro del worker, datos intactos y visible", async () => {
+    const id = await seedClosedDmTournament();
+    await h.db("tournaments").where({ id }).update({ mode: "capture_the_flag" });
+    const { battles, t, jobs } = await drainWithRetries(id);
+    expect(battles).toEqual([]); // NO se programa ninguna batalla CTF
     expect(jobs.length).toBe(1);
-    expect(String(jobs[0].last_error)).toMatch(/incompatible \(mvp-arena-01 \/ capture_the_flag\)/);
-    expect(Number(jobs[0].attempts)).toBe(3);
-    expect(t.state).toBe("finished"); // política «failed definitiva»: el torneo termina…
-    expect(t.champion_bot_id).toBeNull(); // …sin coronar a nadie
+    expect(String(jobs[0].last_error)).toMatch(/tournament_mode_not_allowed/);
+    expect(jobs[0].status).not.toBe("done");
+    expect(t.state).toBe("closed"); // no se toca el dato: ni running ni finished
+    const g = await request(app).get(`/tournaments/${id}`);
+    expect(g.status).toBe(200);
+    expect(g.body.mode).toBe("capture_the_flag");
   });
 
-  it("V1C_ZONE_classic_fails · un control de zona clásico se juega UNA vez y falla: el mapa no tiene zona de captura", async () => {
-    const { t, battles, jobs } = await playClassic("zone_control", "zone-control-mvp");
-    expect(battles.map((b) => b.status)).toEqual(["failed"]);
-    expect(jobs.length).toBe(1);
-    expect(String(jobs[0].last_error)).toMatch(/0 zona\(s\) de captura/);
-    expect(t.state).toBe("finished");
-    expect(t.champion_bot_id).toBeNull();
+  it("V1C_ZONE_historic_not_scheduled · lo mismo con control de zona", async () => {
+    const id = await seedClosedDmTournament();
+    await h.db("tournaments").where({ id }).update({ mode: "zone_control" });
+    const { battles, t, jobs } = await drainWithRetries(id);
+    expect(battles).toEqual([]);
+    expect(String(jobs[0].last_error)).toMatch(/tournament_mode_not_allowed/);
+    expect(t.state).toBe("closed");
+  });
+
+  it("V1C_DM_still_scheduled · control positivo: un torneo Deathmatch normal SÍ genera calendario", async () => {
+    const id = await seedClosedDmTournament();
+    const { battles, t } = await drainWithRetries(id);
+    expect(battles.length).toBeGreaterThan(0);
+    expect(["running", "finished"]).toContain(String(t.state));
   });
 });

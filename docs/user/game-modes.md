@@ -100,6 +100,8 @@ Cada mapa **declara** los modos que soporta y el validador comprueba que tenga l
 | Captura la bandera | una base y una bandera de cada equipo (rojo y azul) |
 | Control de zona | al menos una zona de captura |
 
+**Torneos**: en esta versión los torneos admiten sólo *Deathmatch* y *Deathmatch por equipos*; *Captura la bandera* y *Control de zona* no se pueden usar en torneos (la API responde `tournament_mode_not_allowed`). Las batallas sueltas no cambian por esto.
+
 Los mapas de serie son `mvp-arena-01` (bandera y por equipos) y `mvp-arena-02` (la misma arena, que además admite deathmatch). Cómo crear los tuyos: [Mapas](maps.md).
 
 ## Documentación relacionada

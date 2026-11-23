@@ -21,7 +21,7 @@ deuda que los sigue. La causa técnica completa está en [technical-debt.md](tec
 | Síntoma | Causa resumida | Dónde | Deuda |
 |---|---|---|---|
 | No hay forma de recuperar la contraseña; en «Mi cuenta» no se puede activar el 2FA ni ver o cerrar sesiones | la API tiene las operaciones, pero la web no tiene pantallas y la recuperación descarta el token (no hay canal de entrega) | producción y `main` | [TD-012](technical-debt.md#td-012) |
-| Un torneo de captura de bandera o de control de zona se crea y no se puede jugar: la batalla falla y el torneo termina sin campeón (fuera de V1). Sólo el preset CTF se rechaza al crear | los bandos del torneo son A/B y los mapas CTF usan red/blue; el mapa por defecto no tiene zonas | `main` | [TD-070](technical-debt.md#td-070) |
+| Captura la bandera y control de zona no se admiten en torneos: `POST /tournaments` responde 400 `tournament_mode_not_allowed` (B3, V1). Los torneos antiguos con esos modos siguen visibles pero no avanzan: `generate_schedule` falla con ese código y queda en revisión. Una batalla CTF de un torneo antiguo ya programada antes de B3 se ejecutaría y fallaría como antes (deuda: guarda en `run_battle`, ver informe B3) | los bandos del torneo son A/B y los mapas CTF usan red/blue; el mapa por defecto no tiene zonas | `main` | [TD-070](technical-debt.md#td-070) |
 | El filtro «Abortada o con incidencia» de los replays no muestra las batallas detenidas por el límite técnico | el filtro no incluye `technical_limit` | `main` | [TD-071](technical-debt.md#td-071) |
 | Una página de «Mis bots» o de la lista de bots puede salir con menos elementos de los pedidos | la visibilidad se filtra después de leer 200 filas | producción y `main` | [TD-068](technical-debt.md#td-068) |
 | Un error de filtro al paginar se presenta como «cursor inválido» | el cursor se hace responsable de cualquier error de conversión | `main` | [TD-067](technical-debt.md#td-067) |
@@ -59,7 +59,7 @@ Diagnóstico y procedimientos: [docs/operations/diagnostics.md](../operations/di
 |---|---|---|
 | Recuperación sin canal de entrega; sin pantallas de 2FA ni sesiones | CODE_VERIFIED | `apps/api/src/routes/auth.ts:386-398`, `:440`; `git grep -nE "auth/(2fa|sessions|recover|reset)" -- apps/web/src` vacío |
 | Una batalla `failed` ya no bloquea el cierre del match (política #299) | CODE_VERIFIED (2026-11-20, `80f4952`) | `apps/tournament-worker/src/results.ts` (`settleMatch`); `tournament-lifecycle-failed.test.ts` |
-| CTF rechazado en torneos sólo con `rules.preset`; con reglas clásicas, CTF y zona se aceptan y no se pueden jugar | CODE_VERIFIED (2026-11-20) y LAB (PR #317) | `apps/api/src/services/battle-rules.ts`; `v1-tournament-ctf-zone.e2e.test.ts` |
+| CTF y zona rechazados al CREAR torneos (400 `tournament_mode_not_allowed`, también por ruleset/preset/custom); calendario no generado para torneos antiguos con esos modos | IMPLEMENTADO en PR B3 (borrador; sin integrar, sin desplegar). Probado en local con PostgreSQL embebida | `apps/tournament-worker/src/tournament-modes.ts`; `v1-b3-tournament-modes.test.ts`; `v1-tournament-ctf-zone.e2e.test.ts` |
 | Filtro `aborted` sin `technical_limit` | CODE_VERIFIED | `apps/api/src/services/replay-list.ts:222-226` |
 | `listBots`: 200 filas y visibilidad en memoria | CODE_VERIFIED | `apps/api/src/routes/bots.ts:205-223` |
 | `runCursorQuery` | CODE_VERIFIED | `apps/api/src/serialize.ts:168-175` |
