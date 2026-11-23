@@ -50,7 +50,7 @@ import {
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure, toInfrastructureFailure } from "./errors.js";
-import { enqueueJob, type JobRow } from "./queue.js";
+import { enqueueJob, failBattleInfrastructure, type JobRow } from "./queue.js";
 import { isTournamentCancelled } from "./scheduler.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
@@ -700,16 +700,10 @@ async function finishBattle(
 export async function markBattleForReview(db: Knex, job: JobRow): Promise<void> {
   if (job.kind !== "run_battle") return;
   const battleId = String(job.payload.battleId ?? "");
-  await db("battles")
-    .where({ id: battleId })
-    .where((q) =>
-      q
-        .where({ status: "scheduled" })
-        .orWhere((r) =>
-          r
-            .where({ status: "running" })
-            .andWhere((s) => s.whereNull("lease_expires_at").orWhere("lease_expires_at", "<", db.fn.now())),
-        ),
-    )
-    .update({ status: "failed", failure_kind: "infrastructure", claimed_by: null, lease_expires_at: null });
+  // V1-P0 · mismo guard de antes (sólo `scheduled` o `running` con lease vencido), ahora con
+  // rastro en `audit_log` y el motivo explícito del trabajo.
+  if (!battleId) return;
+  await db.transaction((trx) =>
+    failBattleInfrastructure(trx, battleId, job.last_error ?? "reintentos de infraestructura agotados"),
+  );
 }
