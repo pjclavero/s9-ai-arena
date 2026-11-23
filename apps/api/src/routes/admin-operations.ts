@@ -12,10 +12,11 @@
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, notFound, tooMany } from "../errors.js";
 import { isUuid } from "../params.js";
 import { parseLimit } from "../serialize.js";
 import { requireStrongReauth } from "./auth.js";
+import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import {
   cancelOperation,
   confirmOperation,
@@ -29,7 +30,7 @@ function idParam(raw: unknown): string {
   return raw;
 }
 
-export function adminOperationsRoutes(db: Db): Router {
+export function adminOperationsRoutes(db: Db, deps: { confirmLimiter: RateLimiterLike }): Router {
   const router = Router();
   const ctx = (req: { auth?: { userId: string }; correlationId?: string }) => ({
     actorId: req.auth?.userId ?? null,
@@ -54,13 +55,15 @@ export function adminOperationsRoutes(db: Db): Router {
 
   // x-reauth: la reautenticación va PRIMERO (sin credenciales frescas ⇒ 401 aunque el token sea válido).
   defineOperation(router, "confirmAdminOperation", async (req, res) => {
+    // Límite de intentos POR ADMIN (antes de verificar la contraseña): frena la fuerza bruta con un token robado.
+    if (!(await deps.confirmLimiter.hit(`admin-confirm:${req.auth!.userId}`))) {
+      throw tooMany("Demasiados intentos de confirmación: espera unos minutos");
+    }
     const body = (req.body ?? {}) as Record<string, unknown>;
     const user = await db("users").where({ id: req.auth!.userId }).first();
     await requireStrongReauth(db, user, { password: body.password, totp: body.totp });
     const id = idParam(req.params.id);
-    if (typeof body.confirmToken !== "string" || typeof body.phrase !== "string") {
-      throw badRequest("confirmToken y phrase son obligatorios");
-    }
+    if (typeof body.phrase !== "string") throw badRequest("phrase es obligatoria");
     const r = await confirmOperation(db, ctx(req), id, { confirmToken: body.confirmToken, phrase: body.phrase });
     res.setHeader("Cache-Control", "no-store");
     res.json(r);

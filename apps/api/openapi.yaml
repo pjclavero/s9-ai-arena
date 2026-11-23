@@ -2347,7 +2347,7 @@ paths:
       summary: >-
         ADM-1 · Confirma una orden en `awaiting_confirmation`: token de un solo uso (consumo atómico), frase
         literal EXACTA y REAUTENTICACIÓN FUERTE (contraseña + TOTP si lo tiene; sin credenciales frescas, 401).
-        Las irreversibles las confirma un admin distinto del solicitante (403). Token caducado o ya usado:
+        Las irreversibles NO llevan token: las aprueba, desde su propia sesión y reautenticado, un admin distinto del solicitante (403 si es el mismo). Límite de intentos por admin (429). Token caducado o ya usado:
         409 confirmation_expired / confirmation_token_invalid. Pasa a `pending`.
       x-min-role: admin
       x-reauth: true
@@ -2365,6 +2365,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { description: Demasiados intentos de confirmación, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /admin/operations/{id}/cancel:
     post:
@@ -3675,9 +3676,9 @@ components:
     AdminOperationConfirm:
       type: object
       additionalProperties: false
-      required: [confirmToken, phrase, password]
+      required: [phrase, password]
       properties:
-        confirmToken: { type: string, x-private: true }
+        confirmToken: { type: string, x-private: true, description: 'Obligatorio salvo en las irreversibles (segundo admin: no hay token, aprueba su propia sesión reautenticada).' }
         phrase: { type: string, description: 'Frase literal devuelta por el servidor al crear la orden.' }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta tiene 2FA.' }

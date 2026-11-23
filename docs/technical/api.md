@@ -178,12 +178,14 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | `GET /admin/security-findings`, `GET /admin/audit-log` | admin |
 | `GET /system/status`, `GET /system/rbac` | admin |
 | `GET /admin/settings/public-access`, `PATCH /admin/settings/public-access` | admin (MG, contrato 0.18.0: espectador y replays públicos en caliente, auditados; la fila `app_runtime_settings` manda sobre el entorno) |
+| `GET /admin/settings`, `PATCH /admin/settings` | admin (ADM-1, contrato 0.26.0: ajustes del sistema de un registro en código; validación en servidor, techo del entorno, versión optimista, auditoría atómica; cada clave indica si requiere reinicio) |
+| `POST/GET /admin/operations`, `GET /admin/operations/{id}`, `POST …/confirm`, `POST …/cancel` | admin (ADM-1: órdenes de tipos cerrados con confirmación en dos pasos: token de un solo uso, frase literal, reautenticación y límite de intentos; las irreversibles las aprueba otro admin desde su propia sesión, sin token) |
 | `GET /admin/streaming`, `PUT …/settings`, `PUT/DELETE …/credentials/{platform}`, `PUT …/ingests/{platform}`, `GET …/destinations`, `GET …/target`, `POST …/test`, `POST …/start`, `POST …/restart`, `POST …/stop`, `GET …/recordings`, `POST …/retention`, `GET …/audit` | admin (administración de la emisión; ver [streaming.md](../operations/streaming.md)) |
 
 ## Rutas del contrato no recogidas en las tablas anteriores
 
 Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 2026). Estas operaciones de `apps/api/openapi.yaml` (contrato
-0.25.0, 106 operaciones, `main` `80f4952`, 2026-11-20) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
+0.25.0, 106 operaciones, `main` `80f4952`, 2026-11-20; las 7 de ADM-1 del contrato 0.26.0 figuran en la tabla de Administración de arriba) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
 
 | operationId | Método y ruta | Rol mínimo |
 |---|---|---|
@@ -276,7 +278,7 @@ Verificado contra `27f70bb`.
 |---|---|---|
 | Rutas y roles del contrato (tablas anteriores) | CODE_VERIFIED | `apps/api/openapi.yaml` (operaciones con `x-min-role` volcadas con un script) |
 | El rol mínimo sale del contrato | CODE_VERIFIED | `apps/api/src/registry.ts:20-60` |
-| Rutas del contrato 0.25.0 que faltan en las tablas (sección actualizada el 2026-11-20; 106 operaciones) | CODE_VERIFIED (`80f4952`) | contraste por script de las operaciones de `apps/api/openapi.yaml` con este documento |
+| Rutas del contrato 0.25.0 que faltan en las tablas (sección actualizada el 2026-11-20; 106 operaciones a `80f4952`; contrato 0.26.0 = 113 con ADM-1) | CODE_VERIFIED (`80f4952`) | contraste por script de las operaciones de `apps/api/openapi.yaml` con este documento |
 | Los endpoints «sin pantalla» (lista corregida el 2026-11-20: ya tienen pantalla bots, borradores de mapa, auditoría y estadísticas de batalla, quitar miembro y la emisión) | CODE_VERIFIED (`80f4952`) | llamadas `api(...)` de `apps/web/src` |
 | 8 extensiones con `defineExtension` | CODE_VERIFIED | `routes/auth.ts:297,384,399`; `routes/keys.ts:19`; `routes/bots.ts:217,236`; `routes/tournaments.ts:129,143` |
 | Prefijo `/api/v1` quitado por nginx | CODE_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-76` |

@@ -141,29 +141,8 @@ export function effectiveValue(
 }
 
 /**
- * Claves registradas de fábrica. ADM-1 sólo trae dos SONDAS inocuas (ningún servicio las
- * consume: comprueban el circuito web → API → BD → lector y la diferencia entre
- * «en caliente» y «requiere reinicio»). ADM-2 (worker) y el PR de replays añaden sus
- * claves AQUÍ, con su consumidor, sin tocar nada más.
+ * Claves registradas de fábrica. Vacío a propósito: ADM-1 sólo trae el marco. ADM-2 (worker) y el
+ * PR de replays añaden AQUÍ sus claves reales, con su consumidor, sin tocar nada más. Los tests
+ * registran sus propias claves de prueba con `createSettingsRegistry`.
  */
-export const SYSTEM_SETTINGS_REGISTRY: SettingsRegistry = createSettingsRegistry([
-  {
-    key: "ops.probe_hot",
-    type: "integer",
-    min: 0,
-    max: 100,
-    default: 0,
-    consumer: "api",
-    apply: "hot",
-    env: "S9_PROBE_HOT_MAX",
-    description: "Sonda inocua de ajuste en caliente: ningún servicio la usa; sirve para verificar el circuito.",
-  },
-  {
-    key: "ops.probe_restart",
-    type: "boolean",
-    default: false,
-    consumer: "api",
-    apply: "restart",
-    description: "Sonda inocua de ajuste que exige reinicio: ningún servicio la usa; sirve para verificar el aviso.",
-  },
-]);
+export const SYSTEM_SETTINGS_REGISTRY: SettingsRegistry = createSettingsRegistry([]);

@@ -13,6 +13,7 @@ import { tokenFor } from "../testing/helpers.js";
 import { createApp } from "../app.js";
 import { hashPassword } from "../auth/passwords.js";
 import { generateTotpSecret } from "../auth/totp.js";
+import { SharedRateLimiter } from "../middleware/shared-rate-limit.js";
 import {
   claimOperation,
   completeOperation,
@@ -31,7 +32,11 @@ let organizer: string;
 beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
-  app = createApp({ db: h.db });
+  // Límite holgado: el límite real de confirm se prueba aparte (LIMITE_CONFIRM) con su propio limitador.
+  app = createApp({
+    db: h.db,
+    adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.suite", { max: 100_000, windowMs: 60_000 }),
+  });
   // Segundo administrador (para lo irreversible).
   const [u] = await h
     .db("users")
@@ -317,19 +322,56 @@ describe("ADM-1 · confirmación en dos pasos", () => {
 });
 
 describe("ADM-1 · segundo admin para lo irreversible", () => {
-  it("SEGUNDO_ADMIN: el solicitante NO puede confirmar su propia acción irreversible; otro admin sí", async () => {
-    const { id, token, phrase } = await createAndTake(irreversible, admin);
-    const own = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD }, admin);
+  it("SEGUNDO_ADMIN: sin token compartido; el solicitante NO puede aprobar, otro admin SÍ desde su propia sesión", async () => {
+    const created = await create(irreversible, admin);
+    expect(created.status).toBe(201);
+    // No se entrega ningún token que compartir fuera de banda.
+    expect(created.body.confirmToken).toBeNull();
+    expect(await h.db("admin_operations").where({ id: created.body.operation.id }).first()).toMatchObject({
+      confirm_token_hash: null,
+    });
+    const id = created.body.operation.id as string;
+    const phrase = created.body.operation.confirmPhrase as string;
+    const own = await confirm(id, { phrase, password: DEV_PASSWORD }, admin);
     expect(own.status).toBe(403);
-    const other = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD }, admin2);
+    // Ni siquiera con otra sesión del MISMO usuario.
+    const ownOtherSession = await tokenFor(h.db, DEV_USERS.admin);
+    expect((await confirm(id, { phrase, password: DEV_PASSWORD }, ownOtherSession)).status).toBe(403);
+    // El segundo admin se reautentica con SU contraseña, en SU sesión, y aprueba.
+    expect((await confirm(id, { phrase, password: "otra-contraseña-mala" }, admin2)).status).toBe(401);
+    const other = await confirm(id, { phrase, password: DEV_PASSWORD }, admin2);
     expect(other.status, JSON.stringify(other.body)).toBe(200);
     const requester = await h.db("users").where({ email: DEV_USERS.admin }).first();
     const confirmer = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
     expect(other.body).toMatchObject({
+      status: "pending",
       requestedBy: requester.id,
       confirmedBy: confirmer.id,
       requiresSecondAdmin: true,
     });
+    // Un solo uso: una segunda aprobación (o de un tercero) ya no aplica.
+    expect((await confirm(id, { phrase, password: DEV_PASSWORD }, admin2)).status).toBe(409);
+  });
+
+  it("SEGUNDO_ADMIN_FRASE_Y_CADUCIDAD: la aprobación del segundo admin también exige la frase literal y no caducada", async () => {
+    const created = await create(irreversible, admin);
+    const id = created.body.operation.id as string;
+    const phrase = created.body.operation.confirmPhrase as string;
+    expect((await confirm(id, { phrase: "otra", password: DEV_PASSWORD }, admin2)).status).toBe(400);
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ confirm_expires_at: new Date(Date.now() - 1000) });
+    const late = await confirm(id, { phrase, password: DEV_PASSWORD }, admin2);
+    expect(late.status).toBe(409);
+    expect(late.body.error).toBe("confirmation_expired");
+  });
+
+  it("CONFIRMA_SIN_TOKEN_SOLO_IRREVERSIBLE: una destructiva normal sigue exigiendo el token", async () => {
+    const { id, phrase } = await createAndTake(destructive);
+    const r = await confirm(id, { phrase, password: DEV_PASSWORD });
+    expect(r.status).toBe(400);
+    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("awaiting_confirmation");
   });
 
   it("SEGUNDO_ADMIN_AUSENTE: con un único admin la irreversible se rechaza (ruta de consola)", async () => {
@@ -471,5 +513,51 @@ describe("ADM-1 · ejecutor: lease, reintentos y rol de BD mínimo", () => {
         sql,
       ).rejects.toMatchObject({ code: "42501" });
     }
+  });
+});
+
+describe("ADM-1 · límite de intentos de confirmación", () => {
+  it("LIMITE_CONFIRM: pasado el máximo por admin, 429 (incluso con credenciales correctas) y otro admin no se ve afectado", async () => {
+    const limited = createApp({
+      db: h.db,
+      adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.test", { max: 3, windowMs: 60_000 }),
+    });
+    const conf = (t: string, id: string, body: Record<string, unknown>) =>
+      request(limited).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send(body);
+    const { id, token, phrase } = await createAndTake(destructive);
+    const statuses: number[] = [];
+    for (let k = 0; k < 3; k++)
+      statuses.push((await conf(admin, id, { confirmToken: token, phrase, password: "mala-contraseña" })).status);
+    expect(statuses).toEqual([401, 401, 401]);
+    const blocked = await conf(admin, id, { confirmToken: token, phrase, password: DEV_PASSWORD });
+    expect(blocked.status).toBe(429);
+    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("awaiting_confirmation");
+    // El límite es por admin: el otro admin sigue pudiendo intentar.
+    expect((await conf(admin2, id, { confirmToken: token, phrase, password: "mala" })).status).toBe(401);
+  });
+});
+
+describe("ADM-1 · circuito de extremo a extremo con un ejecutor de prueba", () => {
+  /** Ejecutor de PRUEBA para system.noop: existe sólo aquí; ningún servicio lo cablea en producción. */
+  async function noopExecutorOnce(owner: string): Promise<boolean> {
+    const c = await claimOperation(h.db, { kinds: ["system.noop"], owner, leaseMs: 30_000 });
+    if (!c) return false;
+    await completeOperation(h.db, c.id, owner, { noop: true, impactClass: c.params.impactClass });
+    return true;
+  }
+
+  it("CIRCUITO_E2E: crear → confirmar → ejecutor → done visible por la API, con toda la traza auditada", async () => {
+    const { id, token, phrase } = await createAndTake(destructive);
+    expect(await noopExecutorOnce("test-exec")).toBe(false); // sin confirmar no se ejecuta
+    expect((await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD })).status).toBe(200);
+    expect(await noopExecutorOnce("test-exec")).toBe(true);
+    const r = await request(app).get(`/admin/operations/${id}`).set("Authorization", `Bearer ${admin}`);
+    expect(r.body).toMatchObject({ status: "done", result: { noop: true, impactClass: "destructive" } });
+    expect((await audits()).map((x) => x.action)).toEqual([
+      "admin.op.requested",
+      "admin.op.confirmed",
+      "admin.op.started",
+      "admin.op.succeeded",
+    ]);
   });
 });

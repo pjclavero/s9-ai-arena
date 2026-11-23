@@ -36,7 +36,7 @@ describe("registro de ajustes: validación en servidor", () => {
     for (const bad of ["5", 2.5, Number.NaN, Infinity, true, null, undefined, {}]) {
       expect(validateSettingValue(INT, bad, {}).ok, String(bad)).toBe(false);
     }
-    const B = SYSTEM_SETTINGS_REGISTRY.get("ops.probe_restart")!;
+    const B: SettingDef = { ...INT, key: "test.flag", type: "boolean", default: false, env: undefined };
     for (const bad of ["true", 1, 0, null]) expect(validateSettingValue(B, bad, {}).ok, String(bad)).toBe(false);
     expect(validateSettingValue(B, true, {}).ok).toBe(true);
   });
@@ -91,14 +91,14 @@ describe("registro de ajustes: construcción", () => {
     expect(() => createSettingsRegistry([{ ...INT, default: 99 }])).toThrow(/por defecto/);
   });
 
-  it("el registro de fábrica declara consumidor y clase de aplicación en cada clave", () => {
+  it("FABRICA_VACIA: el registro de producción no trae sondas ni claves sin consumidor real", () => {
+    expect(SYSTEM_SETTINGS_REGISTRY.defs).toEqual([]);
     for (const d of SYSTEM_SETTINGS_REGISTRY.defs) {
       expect(d.consumer.length).toBeGreaterThan(0);
       expect(["hot", "restart"]).toContain(d.apply);
     }
-    expect(SYSTEM_SETTINGS_REGISTRY.get("ops.probe_hot")!.apply).toBe("hot");
-    expect(SYSTEM_SETTINGS_REGISTRY.get("ops.probe_restart")!.apply).toBe("restart");
     // clave inexistente: no hay entrada «libre»
+    expect(SYSTEM_SETTINGS_REGISTRY.get("ops.probe_hot")).toBeUndefined();
     expect(SYSTEM_SETTINGS_REGISTRY.get("__proto__")).toBeUndefined();
     expect(SYSTEM_SETTINGS_REGISTRY.get("constructor")).toBeUndefined();
   });

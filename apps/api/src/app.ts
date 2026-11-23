@@ -117,6 +117,8 @@ export interface AppConfig {
    * tests; en producción, el registro de código y `process.env`).
    */
   systemSettings?: { registry?: SettingsRegistry; env?: NodeJS.ProcessEnv };
+  /** ADM-1 · Límite de intentos de `confirmAdminOperation` por admin (por defecto, compartido en BD). */
+  adminConfirmLimiter?: RateLimiterLike;
   streamingPublicKey?: () => { pem: string; kid: string } | null;
   broadcastBaseUrl?: string;
 }
@@ -210,7 +212,12 @@ export function createApp(cfg: AppConfig): express.Express {
       env: cfg.systemSettings?.env,
     }),
   );
-  app.use(adminOperationsRoutes(cfg.db));
+  app.use(
+    adminOperationsRoutes(cfg.db, {
+      confirmLimiter:
+        cfg.adminConfirmLimiter ?? new SharedRateLimiter(cfg.db, "admin.confirm", { max: 10, windowMs: 5 * 60_000 }),
+    }),
+  );
   app.use(
     streamingRoutes(cfg.db, {
       streamer,

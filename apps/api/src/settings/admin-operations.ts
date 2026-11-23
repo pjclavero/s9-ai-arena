@@ -195,7 +195,8 @@ export async function createOperation(
   }
 
   const needsConfirm = cls !== "none";
-  const token = needsConfirm ? randomBytes(32).toString("base64url") : null;
+  // El segundo admin NO recibe ni comparte ningún token: aprueba desde su propia sesión (reautenticado).
+  const token = needsConfirm && !requiresSecondAdmin ? randomBytes(32).toString("base64url") : null;
   let row: OpRow;
   try {
     row = await db.transaction(async (trx) => {
@@ -259,10 +260,9 @@ export async function confirmOperation(
 ): Promise<ReturnType<typeof operationView>> {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("el cuerpo debe ser un objeto JSON");
   const b = body as Record<string, unknown>;
-  if (typeof b.confirmToken !== "string" || b.confirmToken.length === 0)
-    throw badRequest("confirmToken es obligatorio");
+  if (b.confirmToken !== undefined && typeof b.confirmToken !== "string") throw badRequest("confirmToken inválido");
   if (typeof b.phrase !== "string") throw badRequest("phrase es obligatoria");
-  const confirmToken: string = b.confirmToken;
+  const confirmToken: string | undefined = b.confirmToken as string | undefined;
   const phrase: string = b.phrase;
 
   const outcome = await db.transaction(async (trx): Promise<ReturnType<typeof operationView> | "expired"> => {
@@ -292,9 +292,12 @@ export async function confirmOperation(
     }
     if (phrase.trim() !== row.confirm_phrase) throw badRequest("La frase de confirmación no coincide");
 
-    // Consumo ATÓMICO del token: un solo uso aunque haya dos confirmaciones a la vez.
-    const [done]: OpRow[] = await t("admin_operations")
-      .where({ id, status: "awaiting_confirmation", confirm_token_hash: sha256(confirmToken) })
+    // Con segundo admin no hay token: la aprobación es la sesión reautenticada de OTRO admin.
+    if (!row.requires_second_admin && !confirmToken) throw badRequest("confirmToken es obligatorio");
+    // Consumo ATÓMICO: un solo uso aunque haya dos confirmaciones a la vez.
+    const consume = t("admin_operations").where({ id, status: "awaiting_confirmation" });
+    if (!row.requires_second_admin) consume.where({ confirm_token_hash: sha256(confirmToken!) });
+    const [done]: OpRow[] = await consume
       .where("confirm_expires_at", ">", t.fn.now())
       .update({
         status: "pending",
