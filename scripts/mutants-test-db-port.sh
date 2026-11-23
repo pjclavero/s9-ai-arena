@@ -10,13 +10,17 @@ out=$(RUN); rc=$?; echo "BASE rc=$rc"
 [ "$rc" -eq 0 ] || { echo "$out" | tail -20; exit 1; }
 fail=0
 mutant() {
-  local name=$1 expect=$2 old=$3 new=$4
-  python3 - "$F" "$old" "$new" <<'PY'
+  local name=$1 expect=$2 old=$3 new=$4 old2=${5:-} new2=${6:-}
+  python3 - "$F" "$old" "$new" "$old2" "$new2" <<'PY'
 import sys
-f, old, new = sys.argv[1:4]
+f, old, new, old2, new2 = sys.argv[1:6]
 s = open(f).read()
-assert s.count(old) == 1, f"patrón no único/ausente: {old}"
-open(f, "w").write(s.replace(old, new))
+for o, n in ((old, new), (old2, new2)):
+    if not o:
+        continue
+    assert s.count(o) == 1, f"patrón no único/ausente: {o}"
+    s = s.replace(o, n)
+open(f, "w").write(s)
 PY
   [ $? -eq 0 ] || { echo "MUTANTE $name: no aplicable"; fail=1; git checkout -q -- "$F"; return; }
   out=$(RUN); rc=$?
@@ -33,7 +37,8 @@ mutant T3-sin-tope "TOPE" \
 mutant T4-ipv4-parcial-no-detectado "señal real de puerto ocupado" \
   "could not bind IPv4 address[^\\n]*address already in use" "zzz-nunca"
 mutant T5-stop-tras-salida-temprana "FALLO TOTAL" \
-  "let started = false;" "let started = true;"
+  "let started = false;" "let started = true;" \
+  "const STOP_GRACE_MS = 5_000;" "const STOP_GRACE_MS = 3_600_000;"
 git diff --quiet -- "$F" || { echo "ÁRBOL SUCIO"; fail=1; }
 [ "$fail" -eq 0 ] && echo "TODOS LOS MUTANTES MUERTOS, árbol limpio" || echo "HAY FALLOS"
 exit "$fail"
