@@ -126,6 +126,11 @@ export interface ApiOptions {
   formData?: FormData;
   /** Plazo de la petición en ms (por defecto API_TIMEOUT_MS). */
   timeoutMs?: number;
+  /**
+   * ADM-1 · La petición lleva REAUTENTICACIÓN (contraseña/TOTP): un 401 son credenciales malas, no
+   * una sesión caducada. No se refresca ni se reintenta (reintentar duplicaría el intento fallido).
+   */
+  reauth?: boolean;
 }
 
 async function rawFetch(method: string, path: string, body?: unknown, opts: ApiOptions = {}) {
@@ -263,7 +268,7 @@ export async function api<T = unknown>(
   const res = await rawFetch(method, path, body, opts);
   // Interceptor único de 401 (los endpoints de auth quedan fuera: un 401 de
   // /auth/login son credenciales malas, no una sesión caducada).
-  if (res.status === 401 && !path.startsWith("/auth/")) {
+  if (res.status === 401 && !path.startsWith("/auth/") && !opts.reauth) {
     if (await refreshSession()) {
       return parseResponse<T>(await rawFetch(method, path, body, opts));
     }

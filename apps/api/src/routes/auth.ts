@@ -122,7 +122,7 @@ async function createSession(db: Db, userId: string, req: { headers: Record<stri
  * R2.4 · Reautenticación FUERTE para operaciones sensibles: contraseña + (si hay
  * 2FA activo) TOTP o código de recuperación. Un access token robado NO basta.
  */
-async function requireStrongReauth(
+export async function requireStrongReauth(
   db: Db,
   user: Record<string, unknown>,
   body: { password?: unknown; totp?: unknown },

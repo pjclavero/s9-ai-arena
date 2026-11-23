@@ -39,6 +39,7 @@ import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
 import { StreamingPage } from "./pages/StreamingPage.js"; // EQ5b · Administración → Streaming
+import { SettingsPage } from "./pages/admin/SettingsPage.js"; // ADM-1 · Administración → Ajustes del sistema
 import { BattleDetailPage } from "./pages/BattleDetailPage.js"; // UX-D · #/battles/<uuid>
 import { MapsPage } from "./pages/MapsPage.js";
 import { MapEditorPage } from "./pages/MapEditorPage.js";
@@ -140,6 +141,7 @@ export type StaticPanelRoute =
   | "audit"
   | "roles"
   | "streaming"
+  | "settings"
   | "account"
   | "admin";
 
@@ -157,6 +159,8 @@ export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; patter
   { name: "roles", pattern: /^#\/roles(?:[/?].*)?$/ },
   // EQ5b · Administración → Streaming (`?battle=<id>` / `?tournament=<id>` preselecciona).
   { name: "streaming", pattern: /^#\/streaming(?:[/?].*)?$/ },
+  // ADM-1 · Administración → Ajustes del sistema.
+  { name: "settings", pattern: /^#\/settings(?:[/?].*)?$/ },
   // V1-B · Mi cuenta (cambio de contraseña).
   { name: "account", pattern: /^#\/account\/?(?:\?.*)?$/ },
   { name: "admin", pattern: /^#\/admin(?:[/?].*)?$/ },
@@ -379,6 +383,8 @@ export function App() {
         return admin(<RolesPage me={me!} />);
       case "streaming":
         return admin(<StreamingPage me={me!} route={route} />);
+      case "settings":
+        return admin(<SettingsPage me={me!} />);
       case "account":
         return <AccountPage />;
       case "admin":

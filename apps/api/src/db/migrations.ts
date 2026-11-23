@@ -1142,17 +1142,160 @@ const m022_entries_team: Migration = {
   },
 };
 
+// ADM-1 · 023_system_settings_operations: base de la administración web.
+//  - `system_settings`: ajustes funcionales persistidos (clave → valor jsonb validado por el
+//    REGISTRO en código; `version` para concurrencia optimista). Sin secretos. No se siembra:
+//    sin fila vale el entorno o el valor por defecto del registro.
+//  - `admin_operations`: cola de órdenes administrativas. `kind` es una lista CERRADA (CHECK) y
+//    `params` sólo admite identificadores/enteros validados por el esquema de cada tipo (la
+//    API valida y el ejecutor vuelve a validar); NO hay rutas ni comandos. La API sólo inserta
+//    y confirma; la ejecuta el servicio que ya posee el privilegio, con su propio rol de BD
+//    (SELECT + UPDATE de status/result/lease…), por un `lease` con caducidad.
+//    Estados: awaiting_confirmation → pending → running → done|failed; expired|cancelled.
+//    El índice único parcial impone UNA orden activa por `kind` (anti-abuso).
+// Los tipos reales (ADM-4/6/7) AMPLÍAN el CHECK de `kind` en su propia migración.
+// Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED. Probada en `migration-023.test.ts`.
+const m023_system_settings_operations: Migration = {
+  name: "023_system_settings_operations",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE system_settings (
+        key        text PRIMARY KEY CHECK (key ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'),
+        value      jsonb NOT NULL,
+        version    integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE TABLE admin_operations (
+        id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind                text NOT NULL CHECK (kind IN ('system.noop')),
+        params              jsonb NOT NULL DEFAULT '{}'::jsonb,
+        status              text NOT NULL CHECK (status IN
+                              ('awaiting_confirmation','pending','running','done','failed','expired','cancelled')),
+        requested_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+        confirmed_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+        impact              jsonb NOT NULL DEFAULT '{}'::jsonb,
+        confirm_phrase      text,
+        confirm_token_hash  text,
+        confirm_expires_at  timestamptz,
+        requires_second_admin boolean NOT NULL DEFAULT false,
+        result              jsonb,
+        lease_owner         text,
+        lease_expires_at    timestamptz,
+        attempts            integer NOT NULL DEFAULT 0,
+        created_at          timestamptz NOT NULL DEFAULT now(),
+        confirmed_at        timestamptz,
+        started_at          timestamptz,
+        finished_at         timestamptz,
+        CHECK (status <> 'running' OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+      );
+      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
+        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running');
+      CREATE INDEX admin_operations_claim_idx ON admin_operations (status, kind, created_at);
+
+      -- MÁQUINA DE ESTADOS EN LA BD (vale para CUALQUIER rol, también un ejecutor con UPDATE de columnas):
+      --  * kind, params y los datos de la solicitud son inmutables (sólo pueden pasar a NULL por ON DELETE SET NULL);
+      --  * transiciones legales: awaiting_confirmation → pending|expired|cancelled; pending → running|cancelled;
+      --    running → done|failed|pending (reaper); los estados finales no se tocan;
+      --  * awaiting_confirmation → pending sólo con confirmación: confirmed_by y confirmed_at informados EN ESA
+      --    MISMA actualización (columnas que el rol ejecutor no puede escribir) y, con segundo admin, distinto del
+      --    solicitante. Así un ejecutor no puede saltarse token, frase, reautenticación ni segundo admin.
+      CREATE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.requires_second_admin IS DISTINCT FROM OLD.requires_second_admin
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            -- Única modificación admitida en un estado final: ON DELETE SET NULL de requested_by/confirmed_by
+            -- (borrar o anonimizar un usuario). Cualquier otra columna debe quedar igual.
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          IF OLD.requires_second_admin AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.requested_by THEN
+            RAISE EXCEPTION 'admin_operations: la acción irreversible exige un segundo admin distinto del solicitante' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE TRIGGER admin_operations_guard BEFORE UPDATE ON admin_operations
+        FOR EACH ROW EXECUTE FUNCTION admin_operations_guard();
+
+      -- Una orden NACE como la crea la API: en awaiting_confirmation, o en pending sin segundo admin (acciones sin
+      -- impacto), y sin campos de confirmación, lease, resultado ni intentos prerrellenados.
+      CREATE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.status = 'pending' AND NEW.requires_second_admin THEN
+          RAISE EXCEPTION 'admin_operations: una orden con segundo admin nace en awaiting_confirmation' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
+      CREATE TRIGGER admin_operations_insert_guard BEFORE INSERT ON admin_operations
+        FOR EACH ROW EXECUTE FUNCTION admin_operations_insert_guard();
+    `);
+  },
+  // Vuelta atrás: se pierden los ajustes guardados (vuelve el entorno/defecto) y el historial de órdenes
+  // (su rastro de auditoría queda en audit_log).
+  async down(db) {
+    await db.raw(
+      `DROP TABLE admin_operations; DROP FUNCTION admin_operations_guard(); DROP FUNCTION admin_operations_insert_guard(); DROP TABLE system_settings;`,
+    );
+  },
+};
+
 // V1 REPLAYS · PR-3 · `replay_artifacts`: un replay S9R/1 publicado por batalla (receta `.s9r` y
 // vista `.s9v`), con el intento y el titular que lo grabaron, sha256 y bytes de cada fichero, la
 // cadena de integridad, `truncated` y el estado del ciclo de vida (lo gobiernan el janitor y el
 // borrado de PR-6/PR-7; aquí sólo nace `published`). `battles.replay_ref` apunta a la receta y
 // `replay_hash` = `recipe_sha256`.
 //
-// NUMERACIÓN: la 023 la reserva ADM-1 (#334, `023_system_settings_operations`), que se integra
-// ANTES que este PR (decisión del coordinador). knex aplica por nombre y no exige números
-// consecutivos: el hueco 022→024 no rompe `migrate.latest` (migrations-order.test.ts lo declara
-// en RESERVED_GAPS). Tabla NUEVA e independiente (sólo FK a battles): entra en
-// NAMED_ROLLBACK_ALLOWED. Probada en `migration-024.test.ts`.
+// NUMERACIÓN: va después de `023_system_settings_operations` (ADM-1, #334, integrada antes).
+// Tabla NUEVA e independiente (sólo FK a battles y users): entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-024.test.ts`.
 const m024_replay_artifacts: Migration = {
   name: "024_replay_artifacts",
   async up(db) {
@@ -1219,7 +1362,7 @@ export const MIGRATIONS: Migration[] = [
   m020_streaming_ingests,
   m021_runtime_settings,
   m022_entries_team,
-  // 023 reservada para ADM-1 (#334), que se integra antes.
+  m023_system_settings_operations,
   m024_replay_artifacts,
 ];
 
@@ -1295,6 +1438,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "021_runtime_settings",
   // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
   "022_entries_team",
+  // ADM-1 · tablas propias sin dependencias posteriores.
+  "023_system_settings_operations",
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",
 ]);
