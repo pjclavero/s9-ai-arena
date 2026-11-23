@@ -14,8 +14,8 @@
  *
  *   tsx apps/streamer/src/render-selftest.ts   (rc 0 = ambos controles correctos)
  */
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger, DEFAULT_CONFIG, type StreamerConfig } from "./config.js";
 import {
@@ -27,13 +27,14 @@ import {
   splitGrayFrames,
 } from "./frame-check.js";
 import { realSpawner } from "./main.js";
+import { runIsolatedCases, startDisplay } from "./selftest-display.js";
 import { StreamSupervisor } from "./supervisor.js";
 
-const DISPLAY = process.env.SELFTEST_DISPLAY ?? ":95";
-// Chromium toma el display del ENTORNO (buildChromiumArgs no lo pasa): en producción el
-// entrypoint arranca el Xvfb en $DISPLAY; aquí el Xvfb propio va en DISPLAY y el entorno
-// heredado por los hijos tiene que apuntar a él (la CI lo cazó: la imagen trae DISPLAY=:99).
-process.env.DISPLAY = DISPLAY;
+// Un Xvfb NUEVO por caso (selftest-display.ts): el positivo en BASE y el negativo en BASE+1.
+// Compartir uno entre casos fue la causa del flaky «Missing X server or $DISPLAY» del negativo
+// (Xvfb se reinicia al irse su último cliente; ver selftest-display.ts).
+const BASE_DISPLAY = Number((process.env.SELFTEST_DISPLAY ?? ":95").replace(/^:/, "").split(".")[0]);
+const displayOf = (i: number) => `:${BASE_DISPLAY + i}`;
 // HOME PROPIO y desechable: el perfil de Chromium vive en $HOME/.config/chromium. Si la
 // autoprueba usara el HOME de `streamer`, su perfil (con el SingletonLock del Chromium
 // que se para aquí, «buildkitsandbox») quedaría DENTRO DE LA IMAGEN y el Chromium real
@@ -61,7 +62,11 @@ async function until(cond: () => boolean, ms: number): Promise<boolean> {
   return cond();
 }
 
-async function run(kind: keyof typeof PAGES): Promise<boolean> {
+async function run(kind: keyof typeof PAGES, DISPLAY: string): Promise<boolean> {
+  // Chromium toma el display del ENTORNO (buildChromiumArgs no lo pasa): en producción el
+  // entrypoint arranca el Xvfb en $DISPLAY; aquí el Xvfb del caso va en DISPLAY y el entorno
+  // heredado por los hijos tiene que apuntar a él (la CI lo cazó: la imagen trae DISPLAY=:99).
+  process.env.DISPLAY = DISPLAY;
   const rec = join(DIR, `rec-${kind}`);
   rmSync(rec, { recursive: true, force: true });
   mkdirSync(rec, { recursive: true });
@@ -146,19 +151,21 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
 // transforma este fichero a CommonJS (lo cazó la CI).
 async function selftest(): Promise<number> {
   mkdirSync(join(DIR, "home"), { recursive: true });
-  const xvfb = spawn("Xvfb", [DISPLAY, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"], { stdio: "ignore" });
-  const sock = `/tmp/.X11-unix/X${DISPLAY.replace(/^:/, "").split(".")[0]}`;
   let rc = 1;
   try {
-    if (!(await until(() => existsSync(sock), 10_000))) throw new Error(`Xvfb no creó ${sock}`);
-    const positive = await run("ok");
-    const negative = await run("white");
+    const [positive, negative] = await runIsolatedCases(
+      [
+        { name: "ok", display: displayOf(0) },
+        { name: "white", display: displayOf(1) },
+      ],
+      (display) => startDisplay(display),
+      (name, display) => run(name as keyof typeof PAGES, display),
+    );
     log(`RESULTADO positivo=${positive ? "OK" : "FALLO"} negativo=${negative ? "OK" : "FALLO"}`);
     rc = positive && negative ? 0 : 1;
   } catch (e) {
     log(`error: ${(e as Error).message}`);
   } finally {
-    xvfb.kill("SIGTERM");
     rmSync(DIR, { recursive: true, force: true });
   }
   return rc;
