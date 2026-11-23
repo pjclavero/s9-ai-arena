@@ -574,7 +574,7 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
     );
     await h.db.raw(`GRANT INSERT ON audit_log TO s9_ops_exec`);
   }
-  const asExec = (sql: string, bindings: unknown[] = []) =>
+  const asExec = (sql: string, bindings: string[] = []) =>
     h.db.transaction(async (trx) => {
       await trx.raw(`SET LOCAL ROLE s9_ops_exec`);
       await trx.raw(sql, bindings);
