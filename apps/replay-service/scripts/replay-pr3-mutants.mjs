@@ -117,19 +117,8 @@ export const MUTANTS = [
       },
     ],
   },
-  {
-    id: "M-W6-verify-guard-removed",
-    why: "verify de un S9R/1 lo lee como JSONL y responde corrupt_file",
-    test: WIRE,
-    t: "W6 ",
-    edits: [
-      {
-        file: "apps/api/src/routes/replays.ts",
-        find: "if (isS9rReplayRef(battle.replay_ref)) throw replayNotFound();",
-        replace: "/* mutante */",
-      },
-    ],
-  },
+  // M-W6 (guarda de verify de PR-3) retirado en PR-4: la guarda «sólo S9R» vive ahora en
+  // `readableS9r` (routes/replays.ts) y la calibra M-E8-legacy-guard-removed (replay-pr4-mutants.mjs).
   {
     id: "M-RC2-unbounded-queue",
     why: "la cola no tiene tope: crecería en RAM con el disco atascado",

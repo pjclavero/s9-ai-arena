@@ -13,8 +13,8 @@
  * W4 camino feliz: los dos ficheros se publican, verifican ok:true con el sha de la BD, la receta
  *    RE-SIMULA el mismo resultado (verify del motor) y la fila de replay_artifacts cuadra.
  * W5 reserva perdida antes del cierre: no se publica nada y los `.part` del intento se borran.
- * W6 «nada se rompe» (lectores en PR-4): la batalla nueva se consulta (detalle, listado, estadísticas
- *    «pending»); índice, segmento y verificación responden 404 uniforme, nunca un 500 ni `corrupt_file`.
+ * W6 (PR-4) la batalla nueva se consulta entera por la API con los lectores S9R/1: detalle, listado,
+ *    estadísticas «ready», índice, segmento, verify (matches) y crudo con su sha.
  * Mutantes: apps/replay-service/scripts/replay-pr3-mutants.mjs (cada uno muere por su W<n>).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -326,7 +326,7 @@ describe("V1 REPLAYS PR-3 · publicación real", () => {
     expect(filesIn(r.replaysDir)).toEqual({ finals: [], partials: [] });
   }, 120_000);
 
-  it("W6 nada se rompe con un replay nuevo: la batalla se consulta; índice, segmento y verify dan 404 uniforme (lectores en PR-4)", async () => {
+  it("W6 (PR-4) una batalla nueva se consulta ENTERA por la API: detalle, listado, estadísticas, índice, segmento, verify y crudo", async () => {
     const r = await rig({});
     const s = await scheduleTournament();
     await drainAll(r.worker);
@@ -336,16 +336,22 @@ describe("V1 REPLAYS PR-3 · publicación real", () => {
     expect(detail.body.status).toBe("finished");
     const list = await request(app).get(`/replays`).set(auth);
     expect(list.status).toBe(200);
-    expect(list.body.items.map((i: Row) => i.battleId)).toContain(s.battleId);
+    const item = list.body.items.find((i: Row) => i.battleId === s.battleId);
+    expect(item.sizeBytes).toBeGreaterThan(0);
     const stats = await request(app).get(`/battles/${s.battleId}/stats`).set(auth);
     expect(stats.status).toBe(200);
-    expect(stats.body.status).toBe("pending");
-    for (const path of [`/replays/${s.battleId}/index`, `/replays/${s.battleId}/segment?fromTick=0&toTick=30`]) {
-      const res = await request(app).get(path).set(auth);
-      expect(res.status, path).toBe(404);
-    }
+    expect(stats.body.status).toBe("ready");
+    const idx = await request(app).get(`/replays/${s.battleId}/index`).set(auth);
+    expect(idx.status).toBe(200);
+    expect(idx.body.snapshotCount).toBeGreaterThan(0);
+    const seg = await request(app).get(`/replays/${s.battleId}/segment?fromTick=0&toTick=30`).set(auth);
+    expect(seg.status).toBe(200);
+    expect(seg.body.snapshots.length).toBeGreaterThan(0);
     const v = await request(app).post(`/replays/${s.battleId}/verify`).set(auth);
-    expect(v.status).toBe(404);
-    expect(JSON.stringify(v.body)).not.toMatch(/corrupt_file/);
+    expect(v.status).toBe(200);
+    expect(v.body.matches).toBe(true);
+    const raw = await request(app).get(`/replays/${s.battleId}`).set(auth).buffer(true);
+    expect(raw.status).toBe(200);
+    expect(raw.headers["x-replay-sha256"]).toBe((await h.db("battles").where({ id: s.battleId }).first()).replay_hash);
   }, 120_000);
 });
