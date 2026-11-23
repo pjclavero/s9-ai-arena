@@ -223,6 +223,45 @@ export const MUTANTS = [
       { file: "apps/replay-service/src/main.ts", find: "  if (err) {", replace: "  if (Date.now() < 0 && err) {" },
     ],
   },
+  {
+    id: "M-RP1-no-dedupe",
+    why: "el helper no deduplica los solapes entre segmentos",
+    test: "apps/api/src/replay-pages.test.ts",
+    t: "RP1 ",
+    edits: [
+      {
+        file: "tests/browser/specs/replay-pages.ts",
+        find: "if (!byTick.has(s.tick)) byTick.set(s.tick, s);",
+        replace: "byTick.set(s.tick + Math.random(), s);",
+      },
+    ],
+  },
+  {
+    id: "M-RP1-skips-chunks",
+    why: "el helper se salta trozos (faltan instantáneas)",
+    test: "apps/api/src/replay-pages.test.ts",
+    t: "RP1 ",
+    edits: [
+      {
+        file: "tests/browser/specs/replay-pages.ts",
+        find: "from += SEGMENT_CHUNK_TICKS)",
+        replace: "from += 2 * SEGMENT_CHUNK_TICKS)",
+      },
+    ],
+  },
+  {
+    id: "M-RP1-chunk-too-wide",
+    why: "el helper pide trozos más anchos que el tope (400 de la API)",
+    test: "apps/api/src/replay-pages.test.ts",
+    t: "RP1 ",
+    edits: [
+      {
+        file: "tests/browser/specs/replay-pages.ts",
+        find: "export const SEGMENT_CHUNK_TICKS = 1200;",
+        replace: "export const SEGMENT_CHUNK_TICKS = 1300;",
+      },
+    ],
+  },
 ];
 
 function run(test, t) {

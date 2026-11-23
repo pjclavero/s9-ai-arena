@@ -6,6 +6,7 @@
  * visibilidad del bot en la web) se hace con la API pública y el Bearer del dueño,
  * y se anota como hallazgo.
  */
+import { collectReplaySnapshots } from "./replay-pages.js";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { OUT, go } from "./helpers.js";
@@ -170,21 +171,14 @@ export async function waitStatsReady(api: PublicApi, battleId: string): Promise<
   return s;
 }
 
-/**
- * Todas las instantáneas del replay por la API autorizada, en trozos como el reproductor (V1
- * REPLAYS PR-4: un segmento abarca como mucho 1200 ticks; cada trozo arranca en el keyframe
- * anterior, así que se deduplica por tick).
- */
+/** Todas las instantáneas del replay por la API autorizada, en segmentos (ver replay-pages.ts). */
 export async function replaySnapshots(api: PublicApi, battleId: string): Promise<{ index: any; snapshots: any[] }> {
   const index = await api.ok("GET", `/replays/${battleId}/index`);
-  const CHUNK = 1200;
-  const byTick = new Map<number, any>();
-  for (let from = 0; from <= index.ticks; from += CHUNK) {
-    const to = Math.min(from + CHUNK - 1, index.ticks);
-    const seg = await api.ok("GET", `/replays/${battleId}/segment?fromTick=${from}&toTick=${to}`);
-    for (const s of seg.snapshots as any[]) if (!byTick.has(s.tick)) byTick.set(s.tick, s);
-  }
-  return { index, snapshots: [...byTick.values()].sort((a, b) => a.tick - b.tick) };
+  const snapshots = await collectReplaySnapshots(
+    (from, to) => api.ok("GET", `/replays/${battleId}/segment?fromTick=${from}&toTick=${to}`),
+    index.ticks,
+  );
+  return { index, snapshots };
 }
 
 /** Basura que nunca debe salir en la UI (SPEC-COMUN §7). */
