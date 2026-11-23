@@ -24,6 +24,8 @@ import {
   nodeFs,
   publishPair,
   publishPartial,
+  type PublishOptions,
+  type PublishPair,
   scanPartial,
   verifyFile,
   type Algo,
@@ -49,6 +51,10 @@ function rec(t: number, v: number, tag = ""): string {
     c: { thr: (x % 2001) / 1000 - 1, turn: ((x >>> 8) % 2001) / 1000 - 1, fire: (x >>> 16) % 7 === 0 },
   });
 }
+
+/** Tests de formato: se salta la prueba de cierre (la prueba tiene sus propios tests en T23). */
+const pub = (a: string, b: string, o: PublishOptions = {}) => publishPartial(a, b, { unsafeSkipProof: true, ...o });
+const pairPub = (x: PublishPair, o: PublishOptions = {}) => publishPair(x, { unsafeSkipProof: true, ...o });
 
 async function build(
   path: string,
@@ -429,7 +435,7 @@ describe("T6 errores de disco tipados", () => {
     const part = p("pub.s9r.part");
     const fin = p("pub.s9r");
     await build(part);
-    await expect(publishPartial(part, fin, { fs: faulty("link", 1, "EIO") })).rejects.toBeInstanceOf(StorageIoError);
+    await expect(pub(part, fin, { fs: faulty("link", 1, "EIO") })).rejects.toBeInstanceOf(StorageIoError);
     expect(existsSync(fin)).toBe(false);
     expect(existsSync(part)).toBe(true);
   });
@@ -516,7 +522,7 @@ describe("T9 publicación atómica", () => {
     const fin = p("a.published.s9r");
     await build(part);
     expect(existsSync(fin)).toBe(false);
-    await publishPartial(part, fin);
+    await pub(part, fin);
     expect(existsSync(part)).toBe(false);
     expect((await verifyFile(fin)).ok).toBe(true);
   });
@@ -525,7 +531,7 @@ describe("T9 publicación atómica", () => {
     const fin = p("b.published.s9r");
     await build(part);
     writeFileSync(fin, "ya publicado");
-    await expect(publishPartial(part, fin)).rejects.toMatchObject({ code: "final_exists" });
+    await expect(pub(part, fin)).rejects.toMatchObject({ code: "final_exists" });
     expect(readFileSync(fin, "utf8")).toBe("ya publicado");
   });
   it("T9 vista primero y receta al final; si falla la receta, no hay receta publicada", async () => {
@@ -545,7 +551,7 @@ describe("T9 publicación atómica", () => {
     const rf = p("c.s9r");
     const vf = p("c.s9v");
     await expect(
-      publishPair({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 }),
+      pairPub({ recipe: { partial: rp, final: rf }, view: { partial: vp, final: vf } }, { fs: fs2 }),
     ).rejects.toBeInstanceOf(StorageIoError);
     expect(order).toEqual(["V", "R"]);
     expect(existsSync(rf)).toBe(false);

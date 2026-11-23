@@ -63,6 +63,16 @@ export interface WriterOptions {
   fs?: S9rFs;
 }
 
+/**
+ * Marca de cierre correcto: sólo los `WriteSummary` que emite un escritor al cerrar bien están
+ * en este WeakSet (congelados). Una copia, un objeto fabricado o un sha obtenido de otro modo
+ * (p. ej. `verifyFile` sobre un parcial dañado) NO pasan `isIssuedSummary`.
+ */
+const ISSUED = new WeakSet<object>();
+export function isIssuedSummary(x: unknown): x is WriteSummary {
+  return typeof x === "object" && x !== null && ISSUED.has(x);
+}
+
 export interface WriteSummary {
   path: string;
   bytes: number;
@@ -328,6 +338,7 @@ export class S9rWriter {
   close(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
     return this.enqueue(async () => {
       this.assertOpen();
+      this.assertOptions(opts);
       // La ÚNICA forma de marcar un fichero como truncado es `closeTruncated()`. Cualquier opción
       // `truncated` en `close()` se rechaza y el escritor queda sin sellar (sigue abierto).
       if ("truncated" in (opts as object)) {
@@ -339,6 +350,13 @@ export class S9rWriter {
       // Sólo `closeTruncated()` puede sellar un fichero como truncado: no hay segunda vía.
       return this.finish({ result: opts.result, truncated: false });
     });
+  }
+
+  /** Opciones de cierre: un objeto (nada de null ni primitivos); error tipado, no TypeError. */
+  private assertOptions(opts: unknown): void {
+    if (typeof opts !== "object" || opts === null || Array.isArray(opts)) {
+      throw new WriterStateError("bad_options", "las opciones de cierre deben ser un objeto");
+    }
   }
 
   /** Falla si ya se superó el tope de bytes (no se puede escribir más). */
@@ -366,6 +384,7 @@ export class S9rWriter {
   closeTruncated(opts: { result?: Record<string, unknown> } = {}): Promise<WriteSummary> {
     return this.enqueue(async () => {
       this.assertOpen();
+      this.assertOptions(opts);
       // Se conserva el prefijo aceptado: lo pendiente en el búfer se vuelca salvo que el tope lo impida.
       if (!this.limitHit) {
         try {
@@ -430,7 +449,7 @@ export class S9rWriter {
       throw e;
     }
     this.state = "closed";
-    return {
+    const summary: WriteSummary = Object.freeze({
       path: this.path,
       bytes: this.offset,
       sha256: this.fileHash.digest("hex"),
@@ -438,7 +457,9 @@ export class S9rWriter {
       fragments: this.entries.filter((e) => e.type === FT.data).length,
       records: this.totalRecords,
       truncated: doc.truncated,
-    };
+    });
+    ISSUED.add(summary);
+    return summary;
   }
 
   private failedPath: string | null = null;

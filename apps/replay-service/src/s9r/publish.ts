@@ -12,47 +12,66 @@ import { CorruptReplayError, TruncatedReplayError, WriterStateError, toStorageEr
 import { nodeFs, type S9rFs } from "./io.js";
 import { S9rReader } from "./reader.js";
 import { verifyFile } from "./verify.js";
+import { isIssuedSummary, type WriteSummary } from "./writer.js";
 
 export interface PublishOptions {
   fs?: S9rFs;
   /** Publica un replay truncado (clase A). Explícito y nombrado: por defecto se rechaza. */
   allowTruncated?: boolean;
-  /** Si se indica, verificación COMPLETA (sha256 del fichero incluido) de la RECETA antes de publicar. */
-  expectSha256?: string;
-  /** Idem para la VISTA en `publishPair` (los hashes son por fichero). */
-  expectViewSha256?: string;
   /**
-   * Exige la PRUEBA de un cierre correcto: el `sha256` del `summary` que devolvió
-   * `close()`/`closeTruncated()` (en `expectSha256` y, en un par, `expectViewSha256`).
-   * Un escritor que falló (fsync, etc.) no tiene `summary`, así que nunca puede publicarse con
-   * esta opción, aunque un fallo total del almacenamiento hubiera dejado un pie válido con
-   * nombre `.part`. PR-3 debe usarla siempre.
+   * PRUEBA DE CIERRE de la RECETA, exigida SIEMPRE: el `WriteSummary` que devolvió
+   * `close()`/`closeTruncated()` del escritor de ese parcial. Es un objeto emitido y registrado
+   * por el módulo (no se puede fabricar ni copiar) y su `path` y `sha256` se validan contra el
+   * fichero. Un escritor cuyo cierre falló no tiene `summary`: nunca puede publicarse, aunque un
+   * fallo total del almacenamiento hubiera dejado un pie válido con nombre `.part`.
    */
-  requireProof?: boolean;
+  proof?: WriteSummary;
+  /** Idem para la VISTA en `publishPair`. */
+  viewProof?: WriteSummary;
+  /**
+   * SÓLO tests y diagnóstico: publica sin prueba de cierre (se siguen aplicando las comprobaciones
+   * de nombre, pie, cadena y truncado). Nunca debe usarse en el camino de producción.
+   */
+  unsafeSkipProof?: boolean;
 }
 
 /**
  * Comprobación OBLIGATORIA previa a publicar. El origen debe ser un `.part` (nunca un `.failed`
- * ni un fichero final). Después `S9rReader.open` (pie, índice, cadena): un parcial sin pie da
+ * ni un fichero final). Después se exige la PRUEBA DE CIERRE (`proof`): un `WriteSummary` emitido
+ * por un escritor que cerró bien, con el mismo `path`, cuyo `sha256` se verifica sobre el fichero
+ * entero. Luego `S9rReader.open` (pie, índice, cadena): un parcial sin pie da
  * `IncompleteReplayError`, uno corrupto `CorruptReplayError`, un truncado `TruncatedReplayError`
- * salvo `allowTruncated`. Con `expectSha256` se verifica además todo el fichero.
+ * salvo `allowTruncated`.
  * Nota: la comprobación y el `link` son por ruta; el directorio de parciales debe ser privado
  * del servicio (no hay protección frente a otro proceso que lo reemplace entre ambos pasos).
  */
-export async function assertPublishable(path: string, opts: PublishOptions = {}, expectSha256?: string): Promise<void> {
-  if (opts.requireProof && expectSha256 === undefined) {
-    throw new WriterStateError("proof_required", "se exige la prueba del cierre (sha256 del summary) para publicar");
-  }
+export async function assertPublishable(
+  path: string,
+  opts: PublishOptions = {},
+  proof: WriteSummary | undefined = opts.proof,
+): Promise<void> {
   if (path.endsWith(".failed")) throw new CorruptReplayError("failed_file", "fichero .failed: nunca se publica");
   if (!path.endsWith(".part")) throw new WriterStateError("not_a_partial", "sólo se publican orígenes .part");
+  if (!opts.unsafeSkipProof) {
+    if (proof === undefined) {
+      throw new WriterStateError(
+        "proof_required",
+        "se exige la prueba del cierre (el summary de close/closeTruncated)",
+      );
+    }
+    if (!isIssuedSummary(proof)) {
+      throw new WriterStateError("proof_invalid", "la prueba no es un summary emitido por un escritor que cerró bien");
+    }
+    if (proof.path !== path) throw new WriterStateError("proof_mismatch", "la prueba pertenece a otro fichero");
+  }
   const r = await S9rReader.open(path, { fs: opts.fs });
   const truncated = r.truncated;
   await r.close();
   if (truncated && !opts.allowTruncated) {
     throw new TruncatedReplayError("truncated", "replay truncado: no se publica sin allowTruncated explícito");
   }
-  if (expectSha256 !== undefined) {
-    const v = await verifyFile(path, { fs: opts.fs, expectSha256, allowTruncated: opts.allowTruncated });
+  if (!opts.unsafeSkipProof) {
+    const v = await verifyFile(path, { fs: opts.fs, expectSha256: proof!.sha256, allowTruncated: opts.allowTruncated });
     if (!v.ok) throw v.error!;
   }
 }
@@ -103,7 +122,7 @@ async function publishAll(items: Item[], fs: S9rFs): Promise<void> {
 
 export async function publishPartial(partialPath: string, finalPath: string, opts: PublishOptions = {}): Promise<void> {
   const fs = opts.fs ?? nodeFs;
-  await assertPublishable(partialPath, opts, opts.expectSha256);
+  await assertPublishable(partialPath, opts, opts.proof);
   await publishAll([{ partial: partialPath, final: finalPath }], fs);
 }
 
@@ -116,8 +135,8 @@ export interface PublishPair {
 export async function publishPair(pair: PublishPair, opts: PublishOptions = {}): Promise<void> {
   const fs = opts.fs ?? nodeFs;
   // Se comprueban AMBOS antes de publicar nada.
-  if (pair.view) await assertPublishable(pair.view.partial, opts, opts.expectViewSha256);
-  await assertPublishable(pair.recipe.partial, opts, opts.expectSha256);
+  if (pair.view) await assertPublishable(pair.view.partial, opts, opts.viewProof);
+  await assertPublishable(pair.recipe.partial, opts, opts.proof);
   await publishAll([...(pair.view ? [pair.view] : []), pair.recipe], fs);
 }
 
