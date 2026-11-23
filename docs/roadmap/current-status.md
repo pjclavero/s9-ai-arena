@@ -154,7 +154,7 @@ Hallazgos de V1 que aún no tienen TD propio (defectos del roadmap): rol `organi
 
 ## Next priorities
 
-1. Decidir los merges de los PR conformes (#311–#317) y las tres decisiones del operador (alcance del `organizer`, exclusión de CTF y zona, tabla por equipos con bye).
+1. Decidir los merges de los PR conformes (#311–#317) y las decisiones del operador (alcance del `organizer`, exclusión de CTF y zona; la del bye ya está decidida: D-OP-24, PR #328).
 2. Desplegar `main` en una ventana autorizada (incluye #309 y #169) y repetir los smokes de torneos por equipos con navegador real.
 3. Cerrar la cuenta: canal de recuperación de contraseña y pantallas de 2FA y sesiones ([TD-012](technical-debt.md#td-012)).
 4. Hardening antes de abrir a terceros: [TD-041](technical-debt.md#td-041), [TD-043](technical-debt.md#td-043), [TD-033](technical-debt.md#td-033).

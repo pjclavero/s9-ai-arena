@@ -141,8 +141,8 @@ const MUTANTS = [
     file: "apps/tournament-worker/src/formats.ts",
     dies: "V1C_SW_pairing",
     why: "suizo: se empareja por semilla en lugar de por puntos",
-    find: "b.points - a.points || a.seed - b.seed);\n  let byeId",
-    repl: "a.seed - b.seed);\n  let byeId",
+    find: "b.points - a.points || a.seed - b.seed);\n  const pairKey",
+    repl: "a.seed - b.seed);\n  const pairKey",
   },
   {
     id: "X3b",
@@ -152,15 +152,87 @@ const MUTANTS = [
     find: "const winner = isTeams ? finished.winner_team_id : finished.winner_bot_id;",
     repl: "const winner = isTeams ? finished.winner_team_id : fp.home;",
   },
+  // ---- D-OP-24 · semántica del bye (tests propios: BYE_*; el contrato E2E es V1C_TDM_bye_contract)
+  {
+    id: "B1",
+    test: "apps/tournament-worker/src/bye-semantics.test.ts",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "BYE_table",
+    why: "tabla: el bye cuenta como victoria jugada",
+    find: "if (r) r.byes++;",
+    repl: "if (r) (r.byes++, r.wins++);",
+  },
+  {
+    id: "B2",
+    test: "apps/tournament-worker/src/bye-semantics.test.ts",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "BYE_table",
+    why: "tabla: el bye vuelve a dar 3 puntos",
+    find: "if (r) r.byes++;",
+    repl: "if (r) (r.byes++, (r.points += 3));",
+  },
+  {
+    id: "B3",
+    test: "apps/tournament-worker/src/bye-semantics.test.ts",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "BYE_swiss_zero",
+    why: "suizo: el bye vuelve a dar 3 puntos",
+    find: "byeCount.set(p.home, (byeCount.get(p.home) ?? 0) + 1);",
+    repl: "byeCount.set(p.home, (byeCount.get(p.home) ?? 0) + 1);\n      points.set(p.home, (points.get(p.home) ?? 0) + 3);",
+  },
+  {
+    id: "B4",
+    test: "apps/tournament-worker/src/formats.test.ts",
+    file: "apps/tournament-worker/src/formats.ts",
+    dies: "BYE_swiss_no_repeat",
+    why: "suizo: DESCANSO REPETIDO (se ignora cuántos byes lleva cada uno)",
+    find: "count(s) === fewest",
+    repl: "true",
+  },
+  {
+    id: "B5",
+    test: "apps/tournament-worker/src/formats.test.ts",
+    file: "apps/tournament-worker/src/formats.ts",
+    dies: "BYE_swiss_feasible",
+    why: "suizo: el bye ignora si fuerza un rival repetido",
+    find: "byeId = (feasible ?? candidates[0]).id;",
+    repl: "byeId = candidates[0].id;",
+  },
+  {
+    id: "B6",
+    test: "apps/tournament-worker/src/bye-semantics.test.ts",
+    file: "apps/tournament-worker/src/ratings.ts",
+    dies: "BYE_no_elo",
+    why: "Elo: una batalla colgada de un bye vuelve a puntuar",
+    find: "(pairing as { bye?: unknown } | null | undefined)?.bye === true) return false;",
+    repl: "(pairing as { bye?: unknown } | null | undefined)?.bye === 12345) return false;",
+  },
+  {
+    id: "B7",
+    test: "apps/tournament-worker/src/bye-semantics.test.ts",
+    file: "apps/tournament-worker/src/results.ts",
+    dies: "BYE_technical",
+    why: "tabla: los resultados técnicos dejan de contarse",
+    find: "      if (h && a) {\n        h.technical++;",
+    repl: "      if (h && a) {\n        h.technical += 0;",
+  },
+  {
+    id: "B8",
+    file: "apps/api/src/routes/tournaments.ts",
+    dies: "V1C_TDM_bye_contract",
+    why: "API: la columna byes deja de exponerse",
+    find: "byes: row.byes,",
+    repl: "byes: 0,",
+  },
 ];
 
 const sh = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8" }).trim();
 const onlyArg = process.argv.indexOf("--only");
 const only = onlyArg >= 0 ? process.argv[onlyArg + 1].split(",") : [];
 
-function run() {
+function run(test = TEST) {
   const out = join(mkdtempSync(join(tmpdir(), "v1c-mut-")), "r.json");
-  const r = spawnSync("npx", ["vitest", "run", TEST, "--maxWorkers=1", "--reporter=json", `--outputFile=${out}`], {
+  const r = spawnSync("npx", ["vitest", "run", test, "--maxWorkers=1", "--reporter=json", `--outputFile=${out}`], {
     encoding: "utf8",
   });
   let failed = [];
@@ -177,12 +249,18 @@ if (sh("git", ["status", "--porcelain", "--untracked-files=no"]) !== "") {
   console.error("ARBOL SUCIO: commitea antes");
   process.exit(2);
 }
-const base = run();
-console.log(`BASE rc=${base.rc} failed=${base.failed.length}`);
-if (base.rc !== 0) process.exit(2);
+const baseOf = new Set();
+const baseFor = (t) => {
+  if (baseOf.has(t)) return;
+  const base = run(t);
+  console.log(`BASE ${t} rc=${base.rc} failed=${base.failed.length}`);
+  if (base.rc !== 0) process.exit(2);
+  baseOf.add(t);
+};
 
 let bad = 0;
 for (const m of MUTANTS.filter((x) => only.length === 0 || only.includes(x.id))) {
+  baseFor(m.test ?? TEST);
   const src = readFileSync(m.file, "utf8");
   const n = src.split(m.find).length - 1;
   if (n !== 1) {
@@ -193,7 +271,7 @@ for (const m of MUTANTS.filter((x) => only.length === 0 || only.includes(x.id)))
   writeFileSync(m.file, src.replace(m.find, m.repl));
   let res;
   try {
-    res = run();
+    res = run(m.test ?? TEST);
   } finally {
     sh("git", ["checkout", "--", m.file]);
   }
