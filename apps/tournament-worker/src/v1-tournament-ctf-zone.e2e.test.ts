@@ -145,7 +145,9 @@ describe("V1-C · B3 · CTF y control de zona FUERA de los torneos", () => {
     expect(battles).toEqual([]); // NO se programa ninguna batalla CTF
     expect(jobs.length).toBe(1);
     expect(String(jobs[0].last_error)).toMatch(/tournament_mode_not_allowed/);
-    expect(jobs[0].status).not.toBe("done");
+    // O2 · acotado: termina en revisión manual y no supera su tope de intentos (sin bucle).
+    expect(jobs[0].status).toBe("needs_review");
+    expect(Number(jobs[0].attempts)).toBeLessThanOrEqual(Number(jobs[0].max_attempts));
     expect(t.state).toBe("closed"); // no se toca el dato: ni running ni finished
     const g = await request(app).get(`/tournaments/${id}`);
     expect(g.status).toBe(200);

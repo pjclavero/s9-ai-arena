@@ -99,6 +99,6 @@ El botón **«Cerrar inscripciones»** sólo lo ve quien creó el torneo y el eq
 ## Cosas a tener en cuenta
 
 - Si una batalla de un torneo falla por un problema técnico y agota sus reintentos, queda como «falló», **no puntúa ni mueve el rating**, y el torneo sigue y termina igualmente. En una eliminatoria avanza el mejor cabeza de serie; si era la final, el torneo termina sin campeón.
-- **Captura la bandera y Control de zona no están soportados en torneos** (no se anuncian como funcionales en V1): crear uno responde 400 `tournament_mode_not_allowed` (también con un preset, reglas personalizadas o un ruleset de esos modos). Los torneos antiguos creados con esos modos siguen visibles y no se modifican, pero **no avanzan**: al cerrar inscripciones el calendario no se genera y el trabajo queda en revisión manual.
+- **Captura la bandera y Control de zona no están soportados en torneos** (no se anuncian como funcionales en V1): crear uno responde 400 `tournament_mode_not_allowed` (también con un preset, reglas personalizadas o un ruleset de esos modos). Los torneos antiguos creados con esos modos siguen visibles y no se modifican, pero **no avanzan**: cerrar sus inscripciones responde 409 `tournament_mode_not_allowed` y no se cierra; si ya estaban cerradas, no se genera calendario (el trabajo pasa a revisión manual). Un torneo así, abierto o cerrado, se puede cancelar.
 
 Siguiente: [Ranking](rankings.md) · [Batallas](battles.md).

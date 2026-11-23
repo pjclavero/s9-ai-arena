@@ -676,6 +676,14 @@ export function tournamentRoutes(
           allowedTransitions: t.state === "draft" ? ["open"] : [],
         });
       }
+      // B3 (O1) · un torneo ANTIGUO con modo excluido no se cierra: fallo rápido y claro ANTES de congelar
+      // nada (si no, quedaría `closed` sin calendario). Se cancela desde `open`.
+      if (!isTournamentModeAllowed(t.mode)) {
+        throw conflict(TOURNAMENT_MODE_NOT_ALLOWED, tournamentModeNotAllowedReason(t.mode), {
+          mode: t.mode,
+          allowedModes: [...TOURNAMENT_ALLOWED_MODES],
+        });
+      }
 
       const entries = (await db("entries").where({ tournament_id: t.id })) as Record<string, unknown>[];
       // #287 (ronda 3, R2-3) · lo que se valida no puede cambiar antes del commit: bots de las
@@ -908,7 +916,11 @@ export function tournamentRoutes(
       if (!t) throw notFound();
       assertCanManageTournament(req.auth, t); // #291 · predicado único (dueño del torneo o staff)
       if (t.state === "cancelled") return t; // idempotente: ni cambio ni auditoría
-      if (!(CANCELLABLE_TOURNAMENT_STATES as readonly string[]).includes(t.state)) {
+      // B3 (O1) · un torneo `closed` con modo excluido nunca generará calendario: se puede cancelar
+      // (sólo ese caso amplía los estados cancelables).
+      const cancellableStates: string[] = [...CANCELLABLE_TOURNAMENT_STATES];
+      if (t.state === "closed" && !isTournamentModeAllowed(t.mode)) cancellableStates.push("closed");
+      if (!cancellableStates.includes(t.state)) {
         throw conflict(
           "tournament_not_cancellable",
           t.state === "finished"
@@ -919,7 +931,7 @@ export function tournamentRoutes(
       }
       const [cancelled] = await trx("tournaments")
         .where({ id: t.id })
-        .whereIn("state", [...CANCELLABLE_TOURNAMENT_STATES])
+        .whereIn("state", cancellableStates)
         .update({ state: "cancelled" })
         .returning("*");
       if (!cancelled) throw conflict("tournament_not_cancellable", "El torneo cambió de estado: no se puede cancelar");

@@ -34,7 +34,7 @@ const MODES = TOURNAMENT_CREATE_MODES;
 /** V1-T1 · Los torneos «Por equipos» sólo se pueden crear con reglas NvN (preset `team_deathmatch`):
  *  la API rechaza CTF en torneos y, sin preset, el torneo nace sin tamaño de equipo, no se monta
  *  «Inscribir equipo» y los equipos no se pueden seleccionar. */
-const TEAM_TOURNAMENT_MODE = "team_deathmatch";
+export const TEAM_TOURNAMENT_MODE = "team_deathmatch";
 
 export function TournamentsPage(_props: { me: Me }) {
   const [list, reload] = useResource(() => api<{ items: Tournament[] }>("GET", "/tournaments"), []);

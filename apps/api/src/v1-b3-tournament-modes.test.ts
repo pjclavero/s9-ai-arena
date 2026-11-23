@@ -114,6 +114,23 @@ describe("B3 · crear torneos con modos excluidos", () => {
     await expectRejected({ mode: "no_existe", rulesetId: "deathmatch-mvp" }, 400, "bad_request");
   });
 
+  it("B3_MODE_VARIANTS · mayúsculas, espacios, array u objeto en `mode` no se cuelan: 400 y ninguna fila", async () => {
+    for (const mode of [
+      "Capture_The_Flag",
+      " zone_control",
+      "zone_control ",
+      "CAPTURE_THE_FLAG",
+      ["capture_the_flag"],
+      { a: 1 },
+    ]) {
+      const before = await count();
+      const r = await create({ mode, rulesetId: "deathmatch-mvp" });
+      expect(r.status, JSON.stringify(mode)).toBe(400);
+      expect(r.body.error).toBe("bad_request");
+      expect(await count()).toBe(before);
+    }
+  });
+
   it("B3_ALLOWED_OK · Deathmatch y Deathmatch por equipos se siguen creando (control positivo)", async () => {
     const dm = await create({ mode: "deathmatch", rulesetId: "deathmatch-mvp" });
     expect(dm.status, JSON.stringify(dm.body)).toBe(201);
@@ -174,6 +191,53 @@ describe("B3 · los torneos existentes no se tocan", () => {
     // Y se puede seguir cancelando (no queda inmovilizado por la restricción).
     const c = await request(app).post(`/tournaments/${ok.body.id}/actions/cancel`).set(bearer(organizer)).send({});
     expect(c.status, JSON.stringify(c.body)).toBe(200);
+  });
+});
+
+describe("B3 · un torneo antiguo con modo excluido no se queda atascado (O1)", () => {
+  async function legacy(mode: string, state: string) {
+    const ok = await create({ mode: "deathmatch", rulesetId: "deathmatch-mvp" });
+    await h.db("tournaments").where({ id: ok.body.id }).update({ mode, state });
+    return ok.body.id as string;
+  }
+
+  it("B3_CLOSE_ENTRIES_REJECTED · closeEntries de un torneo `open` con CTF/zona -> 409 tournament_mode_not_allowed y no se cierra", async () => {
+    for (const mode of ["capture_the_flag", "zone_control"]) {
+      const id = await legacy(mode, "open");
+      const r = await request(app).post(`/tournaments/${id}/actions/close-entries`).set(bearer(organizer)).send({});
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(r.body.error).toBe("tournament_mode_not_allowed");
+      expect(r.body.allowedModes).toEqual(["deathmatch", "team_deathmatch"]);
+      expect((await h.db("tournaments").where({ id }).first()).state).toBe("open");
+      expect(
+        await h
+          .db("jobs")
+          .where({ kind: "generate_schedule" })
+          .whereRaw("payload::text like ?", [`%${id}%`]),
+      ).toEqual([]);
+    }
+  });
+
+  it("B3_CLOSED_EXCLUDED_CANCELLABLE · un torneo `closed` con CTF/zona se puede cancelar", async () => {
+    for (const mode of ["capture_the_flag", "zone_control"]) {
+      const id = await legacy(mode, "closed");
+      const r = await request(app).post(`/tournaments/${id}/actions/cancel`).set(bearer(organizer)).send({});
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.state).toBe("cancelled");
+    }
+  });
+
+  it("B3_CLOSED_ALLOWED_NOT_CANCELLABLE · la ampliación es sólo para modos excluidos: un `closed` Deathmatch sigue dando 409", async () => {
+    const id = await legacy("deathmatch", "closed");
+    const r = await request(app).post(`/tournaments/${id}/actions/cancel`).set(bearer(organizer)).send({});
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("tournament_not_cancellable");
+  });
+
+  it("B3_CLOSE_ENTRIES_DM_OK · control positivo: closeEntries de un Deathmatch con 2 inscritos sigue pudiendo 409 por falta de inscritos, no por modo", async () => {
+    const id = await legacy("deathmatch", "open");
+    const r = await request(app).post(`/tournaments/${id}/actions/close-entries`).set(bearer(organizer)).send({});
+    expect(r.body.error).not.toBe("tournament_mode_not_allowed");
   });
 });
 

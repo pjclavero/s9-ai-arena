@@ -19,7 +19,7 @@ vi.mock("../src/api.js", () => ({
 }));
 
 import { api } from "../src/api.js";
-import { TournamentsPage, TOURNAMENT_CREATE_MODES } from "../src/pages/TournamentsPage.js";
+import { TournamentsPage, TOURNAMENT_CREATE_MODES, TEAM_TOURNAMENT_MODE } from "../src/pages/TournamentsPage.js";
 import { TOURNAMENT_ALLOWED_MODES } from "../../tournament-worker/src/tournament-modes.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
@@ -68,5 +68,7 @@ describe("B3 · formulario de crear torneo", () => {
 
   it("B3W_DRIFT · la lista de la web coincide con la fuente única del worker/API", () => {
     expect([...TOURNAMENT_CREATE_MODES]).toEqual([...TOURNAMENT_ALLOWED_MODES]);
+    // O4 · el modo fijo de «Por equipos» también sale de la fuente única.
+    expect(TOURNAMENT_ALLOWED_MODES).toContain(TEAM_TOURNAMENT_MODE);
   });
 });
