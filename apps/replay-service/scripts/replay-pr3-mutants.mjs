@@ -189,7 +189,7 @@ function run(test, t) {
   const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", test, "-t", t, "--maxWorkers=1"], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, S9_PR3_TICKS: process.env.S9_PR3_TICKS ?? "6000" },
+    env: { ...process.env, S9_PR3_TICKS: process.env.S9_PR3_TICKS ?? "45000" },
   });
   return r.status;
 }
