@@ -56,7 +56,7 @@ export async function startOnFreePort<T>(
     try {
       return { value: await launch(port), port, attempts: attempt };
     } catch (e) {
-      if (!opts.isBusy(e)) throw e;
+      if (!opts.isBusy(e) || attempt >= max) throw e;
     }
   }
 }
