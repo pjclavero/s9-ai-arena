@@ -101,8 +101,12 @@ interface Arranque {
  * Lanza el servicio real y espera a que (a) diga que escucha, o (b) muera.
  * No hay terceros caminos: eso es justamente lo que se está probando.
  */
-async function arrancar(replaysDir: string, ingestSecret: string | undefined = INGEST_SECRET): Promise<Arranque> {
-  const port = await puertoLibre();
+async function arrancar(
+  replaysDir: string,
+  ingestSecret: string | undefined = INGEST_SECRET,
+  fixedPort?: number,
+): Promise<Arranque> {
+  const port = fixedPort ?? (await puertoLibre());
   const proc = spawnService(process.execPath, [TSX as string, MAIN], {
     cwd: REPO,
     env: {
@@ -261,5 +265,27 @@ describe("B8 · el servicio REAL sin secreto configurado: lee pero no deja escri
 
     // (4) EFECTO observable: el directorio de datos sigue VACÍO.
     expect(readdirSync(dir)).toEqual([]);
+  });
+});
+
+/**
+ * V1 REPLAYS PR-4 · revisión #340 · Express 5 entrega el error de `listen` al callback: con el
+ * puerto ocupado, el servicio NO puede anunciar «escuchando» y salir con 0 (en Docker sería un
+ * contenedor «sano» que no sirve nada). Debe morir con 1 y un diagnóstico.
+ */
+describe("puerto ocupado: el servicio falla con 1 y lo dice (nunca «escuchando» y exit 0)", () => {
+  it("EADDRINUSE ⇒ exit 1, sin línea de escucha", { timeout: 120_000 }, async () => {
+    const busy = createServer();
+    await new Promise<void>((r) => busy.listen(0, "0.0.0.0", () => r()));
+    const port = (busy.address() as { port: number }).port;
+    try {
+      const dir = join(mkdtempSync(join(tmpdir(), "b9-port-")), "replays");
+      const s = await arrancar(dir, undefined, port);
+      expect(s.code, s.salida).toBe(1);
+      expect(s.salida).not.toMatch(/escuchando/);
+      expect(s.salida).toMatch(/no se pudo escuchar/);
+    } finally {
+      await new Promise((r) => busy.close(r));
+    }
   });
 });

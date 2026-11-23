@@ -24,7 +24,21 @@ app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "replay-ser
 // ADR-016 · identidad de build embebida en la imagen, observable en ejecución.
 mountVersionEndpoint(app, "replay-service");
 
-app.listen(port, () => {
+// Express 5 pasa a este callback también el ERROR de `listen` (p. ej. EADDRINUSE): sin
+// comprobarlo, el proceso anunciaría «escuchando» y saldría con 0 sin servir nada.
+app.listen(port, (err?: Error) => {
+  if (err) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        service: "replay-service",
+        msg: "no se pudo escuchar",
+        port,
+        reason: err.message,
+      }),
+    );
+    process.exit(1);
+  }
   console.log(
     JSON.stringify({
       level: "info",

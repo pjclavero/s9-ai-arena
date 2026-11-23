@@ -149,7 +149,9 @@ beforeAll(async () => {
   fxSmall = await writeS9rReplay(dir, small, { viewFragmentBytes: 16 * 1024 });
   smallId = await battleRow(fxSmall);
   big = await play("pr340_big", 9000, 4, false);
-  fxBig = await writeS9rReplay(dir, big);
+  // Fragmentos de vista pequeños: lo que el lector retiene por fragmento es despreciable y la
+  // medición de L5 distingue «streaming» de «documento retenido» sin depender del muestreo.
+  fxBig = await writeS9rReplay(dir, big, { viewFragmentBytes: 64 * 1024 });
   bigId = await battleRow(fxBig);
 }, 300_000);
 afterAll(async () => {

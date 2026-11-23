@@ -214,6 +214,15 @@ export const MUTANTS = [
       },
     ],
   },
+  {
+    id: "M-BOOT-listen-error-ignored",
+    why: "con el puerto ocupado el servicio anuncia «escuchando» y sale con 0",
+    test: BOOT,
+    t: "puerto ocupado",
+    edits: [
+      { file: "apps/replay-service/src/main.ts", find: "  if (err) {", replace: "  if (Date.now() < 0 && err) {" },
+    ],
+  },
 ];
 
 function run(test, t) {
