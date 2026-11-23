@@ -265,12 +265,12 @@ describe("L5 (P2-3) · memoria acotada de verify, estadísticas y descarga", () 
     gc();
     const base = process.memoryUsage().heapUsed;
     let peak = 0;
-    // Se mide lo RETENIDO (tras gc), no la basura transitoria entre recolecciones.
+    // Se mide lo RETENIDO (tras gc, cada 150 ms), no la basura transitoria entre recolecciones.
     const t = setInterval(() => {
       gc();
       const d = process.memoryUsage().heapUsed - base;
       if (d > peak) peak = d;
-    }, 25);
+    }, 150);
     try {
       await fn();
     } finally {
@@ -290,21 +290,6 @@ describe("L5 (P2-3) · memoria acotada de verify, estadísticas y descarga", () 
       const s = await computeBattleStatsFrom(await recipeStatsSource(fxBig.path));
       expect(s.durationTicks).toBe(9000);
     });
-    const res = slowRes(false); // descarta lo recibido: sólo se mide el lado del servidor
-    const dPeak = await peakDuring(async () => {
-      const view = await ViewReader.open(fxBig.viewPath);
-      await streamPublicDocument(res, { id: bigId, replay_ref: fxBig.path }, view, null);
-      await view.close();
-      await res.finished();
-    });
-    expect(res.bytes()).toBeGreaterThan(rawView / 4); // no vacuo: el documento entero pasó
-    // La descarga: el documento entero (proyección del orden de rawView, ~6 MiB) NO pasa por la
-    // memoria; lo retenido (medido: ~0,4 MiB) queda muy por debajo de 2 MiB.
-    expect(res.peak()).toBeLessThanOrEqual(16 * 1024 + 8 * 1024);
-    expect(
-      dPeak,
-      `descarga ${(dPeak / MiB).toFixed(1)} MiB; vista cruda ${(rawView / MiB).toFixed(1)} MiB`,
-    ).toBeLessThan(2 * MiB);
     expect(vPeak, `verify ${(vPeak / MiB).toFixed(1)} MiB`).toBeLessThan(48 * MiB);
     expect(sPeak, `stats ${(sPeak / MiB).toFixed(1)} MiB`).toBeLessThan(48 * MiB);
     if (process.env.S9_PR4_METRICS) {
@@ -312,8 +297,68 @@ describe("L5 (P2-3) · memoria acotada de verify, estadísticas y descarga", () 
       appendFileSync(
         process.env.S9_PR4_METRICS,
         `L5 rawView_MiB=${(rawView / MiB).toFixed(2)} verify_MiB=${(vPeak / MiB).toFixed(2)} ` +
-          `stats_MiB=${(sPeak / MiB).toFixed(2)} download_MiB=${(dPeak / MiB).toFixed(2)} ` +
-          `download_buffer_peak_B=${res.peak()}\n`,
+          `stats_MiB=${(sPeak / MiB).toFixed(2)}\n`,
+      );
+    }
+  }, 300_000);
+
+  /**
+   * Descarga (revisión del delta, P2-A): medida DETERMINISTA en lugar del heap. Cada frame
+   * proyectado se observa con un WeakRef; cada 1 000 frames se fuerza `gc()` y se cuentan los
+   * frames anteriores que siguen VIVOS. En streaming quedan vivos como mucho los últimos (el que se
+   * escribe); un documento retenido los mantiene todos. Vista sintética de 45 000 ticks (15 000
+   * snapshots con la forma real de un frame de 4 vehículos) y fragmentos de 64 KiB.
+   *   - correcta: quedan vivos los observados en el MISMO trabajo síncrono (un WeakRef mantiene su
+   *     objetivo hasta el final del job, semántica KeepDuringJob): ≈ un highWaterMark de frames
+   *     (16 KiB / ~0,8 KiB ≈ 20). Constante, no crece con la batalla. Umbral: 64;
+   *   - mutante M-L5 (retiene los frames): miles (todos los observados), > 100x el umbral.
+   * Además: pico de bytes encolados en la respuesta (`writableLength`) <= hwm + un trozo. El heap
+   * retenido se registra como dato, sin umbral (lo dominan el ruido del muestreo y el entorno).
+   */
+  it("L5 descarga de 45 000 ticks: los frames proyectados no se retienen tras escribirse; bytes encolados <= hwm + 8 KiB", async () => {
+    const MiB2 = MiB;
+    const frames = big.snapshots;
+    const fx = await (async () => {
+      const synth: Replay = {
+        ...big,
+        commands: [],
+        events: [],
+        stateHashes: [],
+        checkpoints: [],
+        snapshots: Array.from({ length: 15_000 }, (_, i) => ({ ...frames[i % frames.length], tick: i * 3 })),
+        result: { ...big.result, ticks: 45_000 },
+      };
+      return writeS9rReplay(mkdtempSync(join(tmpdir(), "pr340-l5d-")), synth, { viewFragmentBytes: 64 * 1024 });
+    })();
+    const id = await battleRow(fx);
+    const res = slowRes(false); // descarta lo recibido: sólo se mide el lado del servidor
+    const refs: WeakRef<object>[] = [];
+    let maxAlive = 0;
+    const observe = (frame: object) => {
+      refs.push(new WeakRef(frame));
+      if (refs.length % 1000 === 0) {
+        gc();
+        // Vivos entre los ya escritos (todos menos el actual).
+        let alive = 0;
+        for (let k = 0; k < refs.length - 1; k++) if (refs[k].deref() !== undefined) alive++;
+        if (alive > maxAlive) maxAlive = alive;
+      }
+    };
+    const dPeak = await peakDuring(async () => {
+      const view = await ViewReader.open(fx.viewPath);
+      await streamPublicDocument(res, { id, replay_ref: fx.path }, view, null, { observeProjectedSnapshot: observe });
+      await view.close();
+      await res.finished();
+    });
+    expect(refs.length).toBe(15_000); // no vacuo: se proyectaron todos
+    expect(res.bytes()).toBeGreaterThan(8 * MiB2); // y el documento entero (≈ 11 MiB) pasó
+    expect(maxAlive, `frames proyectados vivos tras escribirse: ${maxAlive}`).toBeLessThanOrEqual(64);
+    expect(res.peak()).toBeLessThanOrEqual(16 * 1024 + 8 * 1024);
+    if (process.env.S9_PR4_METRICS) {
+      const { appendFileSync } = await import("node:fs");
+      appendFileSync(
+        process.env.S9_PR4_METRICS,
+        `L5d doc_MiB=${(res.bytes() / MiB2).toFixed(2)} max_alive=${maxAlive} heap_MiB=${(dPeak / MiB2).toFixed(2)} buffer_peak_B=${res.peak()}\n`,
       );
     }
   }, 300_000);

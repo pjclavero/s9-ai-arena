@@ -24,7 +24,7 @@ import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import { PROJECTED_HTTP_CACHE_CONTROL, projectedEtag } from "../replay-projection.js";
 import { projectBotStats } from "../../../../packages/projection/index.js";
-import { isS9rReplayRef, openView, streamPublicDocument, viewerMetaFromView } from "../replay-s9r.js";
+import { isS9rReplayRef, openView, streamPublicDocument, viewerMetaFromView, whereS9rReplay } from "../replay-s9r.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -252,10 +252,12 @@ function parsePublicReplayLimit(raw: unknown): number {
 
 async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
   // PRC (TD-004) · mismo predicado público que el listado y que el visor.
-  const battle = await wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
-    .where({ "battles.id": id })
-    .whereNotNull("battles.replay_ref")
-    .where("battles.replay_ref", "like", "%.s9r") // diseño §8: sólo recetas S9R/1
+  // Diseño §8 · sólo recetas S9R/1 (predicado único `whereS9rReplay`).
+  const battle = await whereS9rReplay(
+    wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
+      .where({ "battles.id": id })
+      .whereNotNull("battles.replay_ref"),
+  )
     .select(
       "battles.id as id",
       "battles.status as status",
@@ -489,9 +491,12 @@ export function battleRoutes(
       const cursor = decodeCursor(req.query.cursor as string | undefined);
       // PRC (TD-004) · «público» = finished + ningún bot participante no-público
       // (replay-access.ts). Activar la capability NO publica todos los ficheros.
-      let q = wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
-        .whereNotNull("battles.replay_ref")
-        .where("battles.replay_ref", "like", "%.s9r") // diseño §8: sólo recetas S9R/1
+      // Diseño §8 · sólo recetas S9R/1 (predicado único `whereS9rReplay`).
+      let q = whereS9rReplay(
+        wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id")).whereNotNull(
+          "battles.replay_ref",
+        ),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",

@@ -361,7 +361,11 @@ export async function streamPublicDocument(
   battle: Record<string, any>,
   view: ViewReader,
   meta: ViewerMeta | null,
-  opts: { stallMs?: number } = {},
+  opts: {
+    stallMs?: number;
+    /** Sólo tests: observa cada frame proyectado (para comprobar que NO se retiene tras escribirlo). */
+    observeProjectedSnapshot?: (frame: object) => void;
+  } = {},
 ): Promise<void> {
   const w = (s: string) => writeWithBackpressure(res, s, opts.stallMs);
   const battleId = String(battle.id);
@@ -386,6 +390,7 @@ export async function streamPublicDocument(
   let first = true;
   await projectViewStream(battleId, meta, view.records(), {
     onSnapshot: async (b) => {
+      opts.observeProjectedSnapshot?.(b);
       await w((first ? "" : ",") + JSON.stringify(b));
       first = false;
     },
