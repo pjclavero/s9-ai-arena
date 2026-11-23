@@ -229,12 +229,12 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
  * proceso (el mismo `SERVICE_ENTRY` que fija el Compose), sin
  * `REPLAY_INGEST_SECRET` en el entorno — el despiste realista del operador — y
  * comprueba por HTTP de verdad que:
- *   - el servicio SÍ arranca y SÍ sirve lecturas (el visor no se queda a oscuras), y
- *   - la ingesta se rechaza con 401 y NO escribe nada en el disco.
+ *   - el servicio SÍ arranca y responde `/healthz`, y
+ *   - no expone NINGUNA ruta de escritura de replays (V1 REPLAYS PR-4b: 404 con o sin credencial)
+ *     y NO escribe nada en el disco.
  *
- * Esto es lo que cubre el cableado `main.ts` → `resolveIngestSecretFromEnv` →
- * `createReplayServer({ internalSecret })`, que ningún test de la app en memoria
- * puede tocar.
+ * Cubre el proceso real (`main.ts`), que ya no monta rutas de replay ni lee ningún secreto de
+ * ingesta (`resolveIngestSecretFromEnv` y `createReplayServer` se retiraron en PR-4b).
  */
 describe("B8 · el servicio REAL sin secreto configurado: lee pero no deja escribir", () => {
   it("arranca y no expone ninguna ruta de escritura (404) sin escribir nada", { timeout: 120_000 }, async () => {

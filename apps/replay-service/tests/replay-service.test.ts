@@ -196,6 +196,21 @@ describe("T8.1 verify (criterio cap. 28)", () => {
 });
 
 describe("T8.1 índice de keyframes (vista S9R/1)", () => {
+  // V1 REPLAYS PR-4b · recupera los casos exactos del antiguo test (buildKeyframes/nearestKeyframe de
+  // format.ts, retirados) sobre la búsqueda REAL de la vista (revisión de #345, P3-3).
+  it("nearestKeyframe: casos exactos (0, 29, 30, 31, 297, muy lejos) y lista vacía → null", () => {
+    const kfs = Array.from({ length: 10 }, (_, i) => ({ tick: i * 30, snapshotIndex: i * 10 }));
+    const nk = (keyframes: typeof kfs, t: number) =>
+      ViewReader.prototype.nearestKeyframe.call({ summary: { keyframes } } as unknown as ViewReader, t);
+    expect(nk(kfs, 0)!.tick).toBe(0);
+    expect(nk(kfs, 29)!.tick).toBe(0);
+    expect(nk(kfs, 30)!.tick).toBe(30);
+    expect(nk(kfs, 31)!.tick).toBe(30);
+    expect(nk(kfs, 297)!.tick).toBe(270);
+    expect(nk(kfs, 99999)!.tick).toBe(270);
+    expect(nk([], 5)).toBeNull();
+  });
+
   it("nearestKeyframe encuentra el keyframe correcto por búsqueda binaria", async () => {
     const replay = await recordBattle("kf", 900);
     const fx = await writeS9rReplay(tmp(), replay);

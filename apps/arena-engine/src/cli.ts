@@ -16,9 +16,13 @@ import { loadRuleset, safeLookup, TICK_DT } from "../../../packages/game-rules/i
 import { Battle, type BattleConfig } from "./sim/battle.js";
 import { initPhysics } from "./sim/physics.js";
 import { record } from "./replay.js";
-// V1 REPLAYS PR-4b · el replay de la CLI es S9R/1 (el formato real en disco; JSONL retirado).
-import { writeS9rReplay } from "../../replay-service/src/s9r/replay-file.js";
-import { verifyRecipePath } from "../../replay-service/src/recipe-verify.js";
+// V1 REPLAYS PR-4b · el replay de la CLI es S9R/1 (el formato real en disco; JSONL retirado). El
+// formato vive en apps/replay-service: se carga con import() SÓLO en los subcomandos que lo usan
+// (`run --out`, `verify`), para que `deps` y `run` sin replay no dependan de él. La imagen
+// arena-engine lo copia igualmente (infrastructure/docker/arena-engine/Dockerfile); lo comprueba
+// infrastructure/tests/image-entry-imports.test.ts.
+const replayFile = () => import("../../replay-service/src/s9r/replay-file.js");
+const recipeVerify = () => import("../../replay-service/src/recipe-verify.js");
 import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoadout } from "./fixtures.js";
 import { CircleBot, ForwardBot, HunterBot, IdleBot } from "./stubs.js";
 import { createInspector, type Inspector } from "./inspector.js";
@@ -132,6 +136,7 @@ async function cmdRun(): Promise<void> {
     }
     const replay = await record(config, attach);
     mkdirSync(out, { recursive: true });
+    const { writeS9rReplay } = await replayFile();
     const fx = await writeS9rReplay(out, replay, { validate: true });
     report(replay.result, performance.now() - t0);
     console.log(`  replay escrito en ${fx.path} (+ ${fx.viewPath})`);
@@ -184,6 +189,7 @@ function report(result: any, ms: number): void {
 
 async function cmdVerify(file: string): Promise<void> {
   await initPhysics();
+  const { verifyRecipePath } = await recipeVerify();
   const { verification: v, header } = await verifyRecipePath(file);
 
   console.log(`\nverificación de ${file}`);

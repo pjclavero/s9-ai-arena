@@ -35,7 +35,7 @@ Si la batalla no se puede ver, el visor lo dice y se detiene: no se queda en «c
 - **Cámaras**: «Vista global», una por bando y «Seguir *vehículo*» (teclas **1–8** para seguir a cada bot).
 - **Zoom y movimiento**: rueda o pellizco para el zoom, arrastrar para mover la cámara; **+ / −** (zoom), **F** (encajar el mapa), **G** (vista global), **C** (centrar en lo seleccionado). Funciona con el foco en el escenario.
 - **Niebla de guerra**: muestra sólo lo que ve un bando. Aparece únicamente si las reglas de la batalla lo permiten.
-- **Capas de depuración** (sensores y colisiones): sólo para moderadores y administradores.
+- **Capas de depuración** (sensores y colisiones) del **directo**: sólo para moderadores y administradores. No tienen nada que ver con la antigua capa de depuración de los **replays** (las órdenes de los bots), que se ha retirado ([Replays](replays.md#para-depurar-tu-bot)).
 - En el móvil el escenario se ajusta al ancho de la pantalla.
 
 ## En directo

@@ -148,8 +148,8 @@ export const MUTANTS = [
     edits: [
       {
         file: SMOKE,
-        find: "const fx = await writeS9rReplay(cfg.replayOutDir, replay);",
-        replace: "const fx = await writeS9rReplay(cfg.replayOutDir, { ...replay, commands: [] });",
+        find: "const fx = await writeS9rReplay(cfg.replayOutDir, replay, { validate: true });",
+        replace: "const fx = await writeS9rReplay(cfg.replayOutDir, { ...replay, commands: [] }, { validate: true });",
       },
     ],
   },
@@ -186,7 +186,7 @@ export const MUTANTS = [
     t: "sin checksum de mapa se rechaza y no se almacena",
     edits: [
       {
-        file: "apps/replay-service/src/s9r/replay-file.ts",
+        file: "apps/replay-service/src/s9r/completeness.ts",
         find: 'problems.push("mapa sin checksum");',
         replace: "void 0;",
       },
@@ -205,6 +205,39 @@ export const MUTANTS = [
       },
     ],
   },
+  {
+    id: "M-WORKER-completeness-gate-removed",
+    why: "H-4b-1 · el worker publica una grabación incompleta (sin la puerta de completitud)",
+    test: "apps/tournament-worker/src/v1-replay-pr3-wiring.test.ts",
+    t: "W7 ",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/engine-executor.ts",
+        find: "        if (problems.length) {",
+        replace: "        if (Date.now() < 0) {",
+      },
+    ],
+  },
+  {
+    id: "M-WORKER-hashes-not-counted",
+    why: "H-4b-1 · el grabador deja de contar los hashes intermedios (la puerta los daría por ausentes o presentes sin mirar)",
+    test: "apps/tournament-worker/src/v1-replay-pr3-wiring.test.ts",
+    t: "W4 ",
+    edits: [{ file: "apps/replay-service/src/s9r/recorder.ts", find: "    this.hashCount++;\n", replace: "" }],
+  },
+  {
+    id: "M-IMG-replay-service-not-copied",
+    why: "P2-1 · la imagen arena-engine deja de copiar apps/replay-service (la CLI no cargaría el formato)",
+    test: "infrastructure/tests/image-entry-imports.test.ts",
+    t: "arena-engine/Dockerfile · apps/arena-engine/src/cli.ts",
+    edits: [
+      {
+        file: "infrastructure/docker/arena-engine/Dockerfile",
+        find: "COPY apps/replay-service ./apps/replay-service\n",
+        replace: "",
+      },
+    ],
+  },
 ];
 
 function run(test, t) {
@@ -217,12 +250,45 @@ function run(test, t) {
 }
 
 const only = new Set(process.argv.slice(2));
+
+// Precomprobación: TODOS los mutantes seleccionados se aplican (cada patrón con UNA aparición) sobre
+// el árbol limpio. Un mutante que no se aplica NO calibra nada: el script FALLA antes de ejecutar
+// ningún test, en vez de contarlo como «no aplicable» (revisión de #345, P3-1).
+const noAplicables = [];
+for (const m of MUTANTS) {
+  if (only.size && !only.has(m.id)) continue;
+  const cur = new Map();
+  for (const e of m.edits) {
+    const f = join(root, e.file);
+    const src = cur.get(f) ?? readFileSync(f, "utf8");
+    const k = src.split(e.find).length - 1;
+    if (k !== 1) {
+      noAplicables.push(`${m.id}: patrón con ${k} apariciones en ${e.file}`);
+      break;
+    }
+    cur.set(
+      f,
+      src.replace(e.find, () => e.replace),
+    );
+  }
+}
+const desconocidos = [...only].filter((id) => !MUTANTS.some((m) => m.id === id));
+for (const id of desconocidos) noAplicables.push(`${id}: mutante desconocido`);
+if (noAplicables.length) {
+  for (const l of noAplicables) console.log(`FALLO (no aplicado) ${l}`);
+  console.log(`mutantes no aplicables: ${noAplicables.length} · el script FALLA`);
+  process.exit(2);
+}
+
 const base = new Map();
 let survivors = 0;
+let killedCount = 0;
+let total = 0;
 for (const m of MUTANTS) {
   if (only.size && !only.has(m.id)) continue;
   const key = `${m.test}::${m.t}`;
   if (!base.has(key)) base.set(key, run(m.test, m.t));
+  total++;
   if (base.get(key) !== 0) {
     console.log(`${m.id}: BASE ROJA (rc ${base.get(key)}), no calibrable`);
     survivors++;
@@ -258,10 +324,11 @@ for (const m of MUTANTS) {
     const rc = run(m.test, m.t);
     const killed = rc !== 0;
     if (!killed) survivors++;
+    else killedCount++;
     console.log(`${m.id}: ${killed ? "MUERTO (test en rojo, rc " + rc + ")" : "SOBREVIVE (rc 0)"} · ${m.why}`);
   } finally {
     for (const [f, s] of originals) writeFileSync(f, s);
   }
 }
-console.log(`supervivientes/errores: ${survivors}`);
+console.log(`MUERTOS ${killedCount}/${total} · supervivientes/errores: ${survivors}`);
 process.exit(survivors ? 1 : 0);
