@@ -17,7 +17,7 @@ echo "BASE rc=$rc"
 
 fail=0
 mutant() { # nombre, fichero, test que debe morir, viejo, nuevo
-  local name=$1 f=$2 expect=$3 old=$4 new=$5
+  local name=$1 f=$2 expect=$3 old=$4 new=$5 msg=${6:-}
   python3 - "$f" "$old" "$new" <<'EOF'
 import sys
 f, old, new = sys.argv[1:4]
@@ -28,19 +28,20 @@ EOF
   [ $? -eq 0 ] || { echo "MUTANTE $name: no se pudo aplicar"; fail=1; git checkout -q -- "$f"; return; }
   out=$(RUN); rc=$?
   git checkout -q -- "$f"
-  if [ "$rc" -ne 0 ] && echo "$out" | grep -q "FAIL .*$expect"; then
+  if [ "$rc" -ne 0 ] && echo "$out" | grep -q "FAIL .*$expect" && { [ -z "$msg" ] || echo "$out" | grep -q "$msg"; }; then
     echo "MUTANTE $name: MUERTO por «$expect» (rc=$rc)"
   else
     echo "MUTANTE $name: SUPERVIVIENTE (rc=$rc, esperaba que muriera «$expect»)"; fail=1
   fi
 }
 
-# W1 · pickTeam abre la puerta y no espera a la opción cargada (select antes del fetch).
+# W1 · pickTeam abre la puerta (openGate se conserva) pero no espera a la opción cargada (select antes del fetch).
 mutant W1-pickteam-sin-esperar-opcion "$T1" "W287_SUBMIT" \
   '  openGate();
   // Espera a la CONDICIÓN: la opción del equipo ya cargada (no basta con que exista el select).
   await screen.findByRole("option", { name: "Bastión" });' \
-  '  // (mutante) sin abrir la puerta ni esperar la opción'
+  '  openGate();' \
+  'not found in options'
 # W2 · el efecto de selección inicial vuelve a pisar el clic del usuario.
 mutant W2-efecto-pisa-seleccion "$S" "W_EQ4_SELECT_RACE" \
   'setSelectedId((prev) => (prev !== null && mine.some((t) => t.id === prev) ? prev : fallback));' \
