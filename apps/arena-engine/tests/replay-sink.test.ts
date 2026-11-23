@@ -228,6 +228,25 @@ describe("R7 MemoryReplaySink acotado", () => {
     expect(t.snapshots.length).toBe(2);
   });
 
+  it("R7 memoryLimitsFor falla cerrado: parámetros NaN/Infinity/negativos dan topes finitos y positivos", () => {
+    const bad = [Number.NaN, Number.POSITIVE_INFINITY, -5, 0];
+    for (const v of bad) {
+      const l = memoryLimitsFor({ maxTicks: v, vehicles: v, snapshotEvery: v, hashEvery: v, checkpointEvery: v });
+      for (const [k, n] of Object.entries(l)) {
+        expect(Number.isFinite(n) && n > 0, `${k} con ${v}`).toBe(true);
+        expect(n, `${k} con ${v}`).toBeLessThan(50_000_000);
+      }
+    }
+    const inf = memoryLimitsFor({
+      maxTicks: Number.POSITIVE_INFINITY,
+      vehicles: 8,
+      snapshotEvery: 3,
+      hashEvery: 30,
+      checkpointEvery: 300,
+    });
+    expect(inf.maxSnapshots).toBeLessThan(20000);
+  });
+
   it("R7 los topes por defecto derivan de los ticks máximos, los vehículos y las cadencias reales (no son 200 000)", () => {
     const l = memoryLimitsFor({ maxTicks: 45000, vehicles: 8, snapshotEvery: 3, hashEvery: 30, checkpointEvery: 300 });
     expect(l.maxSnapshots).toBeGreaterThanOrEqual(15000);

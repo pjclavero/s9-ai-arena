@@ -243,6 +243,22 @@ export const MUTANTS = [
     find: "console.warn(JSON.stringify(",
     replace: "void (JSON.stringify(",
   },
+  {
+    id: "M-R7-limits-fail-open",
+    test: ENGINE,
+    group: "R7",
+    file: SINK,
+    find: "const pos = (x: number, def: number, max: number) => (Number.isFinite(x) && x > 0 ? Math.min(x, max) : def);",
+    replace: "const pos = (x: number, def: number, max: number) => x;",
+  },
+  {
+    id: "M-G4-reattach-keeps-old-subscription",
+    test: GATEWAY,
+    group: "G4",
+    file: GW,
+    find: "for (const u of previous.unsubscribe) u();",
+    replace: "/* mutante */",
+  },
 ];
 
 function run(m) {

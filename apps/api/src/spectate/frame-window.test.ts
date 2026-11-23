@@ -120,3 +120,21 @@ describe("G3 saltar frames no altera la numeración pública ni el estado del pr
     }
   });
 });
+
+describe("G4 re-attach del mismo battleId", () => {
+  it("G4 el feed anterior se da de baja: los descartes no se cuentan dos veces", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const gw = new SpectateGateway({ publicSpectateEnabled: true });
+      cleanups.push(() => gw.close());
+      const { battle, frames } = windowed(5, 5);
+      gw.attachBattle("b-re", battle, { pollIntervalMs: 200 });
+      gw.attachBattle("b-re", battle, { pollIntervalMs: 200 });
+      for (let t = 0; t < 20; t++) frames.push(pframe(t));
+      await sleep(50);
+      expect(gw.dropStats().droppedFrames).toBe(15);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

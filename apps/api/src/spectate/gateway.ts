@@ -317,6 +317,13 @@ export class SpectateGateway {
       feed.unsubscribe.push(el.onEvict((idx, ev) => this.onEvicted(battleId, feed, "events", idx, ev)));
     }
     feed.timer = setInterval(() => this.pump(battleId, feed), opts.pollIntervalMs ?? 33);
+    // Re-attach del mismo battleId: el feed anterior deja de escuchar la ventana y de bombear
+    // (si no, sus suscripciones onEvict seguirían vivas y contarían/proyectarían dos veces).
+    const previous = this.feeds.get(battleId);
+    if (previous) {
+      for (const u of previous.unsubscribe) u();
+      if (previous.timer) clearInterval(previous.timer);
+    }
     this.feeds.set(battleId, feed);
   }
 

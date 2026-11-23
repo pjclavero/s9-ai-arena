@@ -93,15 +93,23 @@ export function memoryLimitsFor(p: {
   hashEvery: number;
   checkpointEvery: number;
 }): MemoryReplaySinkLimits {
-  const ticks = Math.max(1, Math.ceil(p.maxTicks));
-  const per = (every: number) => (every > 0 ? Math.ceil((ticks / every) * 1.1) + 4 : 4);
+  // Falla CERRADO: un parámetro no finito (NaN, Infinity) o absurdo nunca produce topes
+  // infinitos o NaN (una comparación con NaN es siempre falsa y dejaría el sink sin tope).
+  const pos = (x: number, def: number, max: number) => (Number.isFinite(x) && x > 0 ? Math.min(x, max) : def);
+  const ticks = Math.ceil(pos(p.maxTicks, 45_000, 10_000_000));
+  const vehicles = Math.ceil(pos(p.vehicles, 8, 1_000));
+  const cadence = (every: number, def: number) => (Number.isFinite(every) ? every : def);
+  const per = (every0: number, def: number) => {
+    const every = cadence(every0, def);
+    return every > 0 ? Math.ceil((ticks / every) * 1.1) + 4 : 4;
+  };
   return {
-    maxCommands: Math.ceil(ticks * Math.max(1, p.vehicles) * 1.1) + 16,
-    maxSnapshots: per(p.snapshotEvery),
+    maxCommands: Math.ceil(ticks * vehicles * 1.1) + 16,
+    maxSnapshots: per(p.snapshotEvery, 3),
     // eventos públicos: bajas, minas, prórroga…; <= 1 por tick de media + holgura
     maxEvents: ticks + 1024,
-    maxHashes: per(p.hashEvery),
-    maxCheckpoints: per(p.checkpointEvery),
+    maxHashes: per(p.hashEvery, 30),
+    maxCheckpoints: per(p.checkpointEvery, 300),
   };
 }
 /** Sin parámetros de batalla (uso suelto del sink): los de una batalla de 45 000 ticks x 8 vehículos. */
