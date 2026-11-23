@@ -46,7 +46,9 @@ if [ "${STREAMER_XVFB_ON_DEMAND:-1}" = "0" ]; then
     rm -f "$X_SOCK" # socket sin lock: de un Xvfb que ya no existe
   fi
 
-  Xvfb "$DISPLAY" -screen 0 "${STREAM_WIDTH}x${STREAM_HEIGHT}x24" -nolisten tcp &
+  # -noreset: sin él Xvfb reinicia el servidor al irse el último cliente y un Chromium relanzado
+  # en esa ventana recibe «Missing X server or $DISPLAY» (flaky AUD2-13).
+  Xvfb "$DISPLAY" -screen 0 "${STREAM_WIDTH}x${STREAM_HEIGHT}x24" -nolisten tcp -noreset &
   XVFB_PID=$!
   trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
 
@@ -58,7 +60,8 @@ if [ "${STREAMER_XVFB_ON_DEMAND:-1}" = "0" ]; then
       echo "entrypoint: Xvfb terminó al arrancar en :$DISPLAY_NUM" >&2
       exit 1
     fi
-    if [ -S "$X_SOCK" ]; then
+    # Listo = el socket ACEPTA una conexión (el fichero aparece en bind(), antes de listen()).
+    if [ -S "$X_SOCK" ] && node -e 'require("net").connect(process.argv[1]).on("connect",()=>process.exit(0)).on("error",()=>process.exit(1))' "$X_SOCK" 2>/dev/null; then
       ready=1
       break
     fi

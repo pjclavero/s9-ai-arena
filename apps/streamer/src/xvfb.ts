@@ -14,8 +14,34 @@
  *    no basta `kill -0` porque los PID se reutilizan: se mira /proc/<pid>/comm.
  *  - fallo cerrado: si el Xvfb no crea su socket a tiempo o muere al arrancar,
  *    `ensure` rechaza y el supervisor lo trata como corte (reintento contado).
+ *
+ * Carrera del flaky AUD2-13 (también real en producción): Xvfb SIN `-noreset` reinicia el
+ * servidor X cuando se va su ÚLTIMO cliente (cierra la escucha unos ms), de modo que un
+ * Chromium relanzado justo después recibe «Missing X server or $DISPLAY». Por eso el Xvfb
+ * se lanza con `-noreset` y «listo» no es «el fichero del socket existe» sino «el socket
+ * ACEPTA una conexión» (el fichero aparece en bind(), antes de listen()).
  */
+
+/** ¿El socket X acepta ahora mismo una conexión? */
+export function canConnectX(sockPath: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect(sockPath);
+    const done = (ok: boolean) => {
+      s.destroy();
+      resolve(ok);
+    };
+    s.setTimeout(timeoutMs, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+}
+
+/** Argumentos del Xvfb del streamer. `-noreset` evita el reinicio al irse el último cliente. */
+export function xvfbArgs(display: string, width: number, height: number): string[] {
+  return [display, "-screen", "0", `${width}x${height}x24`, "-nolisten", "tcp", "-noreset"];
+}
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import type { SpawnedProcess, Spawner } from "./supervisor.js";
 
 export interface DisplayManager {
@@ -40,6 +66,13 @@ export interface XvfbOptions {
   stopGraceMs?: number;
   /** Inyectables (tests). */
   exists?: (p: string) => boolean;
+  /** Directorio de sockets X (def. /tmp/.X11-unix; tests). */
+  sockDir?: string;
+  /**
+   * ¿acepta el socket una conexión? Por defecto, un connect() real; si se inyecta `exists`
+   * (sistema de ficheros simulado, sin servidor X) el valor por defecto es «sí».
+   */
+  accepts?: (sockPath: string) => Promise<boolean>;
   readFile?: (p: string) => string;
   remove?: (p: string) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -62,7 +95,7 @@ export class XvfbDisplay implements DisplayManager {
     return `/tmp/.X${this.num}-lock`;
   }
   private get sockPath(): string {
-    return `/tmp/.X11-unix/X${this.num}`;
+    return `${this.o.sockDir ?? "/tmp/.X11-unix"}/X${this.num}`;
   }
 
   get running(): boolean {
@@ -128,14 +161,8 @@ export class XvfbDisplay implements DisplayManager {
     if (!this.clearStale()) throw new Error(`el display ${this.o.display} ya lo usa un Xvfb vivo ajeno`);
     const exists = this.o.exists ?? existsSync;
     const sleep = this.o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-    const proc = this.o.spawner(this.o.xvfbBin ?? "Xvfb", [
-      this.o.display,
-      "-screen",
-      "0",
-      `${this.o.width}x${this.o.height}x24`,
-      "-nolisten",
-      "tcp",
-    ]);
+    const accepts = this.o.accepts ?? (this.o.exists ? async () => true : canConnectX);
+    const proc = this.o.spawner(this.o.xvfbBin ?? "Xvfb", xvfbArgs(this.o.display, this.o.width, this.o.height));
     this.proc = proc;
     this.exited = false;
     this.stats.starts++;
@@ -149,7 +176,7 @@ export class XvfbDisplay implements DisplayManager {
     const deadline = Date.now() + (this.o.readyTimeoutMs ?? 5000);
     while (Date.now() < deadline) {
       if (this.proc !== proc || this.exited) throw new Error(`Xvfb terminó al arrancar en ${this.o.display}`);
-      if (exists(this.sockPath)) return;
+      if (exists(this.sockPath) && (await accepts(this.sockPath))) return;
       await sleep(50);
     }
     this.release();
