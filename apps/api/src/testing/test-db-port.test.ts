@@ -44,7 +44,15 @@ describe("startOnFreePort · reintento acotado y específico", () => {
         async () => {
           throw new PortBusyError("ocupado");
         },
-        { isBusy, maxAttempts: 3, pickPort: async () => ++n },
+        {
+          isBusy,
+          maxAttempts: 3,
+          // Sin tope el bucle sería infinito: se corta a los 10 para que el mutante muera, no cuelgue.
+          pickPort: async () => {
+            if (++n > 10) throw new Error("sin tope: más de 10 intentos");
+            return n;
+          },
+        },
       ),
     ).rejects.toBeInstanceOf(PortBusyError);
     expect(n).toBe(3);
