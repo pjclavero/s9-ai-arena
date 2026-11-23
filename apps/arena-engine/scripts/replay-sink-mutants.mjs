@@ -259,6 +259,22 @@ export const MUTANTS = [
     find: "for (const u of previous.unsubscribe) u();",
     replace: "/* mutante */",
   },
+  {
+    id: "M-G4-reattach-keeps-old-timer",
+    test: GATEWAY,
+    group: "G4",
+    file: GW,
+    find: "if (previous.timer) clearInterval(previous.timer);",
+    replace: "/* mutante */",
+  },
+  {
+    id: "M-G5-reattach-keeps-old-clients",
+    test: GATEWAY,
+    group: "G5",
+    file: GW,
+    find: 'this.dropClient(af, c, 1001, "battle_detached");\n    }\n    this.feeds.set',
+    replace: "void c;\n    }\n    this.feeds.set",
+  },
 ];
 
 function run(m) {

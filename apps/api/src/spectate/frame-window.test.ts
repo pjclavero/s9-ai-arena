@@ -131,10 +131,27 @@ describe("G4 re-attach del mismo battleId", () => {
       gw.attachBattle("b-re", battle, { pollIntervalMs: 200 });
       gw.attachBattle("b-re", battle, { pollIntervalMs: 200 });
       for (let t = 0; t < 20; t++) frames.push(pframe(t));
-      await sleep(50);
+      await sleep(450);
       expect(gw.dropStats().droppedFrames).toBe(15);
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("G5 re-attach cierra los clientes del feed anterior", () => {
+  it("G5 los clientes del feed anterior reciben el cierre 1001 battle_detached y el bombeo anterior se detiene", async () => {
+    const gw = new SpectateGateway({ publicSpectateEnabled: true });
+    cleanups.push(() => gw.close());
+    const { battle } = windowed(5, 5);
+    gw.attachBattle("b-cl", battle, { pollIntervalMs: 200 });
+    const old = (gw as any).feeds.get("b-cl");
+    const close = vi.fn();
+    const conn = { timers: new Set(), heartbeat: null, ws: { readyState: 1, close } };
+    old.audiences.get("public_live").clients.add(conn);
+    gw.attachBattle("b-cl", battle, { pollIntervalMs: 200 });
+    expect(close).toHaveBeenCalledWith(1001, "battle_detached");
+    expect(old.audiences.get("public_live").clients.size).toBe(0);
+    expect((gw as any).feeds.get("b-cl")).not.toBe(old);
   });
 });

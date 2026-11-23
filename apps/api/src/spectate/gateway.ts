@@ -323,6 +323,9 @@ export class SpectateGateway {
     if (previous) {
       for (const u of previous.unsubscribe) u();
       if (previous.timer) clearInterval(previous.timer);
+      // Igual que detachBattle: los clientes del feed anterior se cierran (1001), no quedan huérfanos.
+      for (const af of previous.audiences.values())
+        for (const c of af.clients) this.dropClient(af, c, 1001, "battle_detached");
     }
     this.feeds.set(battleId, feed);
   }
