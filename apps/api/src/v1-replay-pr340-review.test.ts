@@ -296,12 +296,13 @@ describe("L5 (P2-3) · memoria acotada de verify, estadísticas y descarga", () 
       await res.finished();
     });
     expect(res.bytes()).toBeGreaterThan(rawView / 4); // no vacuo: el documento entero pasó
-    // La descarga: el documento entero (proyección del orden de rawView) NO pasa por la memoria.
+    // La descarga: el documento entero (proyección del orden de rawView, ~6 MiB) NO pasa por la
+    // memoria; lo retenido (medido: ~0,4 MiB) queda muy por debajo de 2 MiB.
     expect(res.peak()).toBeLessThanOrEqual(16 * 1024 + 8 * 1024);
     expect(
       dPeak,
       `descarga ${(dPeak / MiB).toFixed(1)} MiB; vista cruda ${(rawView / MiB).toFixed(1)} MiB`,
-    ).toBeLessThan(Math.max(8 * MiB, rawView * 0.5));
+    ).toBeLessThan(2 * MiB);
     expect(vPeak, `verify ${(vPeak / MiB).toFixed(1)} MiB`).toBeLessThan(48 * MiB);
     expect(sPeak, `stats ${(sPeak / MiB).toFixed(1)} MiB`).toBeLessThan(48 * MiB);
     if (process.env.S9_PR4_METRICS) {
