@@ -147,11 +147,9 @@ export async function startTestDb(opts: { migrate?: boolean } = {}): Promise<Tes
   const external = process.env.DATABASE_URL;
   if (external) return startExternalTestDb(external, opts);
 
-  const {
-    value: pg,
-    port,
-    dataDir,
-  } = await startOnFreePort(launchEmbedded, { isBusy: (e) => e instanceof PortBusyError });
+  const started = await startOnFreePort(launchEmbedded, { isBusy: (e) => e instanceof PortBusyError });
+  const { value: pg, port } = started;
+  const dataDir = pg.dataDir;
   await pg.createDatabase("arena_test");
 
   const url = `postgres://postgres:postgres@127.0.0.1:${port}/arena_test`;
