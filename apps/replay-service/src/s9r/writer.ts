@@ -290,8 +290,8 @@ export class S9rWriter {
   }
 
   /** Cierra el fragmento en curso (útil para alinear fronteras con checkpoints). */
-  flushFragment(): Promise<void> {
-    return this.enqueue(() => this.flushInner(false));
+  flushFragment(opts: { closing?: boolean } = {}): Promise<void> {
+    return this.enqueue(() => this.flushInner(opts.closing === true));
   }
 
   private async flushInner(closing: boolean): Promise<void> {

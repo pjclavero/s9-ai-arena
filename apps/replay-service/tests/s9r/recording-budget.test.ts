@@ -9,6 +9,7 @@
  * B1 CLASE B: reserva de espacio libre ⇒ aborta, borra los parciales y NO sella nada truncado.
  * B2 CLASE B: cuota del volumen (cuenta lo ya escrito por el propio intento) ⇒ igual.
  * B3 EN CALIENTE: cuota y reserva se releen en CADA fragmento; el tope por batalla queda fijado al empezar.
+ * B6 (grabador) el volcado previo de finish() es de CIERRE: con el disco justo en la reserva, una batalla sana cierra.
  * B4 el CIERRE no aplica reserva ni cuota (sí el tope por batalla).
  * B5 compuerta previa (`preflightCheck`): hueco para una batalla máxima + reserva, y que quepa en la cuota.
  * W1 el escritor invoca `admit` sólo para fragmentos de DATOS (no resultado, índice ni pie), con `closing`.
@@ -248,6 +249,40 @@ describe("PR-5 · clase B: el límite es del entorno", () => {
     await budget.admit(5_000, { closing: true }, 0); // volumen agotado, pero cerrar es lo que la reserva permite
     await expect(budget.admit(5_000, { closing: false }, 0)).rejects.toBeInstanceOf(RecordingBudgetError);
     await expect(budget.admit(5_000, { closing: true }, 6_000)).rejects.toBeInstanceOf(ReplayLimitExceededError);
+  });
+
+  it("B6 (grabador) con el disco JUSTO en la reserva al cerrar, el último fragmento se vuelca como cierre: batalla sana, sin free_space_low", async () => {
+    const dir = tmp();
+    // Libre = exactamente la reserva: cualquier fragmento NO de cierre se rechazaría (libre − fragmento < reserva).
+    const probe: StorageProbe = { freeBytes: async () => OK_LIMITS.minFreeBytes, usedBytes: async () => 0 };
+    const rec = await ReplayRecorder.create({
+      dir,
+      battleId: BID,
+      attempt: 1,
+      owner: OWNER,
+      budget: budgetOf(() => OK_LIMITS, probe, dir),
+      recipeHeader: { seed: "s", ruleset: { rulesetId: "r@1" } },
+      viewHeader: { mode: "deathmatch" },
+      // Fragmentos grandes: nada se vuelca a mitad; todo el contenido llega al volcado de cierre.
+      recipeFragmentBytes: 1 * MiB,
+      viewFragmentBytes: 2 * MiB,
+    });
+    feed(rec, 0, 60);
+    expect(rec.recordingError).toBeNull();
+    const closed = await rec.finish({ winner: "A", ticks: 60, finalStateHash: "fh" });
+    expect(rec.recordingError).toBeNull();
+    expect(closed.truncated).toBe(false);
+    expect((await verifyFile(closed.recipe.partial, { expectSha256: closed.recipe.summary.sha256 })).ok).toBe(true);
+    expect((await verifyFile(closed.view.partial, { expectSha256: closed.view.summary.sha256 })).ok).toBe(true);
+    // control: a mitad de batalla (fragmento NO de cierre) el mismo disco sí se rechaza
+    const dir2 = tmp();
+    const rec2 = await make(
+      dir2,
+      budgetOf(() => OK_LIMITS, probe, dir2),
+    );
+    await feedUntilFault(rec2, 20_000);
+    expect((rec2.recordingError as RecordingBudgetError).denial).toBe("free_space_low");
+    await rec2.discard();
   });
 
   it("B5 compuerta previa: hueco para una batalla máxima + reserva, y que quepa en la cuota", async () => {

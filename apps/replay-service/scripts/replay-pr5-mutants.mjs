@@ -108,7 +108,7 @@ export const MUTANTS = [
     id: "M-B-closing-applies-volume",
     why: "el cierre también aplica reserva y cuota (no puede cerrar con el volumen justo)",
     test: U,
-    t: "B4 el CIERRE",
+    t: "B6 (grabador)",
     edits: [{ file: BUDGET, find: "if (!ctx.closing && this.o.probe) {", replace: "if (this.o.probe) {" }],
   },
   {
@@ -644,7 +644,7 @@ export const MUTANTS = [
     edits: [
       {
         file: "apps/replay-service/src/s9r/recorder.ts",
-        find: "const flushed = await Promise.allSettled([this.recipe.writer.flushFragment(), this.view.writer.flushFragment()]);",
+        find: "const flushed = await Promise.allSettled([\n      this.recipe.writer.flushFragment({ closing: true }),\n      this.view.writer.flushFragment({ closing: true }),\n    ]);",
         replace: "const flushed: PromiseSettledResult<void>[] = [];",
       },
     ],
@@ -672,6 +672,58 @@ export const MUTANTS = [
         file: "apps/api/src/replay-s9r.ts",
         find: "if (isTruncatedBattle(battle)) {\n    return {",
         replace: "if (false as boolean) {\n    return {",
+      },
+    ],
+  },
+  {
+    id: "M-TRUNC-verify-corrupt",
+    why: "verify llama corrupt_file a un truncado legítimo",
+    test: "apps/api/src/pr5-verify-recipe.test.ts",
+    t: "VR1 receta truncada",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: '          : code === "truncated"\n            ? // Íntegro pero incompleto (recording_limit): no es un fichero corrupto.\n              "truncated"\n            : `corrupt_file: ${code}`,',
+        replace: "          : `corrupt_file: ${code}`,",
+      },
+    ],
+  },
+  {
+    id: "M-RACE-verify-by-battle-unit",
+    why: "verifyRecipe no rechaza por la batalla marcada (unitario)",
+    test: "apps/api/src/pr5-verify-recipe.test.ts",
+    t: "VR2 batalla marcada",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: "if (isTruncatedBattle(battle)) {\n    return {",
+        replace: "if (false as boolean) {\n    return {",
+      },
+    ],
+  },
+  {
+    id: "M-FLUSH-not-closing",
+    why: "el volcado previo de finish() no es de cierre (rechazado con el disco justo en la reserva)",
+    test: "apps/replay-service/tests/s9r/recording-budget.test.ts",
+    t: "B6 (grabador)",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/recorder.ts",
+        find: "this.recipe.writer.flushFragment({ closing: true }),",
+        replace: "this.recipe.writer.flushFragment({ closing: false }),",
+      },
+    ],
+  },
+  {
+    id: "M-FLUSH-view-not-closing",
+    why: "el volcado previo de la vista no es de cierre",
+    test: "apps/replay-service/tests/s9r/recording-budget.test.ts",
+    t: "B6 (grabador)",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/recorder.ts",
+        find: "this.view.writer.flushFragment({ closing: true }),",
+        replace: "this.view.writer.flushFragment({ closing: false }),",
       },
     ],
   },

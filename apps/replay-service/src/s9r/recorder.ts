@@ -397,7 +397,11 @@ export class ReplayRecorder {
     // Si cualquiera lo rebasa (aunque el motor ya hubiera terminado), la grabación entera es truncada: nunca una receta
     // completa, con el resultado del motor, junto a una vista truncada. Tras este volcado, `close()` no tiene datos que
     // escribir (sólo resultado, índice y pie, con margen de emergencia), así que no puede rebasar el tope por su cuenta.
-    const flushed = await Promise.allSettled([this.recipe.writer.flushFragment(), this.view.writer.flushFragment()]);
+    // Es el volcado del ÚLTIMO fragmento: `closing: true` (exención de cierre del diseño 2.6.4: sin reserva ni cuota).
+    const flushed = await Promise.allSettled([
+      this.recipe.writer.flushFragment({ closing: true }),
+      this.view.writer.flushFragment({ closing: true }),
+    ]);
     for (const f of flushed) {
       if (f.status !== "rejected") continue;
       const e = f.reason;
