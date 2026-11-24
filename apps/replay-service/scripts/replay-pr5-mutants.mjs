@@ -534,7 +534,7 @@ export const MUTANTS = [
     edits: [
       {
         file: "packages/system-settings/replay-settings.ts",
-        find: "if (!(v.maxBytesPerBattle <= v.quotaMaxBytes)) {",
+        find: "if (!(v.maxBytesPerBattle <= v.quotaMaxBytes / 4)) {",
         replace: "if (false as boolean) {",
       },
     ],
@@ -601,6 +601,58 @@ export const MUTANTS = [
         file: "apps/tournament-worker/src/results.ts",
         find: 'cond && cond.state === "finished" ? (isTeams',
         replace: "cond ? (isTeams",
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-gf2-formality",
+    why: "GF2 se cierra como formalidad con el ganador administrativo de una GF sin resultado (corona campeón)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S10 P-D",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (gf && gf.state !== "finished") {',
+        replace: "if (false as boolean) {",
+      },
+    ],
+  },
+  {
+    id: "M-INVARIANT-winner-without-battles",
+    why: "un match finished con ganador y 0 batallas con resultado (GF2 tras una final W failed)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S10c el invariante",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'cond && cond.state === "finished" ? (isTeams',
+        replace: "cond ? (isTeams",
+      },
+    ],
+  },
+  {
+    id: "M-CROSS-quarter",
+    why: "el tope por batalla sólo se compara con la cuota entera (no con un cuarto)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S9b la regla",
+    edits: [
+      {
+        file: "packages/system-settings/replay-settings.ts",
+        find: "v.maxBytesPerBattle <= v.quotaMaxBytes / 4",
+        replace: "v.maxBytesPerBattle <= v.quotaMaxBytes",
+      },
+    ],
+  },
+  {
+    id: "M-CROSS-no-lock",
+    why: "la comprobación cruzada del PATCH no se serializa (write skew entre PATCH concurrentes)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S9c dos PATCH concurrentes",
+    edits: [
+      {
+        file: "apps/api/src/settings/system-settings.ts",
+        find: 'await t.raw("SELECT pg_advisory_xact_lock(hashtext(?))", ["system_settings:replays.cross"]);',
+        replace: "",
       },
     ],
   },

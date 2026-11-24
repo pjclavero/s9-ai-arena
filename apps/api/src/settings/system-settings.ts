@@ -171,7 +171,13 @@ export async function patchSettings(
       // P2-2 · coherencia entre claves `replays.*`: se comprueba sobre los valores EFECTIVOS tras el cambio (los que
       // no se tocan, con su valor vigente en BD/entorno/defecto), antes de escribir nada.
       if (valid.some((v) => v.item.key.startsWith("replays."))) {
-        const rows = (await t(SYSTEM_SETTINGS_TABLE).whereIn("key", REPLAY_KEYS).select("key", "value")) as Row[];
+        // P3-R2 · dos PATCH concurrentes sobre claves distintas no pueden aprobarse por separado (write skew): cerrojo
+        // de la transacción para toda comprobación cruzada de `replays.*` y bloqueo de las filas existentes.
+        await t.raw("SELECT pg_advisory_xact_lock(hashtext(?))", ["system_settings:replays.cross"]);
+        const rows = (await t(SYSTEM_SETTINGS_TABLE)
+          .whereIn("key", REPLAY_KEYS)
+          .forUpdate()
+          .select("key", "value")) as Row[];
         const byKey = new Map(rows.map((r) => [r.key as string, r.value]));
         for (const v of valid) byKey.set(v.item.key, v.value);
         const eff = (key: string, def: number): number => {

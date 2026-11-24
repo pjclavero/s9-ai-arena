@@ -195,7 +195,7 @@ async function expectTechnicalFailure(
   expect(b.replay_ref).toBeNull();
   expect(b.replay_hash).toBeNull();
   expect(b.final_state_hash).toBeNull();
-  expect(b.run_attempts).toBeGreaterThanOrEqual(3); // la política de reintento existente se aplicó
+  expect(b.run_attempts).toBe(5); // la política propia de storage_unavailable (5 fallos) se aplicó
   const parts = await h.db("participants").where({ battle_id: s.battleId });
   expect(parts.map((p: Row) => p.outcome)).toEqual([null, null]);
   const job = (await h

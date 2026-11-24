@@ -20,7 +20,7 @@ import { tokenFor } from "../../api/src/testing/helpers.js";
 import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { handleGenerateSchedule } from "./scheduler.js";
-import { handleProcessResult, leagueTable, swissStandings } from "./results.js";
+import { handleProcessResult, isTechnicalLimit, leagueTable, settleFailedBattle, swissStandings } from "./results.js";
 import type { JobRow } from "./queue.js";
 import { createPublishedBot } from "./testing/fixtures.js";
 import { replayCrossErrors } from "../../../packages/system-settings/replay-settings.js";
@@ -213,6 +213,82 @@ describe("PR-5 · P1-1 · una serie sin resultado deportivo no decide nada", () 
   });
 });
 
+/** Invariante: ningún match `finished` con ganador, con los dos lados y sin bye, que no tenga una batalla CON resultado deportivo. */
+async function expectNoWinnerWithoutBattles(tid: string) {
+  const ms = await matchesOf(tid);
+  for (const m of ms) {
+    const pr = typeof m.pairing === "string" ? JSON.parse(m.pairing) : m.pairing;
+    if (m.state !== "finished" || !m.winner_bot_id || pr.bye || !pr.home || !pr.away) continue;
+    const bs = (await h.db("battles").where({ match_id: m.id, status: "finished" })) as Row[];
+    const real = bs.filter((b) => {
+      const r = typeof b.result === "string" ? JSON.parse(b.result) : b.result;
+      return !isTechnicalLimit(r);
+    });
+    expect(real.length, `match ${m.slot} finished con ganador y 0 batallas con resultado`).toBeGreaterThan(0);
+  }
+}
+
+/** Doble eliminación: todo real (gana el lado A) salvo la GRAN FINAL, que termina `gfMode`. */
+async function playDoubleElimGfWithout(tid: string, gfMode: "recording_limit" | "failed") {
+  for (let i = 0; i < 20; i++) {
+    const open = (await h.db("battles").where({ tournament_id: tid, status: "scheduled" })) as Row[];
+    if (open.length === 0) break;
+    for (const b of open) {
+      const m = (await h.db("matches").where({ id: b.match_id }).first()) as Row;
+      if (m.slot === "GF") {
+        if (gfMode === "failed") {
+          await h.db("battles").where({ id: b.id }).update({ status: "failed", failure_kind: "infrastructure" });
+          await settleFailedBattle(h.db, b.id);
+        } else await finishAs(b.id, "recording_limit", null, { A: 3, B: 0 });
+      } else await finishAs(b.id, "completed", "A", { A: 3, B: 0 });
+    }
+  }
+}
+
+describe("PR-5 · P1-R1 · la gran final sin resultado no corona (GF2 no es una formalidad)", () => {
+  it.each([
+    ["P-D 2 bots, GF recording_limit", 2, "recording_limit"],
+    ["P-D4 4 bots, GF recording_limit", 4, "recording_limit"],
+    ["P-D4f 4 bots, GF failed", 4, "failed"],
+    ["P-D2f 2 bots, GF failed", 2, "failed"],
+  ] as const)("S10 %s: GF2 se cierra sin resultado, sin batallas, y no hay campeón", async (_n, bots, gfMode) => {
+    const { tid } = await tournament("double_elimination", bots);
+    await playDoubleElimGfWithout(tid, gfMode);
+    const ms = await matchesOf(tid);
+    const gf = ms.find((m) => m.slot === "GF")!;
+    const gf2 = ms.find((m) => m.slot === "GF2")!;
+    expect(gf.state).toBe("failed");
+    expect(gf2.state).toBe("failed");
+    expect(gf2.winner_bot_id).toBeNull();
+    expect(await h.db("battles").where({ match_id: gf2.id })).toHaveLength(0);
+    const t = await tournamentOf(tid);
+    expect(t.state).toBe("finished");
+    expect(t.champion_bot_id).toBeNull();
+    await expectNoWinnerWithoutBattles(tid);
+  });
+
+  it("S10b control: con la GF REAL ganada por el invicto, GF2 sí es una formalidad (finished, ganador, sin batallas) y corona", async () => {
+    const { tid } = await tournament("double_elimination", 2);
+    for (let i = 0; i < 20; i++) {
+      const open = (await h.db("battles").where({ tournament_id: tid, status: "scheduled" })) as Row[];
+      if (open.length === 0) break;
+      for (const b of open) await finishAs(b.id, "completed", "A", { A: 3, B: 0 });
+    }
+    const gf2 = (await matchesOf(tid)).find((m) => m.slot === "GF2")!;
+    expect(gf2.state).toBe("finished");
+    expect(gf2.winner_bot_id).not.toBeNull();
+    expect((await tournamentOf(tid)).champion_bot_id).toBe(gf2.winner_bot_id);
+  });
+
+  it("S10c el invariante se cumple en los casos «todo sin resultado»", async () => {
+    for (const f of ["single_elimination", "double_elimination", "round_robin"] as const) {
+      const { tid } = await tournament(f, 4);
+      await playAll(tid);
+      await expectNoWinnerWithoutBattles(tid);
+    }
+  });
+});
+
 describe("PR-5 · P1-2 · el desempate excluye la puntuación parcial", () => {
   it("S7 serie mixta (empate real 1-1 + recording_limit 0-7): empate en V-D-E y scoreDiff 0", async () => {
     const { tid } = await tournament("round_robin", 2, 2);
@@ -252,40 +328,70 @@ describe("PR-5 · P2-2 · coherencia entre claves replays.*", () => {
       .set("Authorization", `Bearer ${admin}`)
       .send({ changes } as object);
 
-  it("S9 el PATCH rechaza reserva ≥ cuota y tope por batalla > cuota, con un error claro; lo coherente pasa", async () => {
+  it("S9 el PATCH rechaza reserva ≥ cuota y tope por batalla > cuota/4, con un error claro; lo coherente pasa", async () => {
     await h.db("system_settings").delete();
+    const MiB = 1024 ** 2;
     // reserva (5 GiB por defecto) ≥ cuota nueva (1 GiB): rechazado aunque sólo se toque la cuota
     let r = await patch([{ key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 0 }]);
     expect(r.status).toBe(400);
     expect(JSON.stringify(r.body)).toMatch(/min_free_bytes.*menor que.*max_bytes/);
-    // tope por batalla (1 GiB) > cuota (1 GiB no; 1 GiB = cuota admitido) → bajamos la reserva y probamos el tope
+    // cuota 1 GiB con tope 512 MiB (> cuota/4 = 256 MiB): rechazado (P3-R1)
     r = await patch([
-      { key: "replays.quota.min_free_bytes", value: 512 * 1024 ** 2, expectedVersion: 0 },
+      { key: "replays.quota.min_free_bytes", value: 512 * MiB, expectedVersion: 0 },
       { key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 0 },
-      { key: "replays.limits.max_bytes_per_battle", value: 1 * GiB, expectedVersion: 0 },
+      { key: "replays.limits.max_bytes_per_battle", value: 512 * MiB, expectedVersion: 0 },
     ]);
-    expect(r.status, JSON.stringify(r.body)).toBe(200); // reserva 512 MiB < cuota 1 GiB; tope 1 GiB ≤ cuota 1 GiB
-    // ahora el tope ya vale 1 GiB: bajar la cuota por debajo es imposible (mínimo 1 GiB); subir el tope no cabe. Reserva ≥ cuota:
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toMatch(/un cuarto de/);
+    // coherente: tope 256 MiB = cuota/4
+    r = await patch([
+      { key: "replays.quota.min_free_bytes", value: 512 * MiB, expectedVersion: 0 },
+      { key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 0 },
+      { key: "replays.limits.max_bytes_per_battle", value: 256 * MiB, expectedVersion: 0 },
+    ]);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    // subir la reserva hasta la cuota: rechazado, y nada de lo rechazado se guardó
     r = await patch([{ key: "replays.quota.min_free_bytes", value: 1 * GiB, expectedVersion: 1 }]);
     expect(r.status).toBe(400);
-    expect(JSON.stringify(r.body)).toMatch(/menor que/);
-    // nada de lo rechazado se guardó
     const rows = await h.db("system_settings").select("key", "value");
     expect(Object.fromEntries(rows.map((x: Row) => [x.key, x.value]))).toEqual({
-      "replays.quota.min_free_bytes": 512 * 1024 ** 2,
+      "replays.quota.min_free_bytes": 512 * MiB,
       "replays.quota.max_bytes": 1 * GiB,
-      "replays.limits.max_bytes_per_battle": 1 * GiB,
+      "replays.limits.max_bytes_per_battle": 256 * MiB,
     });
     await h.db("system_settings").delete();
   });
 
-  it("S9b la regla «tope por batalla ≤ cuota» (inalcanzable por rangos con las claves reales) rechaza el caso incoherente", () => {
-    expect(replayCrossErrors({ quotaMaxBytes: 2 * GiB, minFreeBytes: 1 * GiB, maxBytesPerBattle: 2 * GiB })).toEqual(
+  it("S9c dos PATCH concurrentes sobre claves distintas, coherentes por separado e incoherentes juntos: nunca los dos (P3-R2)", async () => {
+    const MiB = 1024 ** 2;
+    for (let round = 0; round < 6; round++) {
+      await h.db("system_settings").delete();
+      const r = await patch([
+        { key: "replays.quota.min_free_bytes", value: 512 * MiB, expectedVersion: 0 },
+        { key: "replays.quota.max_bytes", value: 4 * GiB, expectedVersion: 0 },
+      ]);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      const [x, y] = await Promise.all([
+        patch([{ key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 1 }]), // por sí sola: 64 MiB <= 256 MiB
+        patch([{ key: "replays.limits.max_bytes_per_battle", value: 512 * MiB, expectedVersion: 0 }]), // por sí sola: <= 1 GiB
+      ]);
+      expect([x.status, y.status].sort(), `ronda ${round}`).toEqual([200, 400]);
+      const rows = await h.db("system_settings").select("key", "value");
+      const v = Object.fromEntries(rows.map((q: Row) => [q.key, q.value]));
+      const quota = Number(v["replays.quota.max_bytes"] ?? 20 * GiB);
+      const per = Number(v["replays.limits.max_bytes_per_battle"] ?? 64 * MiB);
+      expect(per).toBeLessThanOrEqual(quota / 4);
+    }
+    await h.db("system_settings").delete();
+  });
+
+  it("S9b la regla «tope por batalla ≤ cuota/4» y «reserva < cuota»", () => {
+    expect(replayCrossErrors({ quotaMaxBytes: 4 * GiB, minFreeBytes: 1 * GiB, maxBytesPerBattle: 1 * GiB })).toEqual(
       [],
     );
     expect(
-      replayCrossErrors({ quotaMaxBytes: 2 * GiB, minFreeBytes: 1 * GiB, maxBytesPerBattle: 2 * GiB + 1 }),
-    ).toEqual([expect.stringMatching(/max_bytes_per_battle.*no puede superar/)]);
+      replayCrossErrors({ quotaMaxBytes: 4 * GiB, minFreeBytes: 1 * GiB, maxBytesPerBattle: 1 * GiB + 1 }),
+    ).toEqual([expect.stringMatching(/max_bytes_per_battle.*un cuarto de/)]);
     expect(replayCrossErrors({ quotaMaxBytes: 2 * GiB, minFreeBytes: 2 * GiB, maxBytesPerBattle: 1 })).toEqual([
       expect.stringMatching(/min_free_bytes.*menor que/),
     ]);

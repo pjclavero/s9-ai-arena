@@ -159,6 +159,18 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
       // (final del bracket W) también ganó la GF, el rival ya tiene dos
       // derrotas: GF2 es una formalidad y se resuelve sin jugarse.
       if (p.conditionalOn) {
+        // P1-R1 · si la GRAN FINAL (slot `GF`, la fuente de este match) no terminó con un ganador real (`failed`: sin
+        // resultado deportivo), GF2 NO es una formalidad: no se juega y se cierra SIN resultado y sin campeón, igual que
+        // una final de eliminatoria simple sin resultado. Nunca un match `finished` con ganador y 0 batallas.
+        const gf = (await db("matches").where({ tournament_id: mctx.tournament.id, slot: "GF" }).first()) as
+          MatchRow | undefined;
+        if (gf && gf.state !== "finished") {
+          await db("matches")
+            .where({ id: m.id })
+            .update({ state: "failed", winner_bot_id: null, winner_team_id: null });
+          await resolveDependents(mctx, m.slot);
+          continue;
+        }
         const cond = (await db("matches")
           .where({ tournament_id: mctx.tournament.id, slot: p.conditionalOn })
           .first()) as MatchRow | undefined;

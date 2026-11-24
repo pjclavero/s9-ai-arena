@@ -67,9 +67,8 @@ export const REPLAY_SETTING_DEFS: readonly SettingDef[] = [
 
 /**
  * Coherencia ENTRE claves (P2-2), sobre los valores EFECTIVOS tras el cambio: la reserva física debe caber en la
- * cuota (`min_free_bytes < max_bytes`) y un intento debe caber en la cuota (`max_bytes_per_battle ≤ max_bytes`).
+ * cuota (`min_free_bytes < max_bytes`) y un intento no puede pasar de un cuarto de la cuota (`max_bytes_per_battle ≤ max_bytes / 4`, diseño 3.1).
  * Si no, la compuerta previa rechazaría TODA batalla. Devuelve los errores (vacío = coherente).
- * (El diseño 3.1 pide además `max_bytes_per_battle ≤ quota/4`; se aplica la regla más laxa pedida en la revisión.)
  */
 export function replayCrossErrors(v: {
   quotaMaxBytes: number;
@@ -82,9 +81,9 @@ export function replayCrossErrors(v: {
       `${REPLAYS_QUOTA_MIN_FREE_BYTES} (${v.minFreeBytes}) debe ser menor que ${REPLAYS_QUOTA_MAX_BYTES} (${v.quotaMaxBytes})`,
     );
   }
-  if (!(v.maxBytesPerBattle <= v.quotaMaxBytes)) {
+  if (!(v.maxBytesPerBattle <= v.quotaMaxBytes / 4)) {
     errors.push(
-      `${REPLAYS_LIMIT_MAX_BYTES_PER_BATTLE} (${v.maxBytesPerBattle}) no puede superar ${REPLAYS_QUOTA_MAX_BYTES} (${v.quotaMaxBytes})`,
+      `${REPLAYS_LIMIT_MAX_BYTES_PER_BATTLE} (${v.maxBytesPerBattle}) no puede superar un cuarto de ${REPLAYS_QUOTA_MAX_BYTES} (${v.quotaMaxBytes})`,
     );
   }
   return errors;
