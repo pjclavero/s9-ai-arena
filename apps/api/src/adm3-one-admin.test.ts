@@ -365,6 +365,10 @@ describe("ADM-3 · tokens: anulación por cambio de rol o de estado, y revalidac
     const ta = await tokenOf(a);
     const t1 = (await issue(ta, u.id)).body.token as string;
     await setStatus(ta, u.id, "blocked");
+    // bloquear anula por sí mismo los tokens abiertos (antes de cualquier desbloqueo)
+    expect(
+      await h.db("password_resets").where({ user_id: u.id }).whereNull("used_at").count({ n: "*" }).first(),
+    ).toMatchObject({ n: "0" });
     // token emitido «a mano» mientras está bloqueada y desbloqueo: el desbloqueo también anula
     const manual = "token-manual-de-prueba-" + "x".repeat(24);
     const { hashToken } = await import("./auth/tokens.js");

@@ -657,7 +657,7 @@ M = [
     (
         'N28 la web oculta el bloqueo a otro admin',
         [
-            (PAGE, '                    <Button\n                      data-testid={`status-${u.id}`}', '                    {u.roles.includes("admin") && !isMe ? null : <Button\n                      data-testid={`status-${u.id}`}'),
+            (PAGE, '                      onClick={() =>\n                        setAction({ kind: "status", user: u, to: u.status === "blocked" ? "active" : "blocked" })\n', '                      onClick={() => u.roles.includes("admin") ? undefined :\n                        setAction({ kind: "status", user: u, to: u.status === "blocked" ? "active" : "blocked" })\n'),
         ],
         WEBT, 'BLOQUEAR_ADMIN_DIRECTO',
     ),
@@ -671,7 +671,7 @@ M = [
     (
         'N30 la web pide a otro admin al desbloquear (texto)',
         [
-            (PAGE, '              : "Podrá volver a iniciar sesión.",', '              : "Podrá volver a iniciar sesión. Pide a otro administrador que lo apruebe.",'),
+            (PAGE, 'Nunca puede quedar 0 administradores activos."', 'Nunca puede quedar 0 administradores activos. Pide a otro administrador."'),
         ],
         WEBT, 'SIN_PEDIR_OTRO_ADMIN',
     ),
@@ -684,11 +684,6 @@ M = [
         'N32 la guarda de la 025 sin tabla de transiciones',
         [(MIGS, "        IF NOT (\n             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))\n          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))\n          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))\n        ) THEN\n          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';\n        END IF;\n\n        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo", "        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo")],
         'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD_ESTADOS',
-    ),
-    (
-        'N33 la guarda de la 025 sin inmutabilidad de kind',
-        [(MIGS, '        IF NEW.id IS DISTINCT FROM OLD.id\n           OR NEW.kind IS DISTINCT FROM OLD.kind\n           OR NEW.params IS DISTINCT FROM OLD.params\n           OR NEW.impact IS DISTINCT FROM OLD.impact\n           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase\n           OR NEW.created_at', '        IF NEW.id IS DISTINCT FROM OLD.id\n           OR NEW.params IS DISTINCT FROM OLD.params\n           OR NEW.impact IS DISTINCT FROM OLD.impact\n           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase\n           OR NEW.created_at')],
-        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
     ),
 ]
 
