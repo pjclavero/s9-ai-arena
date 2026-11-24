@@ -103,6 +103,7 @@ Estados posibles:
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 | [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |
+| [TD-074](#td-074) | Retirar el lanzador HTTP legado y `POST /run` de arena-engine | P3 | Motor / API | ABIERTA (bloqueado en V1: `/run` apagado y API sin secreto) |
 
 ---
 
@@ -1445,3 +1446,16 @@ Estados posibles:
 - **Problema:** en un empate a puntos con ciclo, el orden mostrado en la clasificación no está bien definido.
 - **Solución prevista:** calcular una mini-tabla entre los empatados. Cambia una regla de orden visible, así que necesita decisión del operador.
 - **Condición de cierre:** decisión del operador, mini-tabla implementada y un test con un ciclo de tres que da siempre el mismo orden.
+
+## TD-074 — Retirar el lanzador HTTP legado y `POST /run` de arena-engine
+
+- **Estado:** ABIERTA (mitigada en V1)
+- **Prioridad:** P3
+- **Área:** Motor / API (`apps/arena-engine/src/service.ts`, `apps/api/src/services/battle-run-http-launcher.ts`, `infrastructure/docker-compose.yml`)
+- **Detectado:** 2026-11-23, riesgo RB-R4 del informe de recursos V1 (la ruta API → arena-engine ejecuta fuera de la concurrencia del worker)
+- **Evidencia:** `POST /run` ejecutaba batallas con contenedores reales sin pasar por el límite de concurrencia del tournament-worker; el runner estaba cableado en producción (`DOCKER_PROXY_URL`). El lanzador HTTP de la API no lo importa nadie (`server-wiring.test.ts`), pero el secreto interno estaba montado en la API y el motor aceptaba la llamada.
+- **Mitigación aplicada (V1 BLOCK-RUN):** `/run` responde 404 salvo `ARENA_ENGINE_RUN_ENABLED=1`/`true` (el compose no lo define), antes de comprobar la credencial; la API ya no monta `arena_engine_internal_secret`. Tests `V1-RUN-*` y `infrastructure/tests/engine-run-blocked.test.ts`, con mutantes en `scripts/mutants-v1-block-run.sh`. El riesgo RB-R4 queda **cerrado por este bloqueo** (no por la retirada del código). El cambio de compose sólo surte efecto al desplegar.
+- **Problema residual:** código muerto y superficie: la ruta, el lanzador, sus tests, `ARENA_ENGINE_URL`/`ARENA_ENGINE_SHARED_SECRET_FILE`/`ARENA_ENGINE_RUN_TIMEOUT_MS` en la API y su entrada en el modelo de readiness (`packages/readiness/config.ts`, clave `required` sin consumidor).
+- **Solución prevista (después de V1):** borrar el lanzador y sus tests, `POST /run` y el interruptor, el secreto `arena_engine_internal_secret` (y su generación en `init-secrets.sh`), las variables huérfanas de la API y la clave del modelo de readiness; arena-engine quedaría como librería.
+- **Condición de cierre:** ningún `git grep` de `/run` de arena-engine, del lanzador ni del secreto; readiness sin la clave; stack desplegado verificado.
+- **Fixtures de deriva (estáticos):** `infrastructure/tests/compose-canonical-check.test.ts` y `runtime-drift-scan.test.ts` esperan hoy un `SECRETO_INESPERADO`/«secreto no declarado: arena_engine_internal_secret» en la API porque `drift-facts-vm108.json` es una captura estática del contenedor vivo. NO se cierra sola al desplegar: cuando se recapturen los hechos tras el despliegue (la API sin el secreto), esas dos aserciones se pondrán rojas y habrá que revertirlas a la lista anterior (sólo los tres secretos ausentes), de forma intencionada.

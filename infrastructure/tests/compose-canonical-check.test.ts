@@ -501,11 +501,21 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     for (const v of esperadas) expect(todo, v).toContain(v);
     expect(envFalta.length).toBe(esperadas.length);
     const otros = api.filter((x: any) => x.code !== CODIGOS.ENV_FALTA);
-    expect(codigos(otros)).toEqual([CODIGOS.SECRETO_FALTA, CODIGOS.SECRETO_FALTA, CODIGOS.SECRETO_FALTA]);
+    // V1 BLOCK-RUN: la API canónica ya NO monta `arena_engine_internal_secret`, pero
+    // el contenedor vivo (hechos de producción) sí: deriva SECRETO_INESPERADO hasta
+    // que se despliegue el compose nuevo.
+    expect(codigos(otros)).toEqual([
+      CODIGOS.SECRETO_FALTA,
+      CODIGOS.SECRETO_FALTA,
+      CODIGOS.SECRETO_FALTA,
+      CODIGOS.SECRETO_INESPERADO,
+    ]);
     const secretos = otros.map((x: any) => String(x.detail)).join(" | ");
     for (const s of ["artifact_verify_key", "stream_secrets_public", "streamer_control_secret"]) {
       expect(secretos, s).toContain(s);
     }
+    const inesperado = otros.find((x: any) => x.code === CODIGOS.SECRETO_INESPERADO);
+    expect(String(inesperado.detail)).toContain("arena_engine_internal_secret");
   });
 
   it("backup diverge en imagen, hostname de restic y healthcheck", () => {

@@ -81,13 +81,13 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 |---|---|
 | Responsabilidad | Ejecutar una batalla con **contenedores reales** de bots (`POST /run`). **No** simula las batallas del sistema: eso lo hace el tournament-worker |
 | Entrypoint | `apps/arena-engine/src/service.ts` |
-| Entrada | HTTP :8081: `GET /healthz`; `POST /run` con la cabecera `x-arena-engine-auth` (secreto interno) |
+| Entrada | HTTP :8081: `GET /healthz`; `POST /run` con la cabecera `x-arena-engine-auth` (secreto interno), **APAGADO por defecto**: sin `ARENA_ENGINE_RUN_ENABLED=1`/`true` responde 404 antes de mirar la credencial |
 | Salida | `DOCKER_PROXY_URL` (proxy del host) → contenedores de bots en la red `arena` |
 | Redes | `platform`, `arena`, `bot-control` (consumidor del proxy: instancia `ProxyContainerRunner` si hay URL; [networking.md](../operations/networking.md#red-de-control-del-docker-proxy-bot-control)) |
 | Persistencia | ninguna. Devuelve el replay en memoria a quien llama |
-| Configuración | `PORT`, `DOCKER_PROXY_URL` (**vacía por defecto** ⇒ sin runner ⇒ 503), `ARENA_NETWORK`, `ARENA_ENGINE_HOST`, `ARENA_ENGINE_INTERNAL_SECRET_FILE` |
+| Configuración | `PORT`, `DOCKER_PROXY_URL` (**vacía por defecto** ⇒ sin runner ⇒ 503), `ARENA_NETWORK`, `ARENA_ENGINE_HOST`, `ARENA_ENGINE_INTERNAL_SECRET_FILE`, `ARENA_ENGINE_RUN_ENABLED` (interruptor de `/run`; el compose **no** lo define: apagado) |
 | Healthcheck | `wget http://127.0.0.1:8081/healthz` |
-| Errores | 401 sin secreto válido, 503 sin runner |
+| Errores | 404 con el interruptor apagado (por defecto); con él encendido: 401 sin secreto válido, 503 sin runner |
 | Estado | camino legado sin consumidor: la API ya no construye el lanzador HTTP ([TD-039](../roadmap/technical-debt.md#td-039)); el motor se usa como librería desde el tournament-worker |
 | Tests | 23 ficheros (motor, `service.test.ts`, regresiones y determinismo) |
 | Detalle | [engine.md](engine.md), [battles.md](battles.md) |
@@ -252,6 +252,7 @@ Rutas del replay-service (internas: el gateway ya no las enruta desde TD-004; el
 | bot-manager no arranca sin proxy | CODE_VERIFIED | `apps/bot-manager/src/main.ts:30-35,62-66` |
 | Consumidores del proxy = arena-engine, bot-build-worker, tournament-worker (y sólo ellos en `bot-control`) | CODE_VERIFIED | AST desde cada `SERVICE_ENTRY`: `infrastructure/tests/bot-control-network.test.ts` |
 | bot-build-worker sin clave no arranca | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:29-30` |
-| `/run` con secreto interno | CODE_VERIFIED | `apps/arena-engine/src/service.ts:264-270` |
+| `/run` apagado por defecto (404 antes de la credencial) y, encendido, con secreto interno | CODE_VERIFIED | `apps/arena-engine/src/service.ts` (`POST /run`, `isRunEnabled`); tests `V1-RUN-*` en `apps/arena-engine/tests/service.test.ts` |
+| La API no monta `arena_engine_internal_secret` | CODE_VERIFIED | `infrastructure/tests/engine-run-blocked.test.ts` |
 | Secretos del worker | CODE_VERIFIED + RUNTIME_VERIFIED (sólo nombres) | compose; `docker inspect` de nombres de variables y montajes, 2026-10-15 |
 | Recuento de tests | CODE_VERIFIED | `git ls-files apps infrastructure/tests` filtrado por `.test.ts` |
