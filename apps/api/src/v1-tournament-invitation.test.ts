@@ -486,16 +486,13 @@ describe("V1 · torneos por invitación: token y gestión", () => {
   });
 
   it("TI_ENROLL_STATES la modalidad se fija al crear y sólo cambia en draft/open; pasar a abierto revoca el enlace", async () => {
-    const bad = await request(app)
-      .post("/tournaments")
-      .set(as(tok.owner))
-      .send({
-        name: "ti-bad",
-        format: "single_elimination",
-        mode: "deathmatch",
-        rulesetId: DEFAULT_RULESET_ID,
-        enrollment: "secret",
-      });
+    const bad = await request(app).post("/tournaments").set(as(tok.owner)).send({
+      name: "ti-bad",
+      format: "single_elimination",
+      mode: "deathmatch",
+      rulesetId: DEFAULT_RULESET_ID,
+      enrollment: "secret",
+    });
     expect(bad.status).toBe(400);
     const { id, token } = await invitationTournament();
     expect((await setEnrollment(id, "nope")).status).toBe(400);
