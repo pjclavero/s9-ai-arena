@@ -5,7 +5,7 @@
  * resumen de impacto, la frase literal y el token de un solo uso. Paso 2 (este componente): muestra
  * el impacto TAL CUAL lo calculó el servidor (la UI no calcula nada), exige teclear la frase
  * LITERAL y la contraseña (y el TOTP si la cuenta lo tiene) y sólo entonces habilita «Confirmar».
- * La autorización real la hace la API (token, frase, reautenticación y segundo admin): esto
+ * La autorización real la hace la API (token, frase y reautenticación; la confirma el mismo admin): esto
  * sólo evita errores humanos y no autoriza nada.
  */
 import { useState } from "react";
@@ -33,8 +33,6 @@ export function ConfirmDestructive(props: {
   impact: ConfirmImpact;
   /** Frase literal fijada por el servidor. */
   phrase: string;
-  /** La confirma un admin distinto del solicitante. */
-  requiresSecondAdmin?: boolean;
   /** La cuenta tiene 2FA: pedir el código. */
   needsTotp?: boolean;
   /**
@@ -71,11 +69,6 @@ export function ConfirmDestructive(props: {
             </li>
           ))}
         </ul>
-      )}
-      {props.requiresSecondAdmin && (
-        <p role="note" data-testid="confirm-second-admin">
-          Acción irreversible: la tiene que confirmar un segundo administrador, distinto de quien la solicitó.
-        </p>
       )}
       <Field
         label="Escribe la frase exacta para confirmar"

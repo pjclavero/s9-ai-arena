@@ -12,8 +12,8 @@
  *     la FRASE LITERAL que debe teclear quien confirma. `dryRun` termina aquí: no crea orden.
  *  2. `confirmOperation`: token + frase + reautenticación fuerte (la hace la ruta). El token se
  *     consume con un UPDATE atómico condicionado a estado, hash y caducidad ⇒ un solo uso
- *     aunque haya dos confirmaciones simultáneas. Las IRREVERSIBLES exigen un SEGUNDO admin
- *     (distinto del solicitante).
+ *     aunque haya dos confirmaciones simultáneas. Las confirma el MISMO admin que las solicita
+ *     (modelo de UN administrador: reautenticación + frase + token + auditoría; sin segundo admin).
  *  Una orden activa como máximo por tipo (índice único parcial): freno al abuso.
  *  Cada transición queda en `audit_log` en la misma transacción.
  */
@@ -21,8 +21,6 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { isUuid } from "../params.js";
-import { RECOVERY_APPROVAL_WINDOW_MS, approverAvailable, lineageIds } from "../services/account-recovery.js";
 
 /** Caducidad del token de confirmación. */
 export const CONFIRM_TTL_MS = 120_000;
@@ -48,21 +46,13 @@ export interface OperationKindDef {
   impact(db: Db, params: Record<string, unknown>): Promise<Impact>;
   /** Frase literal que se teclea para confirmar (la fija el servidor, no el cliente). */
   phrase(params: Record<string, unknown>, impact: Impact): string;
-  /**
-   * Para tipos que NO los consume un ejecutor sino la propia API (aprobación de segundo admin): una orden
-   * `pending` más antigua que esto (desde su confirmación) se cancela al crear otra del mismo tipo, para que no
-   * ocupe el hueco «una activa por tipo» indefinidamente.
-   */
-  pendingTtlMs?: number;
-  /** Cuentas que NO pueden hacer de segundo admin además del solicitante (p. ej. el propio objetivo). */
-  approverExcludes?(params: Record<string, unknown>): string[];
 }
 
 const NOOP_CLASSES: readonly ImpactClass[] = ["none", "destructive", "irreversible"];
 
 /**
  * Tipo de PRUEBA inocuo: no hace nada. Su parámetro `impactClass` es un enumerado cerrado que
- * sólo elige qué camino del marco se recorre (sin confirmación, con ella, o con segundo admin).
+ * sólo elige qué camino del marco se recorre (sin confirmación, con ella, o irreversible: todas las confirma el mismo admin).
  */
 const SYSTEM_NOOP: OperationKindDef = {
   kind: "system.noop",
@@ -89,113 +79,12 @@ const SYSTEM_NOOP: OperationKindDef = {
 };
 
 /**
- * ADM-3 · Aprobación de un SEGUNDO administrador para emitir un token de recuperación de contraseña sobre una cuenta
- * ADMIN (D-OP-8). No hay ejecutor: la confirma otro admin reautenticado (con su frase) y el solicitante la consume UNA
- * vez al emitir el token (`services/account-recovery.ts`). Siempre irreversible ⇒ exige segundo admin; con un solo
- * administrador la creación responde 409 `second_admin_unavailable` y la vía es la CLI local.
- */
-const USER_RECOVERY_ADMIN: OperationKindDef = {
-  kind: "user.recovery_admin",
-  pendingTtlMs: RECOVERY_APPROVAL_WINDOW_MS,
-  approverExcludes: (p) => [String(p.userId)],
-  parseParams(raw) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "params debe ser un objeto" };
-    for (const k of Object.keys(raw)) if (k !== "userId") return { ok: false, error: `parámetro no admitido: ${k}` };
-    const id = (raw as { userId?: unknown }).userId;
-    if (typeof id !== "string" || !isUuid(id)) return { ok: false, error: "userId debe ser un uuid" };
-    return { ok: true, params: { userId: id.toLowerCase() } };
-  },
-  classify: () => "irreversible",
-  async impact(db, params) {
-    const user = await db("users").where({ id: params.userId }).first("id", "display_name", "status");
-    if (!user) throw notFound("No existe esa cuenta");
-    const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
-    if (!admin) {
-      throw badRequest("La cuenta no es de administrador: emite el token de recuperación directamente, sin aprobación");
-    }
-    const sessions = await db("sessions")
-      .where({ user_id: user.id })
-      .whereNull("revoked_at")
-      .where("expires_at", ">", db.fn.now())
-      .count({ n: "*" })
-      .first();
-    return {
-      summary: `Emitir un token de recuperación de contraseña para la cuenta de administrador «${user.display_name}»: quien lo tenga podrá fijar su contraseña y se cerrarán todas sus sesiones.`,
-      counts: { activeSessions: Number((sessions as { n: string | number }).n) },
-    };
-  },
-  phrase: (p) => `RECUPERAR ADMIN ${String(p.userId).slice(0, 8)}`,
-};
-
-/**
- * ADM-3 · Aprobaciones de un SEGUNDO administrador sobre OTRA cuenta (las consume, una sola vez, la propia API):
- *  - `user.revoke_admin`: quitar el rol admin (la cuenta objetivo debe ser admin);
- *  - `user.block_admin`: bloquear a una cuenta admin (objetivo admin);
- *  - `user.grant_admin`: conceder admin (objetivo NO admin y activa). Sólo hace falta con otro admin activo además
- *    del solicitante; con un único admin basta la reautenticación (bootstrap).
- */
-function userAdminKind(kind: string, want: "admin" | "not_admin", verb: string, phraseWord: string): OperationKindDef {
-  return {
-    ...USER_RECOVERY_ADMIN,
-    kind,
-    async impact(db, params) {
-      const user = await db("users").where({ id: params.userId }).first("id", "display_name", "status");
-      if (!user) throw notFound("No existe esa cuenta");
-      const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
-      if (want === "admin" && !admin) throw badRequest("La cuenta no es de administrador: no hay nada que hacer aquí");
-      if (want === "not_admin" && admin) throw badRequest("La cuenta ya es de administrador");
-      if (want === "not_admin" && user.status !== "active") throw badRequest("La cuenta está bloqueada");
-      const admins = await db("user_roles as r")
-        .join("users as u", "u.id", "r.user_id")
-        .where({ "r.role": "admin", "u.status": "active" })
-        .countDistinct({ n: "r.user_id" })
-        .first();
-      return {
-        summary: `${verb} «${user.display_name}».`,
-        counts: { activeAdmins: Number((admins as { n: string | number }).n) },
-      };
-    },
-    phrase: (p) => `${phraseWord} ${String(p.userId).slice(0, 8)}`,
-  };
-}
-const USER_REVOKE_ADMIN = userAdminKind(
-  "user.revoke_admin",
-  "admin",
-  "Quitar el rol de administrador a",
-  "QUITAR ADMIN",
-);
-const USER_BLOCK_ADMIN = userAdminKind(
-  "user.block_admin",
-  "admin",
-  "Bloquear la cuenta de administrador",
-  "BLOQUEAR ADMIN",
-);
-const USER_UNBLOCK_ADMIN = userAdminKind(
-  "user.unblock_admin",
-  "admin",
-  "Desbloquear la cuenta de administrador",
-  "DESBLOQUEAR ADMIN",
-);
-const USER_GRANT_ADMIN = userAdminKind(
-  "user.grant_admin",
-  "not_admin",
-  "Conceder el rol de administrador a",
-  "CONCEDER ADMIN",
-);
-
-/**
  * Registro CERRADO de tipos de PRODUCCIÓN. ADM-4/6/7 añaden los suyos aquí (y amplían el CHECK de `kind`).
  * `system.noop` es un tipo de PRUEBA: sólo se registra en tests (NODE_ENV=test); en producción la
- * API acepta `user.recovery_admin` (ADM-3) y los que añadan ADM-4/6/7.
+ * API no acepta ningún tipo todavía (los usuarios de ADM-3 no usan órdenes: las hace un único admin).
  */
 export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Readonly<Record<string, OperationKindDef>> {
-  const kinds: Record<string, OperationKindDef> = {
-    [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN,
-    [USER_REVOKE_ADMIN.kind]: USER_REVOKE_ADMIN,
-    [USER_BLOCK_ADMIN.kind]: USER_BLOCK_ADMIN,
-    [USER_UNBLOCK_ADMIN.kind]: USER_UNBLOCK_ADMIN,
-    [USER_GRANT_ADMIN.kind]: USER_GRANT_ADMIN,
-  };
+  const kinds: Record<string, OperationKindDef> = {};
   if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
   return Object.freeze(kinds);
 }
@@ -221,7 +110,6 @@ interface OpRow {
   impact: Impact;
   confirm_phrase: string | null;
   confirm_expires_at: Date | null;
-  requires_second_admin: boolean;
   result: unknown;
   attempts: number;
   created_at: Date;
@@ -241,7 +129,6 @@ export function operationView(r: OpRow) {
     status: r.status,
     impact: r.impact,
     confirmPhrase: r.status === "awaiting_confirmation" ? r.confirm_phrase : null,
-    requiresSecondAdmin: r.requires_second_admin,
     requestedBy: r.requested_by,
     confirmedBy: r.confirmed_by,
     result: r.result ?? null,
@@ -271,7 +158,6 @@ export async function createOperation(
       kind: string;
       impactClass: ImpactClass;
       impact: Impact;
-      requiresSecondAdmin: boolean;
       confirmPhrase: string;
     }
   | { dryRun: false; operation: ReturnType<typeof operationView>; confirmToken: string | null }
@@ -287,17 +173,7 @@ export async function createOperation(
   const params = parsed.params;
   const cls = def.classify(params);
   const impact = await def.impact(db, params);
-  const requiresSecondAdmin = cls === "irreversible";
   const phrase = def.phrase(params, impact);
-
-  // Sólo cuentan los admins ACTIVOS distintos del solicitante (y del objetivo, si el tipo lo declara).
-  const excluded = [ctx.actorId, ...(def.approverExcludes?.(params) ?? [])].filter((x): x is string => !!x);
-  if (requiresSecondAdmin && !(await approverAvailable(db, excluded, ctx.actorId))) {
-    throw conflict(
-      "second_admin_unavailable",
-      "Esta acción irreversible exige un segundo administrador y no hay ninguno disponible: hazla por consola",
-    );
-  }
 
   if (b.dryRun === true) {
     await audit(db, {
@@ -307,12 +183,12 @@ export async function createOperation(
       detail: { kind: def.kind, params, impact },
       correlationId: ctx.correlationId,
     });
-    return { dryRun: true, kind: def.kind, impactClass: cls, impact, requiresSecondAdmin, confirmPhrase: phrase };
+    return { dryRun: true, kind: def.kind, impactClass: cls, impact, confirmPhrase: phrase };
   }
 
   const needsConfirm = cls !== "none";
-  // El segundo admin NO recibe ni comparte ningún token: aprueba desde su propia sesión (reautenticado).
-  const token = needsConfirm && !requiresSecondAdmin ? randomBytes(32).toString("base64url") : null;
+  // Toda orden con impacto (destructiva o irreversible) lleva token de UN solo uso: la confirma el mismo admin.
+  const token = needsConfirm ? randomBytes(32).toString("base64url") : null;
   let row: OpRow;
   try {
     row = await db.transaction(async (trx) => {
@@ -332,23 +208,6 @@ export async function createOperation(
           correlationId: ctx.correlationId,
         });
       }
-      // Aprobaciones confirmadas que nadie consumió a tiempo (tipos sin ejecutor): se cancelan para liberar el hueco.
-      if (def.pendingTtlMs !== undefined) {
-        const stale: { id: string }[] = await t("admin_operations")
-          .where({ kind: def.kind, status: "pending" })
-          .where("confirmed_at", "<=", new Date(Date.now() - def.pendingTtlMs))
-          .update({ status: "cancelled", finished_at: t.fn.now() })
-          .returning("id");
-        for (const e of stale) {
-          await audit(t, {
-            actorId: null,
-            action: OP_AUDIT("unused_expired"),
-            target: `operation:${e.id}`,
-            detail: { kind: def.kind },
-            correlationId: ctx.correlationId,
-          });
-        }
-      }
       const [inserted]: OpRow[] = await t("admin_operations")
         .insert({
           kind: def.kind,
@@ -359,7 +218,6 @@ export async function createOperation(
           confirm_phrase: needsConfirm ? phrase : null,
           confirm_token_hash: token ? sha256(token) : null,
           confirm_expires_at: needsConfirm ? new Date(Date.now() + CONFIRM_TTL_MS) : null,
-          requires_second_admin: requiresSecondAdmin,
           confirmed_at: null,
           confirmed_by: null,
         })
@@ -368,7 +226,7 @@ export async function createOperation(
         actorId: ctx.actorId,
         action: OP_AUDIT("requested"),
         target: `operation:${inserted.id}`,
-        detail: { kind: def.kind, params, impactClass: cls, impact, requiresSecondAdmin },
+        detail: { kind: def.kind, params, impactClass: cls, impact },
         correlationId: ctx.correlationId,
       });
       return inserted;
@@ -420,27 +278,12 @@ export async function confirmOperation(
       // La transacción se confirma para que la caducidad quede registrada; el 409 se lanza fuera.
       return "expired";
     }
-    if (row.requires_second_admin && row.requested_by === ctx.actorId) {
-      throw forbidden("Esta acción irreversible exige confirmarla un segundo administrador, distinto del solicitante");
-    }
-    // ADM-3 · en las órdenes `user.*` NUNCA aprueba la cuenta objetivo ni un admin PROMOVIDO por el solicitante.
-    if (row.kind.startsWith("user.")) {
-      if ((row.params as { userId?: string }).userId === ctx.actorId) {
-        throw forbidden("La cuenta objetivo no puede aprobar una acción sobre sí misma");
-      }
-      // Nadie del linaje de promoción del solicitante (ancestros ni descendientes, a cualquier profundidad).
-      if (row.requested_by && (await lineageIds(t, row.requested_by)).includes(ctx.actorId as string)) {
-        throw forbidden("Estás en el linaje de promoción de quien solicita esto: hace falta otro administrador");
-      }
-    }
     if (phrase.trim() !== row.confirm_phrase) throw badRequest("La frase de confirmación no coincide");
 
-    // Con segundo admin no hay token: la aprobación es la sesión reautenticada de OTRO admin.
-    if (!row.requires_second_admin && !confirmToken) throw badRequest("confirmToken es obligatorio");
+    if (!confirmToken) throw badRequest("confirmToken es obligatorio");
     // Consumo ATÓMICO: un solo uso aunque haya dos confirmaciones a la vez.
-    const consume = t("admin_operations").where({ id, status: "awaiting_confirmation" });
-    if (!row.requires_second_admin) consume.where({ confirm_token_hash: sha256(confirmToken!) });
-    const [done]: OpRow[] = await consume
+    const [done]: OpRow[] = await t("admin_operations")
+      .where({ id, status: "awaiting_confirmation", confirm_token_hash: sha256(confirmToken) })
       .where("confirm_expires_at", ">", t.fn.now())
       .update({
         status: "pending",
@@ -456,7 +299,7 @@ export async function confirmOperation(
       actorId: ctx.actorId,
       action: OP_AUDIT("confirmed"),
       target: `operation:${id}`,
-      detail: { kind: row.kind, requestedBy: row.requested_by, secondAdmin: row.requires_second_admin },
+      detail: { kind: row.kind, requestedBy: row.requested_by },
       correlationId: ctx.correlationId,
     });
     return operationView(done);

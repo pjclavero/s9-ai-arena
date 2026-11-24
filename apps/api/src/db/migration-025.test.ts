@@ -39,9 +39,7 @@ describe("migración 025_user_status_recovery", () => {
     const names = MIGRATIONS.map((m) => m.name);
     expect(names[names.indexOf(NAME) - 1]).toBe("024_replay_artifacts");
     expect(await cols("users")).toEqual(expect.arrayContaining(["status", "blocked_at", "blocked_by"]));
-    expect(await cols("password_resets")).toEqual(
-      expect.arrayContaining(["created_at", "created_by", "issued_via_operation"]),
-    );
+    expect(await cols("password_resets")).toEqual(expect.arrayContaining(["created_at", "created_by"]));
   });
 
   it("MIG025_ESTADO_COHERENTE: la cuenta nace activa; el estado es cerrado y va de la mano de blocked_at", async () => {
@@ -62,60 +60,78 @@ describe("migración 025_user_status_recovery", () => {
     await expect(h.db("password_resets").insert(row)).rejects.toThrow(/password_resets_token_hash_uq/);
   });
 
-  it("MIG025_KIND_NUEVO: la BD admite user.recovery_admin y sigue rechazando tipos desconocidos", async () => {
-    await h.db("admin_operations").insert({ kind: "user.recovery_admin", status: "awaiting_confirmation" });
-    for (const kind of ["user.revoke_admin", "user.grant_admin", "user.block_admin", "user.unblock_admin"]) {
-      await h.db("admin_operations").insert({ kind, status: "awaiting_confirmation" });
-    }
-    await expect(h.db("admin_operations").insert({ kind: "x.otro", status: "awaiting_confirmation" })).rejects.toThrow(
-      /admin_operations_kind_check/,
-    );
-  });
-
-  it("MIG025_INDICE_LINAJE: la tabla de aristas del linaje tiene índice por promotor (la clave primaria cubre al promovido)", async () => {
-    const r = await h.db.raw(`SELECT indexname FROM pg_indexes WHERE tablename = 'admin_grant_edges'`);
-    const names = r.rows.map((x: { indexname: string }) => x.indexname);
-    expect(names).toContain("admin_grant_edges_grantor_idx");
-    expect(names).toContain("admin_grant_edges_pkey");
-  });
-
-  it("MIG025_UNICIDAD_POR_CUENTA: las órdenes user.* son únicas POR CUENTA objetivo y no por tipo; las demás, por tipo", async () => {
+  it("MIG025_MISMO_ADMIN_CONFIRMA_EN_BD: la BD acepta que quien pidió una orden la confirme (sin regla de segundo admin) y la columna ya no existe", async () => {
+    expect(await cols("admin_operations")).not.toContain("requires_second_admin");
     await h.db("admin_operations").delete();
-    const mk = (kind: string, userId?: string) =>
-      h.db("admin_operations").insert({
-        kind,
-        status: "awaiting_confirmation",
-        params: JSON.stringify(userId ? { userId } : {}),
-      });
-    const u1 = "11111111-1111-4111-8111-111111111111";
-    const u2 = "22222222-2222-4222-8222-222222222222";
-    await mk("user.recovery_admin", u1);
-    await mk("user.recovery_admin", u2); // otra cuenta: convive
-    await mk("user.revoke_admin", u1); // otro tipo sobre la misma cuenta: convive
-    await expect(mk("user.recovery_admin", u1)).rejects.toMatchObject({ code: "23505" });
-    await mk("system.noop");
-    await expect(mk("system.noop")).rejects.toMatchObject({ code: "23505" });
+    const a = await newUser("m025-same@test.local");
+    const [op] = await h
+      .db("admin_operations")
+      .insert({ kind: "system.noop", status: "awaiting_confirmation", requested_by: a })
+      .returning("id");
+    // el MISMO admin la confirma (awaiting_confirmation -> pending con confirmed_by = requested_by)
+    await h
+      .db("admin_operations")
+      .where({ id: op.id })
+      .update({ status: "pending", confirmed_by: a, confirmed_at: h.db.fn.now() });
+    expect((await h.db("admin_operations").where({ id: op.id }).first()).status).toBe("pending");
+    // el resto de la máquina de estados de la 023 sigue vigente: no se puede nacer en un estado final
+    await expect(
+      h.db("admin_operations").insert({ kind: "system.noop", status: "cancelled", requested_by: a }),
+    ).rejects.toMatchObject({ code: "23514" });
+    // y confirmar exige confirmed_by/confirmed_at informados
+    await h.db("admin_operations").delete();
+    const [op2] = await h
+      .db("admin_operations")
+      .insert({ kind: "system.noop", status: "awaiting_confirmation", requested_by: a })
+      .returning("id");
+    await expect(h.db("admin_operations").where({ id: op2.id }).update({ status: "pending" })).rejects.toMatchObject({
+      code: "23514",
+    });
     await h.db("admin_operations").delete();
   });
 
-  it("MIG025_VUELTA_ATRAS: el down quita columnas y órdenes de su tipo, restaura el CHECK, AVISA en la auditoría de las cuentas que desbloquea, y se puede reaplicar", async () => {
+  it("MIG025_SIN_TIPOS_USER: no hay tipos user.* ni tabla de linaje ni columna de operación en las contraseñas; la regla «una activa por tipo» de ADM-1 sigue intacta", async () => {
+    await expect(
+      h.db("admin_operations").insert({ kind: "user.recovery_admin", status: "awaiting_confirmation" }),
+    ).rejects.toThrow(/admin_operations_kind_check/);
+    expect((await h.db.raw(`SELECT to_regclass('public.admin_grant_edges') AS t`)).rows[0].t).toBeNull();
+    expect(await cols("password_resets")).not.toContain("issued_via_operation");
+    await h.db("admin_operations").delete();
+    await h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" });
+    await expect(
+      h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" }),
+    ).rejects.toMatchObject({ code: "23505" });
+    await h.db("admin_operations").delete();
+  });
+
+  it("MIG025_VUELTA_ATRAS: el down restaura la columna y la guarda ORIGINAL de la 023, quita las columnas, AVISA en la auditoría de las cuentas que desbloquea, y se puede reaplicar", async () => {
     const blockedId = await newUser("m025-blk@test.local");
     await h.db("users").where({ id: blockedId }).update({ status: "blocked", blocked_at: new Date() });
     await m025().down(h.db);
     const warn = await h.db("audit_log").where({ action: "migration.025.down" }).orderBy("id", "desc").first();
     expect(warn.detail.blockedAccountsUnblocked).toBeGreaterThanOrEqual(1);
     expect(await cols("users")).not.toContain("status");
-    expect(await cols("password_resets")).not.toContain("issued_via_operation");
-    expect(
-      await h.db("admin_operations").where({ kind: "user.recovery_admin" }).count({ n: "*" }).first(),
-    ).toMatchObject({
-      n: "0",
-    });
+    expect(await cols("password_resets")).not.toContain("created_by");
+    // la vuelta atrás restaura la columna y la guarda original (segundo admin) de la 023
+    expect(await cols("admin_operations")).toContain("requires_second_admin");
+    const [irrev] = await h
+      .db("admin_operations")
+      .insert({
+        kind: "system.noop",
+        status: "awaiting_confirmation",
+        requested_by: blockedId,
+        requires_second_admin: true,
+      })
+      .returning("id");
     await expect(
-      h.db("admin_operations").insert({ kind: "user.recovery_admin", status: "awaiting_confirmation" }),
-    ).rejects.toThrow(/admin_operations_kind_check/);
+      h
+        .db("admin_operations")
+        .where({ id: irrev.id })
+        .update({ status: "pending", confirmed_by: blockedId, confirmed_at: h.db.fn.now() }),
+    ).rejects.toThrow(/segundo admin/);
+    await h.db("admin_operations").delete();
     await m025().up(h.db);
     expect(await cols("users")).toContain("status");
-    await h.db("admin_operations").insert({ kind: "user.recovery_admin", status: "awaiting_confirmation" });
+    expect(await cols("admin_operations")).not.toContain("requires_second_admin");
   });
 });

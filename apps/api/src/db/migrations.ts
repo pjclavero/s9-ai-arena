@@ -1340,19 +1340,20 @@ const m024_replay_artifacts: Migration = {
 };
 
 // V1 ADM-3 · 025_user_status_recovery: usuarios operables desde la web y recuperación por token.
+// MODELO DE UN ADMINISTRADOR: ninguna operación exige un segundo admin; no hay órdenes de aprobación ni linaje.
 //  - `users.status` ('active' | 'blocked') con `blocked_at`/`blocked_by`: bloquear impide entrar (login y refresh)
 //    y sus sesiones se cierran en la misma transacción. Sin borrado: la cuenta y su historia se conservan.
-//  - `password_resets` gana `created_at`, `created_by` (el admin que lo emitió) e `issued_via_operation` (la orden
-//    de segundo admin con la que se emitió, cuando el objetivo es una cuenta admin). Sigue guardando SÓLO el hash.
-//  - `admin_operations.kind` admite `user.recovery_admin` y `user.revoke_admin` (autorización de un segundo admin para
-//    emitir un token de recuperación sobre una cuenta ADMIN o para quitar el rol admin a OTRA cuenta; ver
-//    services/account-recovery.ts), `user.grant_admin` (conceder admin a otra cuenta con otro admin activo) y
-//    `user.block_admin` (bloquear a otra cuenta admin). `admin_grant_edges` (sólo inserción) recuerda QUIÉN concedió el rol admin, de forma acumulativa:
-//    un admin promovido por X nunca aprueba órdenes `user.*` de X (contra el admin «títere»). Para los tipos `user.*` la regla «una activa» pasa a ser POR CUENTA OBJETIVO
-//    (`params->>'userId'`): un admin no puede bloquear la recuperación de las demás con una sola solicitud.
-// Depende de la 023 (FK a admin_operations). La vuelta atrás borra las órdenes de ese tipo, quita las columnas
-// (los bloqueos se pierden: las cuentas vuelven a estar activas) y restaura el CHECK de `kind`.
-// Probada en `migration-025.test.ts` (no entra en NAMED_ROLLBACK_ALLOWED: se revierte en orden).
+//  - `password_resets` gana `created_at` y `created_by` (el admin que lo emitió), con hash único y un índice de los
+//    abiertos por usuario. Sigue guardando SÓLO el hash.
+//  - ADM-1 (023) ya no admite el segundo admin: se REEMPLAZAN (`CREATE OR REPLACE`) las dos funciones de guarda de la 023
+//    sin la regla «una irreversible la confirma otro admin» (la 023 no se edita) y se ELIMINA la columna
+//    `admin_operations.requires_second_admin`. Se eligió eliminarla y no dejarla siempre a false con un CHECK porque, sin
+//    la regla en los triggers, la columna sería un campo muerto que invita a reintroducirla; la máquina de estados de
+//    la 023 (inmutabilidad, transiciones, insert-guard) queda intacta salvo esa regla. Las irreversibles se confirman con
+//    reautenticación + frase + token de un solo uso + auditoría, por el MISMO admin; la BD acepta que quien la pidió la
+//    confirme. La vuelta atrás restaura la columna y las funciones originales de la 023.
+// La vuelta atrás restaura la columna y las guardas de la 023, quita las columnas y el estado (los bloqueos se pierden: las cuentas vuelven a estar
+// activas). Probada en `migration-025.test.ts` (no entra en NAMED_ROLLBACK_ALLOWED: se revierte en orden).
 const m025_user_status_recovery: Migration = {
   name: "025_user_status_recovery",
   async up(db) {
@@ -1364,41 +1365,73 @@ const m025_user_status_recovery: Migration = {
         ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
       ALTER TABLE password_resets
         ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
-        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL,
-        ADD COLUMN issued_via_operation uuid REFERENCES admin_operations(id) ON DELETE SET NULL;
-      -- LINAJE de promoción ACUMULATIVO: una arista (grantee ← grantor) por cada concesión del rol admin. Sólo se
-      -- AÑADEN filas: ni la aplicación ni nadie puede modificar o borrar una arista (el trigger rechaza UPDATE y el
-      -- DELETE directo; el borrado en cascada de un usuario sí se admite, pg_trigger_depth() > 1). Así volver a
-      -- conceder el rol por otra cuenta no «blanquea» el linaje.
-      CREATE TABLE admin_grant_edges (
-        grantee    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        grantor    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        PRIMARY KEY (grantee, grantor),
-        CHECK (grantee <> grantor)
-      );
-      CREATE INDEX admin_grant_edges_grantor_idx ON admin_grant_edges (grantor);
-      CREATE FUNCTION admin_grant_edges_append_only() RETURNS trigger LANGUAGE plpgsql AS $ae$
-      BEGIN
-        IF TG_OP = 'UPDATE' OR pg_trigger_depth() = 1 THEN
-          RAISE EXCEPTION 'admin_grant_edges es de solo inserción' USING ERRCODE = '23514';
-        END IF;
-        RETURN OLD;
-      END
-      $ae$;
-      CREATE TRIGGER admin_grant_edges_append_only BEFORE UPDATE OR DELETE ON admin_grant_edges
-        FOR EACH ROW EXECUTE FUNCTION admin_grant_edges_append_only();
+        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL;
       CREATE UNIQUE INDEX password_resets_token_hash_uq ON password_resets (token_hash);
       CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
-      ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
-      ALTER TABLE admin_operations
-        ADD CONSTRAINT admin_operations_kind_check
-        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin','user.grant_admin','user.block_admin','user.unblock_admin'));
-      DROP INDEX admin_operations_one_active_per_kind;
-      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
-        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running') AND kind NOT LIKE 'user.%';
-      CREATE UNIQUE INDEX admin_operations_one_active_per_target
-        ON admin_operations (kind, (params->>'userId')) WHERE status IN ('awaiting_confirmation','pending','running') AND kind LIKE 'user.%';
+
+      -- ADM-1 sin segundo admin: guardas de la 023 SIN la regla del segundo admin (mismo resto de la máquina de estados).
+      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          -- (modelo de un administrador: confirma el mismo admin que la pidió)
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE OR REPLACE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
+      ALTER TABLE admin_operations DROP COLUMN requires_second_admin;
     `);
   },
   async down(db) {
@@ -1409,19 +1442,78 @@ const m025_user_status_recovery: Migration = {
         SELECT 'migration.025.down', 'users',
                jsonb_build_object('blockedAccountsUnblocked', count(*), 'note', 'la vuelta atrás desbloquea las cuentas')
           FROM users WHERE status = 'blocked';
-      DELETE FROM admin_operations WHERE kind LIKE 'user.%';
-      DROP INDEX admin_operations_one_active_per_target;
-      DROP INDEX admin_operations_one_active_per_kind;
-      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
-        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running');
-      ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
-      ALTER TABLE admin_operations ADD CONSTRAINT admin_operations_kind_check CHECK (kind IN ('system.noop'));
+      ALTER TABLE admin_operations ADD COLUMN requires_second_admin boolean NOT NULL DEFAULT false;
+      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.requires_second_admin IS DISTINCT FROM OLD.requires_second_admin
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          IF OLD.requires_second_admin AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.requested_by THEN
+            RAISE EXCEPTION 'admin_operations: la acción irreversible exige un segundo admin distinto del solicitante' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE OR REPLACE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.status = 'pending' AND NEW.requires_second_admin THEN
+          RAISE EXCEPTION 'admin_operations: una orden con segundo admin nace en awaiting_confirmation' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
       DROP INDEX password_resets_user_open_idx;
       DROP INDEX password_resets_token_hash_uq;
-      ALTER TABLE password_resets DROP COLUMN issued_via_operation, DROP COLUMN created_by, DROP COLUMN created_at;
+      ALTER TABLE password_resets DROP COLUMN created_by, DROP COLUMN created_at;
       ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
-      DROP TABLE admin_grant_edges;
-      DROP FUNCTION admin_grant_edges_append_only();
       ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
     `);
   },

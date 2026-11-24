@@ -135,13 +135,17 @@ info:
   # createAdminOperation/listAdminOperations/getAdminOperation/confirmAdminOperation/cancelAdminOperation
   # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
   # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
-  # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
-  # 0.27.0 · ADM-3 (aditivo, admin): listAdminUsers (GET /admin/users: búsqueda y paginación por cursor, sin hashes ni
-  # secretos), setUserStatus (PUT /admin/users/{userId}/status: bloquear/desbloquear, reautenticación),
-  # issueUserRecoveryToken (POST /admin/users/{userId}/recovery-token: token de recuperación de un solo uso y 30 min,
-  # mostrado una vez; cuenta admin ⇒ aprobación de segundo admin). setUserRoles gana 409 last_admin; login 403
-  # account_blocked. `POST /auth/recover` se RETIRA (descartaba el token). Nuevo tipo de orden `user.recovery_admin`.
-  # Migración 025. getAdminUser (GET /admin/users/{userId}); nuevos tipos user.grant_admin y user.block_admin (segundo admin al conceder admin y al bloquear a una cuenta admin; el objetivo y los promovidos por el solicitante nunca aprueban). setUserRoles cambia (reautenticación al conceder/quitar admin; segundo admin para quitarlo a otra cuenta).
+  # (token de un solo uso, frase literal, reautenticación y auditoría; las confirma el MISMO admin). Migración 023.
+  # 0.27.0 · ADM-3 (aditivo, admin; MODELO DE UN ADMINISTRADOR: ninguna operación exige un segundo admin, sin linajes
+  # ni aprobaciones cruzadas): listAdminUsers (GET /admin/users: búsqueda y paginación por cursor, sin hashes ni
+  # secretos), getAdminUser (GET /admin/users/{userId}), setUserStatus (PUT /admin/users/{userId}/status: bloquear/
+  # desbloquear a cualquier cuenta, también admin, con reautenticación), issueUserRecoveryToken (POST
+  # /admin/users/{userId}/recovery-token: token de un solo uso y 30 min para CUALQUIER cuenta, mostrado una vez).
+  # setUserRoles (cambio de contrato): conceder o quitar `admin` exige reautenticación; 409 last_admin si dejaría 0
+  # admins activos; cualquier cambio de roles o de estado anula los tokens de recuperación abiertos. Login 403
+  # account_blocked. `POST /auth/recover` se RETIRA (descartaba el token). ADM-1: se elimina el segundo admin de las
+  # órdenes irreversibles (`requiresSecondAdmin` desaparece de las respuestas; confirmToken siempre obligatorio).
+  # Migración 025.
   version: 0.27.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -335,15 +339,11 @@ paths:
       tags: [admin]
       operationId: setUserRoles
       summary: >-
-        Asignar roles (queda en audit_log). ADM-3 (cambia el contrato): cualquier cambio del conjunto de roles anula los
-        tokens de recuperación abiertos de la cuenta; CONCEDER `admin` y QUITARLO exigen reautenticación fuerte
-        (`password`, `totp`; 401, límite por admin 429); quitar `admin` a OTRA cuenta exige además `operationId` de una
-        orden `user.revoke_admin` solicitada por quien llama y confirmada por otro admin (403 `second_admin_required` /
-        `second_admin_approval_invalid`; 409 `second_admin_unavailable` si no hay otro admin que pueda aprobar). Esa aprobación sólo autoriza quitar `admin`:
-        los demás roles deben quedar como están (400). CONCEDER `admin` a otra cuenta exige, si existe otro admin activo
-        además de quien llama, `operationId` de una orden `user.grant_admin` aprobada por otro admin; si quien llama es
-        el ÚNICO admin (activo o bloqueado) basta la reautenticación (bootstrap, auditado). Nunca aprueba el objetivo ni
-        nadie del linaje de promoción del solicitante. 409 `last_admin` si quitaría el rol admin al último administrador activo.
+        Asignar roles (queda en audit_log). ADM-3 (cambia el contrato; modelo de UN administrador): lo hace UN admin, sin
+        aprobación de otro. CONCEDER `admin` y QUITARLO (a otra cuenta o a uno mismo) exigen reautenticación fuerte
+        (`password`, `totp`; 401, límite por admin 429). Cualquier cambio del conjunto de roles anula los tokens de
+        recuperación abiertos de la cuenta. 409 `last_admin` si dejaría 0 admins activos (quitar el rol al último admin,
+        también a uno mismo), bajo cerrojo y sin carreras. Queda en audit_log.
       x-min-role: admin
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
@@ -357,7 +357,6 @@ paths:
                 roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
                 password: { type: string, x-private: true, description: 'Reautenticación: obligatoria al conceder o quitar `admin`.' }
                 totp: { type: string, x-private: true }
-                operationId: { type: string, format: uuid, description: 'Obligatorio al quitar `admin` a otra cuenta (`user.revoke_admin` aprobada).' }
       responses:
         '200': { description: Roles actualizados, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2338,11 +2337,9 @@ paths:
         El servidor calcula el resumen de impacto. Si la acción es destructiva devuelve `awaiting_confirmation`,
         la frase literal y un `confirmToken` de UN SOLO USO (2 min; sólo se entrega aquí). Sin impacto pasa
         directa a `pending`. `dryRun:true` sólo devuelve el impacto (200, no crea orden). Las irreversibles
-        exigen un segundo admin (409 second_admin_unavailable si no lo hay). Una orden activa por tipo
-        (409 operation_in_progress; para los tipos `user.*` la regla es POR CUENTA OBJETIVO). La API no ejecuta nada: la
-        consume el servicio que posee el privilegio. ADM-3: los tipos `user.*` exigen reautenticación (`password`,
-        `totp`) y tienen límite por admin (401/429); el segundo admin se busca entre los admins activos distintos del
-        solicitante y del objetivo.
+        se confirman igual (token de un solo uso, frase, reautenticación): las confirma el MISMO admin, sin segundo admin.
+        Una orden activa por tipo (409 operation_in_progress). La API no ejecuta nada: la consume el servicio que posee
+        el privilegio.
       x-min-role: admin
       requestBody:
         required: true
@@ -2383,7 +2380,7 @@ paths:
       summary: >-
         ADM-1 · Confirma una orden en `awaiting_confirmation`: token de un solo uso (consumo atómico), frase
         literal EXACTA y REAUTENTICACIÓN FUERTE (contraseña + TOTP si lo tiene; sin credenciales frescas, 401).
-        Las irreversibles NO llevan token: las aprueba, desde su propia sesión y reautenticado, un admin distinto del solicitante (403 si es el mismo). Límite de intentos por admin (429). Token caducado o ya usado:
+        Límite de intentos por admin (429). Token caducado o ya usado:
         409 confirmation_expired / confirmation_token_invalid. Pasa a `pending`.
       x-min-role: admin
       x-reauth: true
@@ -2409,8 +2406,8 @@ paths:
       operationId: cancelAdminOperation
       summary: >-
         ADM-1 · Cancela una orden en `awaiting_confirmation` o `pending` (si ya la tomó un ejecutor, 409 not_cancellable).
-        ADM-3: las órdenes `user.*`, y cualquier orden ajena, sólo se cancelan con reautenticación (body `password`,
-        `totp`; 401) y límite por admin (429); la cancelación se audita con quién la hizo.
+        Cancelar la orden de OTRO admin exige reautenticación (body `password`, `totp`; 401) y límite por admin (429); la
+        cancelación se audita con quién la hizo.
       x-min-role: admin
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2463,10 +2460,9 @@ paths:
       operationId: setUserStatus
       summary: >-
         ADM-3 · Bloquea o desbloquea una cuenta. Bloquear cierra todas sus sesiones, anula sus tokens de recuperación
-        abiertos e impide entrar (login 403 `account_blocked`). Reautenticación fuerte. No se puede aplicar a uno mismo
-        (403) ni bloquear al último administrador activo (409 `last_admin`). Bloquear a OTRA cuenta admin exige además
-        `operationId` de una orden `user.block_admin` (y desbloquear a una cuenta admin, de `user.unblock_admin`) confirmada por otro admin (403 `second_admin_required`; 409
-        `second_admin_unavailable` si nadie puede aprobar). Cambio auditado.
+        abiertos e impide entrar (login 403 `account_blocked`). Reautenticación fuerte. Lo hace UN admin, a cualquier
+        cuenta (también admin y también a uno mismo); 409 `last_admin` si dejaría 0 admins activos (bloquear al último,
+        incluido uno mismo). Desbloquear o bloquear anula los tokens de recuperación abiertos. Cambio auditado.
       x-min-role: admin
       x-reauth: true
       parameters: [{ $ref: '#/components/parameters/UserId' }]
@@ -2492,10 +2488,9 @@ paths:
         ADM-3 (B5, D-OP-8) · Emite un token de recuperación de contraseña de UN solo uso y 30 min para la cuenta
         indicada. El token se devuelve UNA vez (`Cache-Control: no-store`); en BD sólo queda su hash y el administrador
         no conoce la contraseña: la elige el usuario al canjearlo en `POST /auth/reset`. Emitir uno anula los anteriores.
-        Reautenticación fuerte y límite de intentos por admin. Si la cuenta objetivo es ADMIN hace falta `operationId`:
-        una orden `user.recovery_admin` (POST /admin/operations) solicitada por quien emite y confirmada por OTRO
-        administrador; se consume al emitir (403 `second_admin_required` / `second_admin_approval_invalid` si falta o no
-        vale). Cuenta bloqueada: 409 `account_blocked`. Para la propia cuenta: 400 (usar «Mi cuenta»).
+        Reautenticación fuerte y límite de intentos por admin. Vale para CUALQUIER cuenta, también la de otro admin, y lo
+        hace UN admin (queda en audit_log). Cuenta bloqueada: 409 `account_blocked`. Para la propia cuenta: 400 (usar
+        «Mi cuenta»).
       x-min-role: admin
       x-reauth: true
       parameters: [{ $ref: '#/components/parameters/UserId' }]
@@ -3812,9 +3807,7 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin, user.grant_admin, user.block_admin, user.unblock_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) `user.revoke_admin` (quitar el rol admin a OTRA cuenta), `user.block_admin` (bloquear a otra cuenta admin), `user.unblock_admin` (desbloquearla) y `user.grant_admin` (conceder admin a otra cuenta); params `{userId}`; el objetivo debe ser admin (no lo es en `user.grant_admin`). Nunca aprueba el propio objetivo ni nadie del LINAJE de promoción del solicitante (ancestros y descendientes en `admin_granted_by`, a cualquier profundidad).' }
-        password: { type: string, x-private: true, description: 'Reautenticación; obligatoria para los tipos `user.*`.' }
-        totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si el admin tiene 2FA.' }
+        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7). `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test); en producción la API no admite ningún tipo todavía.' }
         params:
           type: object
           description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'
@@ -3844,7 +3837,6 @@ components:
         status: { type: string, enum: [active, blocked] }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta del admin tiene 2FA.' }
-        operationId: { type: string, format: uuid, description: 'Obligatorio al bloquear o desbloquear a otra cuenta admin (`user.block_admin` / `user.unblock_admin` aprobada).' }
     AdminUserStatusResult:
       type: object
       properties:
@@ -3859,7 +3851,6 @@ components:
       properties:
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true }
-        operationId: { type: string, format: uuid, description: 'Obligatorio si la cuenta objetivo es admin: orden `user.recovery_admin` confirmada por otro admin.' }
     AdminRecoveryToken:
       type: object
       properties:
@@ -3871,7 +3862,7 @@ components:
       additionalProperties: false
       required: [phrase, password]
       properties:
-        confirmToken: { type: string, x-private: true, description: 'Obligatorio salvo en las irreversibles (segundo admin: no hay token, aprueba su propia sesión reautenticada).' }
+        confirmToken: { type: string, x-private: true, description: 'Obligatorio: el de un solo uso que devolvió la creación de la orden.' }
         phrase: { type: string, description: 'Frase literal devuelta por el servidor al crear la orden.' }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta tiene 2FA.' }
@@ -3884,7 +3875,6 @@ components:
         status: { type: string, enum: [awaiting_confirmation, pending, running, done, failed, expired, cancelled] }
         impact: { $ref: '#/components/schemas/AdminOperationImpact' }
         confirmPhrase: { type: string, nullable: true }
-        requiresSecondAdmin: { type: boolean }
         requestedBy: { type: string, format: uuid, nullable: true }
         confirmedBy: { type: string, format: uuid, nullable: true }
         result: { nullable: true }
@@ -3907,7 +3897,6 @@ components:
         kind: { type: string }
         impactClass: { type: string, enum: [none, destructive, irreversible] }
         impact: { $ref: '#/components/schemas/AdminOperationImpact' }
-        requiresSecondAdmin: { type: boolean }
         confirmPhrase: { type: string }
 
     StreamingIngests:

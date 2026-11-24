@@ -7,8 +7,12 @@ guardia de carga del entorno, espera a PRODGUARD_OK antes de cada ejecución. Si
 
 Uso:
   python3 scripts/adm3-mutants.py [M1 M2 ...]   ejecuta (todos o los indicados)
-  python3 scripts/adm3-mutants.py --check       sólo valida que cada ancla es única (no ejecuta nada)
-  python3 scripts/adm3-mutants.py --baseline    ejecuta la línea base de cada fichero de test (debe estar en verde)
+  python3 scripts/adm3-mutants.py --check       valida que cada ancla es única y que el fragmento existe en el test
+  python3 scripts/adm3-mutants.py --baseline    ejecuta la línea base de cada (test, filtro): ≥1 test en verde y 0 en rojo
+
+Reglas del harness: (1) BASE: con el árbol sin tocar, el test filtrado por `-t` debe tener ≥1 test EN VERDE
+(con vitest 4 un filtro que no casa da verde vacío: eso es un fallo de calibración); (2) MUTANTE: ≥1 test en ROJO y su
+nombre contiene el fragmento.
 """
 import os
 import re
@@ -18,7 +22,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 T = "apps/api/src/adm3-users-recovery.test.ts"
-T2 = "apps/api/src/adm3-review-fixes.test.ts"
+T2 = "apps/api/src/adm3-one-admin.test.ts"
 ROPS = "apps/api/src/routes/admin-operations.ts"
 MIG25 = "apps/api/src/db/migration-025.test.ts"
 CLIT = "apps/api/src/db/reset-password-cli.test.ts"
@@ -38,401 +42,654 @@ CONF = "apps/web/src/pages/admin/ConfirmDestructive.tsx"
 
 # (nombre, [(fichero, ancla, sustituto), ...], test, fragmento del test que debe fallar)
 M = [
-    ("M1 listar usuarios con rol user",
-     [(OAPI, "      x-min-role: admin\n      parameters:\n        - { name: q, in: query", "      x-min-role: user\n      parameters:\n        - { name: q, in: query")],
-     T, "SOLO_ADMIN"),
-    ("M2 bloquear con rol user",
-     [(OAPI, "      x-min-role: admin\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminUserStatusChange' }",
-      "      x-min-role: user\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminUserStatusChange' }")],
-     T, "SOLO_ADMIN"),
-    ("M3 emitir token con rol user",
-     [(OAPI, "      x-min-role: admin\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminRecoveryTokenRequest' }",
-      "      x-min-role: user\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminRecoveryTokenRequest' }")],
-     T, "SOLO_ADMIN"),
-    ("M4 el listado devuelve el hash de la contraseña",
-     [(SVC, '      "u.display_name",\n      "u.status",', '      "u.display_name",\n      "u.password_hash",\n      "u.status",'),
-      (SVC, "      id: r.id,\n      email: r.email,", "      id: r.id,\n      passwordHash: r.password_hash,\n      email: r.email,")],
-     T, "LISTA_SIN_SECRETOS"),
-    ("M5 el listado devuelve el secreto TOTP",
-     [(SVC, '      "u.display_name",\n      "u.status",', '      "u.display_name",\n      "u.totp_secret",\n      "u.status",'),
-      (SVC, "      id: r.id,\n      email: r.email,", "      id: r.id,\n      totpSecret: r.totp_secret,\n      email: r.email,")],
-     T, "LISTA_SIN_SECRETOS"),
-    ("M6 la búsqueda no escapa los comodines",
-     [(SVC, "const EMAIL_ESCAPE = /[\\\\%_]/g;", "const EMAIL_ESCAPE = /[\\\\]/g;")],
-     T, "LISTA_BUSQUEDA"),
-    ("M7 la búsqueda por nombre distingue mayúsculas",
-     [(SVC, 'b.whereRaw("lower(u.display_name) LIKE', 'b.whereRaw("u.display_name LIKE')],
-     T, "LISTA_BUSQUEDA"),
-    ("M8 sin tope de longitud de la búsqueda",
-     [(SVC, "if (q.length > MAX_SEARCH_LENGTH) throw", "if (false) throw")],
-     T, "LISTA_BUSQUEDA"),
-    ("M9 la paginación ignora el cursor",
-     [(SVC, '  query = applyCursor(query, cursor, "u.created_at", ["u.id"]);\n', "")],
-     T, "LISTA_PAGINA"),
-    ("M10 recoveryPending siempre falso",
-     [(SVC, "recoveryPending: r.recovery_pending === true,", "recoveryPending: false,")],
-     T, "LISTA_ESTADO"),
-    ("M12 los admins bloqueados cuentan como activos",
-     [(SVC, '    .where("u.status", "active")\n    .whereNot("u.id", exceptUserId)', '    .whereNot("u.id", exceptUserId)')],
-     T, "ULTIMO_ADMIN_ROLES"),
-    ("M13 bloquear al último admin permitido",
-     [(SVC, "if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {", "if (false) {")],
-     T, "BLOQUEO_ULTIMO_ADMIN"),
-    ("M14 un admin puede bloquearse a sí mismo",
-     [(SVC, "if (targetId === ctx.actorId) {\n    throw forbidden(", "if (false) {\n    throw forbidden(")],
-     T, "BLOQUEO_NO_A_UNO_MISMO"),
-    ("M15 bloquear no cierra sesiones",
-     [(SVC, "sessionsRevoked = await revokeAllSessions(t, targetId);", "sessionsRevoked = 0;")],
-     T, "BLOQUEO_EFECTOS"),
-    ("M16 bloquear no anula los tokens abiertos",
-     [(SVC, "        const voided = await voidOpenResets(t, targetId);\n        await audit(t, {", "        const voided = 0;\n        await audit(t, {")],
-     T, "BLOQUEO_EFECTOS"),
-    ("M17 el bloqueo no se audita con su nombre",
-     [(SVC, 'action: "admin.user.blocked",', 'action: "admin.user.sin_auditar",')],
-     T, "BLOQUEO_EFECTOS"),
-    ("M18 una cuenta bloqueada inicia sesión",
-     [(AUTH, 'if (user.status === "blocked") {', "if (false) {")],
-     T, "BLOQUEO_EFECTOS"),
-    ("M19 una cuenta bloqueada refresca tokens",
-     [(AUTH, 'if (!owner || owner.status !== "active") throw unauthorized(', "if (false) throw unauthorized(")],
-     T, "REFRESH_BLOQUEADO"),
-    ("M20 bloquear sin reautenticación",
-     [(RU, 'defineOperation(router, "setUserStatus", async (req, res) => {\n    await reauth(req);', 'defineOperation(router, "setUserStatus", async (req, res) => {')],
-     T, "BLOQUEO_REAUTH"),
-    ("M21 emitir token sin reautenticación",
-     [(RU, 'defineOperation(router, "issueUserRecoveryToken", async (req, res) => {\n    await reauth(req);', 'defineOperation(router, "issueUserRecoveryToken", async (req, res) => {')],
-     T, "TOKEN_REAUTH"),
-    ("M22 sin límite de acciones por admin",
-     [(RU, "if (!(await deps.actionLimiter.hit(", "if (false && !(await deps.actionLimiter.hit(")],
-     T, "LIMITE_ACCIONES"),
-    ("M23 el límite de acciones es global y no por admin",
-     [(RU, "admin-users:${req.auth!.userId}", "admin-users:todos")],
-     T, "LIMITE_ACCIONES"),
-    ("M24 el token se guarda en claro",
-     [(SVC, "token_hash: hashToken(token),", "token_hash: token,")],
-     T, "TOKEN_EMISION"),
-    ("M25 el token dura un día",
-     [(SVC, "export const RECOVERY_TTL_MS = 30 * 60_000;", "export const RECOVERY_TTL_MS = 24 * 60 * 60_000;")],
-     T, "TOKEN_EMISION"),
-    ("M26 emitir no anula los tokens anteriores",
-     [(SVC, "      const voided = await voidOpenResets(t, targetId);\n      const token = await createPasswordReset", "      const voided = 0;\n      const token = await createPasswordReset")],
-     T, "TOKEN_REVOCA_ANTERIORES"),
-    ("M27 el token va a la auditoría",
-     [(SVC, "          secondAdminOperation: operationId,\n        },", "          secondAdminOperation: operationId,\n          token,\n        },")],
-     T, "TOKEN_EMISION"),
-    ("M28 se emite token a una cuenta bloqueada",
-     [(SVC, '      if (user.status !== "active") {\n        throw conflict("account_blocked"', '      if (false) {\n        throw conflict("account_blocked"')],
-     T, "TOKEN_CASOS"),
-    ("M29 se emite token para la propia cuenta",
-     [(SVC, "if (targetId === ctx.actorId) {\n    throw badRequest(", "if (false) {\n    throw badRequest(")],
-     T, "TOKEN_CASOS"),
-    ("M30 el token se puede canjear más de una vez",
-     [(SVC, '        .where({ token_hash: hash })\n        .whereNull("used_at")', "        .where({ token_hash: hash })")],
-     T, "TOKEN_UN_SOLO_USO"),
-    ("M31 el canje ignora la caducidad",
-     [(SVC, '        .where("expires_at", ">", t.fn.now())\n        .update({ used_at: t.fn.now() })', "        .update({ used_at: t.fn.now() })")],
-     T, "TOKEN_CADUCA"),
-    ("M32 el canje no cierra las sesiones",
-     [(SVC, "      const sessionsRevoked = await revokeAllSessions(t, user.id);\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación", "      const sessionsRevoked = 0;\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación")],
-     T, "CANJE_REVOCA_SESIONES"),
-    ("M33 el canje no aplica la política de contraseñas",
-     [(SVC, "if (violation) throw badRequest(violation);\n  const passwordHash", "if (false) throw badRequest(violation);\n  const passwordHash")],
-     T, "POLITICA_CONTRASENAS"),
-    ("M34 el canje consume el token de una cuenta bloqueada",
-     [(SVC, 'if (!user || user.status !== "active") throw unauthorized(INVALID_TOKEN);', "if (!user) throw unauthorized(INVALID_TOKEN);")],
-     T, "NO_ENUMERACION"),
-    ("M35 vuelve POST /auth/recover",
-     [(AUTH, "  return router;\n}\n\n// Compatibilidad",
-       '  defineExtension(\n    router,\n    { operationId: "recoverAccount", method: "post", path: "/auth/recover", minRole: "visitor" },\n    async (_req, res) => {\n      res.status(202).json({ status: "accepted" });\n    },\n  );\n\n  return router;\n}\n\n// Compatibilidad')],
-     T, "RECOVER_RETIRADO"),
-    ("M36 el canje sin límite de intentos",
-     [(AUTH, '    rateLimit(resetLimiter, "reset"),\n  );', "  );")],
-     T, "RATE_LIMIT_RESET"),
-    ("M37 la cuenta admin no exige segundo admin",
-     [(SVC, "      if (targetIsAdmin)\n        operationId", "      if (false)\n        operationId")],
-     T, "ADMIN_EXIGE_SEGUNDO"),
-    ("M38 la aprobación del segundo admin no se gasta",
-     [(SVC, '  await trx("admin_operations")\n    .where({ id: op.id, status: "pending" })\n    .update({', '  await trx("admin_operations")\n    .where({ id: op.id, status: "pending" })\n    .whereRaw("false")\n    .update({')],
-     T, "ADMIN_SEGUNDO_FLUJO"),
-    ("M39 la aprobación sirve a quien no la solicitó",
-     [(SVC, "if (op.requested_by !== ctx.actorId) throw invalid(", "if (false) throw invalid(")],
-     T, "ADMIN_SEGUNDO_FLUJO"),
-    ("M40 la aprobación sirve para otra cuenta",
-     [(SVC, "if (params.userId !== targetId) throw invalid(", "if (false) throw invalid(")],
-     T, "ADMIN_APROBACION_ATADA"),
-    ("M41 la aprobación no caduca",
-     [(SVC, "if (!op.confirmed_at || Date.now() - new Date(op.confirmed_at).getTime() > RECOVERY_APPROVAL_WINDOW_MS) {", "if (!op.confirmed_at) {")],
-     T, "ADMIN_APROBACION_ATADA"),
-    ("M42 una orden ya consumida vuelve a valer",
-     [(SVC, '.where({ id: operationId, kind, status: "pending" })', '.where({ id: operationId, kind })')],
-     T, "ADMIN_SEGUNDO_FLUJO"),
-    ("M43 la recuperación admin no es irreversible",
-     [(SOPS, 'classify: () => "irreversible",', 'classify: () => "destructive",')],
-     T, "ADMIN_UNICO"),
-    ("M44 la orden acepta una cuenta que no es admin",
-     [(SOPS, "if (!admin) {\n      throw badRequest(", "if (false) {\n      throw badRequest(")],
-     T, "OP_SOLO_CUENTAS_ADMIN"),
-    ("M45 la orden admite parámetros extra",
-     [(SOPS, 'for (const k of Object.keys(raw)) if (k !== "userId") return', "for (const k of Object.keys(raw)) if (false) return")],
-     T, "OP_SOLO_CUENTAS_ADMIN"),
-    ("M46 los admins bloqueados cuentan como segundo admin",
-     [(SVC, '.where({ "r.role": "admin", "u.status": "active" })\n    .whereNotIn("u.id", [...excluded, ...lineage])', '.where({ "r.role": "admin" })\n    .whereNotIn("u.id", [...excluded, ...lineage])')],
-     T2, "APROBADOR_BLOQUEADO_NO_CUENTA"),
-    ("M47 la aprobación caducada ocupa el hueco para siempre",
-     [(SOPS, "if (def.pendingTtlMs !== undefined) {", "if (false) {")],
-     T, "ADMIN_APROBACION_CADUCADA_LIBERA"),
-    ("M48 la emisión no es atómica con su auditoría",
-     [(SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      const user = await t("users").where({ id: targetId }).forUpdate()',
-       'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      const user = await t("users").where({ id: targetId }).forUpdate()'),
-      (SVC, "      return { token, expiresAt, userId: targetId };\n    }),\n  );\n  return out;", "      return { token, expiresAt, userId: targetId };\n    })(db),\n  );\n  return out;")],
-     T, "AUDITORIA_ATOMICA"),
-    ("M49 la migración no admite el tipo nuevo",
-     [(MIGS, "CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin','user.grant_admin','user.block_admin','user.unblock_admin'));\n      DROP INDEX admin_operations_one_active_per_kind;", "CHECK (kind IN ('system.noop','user.revoke_admin','user.grant_admin','user.block_admin','user.unblock_admin'));\n      DROP INDEX admin_operations_one_active_per_kind;")],
-     MIG25, "MIG025_KIND_NUEVO"),
-    ("M50 el down de la 025 deja las columnas de usuario",
-     [(MIGS, "      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;\n", "")],
-     MIG25, "MIG025_VUELTA_ATRAS"),
-    ("M51 el estado de cuenta no es coherente con blocked_at",
-     [(MIGS, "CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));", "CHECK (true);")],
-     MIG25, "MIG025_ESTADO_COHERENTE"),
-    ("M52 el hash del token no es único",
-     [(MIGS, "CREATE UNIQUE INDEX password_resets_token_hash_uq", "CREATE INDEX password_resets_token_hash_uq")],
-     MIG25, "MIG025_TOKEN_HASH_UNICO"),
-    ("M53 la CLI no cierra las sesiones",
-     [(SVC, "    const sessionsRevoked = await revokeAllSessions(t, user.id);\n    const voided = await voidOpenResets(t, user.id);\n    const admins", "    const sessionsRevoked = 0;\n    const voided = await voidOpenResets(t, user.id);\n    const admins")],
-     T, "CLI_SERVICIO"),
-    ("M54 la CLI no aplica la política de contraseñas",
-     [(SVC, 'if (violation) throw new ResetPasswordCliError("invalid_input", violation);', 'if (false) throw new ResetPasswordCliError("invalid_input", violation);')],
-     T, "CLI_SERVICIO"),
-    ("M55 la CLI audita la contraseña",
-     [(SVC, 'via: "cli",', 'via: "cli",\n        password: input.password,')],
-     T, "CLI_SERVICIO"),
-    ("M56 la CLI acepta la contraseña por argv",
-     [(PWI, '  let file: string | null = null;\n  for (let i = 0; i < argv.length; i++) {\n    const a = argv[i];\n    if (a === "--password-stdin") stdin = true;\n    else if (a === "--password-file") {\n      const v = argv[++i];\n      if (!v) throw new PasswordInputError("--password-file requiere una ruta");\n      file = v;\n    } else if (/^--?password(=|$)/.test(a) || /^-p/.test(a)) {',
-       '  let file: string | null = null;\n  for (let i = 0; i < argv.length; i++) {\n    const a = argv[i];\n    if (a === "--password-stdin") stdin = true;\n    else if (a === "--password-file") {\n      const v = argv[++i];\n      if (!v) throw new PasswordInputError("--password-file requiere una ruta");\n      file = v;\n    } else if (false) {')],
-     T, "CLI_ARGV"),
-    ("M57 la CLI no cierra las sesiones (proceso real)",
-     [(SVC, "    const sessionsRevoked = await revokeAllSessions(t, user.id);\n    const voided = await voidOpenResets(t, user.id);\n    const admins", "    const sessionsRevoked = 0;\n    const voided = await voidOpenResets(t, user.id);\n    const admins")],
-     CLIT, "CLI_PROCESO"),
-    ("M58 la web no oculta el token al cerrarlo",
-     [(PAGE, 'onClick={() => setIssued(null)}', "onClick={() => undefined}")],
-     WEBT, "TOKEN_UNA_VEZ"),
-    ("M59 la web ofrece acciones sobre uno mismo",
-     [(PAGE, "const isMe = u.id === props.me.id;", "const isMe = false;")],
-     WEBT, "SIN_ACCIONES_SOBRE_UNO_MISMO"),
-    ("M60 la web emite el token de un admin sin segundo admin",
-     [(PAGE, "setAction(isAdmin ? { kind: \"requestRecovery\", user: u } : { kind: \"token\", user: u })", "setAction({ kind: \"token\", user: u })")],
-     WEBT, "ADMIN_PIDE_SEGUNDO"),
-    ("M61 la web bloquea sin marcar reautenticación",
-     [(PAGE, "{ status: a.to, ...reauth }, { reauth: true }", "{ status: a.to, ...reauth }")],
-     WEBT, "BLOQUEAR_CONFIRMA"),
-    ("M62 la web pide contraseña para los roles",
-     [(PAGE, "askPassword: action.reauth,", "askPassword: true,")],
-     WEBT, "ROLES_SIN_CONTRASENA"),
-    ("M63 «Cargar más» sustituye en vez de añadir",
-     [(PAGE, "setItems((cur) => [...cur, ...p.items]);", "setItems(p.items);")],
-     WEBT, "CARGAR_MAS"),
-    ("M64 la web ignora la frase del servidor al aprobar",
-     [(PAGE, 'phrase: action.op.confirmPhrase ?? "",', 'phrase: "APROBAR",')],
-     WEBT, "APROBAR"),
-    ("M65 el solicitante ve «Aprobar» en su propia solicitud",
-     [(PAGE, 'o.status === "awaiting_confirmation" && !mine && (', 'o.status === "awaiting_confirmation" && (')],
-     WEBT, "APROBAR"),
-    ("M66 la web emite sin operationId",
-     [(PAGE, "{ ...reauth, operationId: a.op.id },", "{ ...reauth },")],
-     WEBT, "EMITIR_ADMIN"),
-    ("M67 la web no explica la vía local con un solo admin",
-     [(PAGE, 'if (errorCode(e) !== "second_admin_unavailable") throw e;', "if (true) throw e;")],
-     WEBT, "ADMIN_UNICO_CLI"),
-    ("M68 la búsqueda no envía q",
-     [(PAGE, 'if (query) qs.set("q", query);', "")],
-     WEBT, "BUSCA"),
-    ("M69 una cuenta bloqueada ofrece token de recuperación",
-     [(PAGE, "{!isMe && u.status === \"active\" && (", "{!isMe && (")],
-     WEBT, "DESBLOQUEAR"),
-    ("M70 la web se traga el error del servidor",
-     [(PAGE, '<FormError error={actionError} data-testid="users-error" />', "")],
-     WEBT, "ERROR_DEL_SERVIDOR"),
-    ("M71 el canje no valida la longitud en la web",
-     [(RESET, "if (password.length < RESET_PASSWORD_MIN)\n    return", "if (false)\n    return")],
-     WEBT, "RESET_VALIDACION"),
-    ("M72 el canje no pide repetir la contraseña",
-     [(RESET, "if (password !== repeat) return", "if (false) return")],
-     WEBT, "RESET_VALIDACION"),
-    ("M73 el canje envía el token sin recortar",
-     [(RESET, "token: token.trim(),", "token,")],
-     WEBT, "RESET_ENVIA"),
-    ("M74 #/reset no es una ruta pública",
-     [(APP, 'if (/^#\\/reset\\/?(?:\\?.*)?$/.test(route)) return { kind: "reset" };', 'if (false) return { kind: "reset" };')],
-     WEBT, "RESET_RUTA_PUBLICA"),
-    ("M75 la confirmación pide siempre contraseña (askPassword ignorado)",
-     [(CONF, "const askPassword = props.askPassword !== false;", "const askPassword = true;")],
-     WEBT, "ROLES_SIN_CONTRASENA"),
-    # ---- Ronda 1 (revisión de #347)
-    ("M76 el canje no revalida el rol de la cuenta",
-     [(SVC, "if (isAdminNow && !reset.issued_via_operation) throw unauthorized(INVALID_TOKEN);", "if (false) throw unauthorized(INVALID_TOKEN);")],
-     T2, "CANJE_REVALIDA_ROL"),
-    ("M77 cambiar roles no anula los tokens abiertos",
-     [(SVC, "        voided = await voidOpenResets(t, targetId);", "        voided = 0;")],
-     T2, "ROLES_ANULA_TOKENS"),
-    ("M79 quitar admin a otra cuenta sin segundo admin",
-     [(SVC, "        if (targetId !== ctx.actorId) {\n          operationId = await requireSecondAdmin(\n            t,\n            ctx,\n            \"user.revoke_admin\"", "        if (false) {\n          operationId = await requireSecondAdmin(\n            t,\n            ctx,\n            \"user.revoke_admin\"")],
-     T2, "BYPASS_DEGRADAR"),
-    ("M80 conceder o quitar admin sin reautenticación",
-     [("apps/api/src/routes/users.ts", "    if (reauthed) {", "    if (false) {")],
-     T2, "ROLES_REAUTENTICACION"),
-    ("M81 quitarse admin siendo el último permitido",
-     [(SVC, "      if (plan.revokesAdmin) {\n        if (!(await otherActiveAdminExists(t, targetId))) {", "      if (plan.revokesAdmin) {\n        if (false) {")],
-     T, "ULTIMO_ADMIN_ROLES"),
-    ("M82 sin cerrojo del último admin (roles cruzados)",
-     [(SVC, 'await trx.raw("SELECT pg_advisory_xact_lock(?)", [LAST_ADMIN_LOCK_KEY]);', "return;")],
-     T2, "CERROJO_ROLES"),
-    ("M83 sin cerrojo del último admin (bloqueo cruzado)",
-     [(SVC, 'await trx.raw("SELECT pg_advisory_xact_lock(?)", [LAST_ADMIN_LOCK_KEY]);', "return;")],
-     T2, "CERROJO_BLOQUEO"),
-    ("M84 crear órdenes user.* sin reautenticación",
-     [(ROPS, 'rest.kind.startsWith("user.")) await reauth(req, { password, totp });', 'rest.kind.startsWith("user.")) void 0;')],
-     T2, "OP_USER_REAUTH"),
-    ("M85 sin límite de acciones sobre órdenes user.*",
-     [(ROPS, "if (!(await deps.actionLimiter.hit(", "if (false && !(await deps.actionLimiter.hit(")],
-     T2, "OP_USER_LIMITE"),
-    ("M86 cancelar órdenes ajenas sin reautenticación",
-     [(ROPS, 'if (row && (String(row.kind).startsWith("user.") || row.requested_by !== req.auth!.userId)) {', "if (false) {")],
-     T2, "CANCELAR_AJENA"),
-    ("M87 la cancelación no distingue al solicitante en la auditoría",
-     [(SOPS, "byRequester: row.requested_by === ctx.actorId", "byRequester: true")],
-     T2, "CANCELAR_AJENA"),
-    ("M88 una sola orden user.* activa por tipo (no por cuenta)",
-     [(MIGS, "ON admin_operations (kind, (params->>'userId'))", "ON admin_operations (kind)")],
-     T2, "UNICIDAD_POR_CUENTA"),
-    ("M89 la migración no da unicidad por cuenta",
-     [(MIGS, "ON admin_operations (kind, (params->>'userId'))", "ON admin_operations (kind)")],
-     MIG25, "MIG025_UNICIDAD_POR_CUENTA"),
-    ("M90 un interbloqueo sale como 500",
-     [(SVC, 'if ((e as { code?: string }).code === "40P01") {', "if (false) {")],
-     T2, "INTERBLOQUEO_409"),
-    ("M91 la aprobación no revalida a quien aprobó",
-     [(SVC, "if (!approver) throw invalid(", "if (false) throw invalid(")],
-     T2, "APROBADOR_SIGUE_ADMIN"),
-    ("M92 el objetivo cuenta como segundo admin",
-     [(SOPS, "approverExcludes: (p) => [String(p.userId)],", "approverExcludes: () => [],")],
-     T2, "OBJETIVO_NO_ES_SEGUNDO_ADMIN"),
-    ("M93 el mensaje de política del canje es una copia fija",
-     [(SVC, "if (violation) throw badRequest(violation);\n  const passwordHash = await hashPassword(newPassword as string);", 'if (violation) throw badRequest("token y newPassword (≥12) obligatorios");\n  const passwordHash = await hashPassword(newPassword as string);')],
-     T2, "POLITICA_MENSAJE_DERIVADO"),
-    ("M94 el down de la 025 no avisa en la auditoría",
-     [(MIGS, "SELECT 'migration.025.down', 'users',", "SELECT 'migration.025.sin_aviso', 'users',")],
-     MIG25, "MIG025_VUELTA_ATRAS"),
-    ("M95 la web no pide TOTP al admin con 2FA",
-     [(PAGE, "          needsTotp={props.me.twoFactorEnabled}\n", "")],
-     WEBT, "NEEDS_TOTP"),
-    ("M96 la web concede admin sin reautenticación",
-     [(PAGE, "reauth: grants || revokes", "reauth: false")],
-     WEBT, "CONCEDER_ADMIN_REAUTH"),
-    ("M97 la web quita admin a otra cuenta directamente",
-     [(PAGE, "revokes && !isMe", "false")],
-     WEBT, "QUITAR_ADMIN_A_OTRO_PIDE_APROBACION"),
-    ("M98 la web aplica el cambio sin operationId",
-     [(PAGE, "{ roles, ...reauth, operationId: a.op.id }", "{ roles, ...reauth }")],
-     WEBT, "APLICAR_QUITAR_ADMIN"),
-    ("M99 la web cancela sin reautenticación",
-     [(PAGE, "`/admin/operations/${a.op.id}/cancel`, reauth, { reauth: true }", "`/admin/operations/${a.op.id}/cancel`")],
-     WEBT, "CANCELAR_CON_REAUTH"),
-    ("M100 la web solicita órdenes user.* sin reautenticación",
-     [(PAGE, "{ kind, params: { userId: user.id }, ...reauth }", "{ kind, params: { userId: user.id } }")],
-     WEBT, "ADMIN_PIDE_SEGUNDO"),
-    # ---- Ronda 2 (delta de la revisión de #347: admin títere)
-    ("M101 conceder admin a otra cuenta sin aprobación aunque haya otro admin",
-     [(SVC, 'if (await otherAdminExists(t, ctx.actorId ?? "")) {', "if (false) {")],
-     T2, "TITERE_RECUPERACION"),
-    ("M102 el bootstrap del segundo admin no queda auditado como tal",
-     [(SVC, "          bootstrap = true;", "          bootstrap = false;")],
-     T2, "GRANT_BOOTSTRAP"),
-    ("M103 bloquear a otra cuenta admin sin aprobación",
-     [(SVC, "        if (isAdmin) {\n          approval = await requireSecondAdmin(", "        if (false) {\n          approval = await requireSecondAdmin(")],
-     T2, "CADENA_BLOQUEO"),
-    ("M104 el objetivo aprueba su propia orden (confirmación)",
-     [(SOPS, "if ((row.params as { userId?: string }).userId === ctx.actorId) {", "if (false) {")],
-     T2, "OBJETIVO_NO_APRUEBA"),
-    ("M107 el consumo admite al objetivo como aprobador",
-     [(SVC, "if (approver.id === targetId) throw invalid(", "if (false) throw invalid(")],
-     T2, "OBJETIVO_NO_CONSUME"),
-    ("M109 no se recuerda quién concedió el rol admin",
-     [(SVC, 'await t("admin_grant_edges").insert({ grantee: targetId, grantor: ctx.actorId }).onConflict().ignore();', "void 0;")],
-     T2, "GRANT_BOOTSTRAP"),
-    ("M110 user.revoke_admin autoriza cualquier conjunto de roles",
-     [(SVC, "            !sameSet(\n              wanted,", "            false && !sameSet(\n              wanted,")],
-     T2, "REVOCA_SOLO_QUITA_ADMIN"),
-    ("M111 GET /admin/users/{id} con rol user",
-     [(OAPI, "operationId: getAdminUser\n      summary: ADM-3 · Un usuario por id (misma proyección que el listado, con sus roles ACTUALES). Sin secretos.\n      x-min-role: admin", "operationId: getAdminUser\n      summary: ADM-3 · Un usuario por id (misma proyección que el listado, con sus roles ACTUALES). Sin secretos.\n      x-min-role: user")],
-     T2, "GET_ADMIN_USER"),
-    ("M112 el estado ignora el operationId de la aprobación",
-     [(RU, "res.json(await setUserStatus(db, ctx(req), id, status, { operationId }));", "res.json(await setUserStatus(db, ctx(req), id, status));")],
-     T2, "CADENA_BLOQUEO"),
-    ("M113 la migración no admite el tipo user.block_admin",
-     [(MIGS, "'user.grant_admin','user.block_admin','user.unblock_admin'));", "'user.grant_admin','user.unblock_admin'));")],
-     MIG25, "MIG025_KIND_NUEVO"),
-    ("M114 la web usa los roles de la página y no los reales del objetivo",
-     [(PAGE, 'const fresh = await api<AdminUser>("GET", `/admin/users/${userId}`);', "const fresh = items.find((x) => x.id === userId) ?? { roles: [] as string[] };")],
-     WEBT, "APLICAR_QUITAR_ADMIN"),
-    ("M115 la web no solicita user.grant_admin cuando el servidor lo exige",
-     [(PAGE, 'if (!(grantsOther && errorCode(e) === "second_admin_required")) throw e;', "throw e;")],
-     WEBT, "CONCEDER_ADMIN_PIDE_APROBACION"),
-    ("M116 la web no solicita user.block_admin cuando el servidor lo exige",
-     [(PAGE, 'if (errorCode(e) !== "second_admin_required") throw e;', "throw e;")],
-     WEBT, "BLOQUEAR_ADMIN_PIDE_APROBACION"),
-    ("M117 la web bloquea al admin sin operationId",
-     [(PAGE, 'operationId: a.op.id },\n            { reauth: true },\n          );\n          setNotice(`Cuenta', '},\n            { reauth: true },\n          );\n          setNotice(`Cuenta')],
-     WEBT, "APLICAR_BLOQUEAR_ADMIN"),
-    ("M118 la web no añade admin al conceder",
-     [(PAGE, '? [...new Set([...fresh.roles, "admin"])]', "? fresh.roles")],
-     WEBT, "APLICAR_CONCEDER_ADMIN"),
-    # ---- Ronda 3 (delta 2: linaje de promoción, bootstrap, desbloqueo)
-    ("M119 el linaje no incluye a los ancestros",
-     [(SVC, "SELECT grantor FROM admin_grant_edges WHERE grantee = ?", "SELECT grantor FROM admin_grant_edges WHERE grantee = ? AND false")],
-     T2, "LINAJE_CADENA_X_Y"),
-    ("M120 el linaje no incluye a los descendientes",
-     [(SVC, "SELECT grantee FROM admin_grant_edges WHERE grantor = ?\n", "SELECT grantee FROM admin_grant_edges WHERE grantor = ? AND false\n")],
-     T2, "LINAJE_CADENA_X_Y"),
-    ("M121 el linaje de ancestros no es transitivo",
-     [(SVC, "SELECT e.grantor FROM admin_grant_edges e JOIN up ON e.grantee = up.id", "SELECT e.grantor FROM admin_grant_edges e JOIN up ON e.grantee = up.id WHERE false")],
-     T2, "LINAJE_CADENA_X_Y"),
-    ("M122 el linaje de descendientes no es transitivo",
-     [(SVC, "SELECT e.grantee FROM admin_grant_edges e JOIN down d ON e.grantor = d.id", "SELECT e.grantee FROM admin_grant_edges e JOIN down d ON e.grantor = d.id WHERE false")],
-     T2, "LINAJE_CADENA_X_Y"),
-    ("M123 la confirmación no mira el linaje",
-     [(SOPS, "if (row.requested_by && (await lineageIds(t, row.requested_by)).includes(ctx.actorId as string)) {", "if (false) {")],
-     T2, "LINAJE_CADENA_X_Y"),
-    ("M124 el consumo no mira el linaje",
-     [(SVC, "if ((await lineageIds(trx, op.requested_by as string)).includes(approver.id as string)) {", "if (false) {")],
-     T2, "LINAJE_NO_CONSUME"),
-    ("M125 los aprobadores disponibles ignoran el linaje",
-     [(SVC, "const lineage = requesterId ? await lineageIds(db, requesterId) : [];", "const lineage: string[] = [];")],
-     T2, "LINAJE_SIN_APROBADOR"),
-    ("M126 el bootstrap sólo cuenta los admins activos",
-     [(SVC, 'if (await otherAdminExists(t, ctx.actorId ?? "")) {', 'if (await otherActiveAdminExists(t, ctx.actorId ?? "")) {')],
-     T2, "BOOTSTRAP_SIN_OTROS_ADMINS"),
-    ("M127 desbloquear a una cuenta admin sin aprobación",
-     [(SVC, "        if (wasAdmin) {\n          approval = await requireSecondAdmin(", "        if (false) {\n          approval = await requireSecondAdmin(")],
-     T2, "DESBLOQUEO_ADMIN"),
-    ("M128 las aristas del linaje se pueden modificar o borrar (sin trigger)",
-     [(MIGS, "      CREATE TRIGGER admin_grant_edges_append_only BEFORE UPDATE OR DELETE ON admin_grant_edges\n        FOR EACH ROW EXECUTE FUNCTION admin_grant_edges_append_only();\n", "")],
-     T2, "ARISTAS_SOLO_INSERCION"),
-    ("M132 una concesión posterior no añade su arista (el linaje se «blanquea»)",
-     [(SVC, "if (plan.grantsAdmin && ctx.actorId) {", 'if (plan.grantsAdmin && ctx.actorId && !(await t("admin_grant_edges").where({ grantee: targetId }).first())) {')],
-     T2, "LINAJE_ACUMULATIVO"),
-    ("M133 sin índice del linaje por promotor",
-     [(MIGS, "      CREATE INDEX admin_grant_edges_grantor_idx ON admin_grant_edges (grantor);\n", "")],
-     MIG25, "MIG025_INDICE_LINAJE"),
-    ("M129 la migración no admite user.unblock_admin",
-     [(MIGS, "'user.block_admin','user.unblock_admin'));", "'user.block_admin'));")],
-     MIG25, "MIG025_KIND_NUEVO"),
-    ("M130 la web solicita bloquear al intentar desbloquear",
-     [(PAGE, 'a.to === "blocked" ? BLOCK_KIND : UNBLOCK_KIND', "BLOCK_KIND")],
-     WEBT, "DESBLOQUEAR_ADMIN_PIDE_APROBACION"),
-    ("M131 la web aplica el desbloqueo como bloqueo",
-     [(PAGE, 'status: a.op.kind === BLOCK_KIND ? "blocked" : "active"', 'status: "blocked"')],
-     WEBT, "APLICAR_DESBLOQUEAR_ADMIN"),
+    (
+        'M1 listar usuarios con rol user',
+        [
+            (OAPI, '      x-min-role: admin\n      parameters:\n        - { name: q, in: query', '      x-min-role: user\n      parameters:\n        - { name: q, in: query'),
+        ],
+        T, 'SOLO_ADMIN',
+    ),
+    (
+        'M2 bloquear con rol user',
+        [
+            (OAPI, "      x-min-role: admin\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminUserStatusChange' }", "      x-min-role: user\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminUserStatusChange' }"),
+        ],
+        T, 'SOLO_ADMIN',
+    ),
+    (
+        'M3 emitir token con rol user',
+        [
+            (OAPI, "      x-min-role: admin\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminRecoveryTokenRequest' }", "      x-min-role: user\n      x-reauth: true\n      parameters: [{ $ref: '#/components/parameters/UserId' }]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: { $ref: '#/components/schemas/AdminRecoveryTokenRequest' }"),
+        ],
+        T, 'SOLO_ADMIN',
+    ),
+    (
+        'M4 el listado devuelve el hash de la contraseña',
+        [
+            (SVC, '      "u.display_name",\n      "u.status",', '      "u.display_name",\n      "u.password_hash",\n      "u.status",'),
+            (SVC, '      id: r.id,\n      email: r.email,', '      id: r.id,\n      passwordHash: r.password_hash,\n      email: r.email,'),
+        ],
+        T, 'LISTA_SIN_SECRETOS',
+    ),
+    (
+        'M5 el listado devuelve el secreto TOTP',
+        [
+            (SVC, '      "u.display_name",\n      "u.status",', '      "u.display_name",\n      "u.totp_secret",\n      "u.status",'),
+            (SVC, '      id: r.id,\n      email: r.email,', '      id: r.id,\n      totpSecret: r.totp_secret,\n      email: r.email,'),
+        ],
+        T, 'LISTA_SIN_SECRETOS',
+    ),
+    (
+        'M6 la búsqueda no escapa los comodines',
+        [
+            (SVC, 'const EMAIL_ESCAPE = /[\\\\%_]/g;', 'const EMAIL_ESCAPE = /[\\\\]/g;'),
+        ],
+        T, 'LISTA_BUSQUEDA',
+    ),
+    (
+        'M7 la búsqueda por nombre distingue mayúsculas',
+        [
+            (SVC, 'b.whereRaw("lower(u.display_name) LIKE', 'b.whereRaw("u.display_name LIKE'),
+        ],
+        T, 'LISTA_BUSQUEDA',
+    ),
+    (
+        'M8 sin tope de longitud de la búsqueda',
+        [
+            (SVC, 'if (q.length > MAX_SEARCH_LENGTH) throw', 'if (false) throw'),
+        ],
+        T, 'LISTA_BUSQUEDA',
+    ),
+    (
+        'M9 la paginación ignora el cursor',
+        [
+            (SVC, '  query = applyCursor(query, cursor, "u.created_at", ["u.id"]);\n', ''),
+        ],
+        T, 'LISTA_PAGINA',
+    ),
+    (
+        'M10 recoveryPending siempre falso',
+        [
+            (SVC, 'recoveryPending: r.recovery_pending === true,', 'recoveryPending: false,'),
+        ],
+        T, 'LISTA_ESTADO',
+    ),
+    (
+        'M12 los admins bloqueados cuentan como activos',
+        [
+            (SVC, '    .where("u.status", "active")\n    .whereNot("u.id", exceptUserId)', '    .whereNot("u.id", exceptUserId)'),
+        ],
+        T, 'ULTIMO_ADMIN_ROLES',
+    ),
+    (
+        'M13 bloquear al último admin permitido',
+        [
+            (SVC, 'if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {', 'if (false) {'),
+        ],
+        T, 'BLOQUEO_ULTIMO_ADMIN',
+    ),
+    (
+        'M15 bloquear no cierra sesiones',
+        [
+            (SVC, 'sessionsRevoked = await revokeAllSessions(t, targetId);', 'sessionsRevoked = 0;'),
+        ],
+        T, 'BLOQUEO_EFECTOS',
+    ),
+    (
+        'M17 el bloqueo no se audita con su nombre',
+        [
+            (SVC, 'action: "admin.user.blocked",', 'action: "admin.user.sin_auditar",'),
+        ],
+        T, 'BLOQUEO_EFECTOS',
+    ),
+    (
+        'M18 una cuenta bloqueada inicia sesión',
+        [
+            (AUTH, 'if (user.status === "blocked") {', 'if (false) {'),
+        ],
+        T, 'BLOQUEO_EFECTOS',
+    ),
+    (
+        'M19 una cuenta bloqueada refresca tokens',
+        [
+            (AUTH, 'if (!owner || owner.status !== "active") throw unauthorized(', 'if (false) throw unauthorized('),
+        ],
+        T, 'REFRESH_BLOQUEADO',
+    ),
+    (
+        'M20 bloquear sin reautenticación',
+        [
+            (RU, 'defineOperation(router, "setUserStatus", async (req, res) => {\n    await reauth(req);', 'defineOperation(router, "setUserStatus", async (req, res) => {'),
+        ],
+        T, 'BLOQUEO_REAUTH',
+    ),
+    (
+        'M21 emitir token sin reautenticación',
+        [
+            (RU, 'defineOperation(router, "issueUserRecoveryToken", async (req, res) => {\n    await reauth(req);', 'defineOperation(router, "issueUserRecoveryToken", async (req, res) => {'),
+        ],
+        T, 'TOKEN_REAUTH',
+    ),
+    (
+        'M22 sin límite de acciones por admin',
+        [
+            (RU, 'if (!(await deps.actionLimiter.hit(', 'if (false && !(await deps.actionLimiter.hit('),
+        ],
+        T, 'LIMITE_ACCIONES',
+    ),
+    (
+        'M23 el límite de acciones es global y no por admin',
+        [
+            (RU, 'admin-users:${req.auth!.userId}', 'admin-users:todos'),
+        ],
+        T, 'LIMITE_ACCIONES',
+    ),
+    (
+        'M24 el token se guarda en claro',
+        [
+            (SVC, 'token_hash: hashToken(token),', 'token_hash: token,'),
+        ],
+        T, 'TOKEN_EMISION',
+    ),
+    (
+        'M25 el token dura un día',
+        [
+            (SVC, 'export const RECOVERY_TTL_MS = 30 * 60_000;', 'export const RECOVERY_TTL_MS = 24 * 60 * 60_000;'),
+        ],
+        T, 'TOKEN_EMISION',
+    ),
+    (
+        'M26 emitir no anula los tokens anteriores',
+        [
+            (SVC, '      const voided = await voidOpenResets(t, targetId);\n      const token = await createPasswordReset', '      const voided = 0;\n      const token = await createPasswordReset'),
+        ],
+        T, 'TOKEN_REVOCA_ANTERIORES',
+    ),
+    (
+        'M28 se emite token a una cuenta bloqueada',
+        [
+            (SVC, '      if (user.status !== "active") {\n        throw conflict("account_blocked"', '      if (false) {\n        throw conflict("account_blocked"'),
+        ],
+        T, 'TOKEN_CASOS',
+    ),
+    (
+        'M29 se emite token para la propia cuenta',
+        [
+            (SVC, 'if (targetId === ctx.actorId) {\n    throw badRequest(', 'if (false) {\n    throw badRequest('),
+        ],
+        T, 'TOKEN_CASOS',
+    ),
+    (
+        'M30 el token se puede canjear más de una vez',
+        [
+            (SVC, '        .where({ token_hash: hash })\n        .whereNull("used_at")', '        .where({ token_hash: hash })'),
+        ],
+        T, 'TOKEN_UN_SOLO_USO',
+    ),
+    (
+        'M31 el canje ignora la caducidad',
+        [
+            (SVC, '        .where("expires_at", ">", t.fn.now())\n        .update({ used_at: t.fn.now() })', '        .update({ used_at: t.fn.now() })'),
+        ],
+        T, 'TOKEN_CADUCA',
+    ),
+    (
+        'M32 el canje no cierra las sesiones',
+        [
+            (SVC, '      const sessionsRevoked = await revokeAllSessions(t, user.id);\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación', '      const sessionsRevoked = 0;\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación'),
+        ],
+        T, 'CANJE_REVOCA_SESIONES',
+    ),
+    (
+        'M33 el canje no aplica la política de contraseñas',
+        [
+            (SVC, 'if (violation) throw badRequest(violation);\n  const passwordHash', 'if (false) throw badRequest(violation);\n  const passwordHash'),
+        ],
+        T, 'POLITICA_CONTRASENAS',
+    ),
+    (
+        'M34 el canje consume el token de una cuenta bloqueada',
+        [
+            (SVC, 'if (!user || user.status !== "active") throw unauthorized(INVALID_TOKEN);', 'if (!user) throw unauthorized(INVALID_TOKEN);'),
+        ],
+        T, 'NO_ENUMERACION',
+    ),
+    (
+        'M35 vuelve POST /auth/recover',
+        [
+            (AUTH, '  return router;\n}\n\n// Compatibilidad', '  defineExtension(\n    router,\n    { operationId: "recoverAccount", method: "post", path: "/auth/recover", minRole: "visitor" },\n    async (_req, res) => {\n      res.status(202).json({ status: "accepted" });\n    },\n  );\n\n  return router;\n}\n\n// Compatibilidad'),
+        ],
+        T, 'RECOVER_RETIRADO',
+    ),
+    (
+        'M36 el canje sin límite de intentos',
+        [
+            (AUTH, '    rateLimit(resetLimiter, "reset"),\n  );', '  );'),
+        ],
+        T, 'RATE_LIMIT_RESET',
+    ),
+    (
+        'M48 la emisión no es atómica con su auditoría',
+        [
+            (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      const user = await t("users").where({ id: targetId }).forUpdate()', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      const user = await t("users").where({ id: targetId }).forUpdate()'),
+            (SVC, '      return { token, expiresAt, userId: targetId };\n    }),\n  );\n  return out;', '      return { token, expiresAt, userId: targetId };\n    })(db),\n  );\n  return out;'),
+        ],
+        T, 'AUDITORIA_ATOMICA',
+    ),
+    (
+        'M50 el down de la 025 deja las columnas de usuario',
+        [
+            (MIGS, '      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;\n', ''),
+        ],
+        MIG25, 'MIG025_VUELTA_ATRAS',
+    ),
+    (
+        'M51 el estado de cuenta no es coherente con blocked_at',
+        [
+            (MIGS, "CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));", 'CHECK (true);'),
+        ],
+        MIG25, 'MIG025_ESTADO_COHERENTE',
+    ),
+    (
+        'M52 el hash del token no es único',
+        [
+            (MIGS, 'CREATE UNIQUE INDEX password_resets_token_hash_uq', 'CREATE INDEX password_resets_token_hash_uq'),
+        ],
+        MIG25, 'MIG025_TOKEN_HASH_UNICO',
+    ),
+    (
+        'M53 la CLI no cierra las sesiones',
+        [
+            (SVC, '    const sessionsRevoked = await revokeAllSessions(t, user.id);\n    const voided = await voidOpenResets(t, user.id);\n    const admins', '    const sessionsRevoked = 0;\n    const voided = await voidOpenResets(t, user.id);\n    const admins'),
+        ],
+        T, 'CLI_SERVICIO',
+    ),
+    (
+        'M54 la CLI no aplica la política de contraseñas',
+        [
+            (SVC, 'if (violation) throw new ResetPasswordCliError("invalid_input", violation);', 'if (false) throw new ResetPasswordCliError("invalid_input", violation);'),
+        ],
+        T, 'CLI_SERVICIO',
+    ),
+    (
+        'M55 la CLI audita la contraseña',
+        [
+            (SVC, 'via: "cli",', 'via: "cli",\n        password: input.password,'),
+        ],
+        T, 'CLI_SERVICIO',
+    ),
+    (
+        'M56 la CLI acepta la contraseña por argv',
+        [
+            (PWI, '  let file: string | null = null;\n  for (let i = 0; i < argv.length; i++) {\n    const a = argv[i];\n    if (a === "--password-stdin") stdin = true;\n    else if (a === "--password-file") {\n      const v = argv[++i];\n      if (!v) throw new PasswordInputError("--password-file requiere una ruta");\n      file = v;\n    } else if (/^--?password(=|$)/.test(a) || /^-p/.test(a)) {', '  let file: string | null = null;\n  for (let i = 0; i < argv.length; i++) {\n    const a = argv[i];\n    if (a === "--password-stdin") stdin = true;\n    else if (a === "--password-file") {\n      const v = argv[++i];\n      if (!v) throw new PasswordInputError("--password-file requiere una ruta");\n      file = v;\n    } else if (false) {'),
+        ],
+        T, 'CLI_ARGV',
+    ),
+    (
+        'M57 la CLI no cierra las sesiones (proceso real)',
+        [
+            (SVC, '    const sessionsRevoked = await revokeAllSessions(t, user.id);\n    const voided = await voidOpenResets(t, user.id);\n    const admins', '    const sessionsRevoked = 0;\n    const voided = await voidOpenResets(t, user.id);\n    const admins'),
+        ],
+        CLIT, 'CLI_PROCESO',
+    ),
+    (
+        'M58 la web no oculta el token al cerrarlo',
+        [
+            (PAGE, 'onClick={() => setIssued(null)}', 'onClick={() => undefined}'),
+        ],
+        WEBT, 'TOKEN_UNA_VEZ',
+    ),
+    (
+        'M61 la web bloquea sin marcar reautenticación',
+        [
+            (PAGE, '{ status: a.to, ...reauth }, { reauth: true }', '{ status: a.to, ...reauth }'),
+        ],
+        WEBT, 'BLOQUEAR_CONFIRMA',
+    ),
+    (
+        'M63 «Cargar más» sustituye en vez de añadir',
+        [
+            (PAGE, 'setItems((cur) => [...cur, ...p.items]);', 'setItems(p.items);'),
+        ],
+        WEBT, 'CARGAR_MAS',
+    ),
+    (
+        'M68 la búsqueda no envía q',
+        [
+            (PAGE, 'if (query) qs.set("q", query);', ''),
+        ],
+        WEBT, 'BUSCA',
+    ),
+    (
+        'M69 una cuenta bloqueada ofrece token de recuperación',
+        [
+            (PAGE, '{!isMe && u.status === "active" && (', '{!isMe && ('),
+        ],
+        WEBT, 'DESBLOQUEAR',
+    ),
+    (
+        'M70 la web se traga el error del servidor',
+        [
+            (PAGE, '<FormError error={actionError} data-testid="users-error" />', ''),
+        ],
+        WEBT, 'ERROR_DEL_SERVIDOR',
+    ),
+    (
+        'M71 el canje no valida la longitud en la web',
+        [
+            (RESET, 'if (password.length < RESET_PASSWORD_MIN)\n    return', 'if (false)\n    return'),
+        ],
+        WEBT, 'RESET_VALIDACION',
+    ),
+    (
+        'M72 el canje no pide repetir la contraseña',
+        [
+            (RESET, 'if (password !== repeat) return', 'if (false) return'),
+        ],
+        WEBT, 'RESET_VALIDACION',
+    ),
+    (
+        'M73 el canje envía el token sin recortar',
+        [
+            (RESET, 'token: token.trim(),', 'token,'),
+        ],
+        WEBT, 'RESET_ENVIA',
+    ),
+    (
+        'M74 #/reset no es una ruta pública',
+        [
+            (APP, 'if (/^#\\/reset\\/?(?:\\?.*)?$/.test(route)) return { kind: "reset" };', 'if (false) return { kind: "reset" };'),
+        ],
+        WEBT, 'RESET_RUTA_PUBLICA',
+    ),
+    (
+        'M77 cambiar roles no anula los tokens abiertos',
+        [
+            (SVC, '        voided = await voidOpenResets(t, targetId);', '        voided = 0;'),
+        ],
+        T2, 'ROLES_ANULA_TOKENS',
+    ),
+    (
+        'M82 sin cerrojo del último admin (roles cruzados)',
+        [
+            (SVC, 'await trx.raw("SELECT pg_advisory_xact_lock(?)", [LAST_ADMIN_LOCK_KEY]);', 'return;'),
+        ],
+        T2, 'CERROJO_ROLES',
+    ),
+    (
+        'M83 sin cerrojo del último admin (bloqueo cruzado)',
+        [
+            (SVC, 'await trx.raw("SELECT pg_advisory_xact_lock(?)", [LAST_ADMIN_LOCK_KEY]);', 'return;'),
+        ],
+        T2, 'CERROJO_BLOQUEO',
+    ),
+    (
+        'M87 la cancelación no distingue al solicitante en la auditoría',
+        [
+            (SOPS, 'byRequester: row.requested_by === ctx.actorId', 'byRequester: true'),
+        ],
+        T2, 'CANCELAR_AJENA',
+    ),
+    (
+        'M90 un interbloqueo sale como 500',
+        [
+            (SVC, 'if ((e as { code?: string }).code === "40P01") {', 'if (false) {'),
+        ],
+        T2, 'INTERBLOQUEO_409',
+    ),
+    (
+        'M93 el mensaje de política del canje es una copia fija',
+        [
+            (SVC, 'if (violation) throw badRequest(violation);\n  const passwordHash = await hashPassword(newPassword as string);', 'if (violation) throw badRequest("token y newPassword (≥12) obligatorios");\n  const passwordHash = await hashPassword(newPassword as string);'),
+        ],
+        T2, 'POLITICA_MENSAJE_DERIVADO',
+    ),
+    (
+        'M94 el down de la 025 no avisa en la auditoría',
+        [
+            (MIGS, "SELECT 'migration.025.down', 'users',", "SELECT 'migration.025.sin_aviso', 'users',"),
+        ],
+        MIG25, 'MIG025_VUELTA_ATRAS',
+    ),
+    (
+        'M95 la web no pide TOTP al admin con 2FA',
+        [
+            (PAGE, '          needsTotp={props.me.twoFactorEnabled}\n', ''),
+        ],
+        WEBT, 'NEEDS_TOTP',
+    ),
+    (
+        'M111 GET /admin/users/{id} con rol user',
+        [
+            (OAPI, 'operationId: getAdminUser\n      summary: ADM-3 · Un usuario por id (misma proyección que el listado, con sus roles ACTUALES). Sin secretos.\n      x-min-role: admin', 'operationId: getAdminUser\n      summary: ADM-3 · Un usuario por id (misma proyección que el listado, con sus roles ACTUALES). Sin secretos.\n      x-min-role: user'),
+        ],
+        T2, 'GET_ADMIN_USER',
+    ),
+    (
+        'N1 conceder o quitar admin sin reautenticación',
+        [
+            ('apps/api/src/routes/users.ts', '    if (reauthed) {', '    if (false) {'),
+        ],
+        T2, 'REAUTH_CADA_OPERACION',
+    ),
+    (
+        'N2 auto-bloqueo del último admin permitido',
+        [
+            (SVC, 'if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {', 'if (false) {'),
+        ],
+        T2, 'ULTIMO_ADMIN:',
+    ),
+    (
+        'N3 auto-degradación del último admin permitida',
+        [
+            (SVC, 'if (plan.revokesAdmin && !(await otherActiveAdminExists(t, targetId))) {', 'if (false) {'),
+        ],
+        T2, 'ULTIMO_ADMIN:',
+    ),
+    (
+        'N4 el cambio de roles no se audita con su nombre',
+        [
+            (SVC, 'action: "admin.user.roles_set",', 'action: "admin.user.roles_x",'),
+        ],
+        T2, 'UN_ADMIN_TODO',
+    ),
+    (
+        'N5 el desbloqueo no se audita con su nombre',
+        [
+            (SVC, 'action: "admin.user.unblocked",', 'action: "admin.user.unblocked_x",'),
+        ],
+        T2, 'UN_ADMIN_TODO',
+    ),
+    (
+        'N6 el token de recuperación no se audita con su nombre',
+        [
+            (SVC, 'action: "admin.user.recovery_token_issued",', 'action: "admin.user.recovery_token_x",'),
+        ],
+        T2, 'UN_ADMIN_TODO',
+    ),
+    (
+        'N7 desbloquear no anula los tokens abiertos',
+        [
+            (SVC, '        const voided = await voidOpenResets(t, targetId);\n        await audit(t, {\n          actorId: ctx.actorId,\n          action: "admin.user.unblocked",', '        const voided = 0;\n        await audit(t, {\n          actorId: ctx.actorId,\n          action: "admin.user.unblocked",'),
+        ],
+        T2, 'ESTADO_ANULA_TOKENS',
+    ),
+    (
+        'N8 bloquear no anula los tokens abiertos',
+        [
+            (SVC, '        const voided = await voidOpenResets(t, targetId);\n        await audit(t, {\n          actorId: ctx.actorId,\n          action: "admin.user.blocked",', '        const voided = 0;\n        await audit(t, {\n          actorId: ctx.actorId,\n          action: "admin.user.blocked",'),
+        ],
+        T2, 'ESTADO_ANULA_TOKENS',
+    ),
+    (
+        'N9 el token va a la auditoría',
+        [
+            (SVC, 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided },', 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided, token },'),
+        ],
+        T, 'TOKEN_EMISION',
+    ),
+    (
+        'N10 la irreversible no lleva token de confirmación',
+        [
+            (SOPS, 'const token = needsConfirm ? randomBytes(32).toString("base64url") : null;', 'const token = needsConfirm && cls !== "irreversible" ? randomBytes(32).toString("base64url") : null;'),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'UN_ADMIN_IRREVERSIBLE',
+    ),
+    (
+        'N11 confirmar sin token permitido',
+        [
+            (SOPS, 'if (!confirmToken) throw badRequest("confirmToken es obligatorio");', 'if (false) throw badRequest("confirmToken es obligatorio");'),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'CONFIRMA_SIN_TOKEN_NUNCA',
+    ),
+    (
+        'N12 la irreversible vuelve a exigir un segundo admin al confirmar',
+        [
+            (SOPS, '    if (phrase.trim() !== row.confirm_phrase) throw badRequest(', '    if (row.requested_by === ctx.actorId) throw forbidden("segundo admin");\n    if (phrase.trim() !== row.confirm_phrase) throw badRequest('),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'UN_ADMIN_IRREVERSIBLE',
+    ),
+    (
+        'N13 la irreversible se confirma sin frase',
+        [
+            (SOPS, 'if (phrase.trim() !== row.confirm_phrase) throw badRequest("La frase de confirmación no coincide");', 'if (false) throw badRequest("La frase de confirmación no coincide");'),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'IRREVERSIBLE_FRASE_Y_CADUCIDAD',
+    ),
+    (
+        'N14 la API vuelve a anunciar requiresSecondAdmin',
+        [
+            (SOPS, '    confirmPhrase: r.status === "awaiting_confirmation" ? r.confirm_phrase : null,', '    confirmPhrase: r.status === "awaiting_confirmation" ? r.confirm_phrase : null,\n    requiresSecondAdmin: false,'),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'UN_ADMIN_IRREVERSIBLE',
+    ),
+    (
+        'N15 system.noop también en producción',
+        [
+            (SOPS, 'if (env.NODE_ENV === "test") kinds', 'if (true) kinds'),
+        ],
+        'apps/api/src/settings/admin-operations.test.ts', 'NOOP_SOLO_EN_TESTS',
+    ),
+    (
+        'N16 la guarda de la 025 vuelve a exigir segundo admin',
+        [
+            (MIGS, '          -- (modelo de un administrador: confirma el mismo admin que la pidió)\n', "          IF NEW.confirmed_by IS NOT DISTINCT FROM OLD.requested_by THEN\n            RAISE EXCEPTION 'admin_operations: segundo admin' USING ERRCODE = '23514';\n          END IF;\n"),
+        ],
+        MIG25, 'MIG025_MISMO_ADMIN_CONFIRMA_EN_BD',
+    ),
+    (
+        'N17 la 025 no elimina la columna requires_second_admin',
+        [
+            (MIGS, '      ALTER TABLE admin_operations DROP COLUMN requires_second_admin;\n', ''),
+        ],
+        MIG25, 'MIG025_MISMO_ADMIN_CONFIRMA_EN_BD',
+    ),
+    (
+        'N18 el down de la 025 no restaura la columna',
+        [
+            (MIGS, '      ALTER TABLE admin_operations ADD COLUMN requires_second_admin boolean NOT NULL DEFAULT false;\n', ''),
+        ],
+        MIG25, 'MIG025_VUELTA_ATRAS',
+    ),
+    (
+        'N19 cancelar la orden de otro admin sin reautenticación',
+        [
+            (ROPS, 'if (row && row.requested_by !== req.auth!.userId) {', 'if (false) {'),
+        ],
+        T2, 'CANCELAR_AJENA',
+    ),
+    (
+        'N20 el auto-bloqueo se prohíbe de nuevo',
+        [
+            (SVC, '  if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");\n', '  if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");\n  if (targetId === ctx.actorId) throw forbidden("no a uno mismo");\n'),
+        ],
+        T, 'AUTOBLOQUEO_PROTEGIDO',
+    ),
+    (
+        'N21 el token de la cuenta de otro admin se rechaza',
+        [
+            (SVC, '      // Cualquier cuenta (también la de otro admin): lo hace UN admin reautenticado; queda en audit_log.\n', '      if (await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id")) throw forbidden("segundo admin");\n'),
+        ],
+        T2, 'ADMIN_GESTIONA_ADMIN',
+    ),
+    (
+        'N22 gestionar roles de otro admin se rechaza',
+        [
+            (SVC, '      const changed = !sameSet(before, wanted);\n', '      if (plan.revokesAdmin && targetId !== ctx.actorId) throw forbidden("segundo admin");\n      const changed = !sameSet(before, wanted);\n'),
+        ],
+        T2, 'ADMIN_GESTIONA_ADMIN',
+    ),
+    (
+        'N23 dar admin a una cuenta nueva exige algo especial',
+        [
+            (SVC, '      const changed = !sameSet(before, wanted);\n', '      if (plan.grantsAdmin && (await t("user_roles").where({ role: "admin" }).first("user_id"))) throw forbidden("aprobación");\n      const changed = !sameSet(before, wanted);\n'),
+        ],
+        T2, 'SIN_BOOTSTRAP_NI_LINAJE',
+    ),
+    (
+        'N24 la web usa los roles de la página y no los reales',
+        [
+            (PAGE, 'const fresh = await api<AdminUser>("GET", `/admin/users/${u.id}`);', 'const fresh = u;'),
+        ],
+        WEBT, 'ROLES_REALES_POR_ID',
+    ),
+    (
+        'N25 la web concede admin sin reautenticación',
+        [
+            (PAGE, 'reauth: touchesAdmin });', 'reauth: false });'),
+        ],
+        WEBT, 'CONCEDER_ADMIN_REAUTH',
+    ),
+    (
+        'N26 la web pide contraseña para roles que no tocan admin',
+        [
+            (PAGE, 'askPassword: touchesAdmin,', 'askPassword: true,'),
+        ],
+        WEBT, 'ROLES_REALES_POR_ID',
+    ),
+    (
+        'N27 la web ofrece el token de recuperación sobre uno mismo',
+        [
+            (PAGE, 'const isMe = u.id === props.me.id;', 'const isMe = false;'),
+        ],
+        WEBT, 'PROPIA_FILA',
+    ),
+    (
+        'N28 la web oculta el bloqueo a otro admin',
+        [
+            (PAGE, '                    <Button\n                      data-testid={`status-${u.id}`}', '                    {u.roles.includes("admin") && !isMe ? null : <Button\n                      data-testid={`status-${u.id}`}'),
+        ],
+        WEBT, 'BLOQUEAR_ADMIN_DIRECTO',
+    ),
+    (
+        'N29 la web oculta el token a otro admin',
+        [
+            (PAGE, '{!isMe && u.status === "active" && (', '{!isMe && u.status === "active" && !u.roles.includes("admin") && ('),
+        ],
+        WEBT, 'TOKEN_DE_ADMIN_DIRECTO',
+    ),
+    (
+        'N30 la web pide a otro admin al desbloquear (texto)',
+        [
+            (PAGE, '              : "Podrá volver a iniciar sesión.",', '              : "Podrá volver a iniciar sesión. Pide a otro administrador que lo apruebe.",'),
+        ],
+        WEBT, 'SIN_PEDIR_OTRO_ADMIN',
+    ),
+    (
+        'N31 la guarda de la 025 no exige confirmación al pasar a pending',
+        [(MIGS, "          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo", '          -- (modelo')],
+        'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD:',
+    ),
+    (
+        'N32 la guarda de la 025 sin tabla de transiciones',
+        [(MIGS, "        IF NOT (\n             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))\n          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))\n          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))\n        ) THEN\n          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';\n        END IF;\n\n        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo", "        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo")],
+        'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD_ESTADOS',
+    ),
+    (
+        'N33 la guarda de la 025 sin inmutabilidad de kind',
+        [(MIGS, '        IF NEW.id IS DISTINCT FROM OLD.id\n           OR NEW.kind IS DISTINCT FROM OLD.kind\n           OR NEW.params IS DISTINCT FROM OLD.params\n           OR NEW.impact IS DISTINCT FROM OLD.impact\n           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase\n           OR NEW.created_at', '        IF NEW.id IS DISTINCT FROM OLD.id\n           OR NEW.params IS DISTINCT FROM OLD.params\n           OR NEW.impact IS DISTINCT FROM OLD.impact\n           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase\n           OR NEW.created_at')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
+    ),
 ]
 
 
@@ -451,6 +708,39 @@ def wait_prodguard():
     return False
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def counts(out):
+    """(pasados, fallados) de la línea «Tests» de vitest. Un filtro -t que no casa con nada da (0, 0): VERDE VACÍO."""
+    clean = ANSI.sub("", out)
+    line = next((l for l in clean.splitlines() if re.match(r"\s*Tests\s", l)), "")
+    passed = re.search(r"(\d+) passed", line)
+    failed = re.search(r"(\d+) failed", line)
+    return (int(passed.group(1)) if passed else 0, int(failed.group(1)) if failed else 0)
+
+
+def run_filtered(test, frag):
+    r = sh(f'timeout 900 nice -n 19 ionice -c3 npx vitest run --maxWorkers=1 {test} -t "{frag}" 2>&1')
+    return r.returncode, r.stdout + r.stderr
+
+
+_base = {}
+
+
+def baseline(test, frag):
+    """La línea base debe tener >=1 test EN VERDE y 0 en rojo con ese filtro; si no, el mutante no demuestra nada."""
+    key = (test, frag)
+    if key not in _base:
+        if not wait_prodguard():
+            print("PRODGUARD no llegó a OK; se aborta", flush=True)
+            sys.exit(2)
+        rc, out = run_filtered(test, frag)
+        passed, failed = counts(out)
+        _base[key] = (rc == 0 and passed >= 1 and failed == 0, passed, failed, rc)
+    return _base[key]
+
+
 def check_anchors(edits):
     bad = []
     for path, old, _new in edits:
@@ -460,26 +750,29 @@ def check_anchors(edits):
     return bad
 
 
-args = sys.argv[1:]
-if args == ["--check"]:
+def check_all():
     n = 0
     for name, edits, test, frag in M:
-        bad = check_anchors(edits)
-        for b in bad:
+        problems = check_anchors(edits)
+        if frag not in open(os.path.join(ROOT, test)).read():
+            problems.append(f"el fragmento {frag!r} no aparece en {test}")
+        for b in problems:
             print(f"{name}: {b}")
-        n += len(bad)
-    print(f"ANCLAS: {len(M)} mutantes, {n} anclas inválidas")
-    sys.exit(1 if n else 0)
+        n += len(problems)
+    print(f"COMPROBACION: {len(M)} mutantes, {n} problemas")
+    return n
+
+
+args = sys.argv[1:]
+if args == ["--check"]:
+    sys.exit(1 if check_all() else 0)
 
 if args == ["--baseline"]:
     bad = 0
-    for test in sorted({m[2] for m in M}):
-        if not wait_prodguard():
-            print("PRODGUARD no llegó a OK; se aborta")
-            sys.exit(2)
-        r = sh(f"timeout 900 nice -n 19 ionice -c3 npx vitest run --maxWorkers=1 {test} 2>&1")
-        print(f"BASE {test}: rc={r.returncode}", flush=True)
-        bad += r.returncode != 0
+    for test, frag in sorted({(m[2], m[3]) for m in M}):
+        ok, passed, failed, rc = baseline(test, frag)
+        print(f"BASE {'OK ' if ok else 'MAL'} {test} -t {frag}: rc={rc} pasan={passed} fallan={failed}", flush=True)
+        bad += not ok
     sys.exit(1 if bad else 0)
 
 only = args
@@ -491,6 +784,11 @@ for name, edits, test, frag in M:
     bad = check_anchors(edits)
     if bad:
         print(f"{name}: MUTANTE INVÁLIDO {bad}", flush=True)
+        fails += 1
+        continue
+    ok, passed, failed, rc = baseline(test, frag)
+    if not ok:
+        print(f"{name}: BASE NO VÁLIDA (rc={rc}, pasan={passed}, fallan={failed}): sin ≥1 test en verde no hay calibración", flush=True)
         fails += 1
         continue
     if not wait_prodguard():
@@ -505,16 +803,16 @@ for name, edits, test, frag in M:
             cur[path] = cur[path].replace(old, new, 1)
         for path, src in cur.items():
             open(os.path.join(ROOT, path), "w").write(src)
-        r = sh(f'timeout 900 nice -n 19 ionice -c3 npx vitest run --maxWorkers=1 {test} -t "{frag}" 2>&1')
-        out = r.stdout + r.stderr
+        rc2, out = run_filtered(test, frag)
         open(f"/tmp/adm3-mut-{tag}.log", "w").write(out)
-        red = r.returncode != 0 and re.search(r"\d+ failed", out) is not None
-        failed_lines = [l for l in out.splitlines() if "×" in l or "FAIL" in l]
+        p2, f2 = counts(out)
+        failed_lines = [l for l in ANSI.sub("", out).splitlines() if "×" in l or "FAIL" in l]
         reason = any(frag in l for l in failed_lines)
+        red = rc2 != 0 and f2 >= 1
         verdict = "ROJO-OK" if (red and reason) else ("ROJO-RAZON?" if red else "VERDE (mutante vivo)")
         if verdict != "ROJO-OK":
             fails += 1
-        print(f"{name}: rc={r.returncode} {verdict}", flush=True)
+        print(f"{name}: base pasan={passed} | mutante rc={rc2} fallan={f2} {verdict}", flush=True)
     finally:
         for path, src in originals.items():
             open(os.path.join(ROOT, path), "w").write(src)

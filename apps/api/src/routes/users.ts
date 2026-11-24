@@ -64,7 +64,7 @@ export function userRoutes(db: Db, deps: { actionLimiter: RateLimiterLike }): Ro
       { actorId: req.auth!.userId, correlationId: req.correlationId },
       user.id,
       roles as string[],
-      { operationId: body.operationId, reauthed },
+      { reauthed },
     );
     res.json(userToJson(user, final, { includePrivate: true }));
   });

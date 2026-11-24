@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * V1 ADM-3 · Página de usuarios del administrador y canje del token de recuperación (API simulada).
+ * V1 ADM-3 · Página de usuarios (MODELO DE UN ADMINISTRADOR: ninguna acción pide a otro admin) y canje del token (API simulada).
  * Cada caso lleva su mutante en scripts/adm3-mutants.py.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ vi.mock("../src/api.js", async (importOriginal) => ({
 }));
 
 import { api } from "../src/api.js";
-import { UsersPage, type AdminUser, type RecoveryOperation } from "../src/pages/admin/UsersPage.js";
+import { UsersPage, type AdminUser } from "../src/pages/admin/UsersPage.js";
 import { ResetPasswordPage, validateReset } from "../src/pages/ResetPasswordPage.js";
 import { matchPublicRoute } from "../src/App.js";
 
@@ -77,7 +77,7 @@ async function confirmWith(phrase: string, password: string, totp?: string) {
 
 describe("ADM-3 · página de usuarios", () => {
   it("USUARIOS_LISTA: pinta usuarios, roles, estado y 2FA, sin pedir un UUID a mano", async () => {
-    route({ "GET /admin/users": () => page([U1, U2, SELF]), "GET /admin/operations": () => [] });
+    route({ "GET /admin/users": () => page([U1, U2, SELF]) });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     expect(screen.getByTestId(`user-row-${U1.id}`).textContent).toMatch(/Bea.*bea@x\.es.*2FA/s);
@@ -88,7 +88,7 @@ describe("ADM-3 · página de usuarios", () => {
   });
 
   it("BUSCA: la búsqueda va al servidor con q y reemplaza el listado", async () => {
-    route({ "GET /admin/users": () => page([U1]), "GET /admin/operations": () => [] });
+    route({ "GET /admin/users": () => page([U1]) });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.change(screen.getByTestId("users-search"), { target: { value: " bea " } });
@@ -98,45 +98,41 @@ describe("ADM-3 · página de usuarios", () => {
 
   it("CARGAR_MAS: sigue el cursor y AÑADE la página siguiente", async () => {
     let n = 0;
-    route({
-      "GET /admin/users": () => (n++ === 0 ? page([U1], "CUR1") : page([U2])),
-      "GET /admin/operations": () => [],
-    });
+    route({ "GET /admin/users": () => (n++ === 0 ? page([U1], "CUR1") : page([U2])) });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId("users-more"));
     await screen.findByTestId(`user-row-${U2.id}`);
     expect(screen.getByTestId(`user-row-${U1.id}`)).toBeTruthy();
     expect(calls("GET", "/admin/users?limit=20&cursor=CUR1")).toHaveLength(1);
-    expect(screen.queryByTestId("users-more")).toBeNull(); // sin siguiente cursor
+    expect(screen.queryByTestId("users-more")).toBeNull();
   });
 
-  it("SIN_ACCIONES_SOBRE_UNO_MISMO: en la propia fila no hay bloquear ni token", async () => {
-    route({ "GET /admin/users": () => page([SELF, U1]), "GET /admin/operations": () => [] });
+  it("PROPIA_FILA: sin token de recuperación para uno mismo, pero sí «Bloquear» (el servidor protege al último admin)", async () => {
+    route({ "GET /admin/users": () => page([SELF, U1]) });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
-    expect(screen.queryByTestId(`status-${SELF.id}`)).toBeNull();
     expect(screen.queryByTestId(`recover-${SELF.id}`)).toBeNull();
-    expect(screen.getByTestId(`status-${U1.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`status-${SELF.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`recover-${U1.id}`)).toBeTruthy();
   });
 
   it("BLOQUEAR_CONFIRMA: la acción destructiva pide frase LITERAL y contraseña, y envía la reautenticación", async () => {
     route({
       "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
       "PUT /admin/users/11111111-1111-4111-8111-111111111111/status": () => ({ status: "blocked", changed: true }),
     });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`status-${U1.id}`));
     await screen.findByTestId("confirm-destructive");
-    expect(calls("PUT", "/admin/users")).toHaveLength(0); // aún no
+    expect(calls("PUT", "/admin/users")).toHaveLength(0);
     const submit = screen.getByTestId("confirm-submit") as HTMLButtonElement;
     expect(screen.getByTestId("confirm-phrase").textContent).toBe("BLOQUEAR bea@x.es");
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "bloquear bea@x.es" } });
     fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mi-clave-larga-1" } });
-    expect(submit.disabled).toBe(true); // frase con otras mayúsculas: no vale
+    expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "BLOQUEAR bea@x.es" } });
     expect(submit.disabled).toBe(false);
     fireEvent.click(submit);
@@ -147,26 +143,51 @@ describe("ADM-3 · página de usuarios", () => {
     await screen.findByTestId("users-notice");
   });
 
-  it("DESBLOQUEAR: una cuenta bloqueada ofrece «Desbloquear» con su propia frase", async () => {
-    route({ "GET /admin/users": () => page([U2]), "GET /admin/operations": () => [] });
+  it("BLOQUEAR_ADMIN_DIRECTO: bloquear a OTRO admin es una acción directa de un solo admin (sin órdenes ni aprobación)", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => ({ status: "blocked", changed: true }),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
+    await confirmWith("BLOQUEAR cris@x.es", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
+    expect(calls("PUT", "/admin/users")[0][2]).toEqual({ status: "blocked", password: "mi-clave-larga-1" });
+    expect(calls("POST", "/admin/operations")).toHaveLength(0);
+  });
+
+  it("DESBLOQUEAR: una cuenta bloqueada ofrece «Desbloquear» con su propia frase y no ofrece token", async () => {
+    route({
+      "GET /admin/users": () => page([U2]),
+      "PUT /admin/users/22222222-2222-4222-8222-222222222222/status": () => ({ status: "active", changed: true }),
+    });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     expect(screen.getByTestId(`status-${U2.id}`).textContent).toBe("Desbloquear");
-    expect(screen.queryByTestId(`recover-${U2.id}`)).toBeNull(); // no se emite token a una cuenta bloqueada
+    expect(screen.queryByTestId(`recover-${U2.id}`)).toBeNull();
     fireEvent.click(screen.getByTestId(`status-${U2.id}`));
     await screen.findByTestId("confirm-destructive");
     expect(screen.getByTestId("confirm-phrase").textContent).toBe("DESBLOQUEAR blas@x.es");
+    await confirmWith("DESBLOQUEAR blas@x.es", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
+    expect(calls("PUT", "/admin/users")[0][2]).toEqual({ status: "active", password: "mi-clave-larga-1" });
   });
 
-  it("ROLES_SIN_CONTRASENA: cambiar roles pide la frase pero no una contraseña que el servidor no verifica", async () => {
+  it("ROLES_REALES_POR_ID: al abrir el editor pide los roles REALES de la cuenta y guarda sobre ellos (sin contraseña si no toca admin)", async () => {
     route({
-      "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
+      "GET /admin/users": () => page([U1]), // la página trae roles desfasados
+      "GET /admin/users/11111111-1111-4111-8111-111111111111": () => ({
+        ...U1,
+        roles: ["user", "developer", "moderator"],
+      }),
       "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => ({}),
     });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
+    await screen.findByTestId(`role-${U1.id}-moderator`);
+    expect((screen.getByTestId(`role-${U1.id}-moderator`) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByTestId(`role-${U1.id}-organizer`));
     fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
     await screen.findByTestId("confirm-destructive");
@@ -175,13 +196,50 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "CAMBIAR ROLES bea@x.es" } });
     fireEvent.click(screen.getByTestId("confirm-submit"));
     await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
-    expect(calls("PUT", "/users/")[0][2]).toEqual({ roles: ["user", "developer", "organizer"] });
+    expect(calls("PUT", "/users/")[0][2]).toEqual({ roles: ["user", "developer", "moderator", "organizer"] });
+  });
+
+  it("CONCEDER_ADMIN_REAUTH: dar el rol admin pide contraseña, la envía y NO crea órdenes", async () => {
+    route({
+      "GET /admin/users": () => page([U1]),
+      "GET /admin/users/11111111-1111-4111-8111-111111111111": () => U1,
+      "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
+    await screen.findByTestId(`role-${U1.id}-admin`);
+    fireEvent.click(screen.getByTestId(`role-${U1.id}-admin`));
+    fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
+    await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
+    const c = calls("PUT", "/users/")[0];
+    expect(c[2]).toEqual({ roles: ["user", "developer", "admin"], password: "mi-clave-larga-1" });
+    expect(c[3]).toEqual({ reauth: true });
+    expect(calls("POST", "/admin/operations")).toHaveLength(0);
+  });
+
+  it("QUITAR_ADMIN_A_OTRO_DIRECTO: quitar «admin» a otra cuenta es una acción directa, con contraseña", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/users/33333333-3333-4333-8333-333333333333": () => ADM,
+      "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`roles-edit-${ADM.id}`));
+    await screen.findByTestId(`role-${ADM.id}-admin`);
+    fireEvent.click(screen.getByTestId(`role-${ADM.id}-admin`));
+    fireEvent.click(screen.getByTestId(`roles-save-${ADM.id}`));
+    await confirmWith("CAMBIAR ROLES cris@x.es", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
+    expect(calls("PUT", "/users/")[0][2]).toEqual({ roles: ["user"], password: "mi-clave-larga-1" });
+    expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
 
   it("TOKEN_UNA_VEZ: el token se muestra tras emitirlo, con caducidad, y desaparece al ocultarlo", async () => {
     route({
       "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
       "POST /admin/users/11111111-1111-4111-8111-111111111111/recovery-token": () => ({
         token: "TOKEN-SECRETO-DE-PRUEBA",
         expiresAt: "2026-11-24T12:30:00.000Z",
@@ -191,10 +249,7 @@ describe("ADM-3 · página de usuarios", () => {
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`recover-${U1.id}`));
-    await screen.findByTestId("confirm-destructive");
-    fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "RECUPERAR bea@x.es" } });
-    fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mi-clave-larga-1" } });
-    fireEvent.click(screen.getByTestId("confirm-submit"));
+    await confirmWith("RECUPERAR bea@x.es", "mi-clave-larga-1");
     const card = await screen.findByTestId("recovery-token-card");
     expect(screen.getByTestId("recovery-token-value").textContent).toBe("TOKEN-SECRETO-DE-PRUEBA");
     expect(card.textContent).toMatch(/una sola vez/);
@@ -206,81 +261,9 @@ describe("ADM-3 · página de usuarios", () => {
     expect(document.body.textContent).not.toContain("TOKEN-SECRETO-DE-PRUEBA");
   });
 
-  it("ADMIN_PIDE_SEGUNDO: para una cuenta admin NO emite token: solicita la aprobación de otro admin", async () => {
+  it("TOKEN_DE_ADMIN_DIRECTO: la cuenta de otro admin también se recupera con UN token emitido directamente", async () => {
     route({
       "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [],
-      "POST /admin/operations": () => ({ operation: { id: "op1" }, confirmToken: null }),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
-    await confirmWith("SOLICITAR RECUPERACION cris@x.es", "mi-clave-larga-1");
-    await screen.findByTestId("users-notice");
-    expect(calls("POST", "/admin/users/")).toHaveLength(0);
-    const c = calls("POST", "/admin/operations")[0];
-    // las órdenes user.* exigen reautenticación (revisión de #347)
-    expect(c[2]).toEqual({ kind: "user.recovery_admin", params: { userId: ADM.id }, password: "mi-clave-larga-1" });
-    expect(c[3]).toEqual({ reauth: true });
-  });
-
-  it("ADMIN_UNICO_CLI: con un solo administrador explica la vía local (no hay segundo admin)", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [],
-      "POST /admin/operations": () => {
-        throw Object.assign(new Error("Esta acción irreversible exige un segundo administrador"), {
-          status: 409,
-          body: { error: "second_admin_unavailable" },
-        });
-      },
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
-    await confirmWith("SOLICITAR RECUPERACION cris@x.es", "mi-clave-larga-1");
-    const n = await screen.findByTestId("users-notice");
-    expect(n.textContent).toMatch(/reset-password/);
-    expect(screen.queryByTestId("users-error")).toBeNull();
-  });
-
-  const OP = (over: Partial<RecoveryOperation>): RecoveryOperation => ({
-    id: "op-1",
-    kind: "user.recovery_admin",
-    params: { userId: ADM.id },
-    status: "awaiting_confirmation",
-    confirmPhrase: "RECUPERAR ADMIN 33333333",
-    requestedBy: "otro-admin",
-    impact: { summary: "Emitir un token…", counts: { activeSessions: 2 } },
-    ...over,
-  });
-
-  it("APROBAR: el otro administrador aprueba con la frase del SERVIDOR y su reautenticación; el solicitante no ve «Aprobar»", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [OP({}), OP({ id: "op-2", requestedBy: ME.id })],
-      "POST /admin/operations/op-1/confirm": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    expect(screen.queryByTestId("approve-op-2")).toBeNull(); // la solicitud es mía
-    fireEvent.click(screen.getByTestId("approve-op-1"));
-    await screen.findByTestId("confirm-destructive");
-    expect(screen.getByTestId("confirm-phrase").textContent).toBe("RECUPERAR ADMIN 33333333");
-    expect(screen.getByTestId("confirm-second-admin")).toBeTruthy();
-    fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "RECUPERAR ADMIN 33333333" } });
-    fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "clave-del-otro-admin" } });
-    fireEvent.click(screen.getByTestId("confirm-submit"));
-    await waitFor(() => expect(calls("POST", "/admin/operations/op-1/confirm")).toHaveLength(1));
-    const c = calls("POST", "/admin/operations/op-1/confirm")[0];
-    expect(c[2]).toEqual({ phrase: "RECUPERAR ADMIN 33333333", password: "clave-del-otro-admin" });
-    expect(c[3]).toEqual({ reauth: true });
-  });
-
-  it("EMITIR_ADMIN: tras la aprobación, quien la solicitó emite el token enviando el operationId", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [OP({ status: "pending", requestedBy: ME.id })],
       "POST /admin/users/33333333-3333-4333-8333-333333333333/recovery-token": () => ({
         token: "TOKEN-ADMIN",
         expiresAt: "2026-11-24T12:30:00.000Z",
@@ -288,47 +271,21 @@ describe("ADM-3 · página de usuarios", () => {
       }),
     });
     render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    expect(screen.queryByTestId("approve-op-1")).toBeNull();
-    fireEvent.click(screen.getByTestId("issue-admin-op-1"));
-    await screen.findByTestId("confirm-destructive");
-    fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "EMITIR TOKEN 33333333" } });
-    fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mi-clave-larga-1" } });
-    fireEvent.click(screen.getByTestId("confirm-submit"));
-    await screen.findByTestId("recovery-token-card");
-    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1", operationId: "op-1" });
-  });
-
-  it("ERROR_DEL_SERVIDOR: un rechazo de la API se muestra (no se traga) y la confirmación sigue abierta", async () => {
-    route({
-      "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
-      "PUT /admin/users/11111111-1111-4111-8111-111111111111/status": () => {
-        throw Object.assign(new Error("Reautenticación requerida: contraseña inválida"), { status: 401 });
-      },
-    });
-    render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`status-${U1.id}`));
-    await screen.findByTestId("confirm-destructive");
-    fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "BLOQUEAR bea@x.es" } });
-    fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mala-contraseña-larga" } });
-    fireEvent.click(screen.getByTestId("confirm-submit"));
-    await screen.findByTestId("users-error");
-    expect(screen.getByTestId("confirm-destructive")).toBeTruthy();
+    expect(screen.getByTestId(`recover-${ADM.id}`).textContent).toBe("Token de recuperación");
+    fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
+    await confirmWith("RECUPERAR cris@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("recovery-token-card");
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1" });
+    expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
-});
 
-describe("ADM-3 R1 · revisión de #347", () => {
-  const ME2FA = { ...ME, twoFactorEnabled: true };
-
-  it("NEEDS_TOTP: un admin con 2FA ve el campo TOTP y lo envía; sin 2FA no se pide", async () => {
+  it("NEEDS_TOTP: un admin con 2FA ve el campo TOTP y lo envía", async () => {
     route({
       "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
       "PUT /admin/users/11111111-1111-4111-8111-111111111111/status": () => ({ status: "blocked", changed: true }),
     });
-    render(<UsersPage me={ME2FA} />);
+    render(<UsersPage me={{ ...ME, twoFactorEnabled: true }} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`status-${U1.id}`));
     await screen.findByTestId("confirm-destructive");
@@ -336,7 +293,7 @@ describe("ADM-3 R1 · revisión de #347", () => {
     const submit = screen.getByTestId("confirm-submit") as HTMLButtonElement;
     fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "BLOQUEAR bea@x.es" } });
     fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mi-clave-larga-1" } });
-    expect(submit.disabled).toBe(true); // falta el código 2FA
+    expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByTestId("confirm-totp-input"), { target: { value: "123456" } });
     fireEvent.click(submit);
     await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
@@ -347,235 +304,34 @@ describe("ADM-3 R1 · revisión de #347", () => {
     });
   });
 
-  it("CONCEDER_ADMIN_REAUTH: dar el rol admin pide contraseña y la envía", async () => {
+  it("ERROR_DEL_SERVIDOR: un rechazo de la API (p. ej. 409 último admin) se muestra y la confirmación sigue abierta", async () => {
     route({
-      "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
-      "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
-    fireEvent.click(screen.getByTestId(`role-${U1.id}-admin`));
-    fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
-    await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
-    const c = calls("PUT", "/users/")[0];
-    expect(c[2]).toEqual({ roles: ["user", "developer", "admin"], password: "mi-clave-larga-1" });
-    expect(c[3]).toEqual({ reauth: true });
-  });
-
-  it("QUITAR_ADMIN_A_OTRO_PIDE_APROBACION: quitar «admin» a otra cuenta NO hace el PUT: solicita la orden user.revoke_admin", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [],
-      "POST /admin/operations": () => ({ operation: { id: "op9" }, confirmToken: null }),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`roles-edit-${ADM.id}`));
-    fireEvent.click(screen.getByTestId(`role-${ADM.id}-admin`));
-    fireEvent.click(screen.getByTestId(`roles-save-${ADM.id}`));
-    await confirmWith("SOLICITAR QUITAR ADMIN cris@x.es", "mi-clave-larga-1");
-    await screen.findByTestId("users-notice");
-    expect(calls("PUT", "/users/")).toHaveLength(0);
-    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
-      kind: "user.revoke_admin",
-      params: { userId: ADM.id },
-      password: "mi-clave-larga-1",
-    });
-  });
-
-  const pendingOp = (kind: string, id: string) => ({
-    id,
-    kind,
-    params: { userId: ADM.id },
-    status: "pending",
-    confirmPhrase: null,
-    requestedBy: ME.id,
-    impact: { summary: "x", counts: {} },
-  });
-
-  it("APLICAR_QUITAR_ADMIN: usa los roles REALES del objetivo (pedidos por id, aunque no esté en la página) y envía el operationId", async () => {
-    route({
-      "GET /admin/users": () => page([U1]), // el objetivo NO está en la página cargada
-      "GET /admin/operations": () => [pendingOp("user.revoke_admin", "op-rv")],
-      "GET /admin/users/33333333-3333-4333-8333-333333333333": () => ({
-        ...ADM,
-        roles: ["developer", "organizer", "admin", "user"],
-      }),
-      "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    expect(screen.getByTestId("issue-admin-op-rv").textContent).toBe("Aplicar");
-    fireEvent.click(screen.getByTestId("issue-admin-op-rv"));
-    await confirmWith("QUITAR ADMIN 33333333", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
-    expect(calls("PUT", "/users/")[0][2]).toEqual({
-      roles: ["developer", "organizer", "user"],
-      password: "mi-clave-larga-1",
-      operationId: "op-rv",
-    });
-  });
-
-  it("APLICAR_CONCEDER_ADMIN: añade «admin» a los roles reales y envía el operationId", async () => {
-    const plain = { ...ADM, roles: ["user", "organizer"] };
-    route({
-      "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [pendingOp("user.grant_admin", "op-gr")],
-      "GET /admin/users/33333333-3333-4333-8333-333333333333": () => plain,
-      "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    fireEvent.click(screen.getByTestId("issue-admin-op-gr"));
-    await confirmWith("CONCEDER ADMIN 33333333", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
-    expect(calls("PUT", "/users/")[0][2]).toEqual({
-      roles: ["user", "organizer", "admin"],
-      password: "mi-clave-larga-1",
-      operationId: "op-gr",
-    });
-  });
-
-  it("APLICAR_BLOQUEAR_ADMIN: bloquea con el operationId de la aprobación", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [pendingOp("user.block_admin", "op-bl")],
-      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    fireEvent.click(screen.getByTestId("issue-admin-op-bl"));
-    await confirmWith("BLOQUEAR ADMIN 33333333", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("PUT", "/admin/users/")).toHaveLength(1));
-    expect(calls("PUT", "/admin/users/")[0][2]).toEqual({
-      status: "blocked",
-      password: "mi-clave-larga-1",
-      operationId: "op-bl",
-    });
-  });
-
-  it("CONCEDER_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al conceder, la web solicita user.grant_admin", async () => {
-    route({
-      "GET /admin/users": () => page([U1]),
-      "GET /admin/operations": () => [],
-      "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => {
-        throw Object.assign(new Error("hace falta segundo admin"), {
-          status: 403,
-          body: { error: "second_admin_required" },
+      "GET /admin/users": () => page([SELF, U1]),
+      "PUT /admin/users/me-id/status": () => {
+        throw Object.assign(new Error("No se puede bloquear al último administrador activo"), {
+          status: 409,
+          body: { error: "last_admin" },
         });
       },
-      "POST /admin/operations": () => ({}),
     });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
-    fireEvent.click(screen.getByTestId(`role-${U1.id}-admin`));
-    fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
-    await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
-    await screen.findByTestId("users-notice");
-    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
-      kind: "user.grant_admin",
-      params: { userId: U1.id },
-      password: "mi-clave-larga-1",
-    });
-    expect(screen.queryByTestId("users-error")).toBeNull();
+    fireEvent.click(screen.getByTestId(`status-${SELF.id}`));
+    await confirmWith("BLOQUEAR ana@x.es", "mi-clave-larga-1");
+    const err = await screen.findByTestId("users-error");
+    expect(err.textContent).toMatch(/último administrador/);
+    expect(screen.getByTestId("confirm-destructive")).toBeTruthy();
   });
 
-  it("BLOQUEAR_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al bloquear a un admin, la web solicita user.block_admin", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [],
-      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => {
-        throw Object.assign(new Error("hace falta segundo admin"), {
-          status: 403,
-          body: { error: "second_admin_required" },
-        });
-      },
-      "POST /admin/operations": () => ({}),
-    });
+  it("SIN_PEDIR_OTRO_ADMIN: la pantalla no habla de segundo admin ni de aprobaciones de otro administrador", async () => {
+    route({ "GET /admin/users": () => page([ADM, U1, SELF]) });
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
-    await confirmWith("BLOQUEAR cris@x.es", "mi-clave-larga-1");
-    await screen.findByTestId("users-notice");
-    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
-      kind: "user.block_admin",
-      params: { userId: ADM.id },
-      password: "mi-clave-larga-1",
-    });
-  });
-
-  it("DESBLOQUEAR_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al desbloquear a un admin, la web solicita user.unblock_admin", async () => {
-    const blockedAdmin = { ...ADM, status: "blocked" as const, blockedAt: "2026-11-02T10:00:00.000Z" };
-    route({
-      "GET /admin/users": () => page([blockedAdmin]),
-      "GET /admin/operations": () => [],
-      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => {
-        throw Object.assign(new Error("hace falta segundo admin"), {
-          status: 403,
-          body: { error: "second_admin_required" },
-        });
-      },
-      "POST /admin/operations": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("users-table");
-    fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
-    await confirmWith("DESBLOQUEAR cris@x.es", "mi-clave-larga-1");
-    await screen.findByTestId("users-notice");
-    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
-      kind: "user.unblock_admin",
-      params: { userId: ADM.id },
-      password: "mi-clave-larga-1",
-    });
-  });
-
-  it("APLICAR_DESBLOQUEAR_ADMIN: desbloquea con el operationId de la aprobación", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [pendingOp("user.unblock_admin", "op-ub")],
-      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    fireEvent.click(screen.getByTestId("issue-admin-op-ub"));
-    await confirmWith("DESBLOQUEAR ADMIN 33333333", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("PUT", "/admin/users/")).toHaveLength(1));
-    expect(calls("PUT", "/admin/users/")[0][2]).toEqual({
-      status: "active",
-      password: "mi-clave-larga-1",
-      operationId: "op-ub",
-    });
-  });
-
-  it("CANCELAR_CON_REAUTH: cancelar una solicitud pide confirmación y contraseña", async () => {
-    route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [
-        {
-          id: "op-c",
-          kind: "user.recovery_admin",
-          params: { userId: ADM.id },
-          status: "awaiting_confirmation",
-          confirmPhrase: "RECUPERAR ADMIN 33333333",
-          requestedBy: ME.id,
-          impact: { summary: "x", counts: {} },
-        },
-      ],
-      "POST /admin/operations/op-c/cancel": () => ({}),
-    });
-    render(<UsersPage me={ME} />);
-    await screen.findByTestId("recovery-ops");
-    fireEvent.click(screen.getByTestId("cancel-op-op-c"));
-    expect(calls("POST", "/admin/operations/op-c/cancel")).toHaveLength(0);
-    await confirmWith("CANCELAR 33333333", "mi-clave-larga-1");
-    await waitFor(() => expect(calls("POST", "/admin/operations/op-c/cancel")).toHaveLength(1));
-    const c = calls("POST", "/admin/operations/op-c/cancel")[0];
-    expect(c[2]).toEqual({ password: "mi-clave-larga-1" });
-    expect(c[3]).toEqual({ reauth: true });
+    await screen.findByTestId("confirm-destructive");
+    expect(document.body.textContent).not.toMatch(/segundo admin|otro administrador|aprobaci/i);
+    expect(screen.queryByTestId("recovery-ops")).toBeNull();
+    expect(screen.queryByTestId("confirm-second-admin")).toBeNull();
   });
 });
 

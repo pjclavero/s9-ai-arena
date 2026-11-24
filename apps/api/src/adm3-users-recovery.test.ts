@@ -13,7 +13,7 @@ import { createApp } from "./app.js";
 import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.js";
 import { hashPassword, verifyPassword } from "./auth/passwords.js";
 import { hashToken } from "./auth/tokens.js";
-import { RECOVERY_APPROVAL_WINDOW_MS, RECOVERY_TTL_MS } from "./services/account-recovery.js";
+import { RECOVERY_TTL_MS } from "./services/account-recovery.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -300,22 +300,26 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
     expect(row.blocked_at).toBeNull();
   });
 
-  it("BLOQUEO_NO_A_UNO_MISMO: un admin no se bloquea ni se desbloquea a sí mismo (403)", async () => {
+  it("AUTOBLOQUEO_PROTEGIDO: un admin puede bloquearse a sí mismo sólo si no es el último admin activo (409 last_admin)", async () => {
     const a = await mkAdmin("bl-self");
-    await mkAdmin("bl-self-otro");
-    const t = await tokenOf(a);
-    const r = await setStatus(t, a.id, { status: "blocked", password: PW });
-    expect(r.status).toBe(403);
-    // 403 «forbidden» por ser uno mismo, no por falta de aprobación de segundo admin
-    expect(r.body.error).toBe("forbidden");
-    expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
+    const b = await mkAdmin("bl-self-otro");
+    const ta = await tokenOf(a);
+    // con otro admin activo, el auto-bloqueo se permite (cierra su propia sesión)
+    const ok = await setStatus(ta, a.id, { status: "blocked", password: PW });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await h.db("users").where({ id: a.id }).first()).status).toBe("blocked");
+    // ahora b es el ÚLTIMO admin activo: no puede bloquearse
+    const r = await setStatus(await tokenOf(b), b.id, { status: "blocked", password: PW });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("last_admin");
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("active");
   });
 
-  it("BLOQUEO_ULTIMO_ADMIN: nunca se deja el sistema sin un administrador ACTIVO (409), antes incluso de pedir aprobación", async () => {
+  it("BLOQUEO_ULTIMO_ADMIN: nunca se deja el sistema sin un administrador ACTIVO (409); con otro activo se puede bloquear a un admin sin aprobación", async () => {
     const { setUserStatus } = await import("./services/account-recovery.js");
     const a = await mkAdmin("bl-ultimo-a");
     const b = await mkAdmin("bl-ultimo-b");
-    // b bloqueado a mano: «a» es el único activo; un actor cualquiera no puede bloquearlo
+    // b bloqueado a mano: «a» es el único activo; ni siquiera otro actor puede bloquearlo
     await h.db("users").where({ id: b.id }).update({ status: "blocked", blocked_at: new Date() });
     const actor = await mkUser("bl-ultimo-actor", ["user"]);
     await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
@@ -323,11 +327,10 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
       code: "last_admin",
     });
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
-    // con b activo de nuevo, bloquear a «a» deja de ser el último admin pero exige la aprobación de otro admin
+    // con b activo de nuevo, bloquear a «a» ya no deja 0 admins y NO exige a nadie más
     await h.db("users").where({ id: b.id }).update({ status: "active", blocked_at: null });
-    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
-      status: 403,
-      code: "second_admin_required",
+    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).resolves.toMatchObject({
+      status: "blocked",
     });
   });
 
@@ -570,165 +573,13 @@ describe("ADM-3 · token de recuperación", () => {
   });
 });
 
-describe("ADM-3 · cuenta admin ⇒ segundo administrador", () => {
-  async function flow() {
-    const a = await mkAdmin("sa-a");
-    const b = await mkAdmin("sa-b");
-    const target = await mkAdmin("sa-t");
-    return { a, b, target, ta: await tokenOf(a), tb: await tokenOf(b) };
-  }
-  const createOp = (t: string, userId: string, extra: Record<string, unknown> = {}) =>
-    request(app)
-      .post("/admin/operations")
-      .set("Authorization", `Bearer ${t}`)
-      .send({ kind: "user.recovery_admin", params: { userId }, password: PW, ...extra });
-  const confirmOp = (t: string, id: string, phrase: string, password = PW) =>
-    request(app).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send({ phrase, password });
-
-  it("ADMIN_EXIGE_SEGUNDO: sin aprobación (o con una que no vale) la cuenta admin NO recibe token", async () => {
-    const { a, target, ta } = await flow();
-    const r = await issue(ta, target.id);
-    expect(r.status).toBe(403);
-    expect(r.body.error).toBe("second_admin_required");
-    // orden creada pero SIN confirmar
-    const op = await createOp(ta, target.id);
-    expect(op.status, JSON.stringify(op.body)).toBe(201);
-    expect(op.body.confirmToken).toBeNull();
-    expect(op.body.operation.requiresSecondAdmin).toBe(true);
-    const r2 = await issue(ta, target.id, { password: PW, operationId: op.body.operation.id });
-    expect(r2.status).toBe(403);
-    expect(r2.body.error).toBe("second_admin_approval_invalid");
-    // un operationId que no es uuid tampoco abre nada
-    expect((await issue(ta, target.id, { password: PW, operationId: "x'; --" })).status).toBe(403);
-    expect(await h.db("password_resets").where({ user_id: target.id }).count({ n: "*" }).first()).toMatchObject({
-      n: "0",
-    });
-    expect(
-      (await audits("admin.user.recovery_token_issued")).filter((x) => x.target === `user:${target.id}`),
-    ).toHaveLength(0);
-    void a;
-  });
-
-  it("ADMIN_SEGUNDO_FLUJO: A solicita, B (otro admin) aprueba, A emite; la aprobación se gasta UNA vez; el canje cierra sesiones", async () => {
-    const { a, b, target, ta, tb } = await flow();
-    const sess = await login(target);
-    const op = await createOp(ta, target.id);
-    const id = op.body.operation.id as string;
-    const phrase = op.body.operation.confirmPhrase as string;
-    expect(phrase).toMatch(/^RECUPERAR ADMIN [0-9a-f]{8}$/);
-    // el propio solicitante NO puede aprobarla
-    expect((await confirmOp(ta, id, phrase)).status).toBe(403);
-    // B aprueba (frase + reautenticación)
-    expect((await confirmOp(tb, id, phrase, "mala-contraseña-larga")).status).toBe(401);
-    expect((await confirmOp(tb, id, phrase)).status).toBe(200);
-    // sólo quien la solicitó puede consumirla: B no
-    const byB = await issue(tb, target.id, { password: PW, operationId: id });
-    expect(byB.status).toBe(403);
-    expect(byB.body.error).toBe("second_admin_approval_invalid");
-    // ni un TERCER admin que no la solicitó ni la confirmó
-    const c = await mkAdmin("sa-c");
-    const byC = await issue(await tokenOf(c), target.id, { password: PW, operationId: id });
-    expect(byC.status).toBe(403);
-    expect(byC.body.error).toBe("second_admin_approval_invalid");
-    // A emite
-    const r = await issue(ta, target.id, { password: PW, operationId: id });
-    expect(r.status, JSON.stringify(r.body)).toBe(201);
-    const row = await h.db("password_resets").where({ user_id: target.id }).first();
-    expect(row.issued_via_operation).toBe(id);
-    expect(row.created_by).toBe(a.id);
-    const opRow = await h.db("admin_operations").where({ id }).first();
-    expect(opRow.status).toBe("done");
-    expect(opRow.confirmed_by).toBe(b.id);
-    // la aprobación no se reutiliza
-    const again = await issue(ta, target.id, { password: PW, operationId: id });
-    expect(again.status).toBe(403);
-    // canjear cierra las sesiones de la cuenta admin
-    expect((await reset(r.body.token, NEWPW)).status).toBe(204);
-    expect((await request(app).get("/users/me").set("Authorization", `Bearer ${sess.body.accessToken}`)).status).toBe(
-      401,
-    );
-    expect((await login(target, NEWPW)).status).toBe(200);
-    const rows = await audits("admin.user.recovery_token_issued");
-    expect(rows.find((x) => x.target === `user:${target.id}`)?.detail).toMatchObject({ secondAdminOperation: id });
-  });
-
-  it("ADMIN_APROBACION_ATADA: vale sólo para la cuenta aprobada, y caduca", async () => {
-    const { a, b, target, ta, tb } = await flow();
-    const other = await mkAdmin("sa-other");
-    const op = await createOp(ta, target.id);
-    const id = op.body.operation.id as string;
-    await confirmOp(tb, id, op.body.operation.confirmPhrase);
-    // otra cuenta admin: no vale
-    const wrong = await issue(ta, other.id, { password: PW, operationId: id });
-    expect(wrong.status).toBe(403);
-    expect(wrong.body.error).toBe("second_admin_approval_invalid");
-    // caducada (confirmada hace más de la ventana)
-    await h.db.raw("ALTER TABLE admin_operations DISABLE TRIGGER admin_operations_guard");
-    await h
-      .db("admin_operations")
-      .where({ id })
-      .update({ confirmed_at: new Date(Date.now() - RECOVERY_APPROVAL_WINDOW_MS - 60_000) });
-    await h.db.raw("ALTER TABLE admin_operations ENABLE TRIGGER admin_operations_guard");
-    const late = await issue(ta, target.id, { password: PW, operationId: id });
-    expect(late.status).toBe(403);
-    expect(await h.db("password_resets").where({ user_id: target.id }).count({ n: "*" }).first()).toMatchObject({
-      n: "0",
-    });
-    void a;
-    void b;
-  });
-
-  it("ADMIN_APROBACION_CADUCADA_LIBERA: una aprobación sin consumir caducada se cancela al pedir otra (no bloquea el hueco)", async () => {
-    const { target, ta, tb } = await flow();
-    const op = await createOp(ta, target.id);
-    await confirmOp(tb, op.body.operation.id, op.body.operation.confirmPhrase);
-    // mientras está viva, una segunda solicitud del mismo tipo choca (una activa por tipo)
-    expect((await createOp(ta, target.id)).status).toBe(409);
-    await h.db.raw("ALTER TABLE admin_operations DISABLE TRIGGER admin_operations_guard");
-    await h
-      .db("admin_operations")
-      .where({ id: op.body.operation.id })
-      .update({ confirmed_at: new Date(Date.now() - RECOVERY_APPROVAL_WINDOW_MS - 60_000) });
-    await h.db.raw("ALTER TABLE admin_operations ENABLE TRIGGER admin_operations_guard");
-    const again = await createOp(ta, target.id);
-    expect(again.status, JSON.stringify(again.body)).toBe(201);
-    expect((await h.db("admin_operations").where({ id: op.body.operation.id }).first()).status).toBe("cancelled");
-  });
-
-  it("ADMIN_UNICO: con un solo administrador activo no hay segundo admin posible (409) y la vía es la CLI", async () => {
-    const a = await mkAdmin("unico-a");
-    const t = await tokenOf(a);
-    const target = await mkUser("unico-t", ["user", "admin"]);
-    await h.db("users").where({ id: target.id }).update({ status: "blocked", blocked_at: new Date() }); // admin bloqueado no cuenta
-    const r = await createOp(t, target.id);
-    expect(r.status).toBe(409);
-    expect(r.body.error).toBe("second_admin_unavailable");
-    expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
-  });
-
-  it("OP_SOLO_CUENTAS_ADMIN: la orden sólo se acepta para una cuenta admin existente y con parámetros cerrados", async () => {
-    const { ta } = await flow();
-    const plain = await mkUser("op-plain");
-    expect((await createOp(ta, plain.id)).status).toBe(400);
-    expect((await createOp(ta, "00000000-0000-4000-8000-000000000000")).status).toBe(404);
-    expect((await createOp(ta, "no-uuid")).status).toBe(400);
-    const target = await mkAdmin("op-extra-t");
-    const extra = await request(app)
-      .post("/admin/operations")
-      .set("Authorization", `Bearer ${ta}`)
-      .send({ kind: "user.recovery_admin", params: { userId: target.id, rol: "admin" }, password: PW });
-    expect(extra.status).toBe(400);
-    expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
-  });
-});
-
 describe("ADM-3 · CLI local (un solo administrador)", () => {
   it("CLI_SERVICIO: fija la contraseña (política única), cierra sesiones, anula tokens y audita SIN la contraseña", async () => {
     const { resetPasswordLocal, ResetPasswordCliError } = await import("./services/account-recovery.js");
     const a = await mkAdmin("cli-a");
     const u = await mkAdmin("cli-u");
     const s = await login(u);
-    await issue(await tokenOf(a), u.id, { password: PW, operationId: undefined }).catch(() => undefined);
+    await issue(await tokenOf(a), u.id);
     const r = await resetPasswordLocal(h.db, { email: u.email.toUpperCase(), password: NEWPW });
     expect(r.userId).toBe(u.id);
     expect((await request(app).get("/users/me").set("Authorization", `Bearer ${s.body.accessToken}`)).status).toBe(401);

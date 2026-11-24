@@ -1,7 +1,7 @@
 /**
  * ADM-1 · Órdenes administrativas y confirmación en dos pasos contra PostgreSQL REAL:
  * un no-admin no crea órdenes, tipos cerrados, token de un solo uso con caducidad, frase
- * literal, reautenticación, segundo admin para lo irreversible, ciclo de lease del ejecutor
+ * literal, reautenticación (las irreversibles las confirma el MISMO admin: modelo de un administrador), ciclo de lease del ejecutor
  * (con un rol de BD de privilegios mínimos). Cada caso lleva su mutante en scripts/adm1-mutants.py.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import { hashPassword } from "../auth/passwords.js";
 import { generateTotpSecret } from "../auth/totp.js";
 import { SharedRateLimiter } from "../middleware/shared-rate-limit.js";
 import { insertOperationInState } from "../testing/admin-ops.js";
-import { OPERATION_KINDS, buildOperationKinds } from "./admin-operations.js";
+import { OPERATION_KINDS, buildOperationKinds, sha256 } from "./admin-operations.js";
 import {
   claimOperation,
   completeOperation,
@@ -39,7 +39,7 @@ beforeAll(async () => {
     db: h.db,
     adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.suite", { max: 100_000, windowMs: 60_000 }),
   });
-  // Segundo administrador (para lo irreversible).
+  // Un segundo administrador sólo para probar que el límite de intentos es POR admin (no se necesita para nada más).
   const [u] = await h
     .db("users")
     .insert({
@@ -323,74 +323,76 @@ describe("ADM-1 · confirmación en dos pasos", () => {
   });
 });
 
-describe("ADM-1 · segundo admin para lo irreversible", () => {
-  it("SEGUNDO_ADMIN: sin token compartido; el solicitante NO puede aprobar, otro admin SÍ desde su propia sesión", async () => {
+describe("ADM-1 · UN admin confirma lo irreversible (sin segundo admin)", () => {
+  const opStatus = async (id: string) => (await h.db("admin_operations").where({ id }).first()).status;
+  it("UN_ADMIN_IRREVERSIBLE: el MISMO admin la crea y la confirma con token + frase + contraseña; un solo uso; auditada", async () => {
     const created = await create(irreversible, admin);
     expect(created.status).toBe(201);
-    // No se entrega ningún token que compartir fuera de banda.
-    expect(created.body.confirmToken).toBeNull();
-    expect(await h.db("admin_operations").where({ id: created.body.operation.id }).first()).toMatchObject({
-      confirm_token_hash: null,
-    });
+    // Lleva token de confirmación de UN solo uso (sólo se guarda su hash) y no existe ningún segundo admin.
+    expect(created.body.confirmToken).toEqual(expect.any(String));
+    expect(created.body.operation.requiresSecondAdmin).toBeUndefined();
+    const row = await h.db("admin_operations").where({ id: created.body.operation.id }).first();
+    expect(row.confirm_token_hash).toBe(sha256(created.body.confirmToken));
+    expect(row).not.toHaveProperty("requires_second_admin");
     const id = created.body.operation.id as string;
     const phrase = created.body.operation.confirmPhrase as string;
-    const own = await confirm(id, { phrase, password: DEV_PASSWORD }, admin);
-    expect(own.status).toBe(403);
-    // Ni siquiera con otra sesión del MISMO usuario.
-    const ownOtherSession = await tokenFor(h.db, DEV_USERS.admin);
-    expect((await confirm(id, { phrase, password: DEV_PASSWORD }, ownOtherSession)).status).toBe(403);
-    // El segundo admin se reautentica con SU contraseña, en SU sesión, y aprueba.
-    expect((await confirm(id, { phrase, password: "otra-contraseña-mala" }, admin2)).status).toBe(401);
-    const other = await confirm(id, { phrase, password: DEV_PASSWORD }, admin2);
-    expect(other.status, JSON.stringify(other.body)).toBe(200);
-    const requester = await h.db("users").where({ email: DEV_USERS.admin }).first();
-    const confirmer = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
-    expect(other.body).toMatchObject({
-      status: "pending",
-      requestedBy: requester.id,
-      confirmedBy: confirmer.id,
-      requiresSecondAdmin: true,
-    });
-    // Un solo uso: una segunda aprobación (o de un tercero) ya no aplica.
-    expect((await confirm(id, { phrase, password: DEV_PASSWORD }, admin2)).status).toBe(409);
+    const token = created.body.confirmToken as string;
+    // Sin credenciales frescas, sin frase o sin token: nada
+    expect((await confirm(id, { confirmToken: token, phrase, password: "mala-contraseña" }, admin)).status).toBe(401);
+    expect((await confirm(id, { confirmToken: token, phrase: "otra", password: DEV_PASSWORD }, admin)).status).toBe(
+      400,
+    );
+    expect((await confirm(id, { phrase, password: DEV_PASSWORD }, admin)).status).toBe(400);
+    expect(await opStatus(id)).toBe("awaiting_confirmation");
+    // El mismo admin la confirma
+    const ok = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD }, admin);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const me = await h.db("users").where({ email: DEV_USERS.admin }).first();
+    expect(ok.body).toMatchObject({ status: "pending", requestedBy: me.id, confirmedBy: me.id });
+    // Un solo uso
+    expect((await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD }, admin)).status).toBe(409);
+    const aud = (await audits()).filter((a) => a.target === `operation:${id}`).map((a) => a.action);
+    expect(aud).toEqual(expect.arrayContaining(["admin.op.requested", "admin.op.confirmed"]));
   });
 
-  it("SEGUNDO_ADMIN_FRASE_Y_CADUCIDAD: la aprobación del segundo admin también exige la frase literal y no caducada", async () => {
+  it("IRREVERSIBLE_FRASE_Y_CADUCIDAD: la irreversible también exige la frase literal y un token no caducado", async () => {
     const created = await create(irreversible, admin);
     const id = created.body.operation.id as string;
     const phrase = created.body.operation.confirmPhrase as string;
-    expect((await confirm(id, { phrase: "otra", password: DEV_PASSWORD }, admin2)).status).toBe(400);
+    const token = created.body.confirmToken as string;
+    expect((await confirm(id, { confirmToken: token, phrase: "otra", password: DEV_PASSWORD }, admin)).status).toBe(
+      400,
+    );
     await h
       .db("admin_operations")
       .where({ id })
       .update({ confirm_expires_at: new Date(Date.now() - 1000) });
-    const late = await confirm(id, { phrase, password: DEV_PASSWORD }, admin2);
+    const late = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD }, admin);
     expect(late.status).toBe(409);
     expect(late.body.error).toBe("confirmation_expired");
   });
 
-  it("CONFIRMA_SIN_TOKEN_SOLO_IRREVERSIBLE: una destructiva normal sigue exigiendo el token", async () => {
-    const { id, phrase } = await createAndTake(destructive);
-    const r = await confirm(id, { phrase, password: DEV_PASSWORD });
-    expect(r.status).toBe(400);
-    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("awaiting_confirmation");
+  it("CONFIRMA_SIN_TOKEN_NUNCA: ni una destructiva ni una irreversible se confirman sin el token", async () => {
+    for (const body of [destructive, irreversible]) {
+      const created = await create(body);
+      const id = created.body.operation.id as string;
+      const r = await confirm(id, { phrase: created.body.operation.confirmPhrase, password: DEV_PASSWORD });
+      expect(r.status).toBe(400);
+      expect(await opStatus(id)).toBe("awaiting_confirmation");
+      await h.db("admin_operations").where({ id }).update({ status: "cancelled", finished_at: h.db.fn.now() });
+    }
   });
 
-  it("SEGUNDO_ADMIN_AUSENTE: con un único admin la irreversible se rechaza (ruta de consola)", async () => {
-    await h
-      .db("user_roles")
-      .where({ role: "admin", user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id })
-      .delete();
+  it("ADMIN_UNICO_IRREVERSIBLE: con UN único admin la irreversible se crea y se confirma (la consola ya no es obligatoria)", async () => {
+    const other = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
+    await h.db("user_roles").where({ role: "admin", user_id: other.id }).delete();
     try {
-      const r = await create(irreversible);
-      expect(r.status).toBe(409);
-      expect(r.body.error).toBe("second_admin_unavailable");
-      expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
+      const { id, token, phrase } = await createAndTake(irreversible);
+      const ok = await confirm(id, { confirmToken: token, phrase, password: DEV_PASSWORD });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect(ok.body.status).toBe("pending");
     } finally {
-      await h.db("user_roles").insert({
-        user_id: (await h.db("users").where({ email: "admin2@dev.arena.local" }).first()).id,
-        role: "admin",
-      });
+      await h.db("user_roles").insert({ user_id: other.id, role: "admin" });
     }
   });
 });
@@ -636,7 +638,6 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
       { params: JSON.stringify({ impactClass: "none" }) },
       { impact: JSON.stringify({ summary: "otro", counts: {} }) },
       { confirm_phrase: "otra frase" },
-      { requires_second_admin: true },
       { requested_by: (await h.db("users").where({ email: DEV_USERS.moderator }).first()).id },
     ]) {
       await expect(
@@ -647,24 +648,6 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
       });
     }
     expect(await statusOf(id)).toBe("awaiting_confirmation");
-  });
-
-  it("SEGUNDO_ADMIN_EN_BD: aunque se fabrique la confirmación, en una irreversible no puede confirmar quien la pidió", async () => {
-    const created = await create(irreversible, admin);
-    const id = created.body.operation.id as string;
-    const row = await h.db("admin_operations").where({ id }).first();
-    await expect(
-      h
-        .db("admin_operations")
-        .where({ id })
-        .update({ status: "pending", confirmed_by: row.requested_by, confirmed_at: h.db.fn.now() }),
-    ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/segundo admin/) });
-    const other = await h.db("users").where({ email: "admin2@dev.arena.local" }).first();
-    await h
-      .db("admin_operations")
-      .where({ id })
-      .update({ status: "pending", confirmed_by: other.id, confirmed_at: h.db.fn.now() });
-    expect(await statusOf(id)).toBe("pending");
   });
 
   it("USUARIO_BORRADO: borrar al solicitante (ON DELETE SET NULL) no choca con el trigger, con la orden viva", async () => {
@@ -755,7 +738,6 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
       { status: "failed" },
       { status: "cancelled" },
       { status: "expired" },
-      { status: "pending", requires_second_admin: true },
       { status: "pending", confirmed_at: new Date() },
       { status: "awaiting_confirmation", confirmed_at: new Date() },
       { status: "awaiting_confirmation", result: JSON.stringify({ ok: 1 }) },
@@ -774,9 +756,7 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
       h.db("admin_operations").insert({ kind: "system.noop", status: "pending", confirmed_by: admin1.id }),
     ).rejects.toMatchObject({ code: "23514" });
     // lo legítimo, como lo hace la API
-    await h
-      .db("admin_operations")
-      .insert({ kind: "system.noop", status: "awaiting_confirmation", requires_second_admin: true });
+    await h.db("admin_operations").insert({ kind: "system.noop", status: "awaiting_confirmation" });
     await h.db("admin_operations").delete();
     await h.db("admin_operations").insert({ kind: "system.noop", status: "pending" });
   });
@@ -898,21 +878,10 @@ describe("ADM-1 · registro de tipos y su CHECK", () => {
     }
   });
 
-  const USER_KINDS = [
-    "user.recovery_admin",
-    "user.revoke_admin",
-    "user.block_admin",
-    "user.unblock_admin",
-    "user.grant_admin",
-  ];
-  it("NOOP_SOLO_EN_TESTS: en producción (y desarrollo) el registro no trae system.noop; sí el tipo real de ADM-3", () => {
-    // ADM-3 añade `user.recovery_admin` (segundo admin para recuperar una cuenta admin): es de producción.
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual(USER_KINDS);
-    expect(Object.keys(buildOperationKinds({}))).toEqual(USER_KINDS);
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" })).sort()).toEqual([
-      "system.noop",
-      ...[...USER_KINDS].sort(),
-    ]);
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "development" }))).toEqual(USER_KINDS);
+  it("NOOP_SOLO_EN_TESTS: en producción (y desarrollo) el registro no trae system.noop", () => {
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual([]);
+    expect(Object.keys(buildOperationKinds({}))).toEqual([]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" }))).toEqual(["system.noop"]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "development" }))).toEqual([]);
   });
 });

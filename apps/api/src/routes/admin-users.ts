@@ -2,9 +2,11 @@
  * V1 ADM-3 · Administración → Usuarios y recuperación. Sólo admin (x-min-role del contrato).
  *
  *  - GET  /admin/users                           listado paginado con búsqueda (sin hashes ni secretos)
- *  - PUT  /admin/users/{userId}/status           bloquear / desbloquear (reautenticación fuerte)
- *  - POST /admin/users/{userId}/recovery-token   emite el token de recuperación de UN solo uso (reautenticación;
- *                                                 si el objetivo es admin, aprobación de un segundo admin)
+ *  - GET  /admin/users/{userId}                  una cuenta por id (roles ACTUALES)
+ *  - PUT  /admin/users/{userId}/status           bloquear / desbloquear cualquier cuenta (reautenticación fuerte)
+ *  - POST /admin/users/{userId}/recovery-token   emite el token de recuperación de UN solo uso para CUALQUIER cuenta
+ *                                                 (reautenticación fuerte)
+ * MODELO DE UN ADMINISTRADOR: lo hace UN admin; ninguna acción exige a otro. Nunca queda 0 admins activos (409).
  *
  * Los roles se siguen asignando con `PUT /users/{userId}/roles` (con la guarda del último administrador).
  * Las acciones destructivas llevan límite de intentos POR ADMIN antes de verificar la contraseña: frena la fuerza
@@ -67,15 +69,13 @@ export function adminUsersRoutes(db: Db, deps: AdminUsersDeps): Router {
     const status = (req.body as { status?: unknown } | undefined)?.status;
     if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");
     res.setHeader("Cache-Control", "no-store");
-    const operationId = (req.body as { operationId?: unknown } | undefined)?.operationId;
-    res.json(await setUserStatus(db, ctx(req), id, status, { operationId }));
+    res.json(await setUserStatus(db, ctx(req), id, status));
   });
 
   defineOperation(router, "issueUserRecoveryToken", async (req, res) => {
     await reauth(req);
     const id = userIdParam(req);
-    const operationId = (req.body as { operationId?: unknown } | undefined)?.operationId;
-    const r = await issueRecoveryToken(db, ctx(req), id, { operationId });
+    const r = await issueRecoveryToken(db, ctx(req), id);
     // El token se muestra UNA vez: nunca se cachea ni se vuelve a poder leer.
     res.setHeader("Cache-Control", "no-store");
     res.status(201).json(r);
