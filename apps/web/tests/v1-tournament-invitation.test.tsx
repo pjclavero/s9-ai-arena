@@ -194,26 +194,61 @@ describe("V1 · invitación en la ficha del torneo", () => {
     expect(posted("/tournaments/t1/entries")[0].body).toEqual({ botId: "b1", version: 1 });
   });
 
-  it("TIW_REPLACE_NOT_ENROLLED sin bots inscritos (o en un torneo por equipos) no hay formulario", async () => {
+  it("TIW_REPLACE_NOT_ENROLLED sin bots inscritos no hay formulario de sustitución (bot a bot ni NvN)", async () => {
     tournament = { ...tournament, viewerEntries: [] };
     render(<TournamentDetailPage id="t1" me={ME} />);
     expect(await screen.findByTestId("entry-invitation-only")).toBeTruthy();
     expect(screen.queryByTestId("entry-form")).toBeNull();
     cleanup();
     tournament = {
-      ...tournament,
+      ...BASE,
+      enrollment: "open",
       format: "teams",
       mode: "team_deathmatch",
       rules: { params: { teamSize: 2 } },
-      viewerEntries: [{ botId: "b1", version: 1 }],
+      viewerEntries: [],
     };
     render(<TournamentDetailPage id="t1" me={ME} />);
-    await screen.findByTestId("tournament-state");
+    expect(await screen.findByTestId("team-entry-form")).toBeTruthy();
     expect(screen.queryByTestId("entry-form")).toBeNull();
-    expect(screen.queryByTestId("team-entry-form")).toBeNull();
-    // Y no se promete un cambio de versión que la ficha no ofrece en NvN.
     expect(screen.queryByTestId("entry-replace-only")).toBeNull();
   });
+
+  it("TIW_OPEN_WITH_ENTRIES en un torneo abierto bot a bot con bots ya inscritos sigue el formulario normal (todas las altas)", async () => {
+    tournament = { ...BASE, enrollment: "open", viewerEntries: [{ botId: "b1", version: 1 }] };
+    render(<TournamentDetailPage id="t1" me={ME} />);
+    expect(await screen.findByRole("button", { name: "Inscribir" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cambiar versión" })).toBeNull();
+    expect(screen.getByRole("option", { name: /Trueno/ })).toBeTruthy();
+  });
+
+  for (const enrollment of ["open", "invitation"] as const) {
+    it(`TIW_REPLACE_NVN NvN ${enrollment}: el dueño cambia la versión de su bot inscrito con el equipo, sin enlace ni reinscribir`, async () => {
+      tournament = {
+        ...BASE,
+        enrollment,
+        format: "teams",
+        mode: "team_deathmatch",
+        rules: { params: { teamSize: 2 } },
+        viewerEntries: [{ botId: "b1", version: 1 }],
+      };
+      render(<TournamentDetailPage id="t1" me={ME} />);
+      const user = userEvent.setup();
+      const button = await screen.findByRole("button", { name: "Cambiar versión" });
+      expect(screen.getByRole("option", { name: /Rayo/ })).toBeTruthy();
+      expect(screen.queryByRole("option", { name: /Trueno/ })).toBeNull(); // no inscrito: nada de alta
+      expect(screen.queryByRole("button", { name: "Inscribir" })).toBeNull();
+      // Abierto: el equipo sigue pudiendo inscribirse aparte; por invitación sin enlace, no.
+      if (enrollment === "open") expect(screen.getByTestId("team-entry-form")).toBeTruthy();
+      else expect(screen.queryByTestId("team-entry-form")).toBeNull();
+      await user.selectOptions(screen.getByLabelText("bot a inscribir"), "b1");
+      await screen.findByLabelText("versión a inscribir");
+      await user.click(button);
+      await waitFor(() => expect(posted("/tournaments/t1/entries")).toHaveLength(1));
+      expect(posted("/tournaments/t1/entries")[0].body).toEqual({ botId: "b1", version: 1 });
+      expect(posted("/tournaments/t1/team-entries")).toHaveLength(0);
+    });
+  }
 
   it("TIW_INVALID un enlace revocado no habilita nada y se olvida", async () => {
     check = { valid: false };

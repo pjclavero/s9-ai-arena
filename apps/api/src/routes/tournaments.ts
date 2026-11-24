@@ -204,7 +204,8 @@ export function tournamentRoutes(
   db: Db,
   // MG · visibilidad fija (tests) o getter de los ajustes de runtime: se lee por petición.
   visibility: BattleVisibility | (() => BattleVisibility) = { publicReplays: false, publicSpectate: false },
-  // V1 · INVITACIÓN (P3-1 de la revisión de #350) · limitador compartido (api_usage) por usuario (o IP)
+  // V1 · INVITACIÓN (P3-1 de la revisión de #350) · limitador compartido (api_usage) por usuario (va tras
+  // el RBAC: un anónimo recibe 401 antes, así que la clave por IP de sharedRateLimit no se usa aquí)
   // de la comprobación del invitado y de las inscripciones que presentan un token. Sin él (tests
   // antiguos que montan el router a mano) no se limita.
   opts: { invitationLimiter?: RateLimiterLike } = {},

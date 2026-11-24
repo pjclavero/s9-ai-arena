@@ -309,15 +309,17 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
   /**
    * V1 · TI-02 (P2-1 de la revisión de #350) · sin enlace válido, el DUEÑO de bots YA inscritos en un
    * torneo por invitación puede cambiar su versión (no es un alta; la API lo permite y aplica las
-   * reglas). Sólo sus bots inscritos (`viewerEntries`, que la API da sólo con sesión y sólo propios),
-   * sólo en la inscripción bot a bot y nunca como alta nueva.
+   * reglas). Sólo sus bots inscritos (`viewerEntries`, que la API da sólo con sesión y sólo propios)
+   * y nunca como alta nueva.
+   * H-NvN-01 (revisión delta de #350) · en los torneos por equipos con tamaño (NvN), abiertos o por
+   * invitación, la ficha no tiene formulario bot a bot: el cambio de versión de un bot ya inscrito
+   * con el equipo se ofrece igual (la API lo admite, `POST …/entries` → 200 `replacedVersion`), sin
+   * reinscribir el equipo.
    */
   const replaceOnly = (t: Tournament) =>
     props.me !== null &&
     t.state === "open" &&
-    t.enrollment === "invitation" &&
-    !entryFormVisible(t, invite) &&
-    teamSizeOfTournament(t) === null &&
+    (teamSizeOfTournament(t) !== null || (t.enrollment === "invitation" && !entryFormVisible(t, invite))) &&
     (t.viewerEntries?.length ?? 0) > 0;
 
   return (
@@ -367,10 +369,10 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                 />
               )}
               {/* V1 · INVITACIÓN · la ficha pública de un torneo por invitación NO ofrece inscribirse. */}
-              {t.state === "open" && replaceOnly(t) && (
+              {t.state === "open" && replaceOnly(t) && !canEnter(t) && (
                 <p className="note" data-testid="entry-replace-only">
                   Ya tienes bots inscritos: puedes cambiar la versión de un bot inscrito sin enlace. Para inscribir otro
-                  bot necesitas un enlace de invitación de la organización.
+                  bot o tu equipo necesitas un enlace de invitación de la organización.
                 </p>
               )}
               {t.state === "open" && !canEnter(t) && !replaceOnly(t) && (props.me || t.enrollment === "invitation") && (
@@ -407,7 +409,7 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                   </button>
                 </>
               )}
-              {(canEnter(t) || replaceOnly(t)) && teamSizeOfTournament(t) === null && (
+              {((canEnter(t) && teamSizeOfTournament(t) === null) || replaceOnly(t)) && (
                 <form onSubmit={onEnter} data-testid="entry-form">
                   <label>
                     {replaceOnly(t) ? "Cambiar la versión de tu bot inscrito" : "Inscribir bot"}{" "}
@@ -471,8 +473,9 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                       </p>
                     ) : null;
                   })()}
-                  {/* #291 · sólo quien creó el torneo o el staff (la API también lo exige). */}
-                  {t.viewerCanManage && (
+                  {/* #291 · sólo quien creó el torneo o el staff (la API también lo exige). En NvN con el
+                      formulario de equipo a la vista, «Cerrar inscripciones» ya va con él. */}
+                  {t.viewerCanManage && !(canEnter(t) && teamSizeOfTournament(t) !== null) && (
                     <button type="button" onClick={onCloseEntries} data-testid="close-entries">
                       Cerrar inscripciones
                     </button>

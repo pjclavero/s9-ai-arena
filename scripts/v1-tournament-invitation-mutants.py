@@ -253,13 +253,17 @@ M = [
         ".filter(() => true)")],
      WEB_T, ["TIW_REPLACE_FORM"]),
     ("W18", "la web no ofrece la sustitución sin enlace (P2-1)", [(DETAIL,
-        "              {(canEnter(t) || replaceOnly(t)) && teamSizeOfTournament(t) === null && (",
+        "              {((canEnter(t) && teamSizeOfTournament(t) === null) || replaceOnly(t)) && (",
         "              {canEnter(t) && teamSizeOfTournament(t) === null && (")],
-     WEB_T, ["TIW_REPLACE_FORM"]),
-    ("W19", "la sustitución sin enlace se ofrece también en torneos por equipos", [(DETAIL,
-        "    teamSizeOfTournament(t) === null &&\n    (t.viewerEntries?.length ?? 0) > 0;",
-        "    (t.viewerEntries?.length ?? 0) > 0;")],
-     WEB_T, ["TIW_REPLACE_NOT_ENROLLED"]),
+     WEB_T, ["TIW_REPLACE_FORM", "TIW_REPLACE_NVN"]),
+    ("W19", "H-NvN-01 inverso: la sustitución vuelve a excluir los torneos NvN", [(DETAIL,
+        '    (teamSizeOfTournament(t) !== null || (t.enrollment === "invitation" && !entryFormVisible(t, invite))) &&',
+        '    teamSizeOfTournament(t) === null &&\n    t.enrollment === "invitation" &&\n    !entryFormVisible(t, invite) &&')],
+     WEB_T, ["TIW_REPLACE_NVN"]),
+    ("W20", "la sustitución se ofrece también en un torneo bot a bot abierto (duplica el formulario normal)", [(DETAIL,
+        '    (teamSizeOfTournament(t) !== null || (t.enrollment === "invitation" && !entryFormVisible(t, invite))) &&',
+        "    true &&")],
+     WEB_T, ["TIW_OPEN_WITH_ENTRIES"]),
 ]
 
 

@@ -64,12 +64,15 @@ En un torneo `invitation`, la API rechaza **toda** inscripción que no presente 
 - **En la web** (P2-1 de la revisión de #350), `GET /tournaments/{id}` devuelve, sólo con sesión, `viewerEntries`
   (bot y versión de las inscripciones de bots **propios**; nunca de otros, `TI_VIEWER_ENTRIES`). Con ellas, en un
   torneo por invitación sin enlace válido, la ficha ofrece **«Cambiar la versión de tu bot inscrito»** con sólo
-  esos bots y el botón «Cambiar versión»; nunca un alta nueva. Esto vale en los torneos de inscripción bot a bot;
-  en los torneos por equipos con tamaño (NvN) la ficha no tiene formulario bot a bot y no lo ofrece. Tests:
-  `TIW_REPLACE_FORM`, `TIW_REPLACE_NOT_ENROLLED`.
+  esos bots y el botón «Cambiar versión»; nunca un alta nueva. En los torneos por equipos con tamaño (NvN),
+  abiertos o por invitación, la ficha también lo ofrece para los bots ya inscritos con el equipo (H-NvN-01), sin
+  reinscribir el equipo. `viewerEntries` es una extensión de `getTournament`, que está fuera del contrato OpenAPI
+  (como `viewerCanManage`). Tests: `TIW_REPLACE_FORM`, `TIW_REPLACE_NVN`, `TIW_REPLACE_NOT_ENROLLED`,
+  `TIW_OPEN_WITH_ENTRIES`.
 - **Límite de intentos** (P3-1): la comprobación del invitado y las inscripciones que **presentan** un
   `invitationToken` comparten un limitador sobre `api_usage` (`tournaments.invitation`, 60 por minuto) por
-  usuario, o por IP sin sesión; al superarlo, 429 `too_many_requests`. Una inscripción sin token no cuenta.
+  usuario (estas operaciones exigen sesión: un anónimo recibe antes 401, así que en la práctica no hay límite por
+  IP); al superarlo, 429 `too_many_requests`. Una inscripción sin token no cuenta.
   Test: `TI_RATE_LIMIT`.
 
 ## El enlace y su token
