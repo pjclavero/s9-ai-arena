@@ -416,6 +416,16 @@ describe("PR-5 · clase A: la carrera con el motor ya terminado (P1-R3)", () => 
     expect(ver.body.matches).toBe(false);
     expect(ver.body.reason).toBe("truncated");
     expect((await request(app).get(`/battles/${s.battleId}`).set(auth)).body.replayAvailable).toBe(false);
+    // Por ningún camino: una receta COMPLETA y válida de una batalla marcada `recording_limit` tampoco se certifica
+    // (se rechaza por la batalla, antes de re-simular).
+    const okBefore = await request(app).post(`/replays/${sf.battleId}/verify`).set(auth);
+    expect(okBefore.body.valid).toBe(true);
+    await h
+      .db("battles")
+      .where({ id: sf.battleId })
+      .update({ result: JSON.stringify({ ...fb.result, winner: null, endReason: "recording_limit" }) });
+    const refused = await request(app).post(`/replays/${sf.battleId}/verify`).set(auth);
+    expect(refused.body).toMatchObject({ matches: false, valid: false, reason: "truncated" });
   }, 240_000);
 });
 

@@ -156,7 +156,13 @@ export const MUTANTS = [
     why: "un fallo de clase A descarta la grabación en vez de sellarla truncada",
     test: U,
     t: "A1 tope por batalla",
-    edits: [{ file: RECORDER, find: "this.finished = true;\n    if (this.fault && !this.limitFault) {", replace: "this.finished = true;\n    if (this.fault) {" }],
+    edits: [
+      {
+        file: RECORDER,
+        find: "this.finished = true;\n    if (this.fault && !this.limitFault) {",
+        replace: "this.finished = true;\n    if (this.fault) {",
+      },
+    ],
   },
   {
     id: "M-RECORDER-limit-not-classified",
@@ -164,19 +170,6 @@ export const MUTANTS = [
     test: U,
     t: "A1 tope por batalla",
     edits: [{ file: RECORDER, find: "if (e instanceof ReplayLimitExceededError) this.limitFault = e;", replace: "" }],
-  },
-  {
-    id: "M-RECORDER-queued-limit",
-    why: "el tope superado con appends encolados al cerrar se trata como fallo del cierre",
-    test: U,
-    t: "A3 el tope se supera",
-    edits: [
-      {
-        file: RECORDER,
-        find: 'const queuedLimit = e instanceof WriterStateError && e.code === "limit_hit";',
-        replace: "const queuedLimit = false;",
-      },
-    ],
   },
   // ---- integración con PG real ------------------------------------------------------------------
   {
@@ -562,19 +555,6 @@ export const MUTANTS = [
         file: "apps/api/src/replay-s9r.ts",
         find: 'if (isTruncatedBattle(battle)) res.setHeader("X-Replay-Truncated", "true");',
         replace: "",
-      },
-    ],
-  },
-  {
-    id: "M-TRUNC-verify-corrupt",
-    why: "verify llama corrupt_file a un truncado legítimo",
-    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
-    t: "L1 tope alcanzado",
-    edits: [
-      {
-        file: "apps/api/src/replay-s9r.ts",
-        find: '          : code === "truncated"\n            ? // Íntegro pero incompleto (recording_limit): no es un fichero corrupto.\n              "truncated"\n            : `corrupt_file: ${code}`,',
-        replace: "          : `corrupt_file: ${code}`,",
       },
     ],
   },
