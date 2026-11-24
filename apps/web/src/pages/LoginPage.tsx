@@ -88,7 +88,9 @@ export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string })
       const tokens = await api<{ accessToken: string }>("POST", "/auth/login", {
         email: email.trim(),
         password,
-        ...(totp ? { totp } : {}),
+        // ACC-2FA · el código de 6 cifras o uno de recuperación, sin los espacios del principio y del final
+        // (el servidor ignora además espacios, guiones y mayúsculas del código de recuperación).
+        ...(totp.trim() ? { totp: totp.trim() } : {}),
       });
       setToken(tokens.accessToken);
       props.onLogin(await api<Me>("GET", "/users/me"));
@@ -182,13 +184,17 @@ export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string })
               Código TOTP{" "}
               <input
                 aria-label="totp"
-                inputMode="numeric"
                 autoComplete="one-time-code"
+                spellCheck={false}
+                aria-describedby="hint-totp"
                 value={totp}
                 onChange={(e) => setTotp(e.target.value)}
               />
             </label>{" "}
-            <small>El código de 6 cifras de tu app de autenticación (o un código de recuperación).</small>
+            <small id="hint-totp">
+              El código de 6 cifras de tu app de autenticación. ¿Has perdido el móvil? Escribe aquí uno de tus{" "}
+              <strong>códigos de recuperación</strong>: cada uno sirve una sola vez.
+            </small>
           </p>
         )}
         {error && (

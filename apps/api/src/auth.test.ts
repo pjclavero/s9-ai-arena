@@ -4,8 +4,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import * as otplib from "otplib";
 import type { Express } from "express";
+import { freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev, DEV_USERS, DEV_PASSWORD } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -28,12 +28,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await h.stop();
 });
-
-async function totpFromUri(otpauthUrl: string): Promise<string> {
-  const secret = new URL(otpauthUrl).searchParams.get("secret")!;
-  const r = (await otplib.generate({ secret })) as unknown;
-  return typeof r === "string" ? r : String((r as { otp: string }).otp);
-}
 
 describe("T7.2 registro y login", () => {
   it("registro → login → getMe (con campos privados solo para el propio usuario)", async () => {
@@ -166,7 +160,7 @@ describe("T7.2 2FA TOTP (DoD: activación y uso E2E; la recuperación no lo elud
     expect(without.status).toBe(401);
     const withTotp = await request(app)
       .post("/auth/login")
-      .send({ email, password, totp: await totpFromUri(otpauthUrl) });
+      .send({ email, password, totp: await freshTotp(otpauthUrl) });
     expect(withTotp.status).toBe(200);
   });
 
@@ -194,7 +188,7 @@ describe("T7.2 2FA TOTP (DoD: activación y uso E2E; la recuperación no lo elud
     expect(without.status).toBe(401);
     const withTotp = await request(app)
       .post("/auth/login")
-      .send({ email, password: "password-nueva-123", totp: await totpFromUri(otpauthUrl) });
+      .send({ email, password: "password-nueva-123", totp: await freshTotp(otpauthUrl) });
     expect(withTotp.status).toBe(200);
 
     // El token de reset es de un solo uso

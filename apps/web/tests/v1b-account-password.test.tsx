@@ -25,6 +25,9 @@ function fill(current: string, next: string, confirm: string, totp = "") {
   if (totp) fireEvent.change(screen.getByLabelText("totp"), { target: { value: totp } });
 }
 const submit = () => fireEvent.click(screen.getByRole("button", { name: "Cambiar la contraseña" }));
+// ACC-2FA · la página también carga el estado de la 2FA (GET /users/me): aquí sólo cuentan las llamadas del
+// cambio de contraseña.
+const passwordCalls = () => apiMock.mock.calls.filter((c) => c[1] === "/auth/password");
 
 describe("V1-B · AccountPage", () => {
   it("la ruta #/account está registrada", () => {
@@ -52,7 +55,7 @@ describe("V1-B · AccountPage", () => {
     submit();
     const err = await screen.findByTestId("account-error");
     expect(err.textContent).toContain("al menos 12");
-    expect(apiMock).not.toHaveBeenCalled();
+    expect(passwordCalls()).toHaveLength(0);
   });
 
   it("envía POST /auth/password (con TOTP si se escribe), confirma y limpia los campos", async () => {
@@ -76,7 +79,7 @@ describe("V1-B · AccountPage", () => {
     fill("vieja-contraseña-1", "nueva-contraseña-2", "nueva-contraseña-2");
     submit();
     await screen.findByTestId("account-done");
-    expect(apiMock.mock.calls[0][2]).toEqual({
+    expect(passwordCalls()[0][2]).toEqual({
       currentPassword: "vieja-contraseña-1",
       newPassword: "nueva-contraseña-2",
     });

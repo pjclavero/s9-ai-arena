@@ -1,5 +1,6 @@
 /**
  * V1-B · Mi cuenta: cambio de contraseña (`POST /auth/password`).
+ * ACC-2FA · y la verificación en dos pasos (`TwoFactorSection`).
  *
  * Exige la contraseña actual (y el código TOTP si la cuenta tiene 2FA), aplica la política
  * (≥12 caracteres, distinta de la actual), y al terminar avisa de que se han cerrado las
@@ -9,6 +10,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
+import { TwoFactorSection } from "./TwoFactorSection.js";
 
 export const NEW_PASSWORD_MIN = 12;
 
@@ -173,6 +175,7 @@ export function AccountPage() {
           </button>
         </form>
       </div>
+      <TwoFactorSection />
     </>
   );
 }

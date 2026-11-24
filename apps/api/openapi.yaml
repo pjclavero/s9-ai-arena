@@ -136,7 +136,12 @@ info:
   # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
   # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
   # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
-  version: 0.26.0
+  # 0.28.0 · ACC-2FA (aditivo; numerada tras la 0.27.0 de ADM-3): alta de la 2FA en dos fases
+  # (start2faEnrollment POST /auth/2fa/setup, confirm2faEnrollment POST /auth/2fa/confirm con límite de
+  # intentos), regenerateRecoveryCodes (POST /auth/2fa/recovery-codes, reautenticación fuerte, invalida los
+  # anteriores), User.recoveryCodesRemaining en getMe, 429 en disable2fa y enable2fa DEPRECADA. Todo código
+  # TOTP o de recuperación vale UNA vez. Respuestas con secretos: Cache-Control no-store. Sin migración.
+  version: 0.28.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -255,11 +260,12 @@ paths:
     post:
       tags: [auth]
       operationId: enable2fa
-      summary: Activar 2FA TOTP
+      summary: 'DEPRECADA (ACC-2FA): activa la 2FA en el acto sin comprobar un código. Usa /auth/2fa/setup + /auth/2fa/confirm.'
+      deprecated: true
       x-min-role: user
       responses:
         '200':
-          description: Secreto TOTP y códigos de recuperación (se muestran una sola vez)
+          description: Secreto TOTP y códigos de recuperación (se muestran una sola vez; Cache-Control no-store)
           content:
             application/json:
               schema:
@@ -288,6 +294,88 @@ paths:
         '204': { description: Desactivado (el resto de sesiones quedan revocadas) }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/2fa/setup:
+    post:
+      tags: [auth]
+      operationId: start2faEnrollment
+      summary: 'ACC-2FA · Fase 1 del alta: genera un secreto TOTP nuevo y un token de alta sellado (10 min, atado a la sesión). NO activa nada.'
+      x-min-role: user
+      responses:
+        '200':
+          description: Secreto pendiente de confirmar (Cache-Control no-store)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [otpauthUrl, secret, enrollmentToken, expiresIn]
+                properties:
+                  otpauthUrl: { type: string, x-private: true }
+                  secret: { type: string, description: Secreto en base32 para escribirlo a mano, x-private: true }
+                  enrollmentToken: { type: string, description: Token opaco que se devuelve en confirm2faEnrollment, x-private: true }
+                  expiresIn: { type: integer, description: Segundos de validez del token de alta }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /auth/2fa/confirm:
+    post:
+      tags: [auth]
+      operationId: confirm2faEnrollment
+      summary: 'ACC-2FA · Fase 2: activa la 2FA si el código TOTP es válido para el secreto del token de alta. Devuelve los códigos de recuperación UNA vez y revoca el resto de sesiones. 5 fallos ⇒ 429 durante 15 min.'
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollmentToken, totp]
+              properties:
+                enrollmentToken: { type: string, x-private: true }
+                totp: { type: string, description: Código de 6 cifras de la app, x-private: true }
+      responses:
+        '200':
+          description: 2FA activa (Cache-Control no-store)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recoveryCodes: { type: array, items: { type: string }, x-private: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/2fa/recovery-codes:
+    post:
+      tags: [auth]
+      operationId: regenerateRecoveryCodes
+      summary: 'ACC-2FA · Regenera los códigos de recuperación: invalida TODOS los anteriores y devuelve los nuevos UNA vez. Exige reautenticación fuerte; auditado sin los códigos.'
+      x-min-role: user
+      x-reauth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, totp]
+              properties:
+                password: { type: string, x-private: true }
+                totp: { type: string, description: Código TOTP vigente o código de recuperación, x-private: true }
+      responses:
+        '200':
+          description: Códigos nuevos (Cache-Control no-store)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recoveryCodes: { type: array, items: { type: string }, x-private: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ----------------------------------------------------------------- USERS
   /users/me:
@@ -2541,6 +2629,10 @@ components:
         email: { type: string, format: email, x-private: true }
         roles: { type: array, items: { $ref: '#/components/schemas/Role' }, x-private: true }
         twoFactorEnabled: { type: boolean, x-private: true }
+        recoveryCodesRemaining:
+          type: integer
+          x-private: true
+          description: 'ACC-2FA · sólo en getMe y con la 2FA activa: códigos de recuperación sin usar.'
         createdAt: { type: string, format: date-time }
 
     PublicProfile:
@@ -2573,7 +2665,10 @@ components:
       properties:
         email: { type: string, format: email }
         password: { type: string, x-private: true }
-        totp: { type: string, pattern: '^[0-9]{6}$' }
+        totp:
+          type: string
+          x-private: true
+          description: 'Código TOTP de 6 cifras o un código de recuperación (12 caracteres hexadecimales; se admiten espacios, guiones y mayúsculas). Cada código vale una sola vez.'
 
     TokenPair:
       type: object

@@ -10,8 +10,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import * as otplib from "otplib";
 import type { Express } from "express";
+import { anyTotp, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -36,12 +36,6 @@ afterAll(async () => {
   await h.stop();
 });
 
-async function totpFromUri(otpauthUrl: string): Promise<string> {
-  const secret = new URL(otpauthUrl).searchParams.get("secret")!;
-  const r = (await otplib.generate({ secret })) as unknown;
-  return typeof r === "string" ? r : String((r as { otp: string }).otp);
-}
-
 async function registerAndLogin(email: string, password: string) {
   await request(app).post("/auth/register").send({ email, password, displayName: "R24" });
   const login = await request(app).post("/auth/login").send({ email, password });
@@ -63,7 +57,7 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     // Tras activar 2FA el login exige TOTP:
     const login = await request(app)
       .post("/auth/login")
-      .send({ email, password, totp: await totpFromUri(otpauthUrl) });
+      .send({ email, password, totp: await freshTotp(otpauthUrl) });
     expect(login.status).toBe(200);
     access = login.body.accessToken;
   });
@@ -79,7 +73,7 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     const badPass = await request(app)
       .delete("/auth/2fa")
       .set("Authorization", `Bearer ${access}`)
-      .send({ password: "incorrecta-del-todo", totp: await totpFromUri(otpauthUrl) });
+      .send({ password: "incorrecta-del-todo", totp: await anyTotp(otpauthUrl) });
     expect(badPass.status).toBe(401);
 
     const badTotp = await request(app)
@@ -96,13 +90,13 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     // Segunda sesión del mismo usuario, que deberá caer al desactivar el 2FA:
     const other = await request(app)
       .post("/auth/login")
-      .send({ email, password, totp: await totpFromUri(otpauthUrl) });
+      .send({ email, password, totp: await freshTotp(otpauthUrl) });
     expect(other.status).toBe(200);
 
     const ok = await request(app)
       .delete("/auth/2fa")
       .set("Authorization", `Bearer ${access}`)
-      .send({ password, totp: await totpFromUri(otpauthUrl) });
+      .send({ password, totp: await freshTotp(otpauthUrl) });
     expect(ok.status).toBe(204);
 
     const user = await h.db("users").where({ email }).first();

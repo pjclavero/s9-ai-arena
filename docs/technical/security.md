@@ -36,7 +36,7 @@ explotación. Los gates de activación de la ejecución real (Carril I) y del es
 |---|---|
 | Contraseñas | Argon2id (`apps/api/src/auth/passwords.ts`) |
 | Token de acceso | JWT HS256, `iss = s9-ai-arena`, `aud = s9-arena/session`; caduca en **15 min**; enviado como `Authorization: Bearer` |
-| 2FA | TOTP (`otplib`) con códigos de recuperación hasheados. Sólo está disponible por API (`enable2fa`, `disable2fa`) |
+| 2FA | TOTP (`otplib`, ±30 s) con 8 códigos de recuperación hasheados (SHA-256). Pantalla en «Mi cuenta» (ACC-2FA): alta en dos fases (`start2faEnrollment` devuelve un token de alta AES-256-GCM con clave HKDF del secreto de sesión, atado a usuario y sesión, 10 min; `confirm2faEnrollment` activa sólo con un código válido), `regenerateRecoveryCodes` y `disable2fa` con reautenticación fuerte. 5 fallos por usuario ⇒ 429 15 min. Cada paso TOTP se consume una vez por usuario (`api_usage`, ruta `auth.totp.used_step`) y cada código de recuperación se borra en la misma sentencia que lo acepta. Respuestas con secretos: `Cache-Control: no-store`. `enable2fa` (alta directa) queda deprecada |
 | Registro | `POST /auth/register`, abierto a `visitor`, **sin interruptor ni invitación**; concede `user` + `developer` ([TD-012](../roadmap/technical-debt.md#td-012)) |
 | Recuperación | `POST /auth/recover` crea un token de un solo uso, con la misma respuesta exista o no la cuenta; `POST /auth/reset` lo consume (contraseña ≥ 12). **No hay canal** que entregue el token al usuario |
 | Cambio de contraseña | **no existe** |
