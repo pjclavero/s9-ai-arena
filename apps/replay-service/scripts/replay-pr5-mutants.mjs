@@ -797,7 +797,9 @@ export const MUTANTS = [
 ];
 
 function run(test, t) {
-  const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", test, "-t", t, "--maxWorkers=1"], {
+  // MUT_VITEST_CONFIG: config alternativa (p. ej. un alias de `acorn` donde el node_modules local no lo trae).
+  const cfg = process.env.MUT_VITEST_CONFIG ? ["--config", process.env.MUT_VITEST_CONFIG] : [];
+  const r = spawnSync("nice", ["-n", "19", "npx", "vitest", "run", ...cfg, test, "-t", t, "--maxWorkers=1"], {
     cwd: root,
     encoding: "utf8",
     env: process.env,
