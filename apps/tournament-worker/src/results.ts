@@ -162,7 +162,10 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
         const cond = (await db("matches")
           .where({ tournament_id: mctx.tournament.id, slot: p.conditionalOn })
           .first()) as MatchRow | undefined;
-        const condWinner = cond ? (isTeams ? cond.winner_team_id : cond.winner_bot_id) : null;
+        // PR-5 · sólo cuenta un ganador REAL: un match `failed` (sin resultado) guarda quién avanzó por seed y eso no es
+        // haber ganado el bracket; si no, la formalidad coronaría a quien no ganó nada.
+        const condWinner =
+          cond && cond.state === "finished" ? (isTeams ? cond.winner_team_id : cond.winner_bot_id) : null;
         if (condWinner && condWinner === p.home) {
           await finishWithout(condWinner);
           continue;
@@ -415,6 +418,8 @@ export async function leagueTableDetailed(
     // diferencia de puntuación agregada de la serie
     for (const b of battles) {
       const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
+      // Coherente con `seriesOutcome`: un juego sin resultado deportivo no aporta puntuación (ni parcial).
+      if (isTechnicalLimit(result)) continue;
       const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
       const awayTeam = b.game_index % 2 === 1 ? "B" : "A";
       home.scoreDiff += Number(result.score?.[homeTeam] ?? 0) - Number(result.score?.[awayTeam] ?? 0);
@@ -441,7 +446,8 @@ const CLOSED_BATTLE_STATES = ["finished", "failed"];
  * reintentos de infraestructura). El match se cierra en cuanto TODOS sus juegos son terminales:
  *  - con al menos un juego `finished`: la serie se resuelve con los juegos jugados (los
  *    `failed` no cuentan), igual que la salvaguarda técnica;
- *  - con TODOS los juegos `failed`: el match queda `failed` = «sin resultado». No puntúa, no
+ *  - con TODOS los juegos `failed` o sin resultado deportivo (PR-5: `technical_limit`/`recording_limit`): el match
+ *    queda `failed` = «sin resultado». No puntúa, no
  *    mueve el Elo (sólo se calcula con batallas `finished`), no cuenta en V-D-E.
  *      · liga / RR / suizo / equipos: sin ganador, sin puntos para nadie;
  *      · eliminatorias: avanza el mejor seed (el lado `home`), la misma regla que ya
@@ -458,7 +464,10 @@ async function settleMatch(mctx: MaterializeContext, match: MatchRow): Promise<b
   if (games.length === 0) return false; // aún sin materializar: no hay nada que cerrar
   if (games.some((g) => !CLOSED_BATTLE_STATES.includes(g.status))) return false; // la serie sigue en juego
   const p = pairingOf(match);
-  if (games.every((g) => g.status === "failed")) {
+  // V1 REPLAYS PR-5 · una serie en la que NINGÚN juego tiene resultado deportivo (todos `failed`, o con un final de la
+  // lista única `NO_SPORTING_RESULT_END_REASONS`: `technical_limit`, `recording_limit`) no se resuelve por seed ni por
+  // puntos: queda «sin resultado» como un `failed` (no hay ganador, ni empate con punto, ni campeón).
+  if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {
     const advances = p.bracket !== "main" ? p.home : null; // eliminatoria: mejor seed
     await db("matches")
       .where({ id: match.id })

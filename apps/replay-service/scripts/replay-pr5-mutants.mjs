@@ -369,6 +369,241 @@ export const MUTANTS = [
       { file: "apps/web/src/battle-result.ts", find: 'r.endReason === "recording_limit") {', replace: "false) {" },
     ],
   },
+  {
+    id: "M-SERIES-single-elim",
+    why: "una final recording_limit se resuelve por seed y corona campeón",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S1 eliminatoria simple: la final",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-single-elim-4",
+    why: "la eliminatoria de 4 avanza por seed con juegos sin resultado",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S1b eliminatoria simple de 4",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-double-elim",
+    why: "la doble eliminación avanza/baja por seed con juegos sin resultado",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S2 doble eliminación",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-swiss",
+    why: "el suizo da un punto de empate a una serie sin resultado",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S3 suizo",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-league",
+    why: "la liga cuenta un empate en una serie sin resultado",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S4 league",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-round-robin",
+    why: "el round robin cuenta un empate en una serie sin resultado",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S4 round_robin",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-mixed-failed",
+    why: "una serie failed + recording_limit se resuelve por seed",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S5 mezcla",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'if (games.every((g) => g.status === "failed" || (g.status === "finished" && isTechnicalLimit(g.result)))) {',
+        replace: 'if (games.every((g) => g.status === "failed")) {',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-score-diff-partial",
+    why: "la puntuación parcial de un juego truncado entra en el desempate",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S7 serie mixta",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: '      if (isTechnicalLimit(result)) continue;\n      const homeTeam = b.game_index % 2 === 1 ? "A" : "B";\n      const awayTeam = b.game_index % 2 === 1 ? "B" : "A";\n      home.scoreDiff',
+        replace:
+          '      const homeTeam = b.game_index % 2 === 1 ? "A" : "B";\n      const awayTeam = b.game_index % 2 === 1 ? "B" : "A";\n      home.scoreDiff',
+      },
+    ],
+  },
+  {
+    id: "M-RETRY-storage-policy-removed",
+    why: "storage_unavailable vuelve a la política por defecto (2 s, 4 s)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S8 5 fallos",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/errors.ts",
+        find: "  storage_unavailable: {\n    maxFailures: 5,",
+        replace: "  storage_unavailable_x: {\n    maxFailures: 5,",
+      },
+    ],
+  },
+  {
+    id: "M-RETRY-storage-backoff",
+    why: "el backoff de storage_unavailable pasa de minutos a segundos",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S8 5 fallos",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/errors.ts",
+        find: "[60_000, 120_000, 300_000, 600_000]",
+        replace: "[2_000, 4_000, 8_000, 16_000]",
+      },
+    ],
+  },
+  {
+    id: "M-CROSS-patch-unchecked",
+    why: "el PATCH no valida la coherencia entre claves replays.*",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S9 el PATCH rechaza",
+    edits: [
+      {
+        file: "apps/api/src/settings/system-settings.ts",
+        find: 'if (errs.length) throw badRequest(errs.join("; "));',
+        replace: "",
+      },
+    ],
+  },
+  {
+    id: "M-CROSS-reserve-vs-quota",
+    why: "se permite una reserva mayor o igual que la cuota",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S9b la regla",
+    edits: [
+      {
+        file: "packages/system-settings/replay-settings.ts",
+        find: "if (!(v.minFreeBytes < v.quotaMaxBytes)) {",
+        replace: "if (false as boolean) {",
+      },
+    ],
+  },
+  {
+    id: "M-CROSS-battle-vs-quota",
+    why: "se permite un tope por batalla mayor que la cuota",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S9b la regla",
+    edits: [
+      {
+        file: "packages/system-settings/replay-settings.ts",
+        find: "if (!(v.maxBytesPerBattle <= v.quotaMaxBytes)) {",
+        replace: "if (false as boolean) {",
+      },
+    ],
+  },
+  {
+    id: "M-TRUNC-replay-available",
+    why: "un replay truncado se anuncia como reproducible (replayAvailable)",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1 tope alcanzado",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: "return isS9rReplayRef(battle.replay_ref) && !isTruncatedBattle(battle);",
+        replace: "return isS9rReplayRef(battle.replay_ref);",
+      },
+    ],
+  },
+  {
+    id: "M-TRUNC-download-header",
+    why: "la descarga del crudo de un truncado no lo marca",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1 tope alcanzado",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: 'if (isTruncatedBattle(battle)) res.setHeader("X-Replay-Truncated", "true");',
+        replace: "",
+      },
+    ],
+  },
+  {
+    id: "M-TRUNC-verify-corrupt",
+    why: "verify llama corrupt_file a un truncado legítimo",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1 tope alcanzado",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: '          : code === "truncated"\n            ? // Íntegro pero incompleto (recording_limit): no es un fichero corrupto.\n              "truncated"\n            : `corrupt_file: ${code}`,',
+        replace: "          : `corrupt_file: ${code}`,",
+      },
+    ],
+  },
+  {
+    id: "M-WEB-list-link",
+    why: "el listado ofrece «Ver replay» para un truncado",
+    test: "apps/web/tests/pr5-replays-truncated-link.test.tsx",
+    t: "TL1",
+    edits: [
+      {
+        file: "apps/web/src/pages/ReplaysPage.tsx",
+        find: '{r.endReason === "recording_limit" ? (\n                          <span data-testid="replay-truncated">',
+        replace: '{false ? (\n                          <span data-testid="replay-truncated">',
+      },
+    ],
+  },
+  {
+    id: "M-SERIES-bracket-reset-failed-winner",
+    why: "la final de reinicio se da por resuelta con el ganador administrativo de un match failed",
+    test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
+    t: "S2 doble eliminación",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/results.ts",
+        find: 'cond && cond.state === "finished" ? (isTeams',
+        replace: "cond ? (isTeams",
+      },
+    ],
+  },
   // ---- métricas, claves y sonda (PG ligera) ----------------------------------------------------------
   {
     id: "M-SETTINGS-env-ceiling-removed",

@@ -165,10 +165,13 @@ async function rig(opts: {
   return { replaysDir, worker, driver };
 }
 
-/** Procesa la cola saltando el backoff de los reintentos (reloj inyectado), hasta vaciarla. */
+/**
+ * Procesa la cola saltando el backoff de los reintentos (reloj inyectado, 15 min por pasada: `storage_unavailable` espera
+ * 1, 2, 5 y 10 min), hasta vaciarla.
+ */
 async function drainAll(w: TournamentWorker): Promise<void> {
   for (let i = 1; i <= 12; i++) {
-    if ((await w.drain(100, new Date(Date.now() + i * 300_000))) === 0 && i > 3) return;
+    if ((await w.drain(100, new Date(Date.now() + i * 900_000))) === 0 && i > 3) return;
   }
 }
 
@@ -343,6 +346,17 @@ describe("PR-5 · clase A: el tope de la propia batalla", () => {
     const ver = await request(app).post(`/replays/${s.battleId}/verify`).set(auth);
     expect(ver.status).toBeLessThan(500);
     expect(ver.body.matches).toBe(false);
+    // P3-2: un truncado legítimo no es «corrupto»; P2-3: no se anuncia como reproducible; P3-3: la descarga lo marca.
+    expect(ver.body.reason).toBe("truncated");
+    expect(detail.body.replayAvailable).toBe(false);
+    const raw = await request(app).get(`/replays/${s.battleId}`).set(auth).buffer(true);
+    expect(raw.status).toBe(200);
+    expect(raw.headers["x-replay-truncated"]).toBe("true");
+    // control: un replay COMPLETO sí es reproducible y su descarga no lleva la marca
+    const fullDetail = await request(app).get(`/battles/${sf.battleId}`).set(auth);
+    expect(fullDetail.body.replayAvailable).toBe(true);
+    const fullRaw = await request(app).get(`/replays/${sf.battleId}`).set(auth).buffer(true);
+    expect(fullRaw.headers["x-replay-truncated"]).toBeUndefined();
   }, 240_000);
 });
 
@@ -479,7 +493,15 @@ describe("PR-5 · cambio EN CALIENTE (system_settings)", () => {
     }
 
     // Cuota inicial 1 GiB (el mínimo permitido) frente a un volumen que ya usa 1,5 GiB: ni cabe una batalla.
-    expect((await patch([{ key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 0 }])).status).toBe(200);
+    // (la reserva baja a 512 MiB en el mismo PATCH: la coherencia entre claves exige reserva < cuota)
+    expect(
+      (
+        await patch([
+          { key: "replays.quota.min_free_bytes", value: 512 * MiB, expectedVersion: 0 },
+          { key: "replays.quota.max_bytes", value: 1 * GiB, expectedVersion: 0 },
+        ])
+      ).status,
+    ).toBe(200);
     const reader = new SystemSettingsReader(h.db, SYSTEM_SETTINGS_REGISTRY, { env: {}, refreshMs: 60_000 });
     await reader.refresh();
     expect(replayLimitsFromReader(reader)().quotaMaxBytes).toBe(1 * GiB);

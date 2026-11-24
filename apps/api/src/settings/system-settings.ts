@@ -21,8 +21,15 @@ import {
   type SettingValue,
   type SettingsRegistry,
 } from "../../../../packages/system-settings/registry.js";
+import {
+  REPLAYS_LIMIT_MAX_BYTES_PER_BATTLE,
+  REPLAYS_QUOTA_MAX_BYTES,
+  REPLAYS_QUOTA_MIN_FREE_BYTES,
+  replayCrossErrors,
+} from "../../../../packages/system-settings/replay-settings.js";
 import { SYSTEM_SETTINGS_TABLE } from "../../../../packages/system-settings/reader.js";
 
+const REPLAY_KEYS = [REPLAYS_QUOTA_MAX_BYTES, REPLAYS_QUOTA_MIN_FREE_BYTES, REPLAYS_LIMIT_MAX_BYTES_PER_BATTLE];
 export const SETTINGS_AUDIT_ACTION = "settings.system.update";
 export const MAX_PATCH_ITEMS = 50;
 
@@ -161,6 +168,23 @@ export async function patchSettings(
   await db
     .transaction(async (trx) => {
       const t = trx as unknown as Db;
+      // P2-2 · coherencia entre claves `replays.*`: se comprueba sobre los valores EFECTIVOS tras el cambio (los que
+      // no se tocan, con su valor vigente en BD/entorno/defecto), antes de escribir nada.
+      if (valid.some((v) => v.item.key.startsWith("replays."))) {
+        const rows = (await t(SYSTEM_SETTINGS_TABLE).whereIn("key", REPLAY_KEYS).select("key", "value")) as Row[];
+        const byKey = new Map(rows.map((r) => [r.key as string, r.value]));
+        for (const v of valid) byKey.set(v.item.key, v.value);
+        const eff = (key: string, def: number): number => {
+          const d = registry.get(key);
+          return d ? Number(effectiveValue(d, byKey.get(key), env).value) : def;
+        };
+        const errs = replayCrossErrors({
+          quotaMaxBytes: eff(REPLAYS_QUOTA_MAX_BYTES, Infinity),
+          minFreeBytes: eff(REPLAYS_QUOTA_MIN_FREE_BYTES, 0),
+          maxBytesPerBattle: eff(REPLAYS_LIMIT_MAX_BYTES_PER_BATTLE, 0),
+        });
+        if (errs.length) throw badRequest(errs.join("; "));
+      }
       for (const { item, value } of ordered) {
         const d = registry.get(item.key)!;
         const row: Row | undefined = await t(SYSTEM_SETTINGS_TABLE).where({ key: item.key }).forUpdate().first();

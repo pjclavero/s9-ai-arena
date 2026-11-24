@@ -132,7 +132,19 @@ export const RETRY_POLICY: Partial<Record<FailureCode, RetryPolicy>> = {
   },
   // 57014: UN reintento tras una pausa de 30 s y a revisión al segundo fallo (~30 s de coste, no 8,5 min).
   db_query_timeout: { maxFailures: 2, backoffMs: (n) => 30_000 * Math.max(1, n) },
+  // V1 REPLAYS PR-5 (P2-1) · almacenamiento (disco/cuota/reserva, compuerta previa, publicación del replay). Un problema
+  // de espacio suele durar minutos, no segundos: con la política por defecto (2 s, 4 s) un disco bajo unos segundos
+  // agotaba los 3 intentos y cerraba el torneo como fallo técnico. Ahora 5 fallos con esperas de 1, 2, 5 y 10 min
+  // (18 min en total) antes de pasar a revisión manual. Valor fijo en código: no es una clave de `system_settings`.
+  storage_unavailable: {
+    maxFailures: 5,
+    overridesJobMax: true,
+    backoffMs: (n) => STORAGE_BACKOFF_MS[Math.min(Math.max(n, 1), STORAGE_BACKOFF_MS.length) - 1],
+  },
 };
+
+/** Esperas (ms) tras el 1.º, 2.º, 3.º y 4.º fallo de almacenamiento: 1, 2, 5 y 10 min. */
+export const STORAGE_BACKOFF_MS = [60_000, 120_000, 300_000, 600_000];
 
 export function retryPolicyFor(code: FailureCode): RetryPolicy {
   return RETRY_POLICY[code] ?? DEFAULT_RETRY_POLICY;

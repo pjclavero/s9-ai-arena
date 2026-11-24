@@ -24,7 +24,14 @@ import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import { PROJECTED_HTTP_CACHE_CONTROL, projectedEtag } from "../replay-projection.js";
 import { projectBotStats } from "../../../../packages/projection/index.js";
-import { isS9rReplayRef, openView, streamPublicDocument, viewerMetaFromView, whereS9rReplay } from "../replay-s9r.js";
+import {
+  isPlayableReplay,
+  isS9rReplayRef,
+  openView,
+  streamPublicDocument,
+  viewerMetaFromView,
+  whereS9rReplay,
+} from "../replay-s9r.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -188,7 +195,7 @@ export function battleToJson(
     startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
     // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
-    replayAvailable: isS9rReplayRef(b.replay_ref),
+    replayAvailable: isPlayableReplay(b),
     replayHash: b.replay_hash ?? undefined,
     // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
     rules: rulesToJson(rulesOf(b)),
@@ -239,7 +246,7 @@ function publicReplayBattleToJson(b: Record<string, unknown>, participants: Reco
     })),
     result: result ? { score: result.score, ticks: result.ticks } : undefined,
     // Diseño §8 · sólo una receta S9R/1 cuenta como replay disponible.
-    replayAvailable: isS9rReplayRef(b.replay_ref),
+    replayAvailable: isPlayableReplay(b),
   };
 }
 

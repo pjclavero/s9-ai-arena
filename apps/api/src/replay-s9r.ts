@@ -239,10 +239,33 @@ async function sha256OfFile(path: string): Promise<string> {
   return h.digest("hex");
 }
 
+/** ¿La batalla terminó por `recording_limit` (replay TRUNCADO por su tope de bytes)? */
+export function isTruncatedBattle(battle: Record<string, any>): boolean {
+  let r = battle.result;
+  if (typeof r === "string") {
+    try {
+      r = JSON.parse(r);
+    } catch {
+      return false;
+    }
+  }
+  return (r as { endReason?: unknown } | null)?.endReason === "recording_limit";
+}
+
+/**
+ * V1 REPLAYS PR-5 · ¿Se ofrece como replay REPRODUCIBLE? Una receta S9R/1 completa sí; un truncado no (el visor, el
+ * índice y verify lo rechazan: «nunca válido»): sólo descarga del crudo.
+ */
+export function isPlayableReplay(battle: Record<string, any>): boolean {
+  return isS9rReplayRef(battle.replay_ref) && !isTruncatedBattle(battle);
+}
+
 /** Descarga del CRUDO (receta) en streaming. */
 export async function streamRecipe(res: Response, battle: Record<string, any>): Promise<void> {
   res.status(200).setHeader("Content-Type", "application/octet-stream");
   if (battle.replay_hash) res.setHeader("X-Replay-Sha256", String(battle.replay_hash));
+  // Un replay truncado (recording_limit) es íntegro pero incompleto: se marca para quien lo descarga.
+  if (isTruncatedBattle(battle)) res.setHeader("X-Replay-Truncated", "true");
   await pipeline(createReadStream(String(battle.replay_ref)), res);
 }
 
@@ -271,7 +294,19 @@ export async function verifyRecipe(battle: Record<string, any>): Promise<Record<
     return {
       matches: false,
       valid: false,
-      reason: code === "file_sha_mismatch" ? "checksum_mismatch" : `corrupt_file: ${code}`,
+      reason:
+        code === "file_sha_mismatch"
+          ? "checksum_mismatch"
+          : code === "truncated"
+            ? // Íntegro pero incompleto (recording_limit): no es un fichero corrupto.
+              "truncated"
+            : `corrupt_file: ${code}`,
+      ...(code === "truncated"
+        ? {
+            message:
+              "Replay truncado: la batalla superó su tope de grabación. Está íntegro pero incompleto, así que no se verifica.",
+          }
+        : {}),
     };
   }
   let out: Awaited<ReturnType<typeof verifyRecipePath>>;

@@ -156,10 +156,13 @@ async function rig(opts: {
   return { replaysDir, worker };
 }
 
-/** Procesa la cola saltando el backoff de los reintentos (reloj inyectado), hasta vaciarla. */
+/**
+ * Procesa la cola saltando el backoff de los reintentos (reloj inyectado, 15 min por pasada: `storage_unavailable` espera
+ * 1, 2, 5 y 10 min), hasta vaciarla.
+ */
 async function drainAll(w: TournamentWorker): Promise<void> {
   for (let i = 1; i <= 12; i++) {
-    if ((await w.drain(100, new Date(Date.now() + i * 300_000))) === 0 && i > 3) return;
+    if ((await w.drain(100, new Date(Date.now() + i * 900_000))) === 0 && i > 3) return;
   }
 }
 
