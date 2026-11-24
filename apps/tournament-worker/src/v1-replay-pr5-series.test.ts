@@ -280,6 +280,19 @@ describe("PR-5 · P1-R1 · la gran final sin resultado no corona (GF2 no es una 
     expect((await tournamentOf(tid)).champion_bot_id).toBe(gf2.winner_bot_id);
   });
 
+  it("S10d final W sin resultado + GF real: GF2 NO es una formalidad (cond. sin ganador real): se juega, no se cierra sin batallas", async () => {
+    const { tid } = await tournament("double_elimination", 2);
+    const w1 = (await h.db("battles").where({ tournament_id: tid, status: "scheduled" })) as Row[];
+    await finishAs(w1[0].id, "recording_limit", null, { A: 3, B: 0 });
+    const gfB = (await h.db("battles").where({ tournament_id: tid, status: "scheduled" })) as Row[];
+    expect(gfB).toHaveLength(1);
+    await finishAs(gfB[0].id, "completed", "A", { A: 3, B: 0 });
+    const gf2 = (await matchesOf(tid)).find((m) => m.slot === "GF2")!;
+    expect(gf2.state).toBe("scheduled");
+    expect(await h.db("battles").where({ match_id: gf2.id, status: "scheduled" })).toHaveLength(1);
+    await expectNoWinnerWithoutBattles(tid);
+  });
+
   it("S10c el invariante se cumple en los casos «todo sin resultado»", async () => {
     for (const f of ["single_elimination", "double_elimination", "round_robin"] as const) {
       const { tid } = await tournament(f, 4);

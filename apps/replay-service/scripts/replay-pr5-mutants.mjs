@@ -595,7 +595,7 @@ export const MUTANTS = [
     id: "M-SERIES-bracket-reset-failed-winner",
     why: "la final de reinicio se da por resuelta con el ganador administrativo de un match failed",
     test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
-    t: "S2 doble eliminación",
+    t: "S10d final W sin resultado",
     edits: [
       {
         file: "apps/tournament-worker/src/results.ts",
@@ -621,7 +621,7 @@ export const MUTANTS = [
     id: "M-INVARIANT-winner-without-battles",
     why: "un match finished con ganador y 0 batallas con resultado (GF2 tras una final W failed)",
     test: "apps/tournament-worker/src/v1-replay-pr5-series.test.ts",
-    t: "S10c el invariante",
+    t: "S10d final W sin resultado",
     edits: [
       {
         file: "apps/tournament-worker/src/results.ts",
