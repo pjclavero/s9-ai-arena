@@ -1347,7 +1347,7 @@ const m024_replay_artifacts: Migration = {
 //  - `admin_operations.kind` admite `user.recovery_admin` y `user.revoke_admin` (autorización de un segundo admin para
 //    emitir un token de recuperación sobre una cuenta ADMIN o para quitar el rol admin a OTRA cuenta; ver
 //    services/account-recovery.ts), `user.grant_admin` (conceder admin a otra cuenta con otro admin activo) y
-//    `user.block_admin` (bloquear a otra cuenta admin). `users.admin_granted_by` recuerda QUIÉN concedió el rol admin:
+//    `user.block_admin` (bloquear a otra cuenta admin). `admin_grant_edges` (sólo inserción) recuerda QUIÉN concedió el rol admin, de forma acumulativa:
 //    un admin promovido por X nunca aprueba órdenes `user.*` de X (contra el admin «títere»). Para los tipos `user.*` la regla «una activa» pasa a ser POR CUENTA OBJETIVO
 //    (`params->>'userId'`): un admin no puede bloquear la recuperación de las demás con una sola solicitud.
 // Depende de la 023 (FK a admin_operations). La vuelta atrás borra las órdenes de ese tipo, quita las columnas
@@ -1361,12 +1361,33 @@ const m025_user_status_recovery: Migration = {
         ADD COLUMN status     text NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
         ADD COLUMN blocked_at timestamptz,
         ADD COLUMN blocked_by uuid REFERENCES users(id) ON DELETE SET NULL,
-        ADD COLUMN admin_granted_by uuid REFERENCES users(id) ON DELETE SET NULL,
         ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
       ALTER TABLE password_resets
         ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
         ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL,
         ADD COLUMN issued_via_operation uuid REFERENCES admin_operations(id) ON DELETE SET NULL;
+      -- LINAJE de promoción ACUMULATIVO: una arista (grantee ← grantor) por cada concesión del rol admin. Sólo se
+      -- AÑADEN filas: ni la aplicación ni nadie puede modificar o borrar una arista (el trigger rechaza UPDATE y el
+      -- DELETE directo; el borrado en cascada de un usuario sí se admite, pg_trigger_depth() > 1). Así volver a
+      -- conceder el rol por otra cuenta no «blanquea» el linaje.
+      CREATE TABLE admin_grant_edges (
+        grantee    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        grantor    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (grantee, grantor),
+        CHECK (grantee <> grantor)
+      );
+      CREATE INDEX admin_grant_edges_grantor_idx ON admin_grant_edges (grantor);
+      CREATE FUNCTION admin_grant_edges_append_only() RETURNS trigger LANGUAGE plpgsql AS $ae$
+      BEGIN
+        IF TG_OP = 'UPDATE' OR pg_trigger_depth() = 1 THEN
+          RAISE EXCEPTION 'admin_grant_edges es de solo inserción' USING ERRCODE = '23514';
+        END IF;
+        RETURN OLD;
+      END
+      $ae$;
+      CREATE TRIGGER admin_grant_edges_append_only BEFORE UPDATE OR DELETE ON admin_grant_edges
+        FOR EACH ROW EXECUTE FUNCTION admin_grant_edges_append_only();
       CREATE UNIQUE INDEX password_resets_token_hash_uq ON password_resets (token_hash);
       CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
       ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
@@ -1399,7 +1420,9 @@ const m025_user_status_recovery: Migration = {
       DROP INDEX password_resets_token_hash_uq;
       ALTER TABLE password_resets DROP COLUMN issued_via_operation, DROP COLUMN created_by, DROP COLUMN created_at;
       ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
-      ALTER TABLE users DROP COLUMN admin_granted_by, DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
+      DROP TABLE admin_grant_edges;
+      DROP FUNCTION admin_grant_edges_append_only();
+      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
     `);
   },
 };

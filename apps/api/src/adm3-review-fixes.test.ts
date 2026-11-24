@@ -87,6 +87,10 @@ const confirmOp = (t: string, id: string, phrase: string) =>
   request(app).post(`/admin/operations/${id}/confirm`).set(auth(t)).send({ phrase, password: PW });
 const cancelOp = (t: string, id: string, body: Record<string, unknown> = {}) =>
   request(app).post(`/admin/operations/${id}/cancel`).set(auth(t)).send(body);
+const edgesOf = async (id: string) =>
+  (await h.db("admin_grant_edges").where({ grantee: id }).orderBy("created_at")).map(
+    (e: { grantor: string }) => e.grantor,
+  );
 const hasAdmin = async (id: string) => !!(await h.db("user_roles").where({ user_id: id, role: "admin" }).first());
 const audits = async (like: string) =>
   (await h.db("audit_log").where("action", "like", like).where("id", ">", auditFloor).orderBy("id")) as {
@@ -479,7 +483,7 @@ describe("ADM-3 R2 · P1-2 · el admin «títere»", () => {
     const r = await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(await hasAdmin(x.id)).toBe(true);
-    expect((await h.db("users").where({ id: x.id }).first()).admin_granted_by).toBe(a.id);
+    expect(await edgesOf(x.id)).toEqual([a.id]);
     const aud = (await audits("admin.user.roles_set")).find((e) => e.target === `user:${x.id}`);
     expect(aud!.detail).toMatchObject({ bootstrap: true, secondAdminOperation: null });
   });
@@ -510,7 +514,7 @@ describe("ADM-3 R2 · P1-2 · el admin «títere»", () => {
     const ta = await tokenOf(a);
     const op = await createOp(ta, "user.recovery_admin", b.id);
     await confirmOp(await tokenOf(c), op.body.operation.id, op.body.operation.confirmPhrase);
-    await h.db("users").where({ id: c.id }).update({ admin_granted_by: a.id }); // C resulta ser promovido por A
+    await h.db("admin_grant_edges").insert({ grantee: c.id, grantor: a.id }); // C resulta ser promovido por A
     const r = await issue(ta, b.id, { password: PW, operationId: op.body.operation.id });
     expect(r.status).toBe(403);
     expect(r.body.error).toBe("second_admin_approval_invalid");
@@ -585,7 +589,7 @@ describe("ADM-3 R2 · P1-2 · el admin «títere»", () => {
     const ok = await putRoles(ta, u.id, { roles: ["user", "developer", "admin"], password: PW, operationId: id });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(await hasAdmin(u.id)).toBe(true);
-    expect((await h.db("users").where({ id: u.id }).first()).admin_granted_by).toBe(a.id);
+    expect(await edgesOf(u.id)).toEqual([a.id]);
     // reutilizada para otra cuenta: no vale
     const v = await mkUser("gra-v");
     expect((await putRoles(ta, v.id, { roles: ["user", "admin"], password: PW, operationId: id })).status).toBe(403);
@@ -697,7 +701,7 @@ describe("ADM-3 R3 · P1-3 · linaje de promoción, bootstrap y desbloqueo", () 
       operationId: op.body.operation.id,
     });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect((await h.db("users").where({ id: y.id }).first()).admin_granted_by).toBe(x.id);
+    expect(await edgesOf(y.id)).toEqual([x.id]);
     const ty = await tokenOf(y);
     // 3 niveles: Y (nieto de A) no aprueba lo de A, y A (abuelo de Y) no aprueba lo de Y
     const v = await mkAdmin("s9-v");
@@ -759,6 +763,79 @@ describe("ADM-3 R3 · P1-3 · linaje de promoción, bootstrap y desbloqueo", () 
     const tx = await tokenOf(x);
     // X se quita el rol a sí mismo (hay otro admin: A)
     expect((await putRoles(tx, x.id, { roles: ["user", "developer"], password: PW })).status).toBe(200);
-    expect((await h.db("users").where({ id: x.id }).first()).admin_granted_by).toBe(a.id);
+    expect(await edgesOf(x.id)).toEqual([a.id]);
+  });
+});
+
+describe("ADM-3 R4 · linaje acumulativo y topología mínima", () => {
+  const edge = (grantee: string, grantor: string) => h.db("admin_grant_edges").insert({ grantee, grantor });
+
+  it("LINAJE_ACUMULATIVO: si otra cuenta vuelve a conceder el rol, el linaje con el primer promotor NO desaparece (R5)", async () => {
+    const a = await mkAdmin("r5-a");
+    const c = await mkAdmin("r5-c");
+    const e = await mkAdmin("r5-e");
+    const x = await mkAdmin("r5-x"); // títere de A
+    await edge(x.id, a.id);
+    const [ta, tc, te, tx] = [await tokenOf(a), await tokenOf(c), await tokenOf(e), await tokenOf(x)];
+    // 2) X se quita el rol (hay otros admins)
+    expect((await putRoles(tx, x.id, { roles: ["user", "developer"], password: PW })).status).toBe(200);
+    // 3) C (honesto) pide conceder admin a X y A lo aprueba
+    const gr = await approvedOp("user.grant_admin", tc, ta, x);
+    // 4) C aplica: X pasa a tener DOS promotores, A y C
+    const ok = await putRoles(tc, x.id, { roles: ["user", "developer", "admin"], password: PW, operationId: gr });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await edgesOf(x.id)).sort()).toEqual([a.id, c.id].sort());
+    // 5) A pide la recuperación de V y X NO puede aprobarla (sigue en el linaje de A); E sí
+    const v = await mkAdmin("r5-v");
+    const op = await createOp(ta, "user.recovery_admin", v.id);
+    expect(op.status, JSON.stringify(op.body)).toBe(201);
+    const byX = await confirmOp(await tokenOf(x), op.body.operation.id, op.body.operation.confirmPhrase);
+    expect(byX.status).toBe(403);
+    expect((await confirmOp(te, op.body.operation.id, op.body.operation.confirmPhrase)).status).toBe(200);
+  });
+
+  it("ARISTAS_SOLO_INSERCION: ni UPDATE ni DELETE de una arista (la BD lo rechaza); sí el borrado en cascada de un usuario", async () => {
+    const a = await mkUser("ar-a");
+    const b = await mkUser("ar-b");
+    await edge(b.id, a.id);
+    await expect(h.db("admin_grant_edges").where({ grantee: b.id }).update({ grantor: b.id })).rejects.toThrow(
+      /solo inserción/,
+    );
+    await expect(h.db("admin_grant_edges").where({ grantee: b.id }).delete()).rejects.toThrow(/solo inserción/);
+    expect(await edgesOf(b.id)).toEqual([a.id]);
+    // una arista no puede unirse a sí misma ni duplicarse
+    await expect(edge(a.id, a.id)).rejects.toThrow();
+    await expect(edge(b.id, a.id)).rejects.toThrow();
+  });
+
+  it("TOPOLOGIA_T3: con «1 bootstrap + 1 consola» el tercer admin NO se puede operar desde la web (409); con dos linajes de dos, sí (T4)", async () => {
+    const a = await mkAdmin("t3-a"); // consola
+    const ta = await tokenOf(a);
+    const x = await (async () => {
+      const r = await request(app)
+        .post("/auth/register")
+        .send({ email: `rv-t3-x-${++tagN}@test.local`, password: PW, displayName: "T3 X" });
+      return { id: r.body.id as string, email: r.body.email as string } as TUser;
+    })();
+    expect((await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW })).status).toBe(200); // bootstrap: X(A)
+    const c = await mkAdmin("t3-c"); // consola (raíz independiente)
+    const tx = await tokenOf(x);
+    // sobre C: pidan A o X, el único aprobador posible sería del linaje del solicitante o el propio C
+    for (const [tok, who] of [
+      [ta, "A"],
+      [tx, "X"],
+    ] as const) {
+      for (const kind of ["user.recovery_admin", "user.block_admin", "user.revoke_admin"]) {
+        const r = await createOp(tok, kind, c.id);
+        expect(r.status, `${who} ${kind}`).toBe(409);
+        expect(r.body.error).toBe("second_admin_unavailable");
+      }
+    }
+    // T4: C promueve a D (por la web no: se crea la arista y el rol como lo haría una concesión legítima)
+    const d = await mkAdmin("t3-d");
+    await edge(d.id, c.id);
+    const op = await createOp(ta, "user.recovery_admin", c.id);
+    expect(op.status, JSON.stringify(op.body)).toBe(201);
+    expect((await confirmOp(await tokenOf(d), op.body.operation.id, op.body.operation.confirmPhrase)).status).toBe(200);
   });
 });

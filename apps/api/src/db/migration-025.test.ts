@@ -72,6 +72,13 @@ describe("migración 025_user_status_recovery", () => {
     );
   });
 
+  it("MIG025_INDICE_LINAJE: la tabla de aristas del linaje tiene índice por promotor (la clave primaria cubre al promovido)", async () => {
+    const r = await h.db.raw(`SELECT indexname FROM pg_indexes WHERE tablename = 'admin_grant_edges'`);
+    const names = r.rows.map((x: { indexname: string }) => x.indexname);
+    expect(names).toContain("admin_grant_edges_grantor_idx");
+    expect(names).toContain("admin_grant_edges_pkey");
+  });
+
   it("MIG025_UNICIDAD_POR_CUENTA: las órdenes user.* son únicas POR CUENTA objetivo y no por tipo; las demás, por tipo", async () => {
     await h.db("admin_operations").delete();
     const mk = (kind: string, userId?: string) =>

@@ -261,7 +261,7 @@ export async function createPasswordReset(
 }
 
 /**
- * LINAJE de promoción de `userId` en el grafo `users.admin_granted_by`: todos sus ANCESTROS (quien lo promovió, quien
+ * LINAJE de promoción de `userId` en el grafo ACUMULATIVO `admin_grant_edges` (sólo inserción): todos sus ANCESTROS (quien lo promovió, quien
  * promovió a éste…) y todos sus DESCENDIENTES (a quién promovió, y a quién promovieron ésos…), a cualquier profundidad.
  * Un aprobador del linaje del solicitante NUNCA es válido: es la defensa contra el admin «títere» en ambas direcciones
  * y a cualquier número de saltos (A → X → Y).
@@ -269,13 +269,13 @@ export async function createPasswordReset(
 export async function lineageIds(db: Db, userId: string): Promise<string[]> {
   const r = await db.raw(
     `WITH RECURSIVE up(id) AS (
-       SELECT admin_granted_by FROM users WHERE id = ? AND admin_granted_by IS NOT NULL
+       SELECT grantor FROM admin_grant_edges WHERE grantee = ?
        UNION
-       SELECT u.admin_granted_by FROM users u JOIN up ON u.id = up.id WHERE u.admin_granted_by IS NOT NULL
+       SELECT e.grantor FROM admin_grant_edges e JOIN up ON e.grantee = up.id
      ), down(id) AS (
-       SELECT id FROM users WHERE admin_granted_by = ?
+       SELECT grantee FROM admin_grant_edges WHERE grantor = ?
        UNION
-       SELECT u.id FROM users u JOIN down d ON u.admin_granted_by = d.id
+       SELECT e.grantee FROM admin_grant_edges e JOIN down d ON e.grantor = d.id
      )
      SELECT id FROM up UNION SELECT id FROM down`,
     [userId, userId],
@@ -584,7 +584,10 @@ export async function setUserRoles(
         if (wanted.length > 0) await t("user_roles").insert(wanted.map((role) => ({ user_id: targetId, role })));
         voided = await voidOpenResets(t, targetId);
         // Quién concedió el rol admin (para que un promovido no apruebe órdenes de su promotor).
-        if (plan.grantsAdmin) await t("users").where({ id: targetId }).update({ admin_granted_by: ctx.actorId });
+        // Linaje ACUMULATIVO: se AÑADE una arista; nunca se actualiza ni se borra (otra concesión no blanquea).
+        if (plan.grantsAdmin && ctx.actorId) {
+          await t("admin_grant_edges").insert({ grantee: targetId, grantor: ctx.actorId }).onConflict().ignore();
+        }
       }
       await audit(t, {
         actorId: ctx.actorId,
