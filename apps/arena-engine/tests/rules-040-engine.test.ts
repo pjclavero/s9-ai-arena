@@ -16,7 +16,15 @@ import { initPhysics } from "../src/sim/physics.js";
 import { ctfArena, emptyArena, gunnerLoadout, sandbagLoadout, scoutLoadout } from "../src/fixtures.js";
 import { FlagRunnerBot, HunterBot, IdleBot } from "../src/stubs.js";
 import { Vehicle } from "../src/sim/vehicle.js";
-import { fromJsonl, record, toJsonl, verify } from "../src/replay.js";
+import { record, verify } from "../src/replay.js";
+import { readS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+/** V1 REPLAYS PR-4b · round-trip por S9R/1 (el formato real en disco), no por JSONL. */
+async function s9rRoundTrip(r: any): Promise<any> {
+  return readS9rReplay((await writeS9rReplay(mkdtempSync(joinPath(tmpdir(), "s9r-rt-")), r)).path);
+}
 
 beforeAll(async () => {
   await initPhysics();
@@ -151,7 +159,7 @@ describe("CTF · prórroga (next_score_wins)", () => {
     );
     expect(replay.header.versions.engine).toBe("0.5.0"); // ADR-024 · motor de la OLA 2
     expect(replay.header.ruleset.overtime).toEqual({ kind: "next_score_wins" });
-    const v = await verify(fromJsonl(toJsonl(replay)));
+    const v = await verify(await s9rRoundTrip(replay));
     expect(v.matches).toBe(true);
   }, 60_000);
 

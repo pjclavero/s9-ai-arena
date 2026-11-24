@@ -25,6 +25,10 @@ COPY apps/arena-engine ./apps/arena-engine
 # necesita el resto (api, web, gateway...). Sin este COPY la imagen arranca
 # y muere con ERR_MODULE_NOT_FOUND en el primer import cruzado.
 COPY apps/bot-manager ./apps/bot-manager
+# V1 REPLAYS PR-4b · la CLI (cli.ts, CMD por defecto) graba y verifica replays en S9R/1, cuyo
+# formato vive en apps/replay-service (import() en `run --out` y `verify`). Sin este COPY esos
+# subcomandos morían con ERR_MODULE_NOT_FOUND (revisión de #345, P2-1).
+COPY apps/replay-service ./apps/replay-service
 COPY maps ./maps
 
 # B13 · Aquí NO se siembra ningún directorio de datos, y es deliberado.

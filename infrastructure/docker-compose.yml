@@ -309,8 +309,9 @@ services:
       # real aquí a propósito): sin configurar, /run sigue en 503
       # runner_unavailable. ARENA_NETWORK/ARENA_ENGINE_HOST tienen defaults
       # seguros (los mismos que ya usaba B1 como fallback en cfg). El secreto
-      # interno de /run va POR ARCHIVO (mismo secreto Docker que usa la API para
-      # llamar aquí — así ambos lados coinciden sin ponerlo en claro).
+      # interno de /run va POR ARCHIVO (secreto Docker; sólo lo monta este
+      # servicio: la API ya no lo recibe, V1 BLOCK-RUN, y /run está apagado por
+      # defecto salvo ARENA_ENGINE_RUN_ENABLED, que este compose no define).
       DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-}
       ARENA_NETWORK: ${ARENA_NETWORK:-arena}
       ARENA_ENGINE_HOST: ${ARENA_ENGINE_HOST:-arena-engine}
@@ -426,7 +427,7 @@ services:
     volumes:
       # B7 · ESCRITURA, y justificado por el código: finishBattle
       # (apps/tournament-worker/src/battle-runner.ts) llama a
-      # `ingestReplay(replaysDir, …)` y guarda la ruta devuelta en
+      # `publishPair` (S9R/1, ReplayRecorder) en replaysDir y guarda la ruta en
       # battles.replay_ref. El servicio declaraba REPLAYS_DIR=/data/replays
       # desde siempre pero NO montaba el volumen: escribía en el sistema de
       # ficheros efímero del contenedor y la API (otro contenedor) nunca

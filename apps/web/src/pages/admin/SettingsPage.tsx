@@ -60,7 +60,15 @@ export function parseDraft(s: SystemSetting, raw: string | boolean): SettingValu
 function SettingRow(props: { s: SystemSetting; busy: boolean; onSave: (s: SystemSetting, v: SettingValue) => void }) {
   const { s } = props;
   const [draft, setDraft] = useState<string | boolean>(typeof s.value === "boolean" ? s.value : String(s.value));
-  useEffect(() => setDraft(typeof s.value === "boolean" ? s.value : String(s.value)), [s.value, s.version]);
+  // El borrador se resincroniza SÓLO cuando cambia lo vigente (valor/versión), y durante el render:
+  // un efecto pasivo corría también al montar y, si se ejecutaba tras escribir el usuario, le devolvía
+  // el borrador al valor del servidor (botón «Guardar» deshabilitado, cambio perdido).
+  const serverKey = `${s.version}|${String(s.value)}`;
+  const [seenKey, setSeenKey] = useState(serverKey);
+  if (seenKey !== serverKey) {
+    setSeenKey(serverKey);
+    setDraft(typeof s.value === "boolean" ? s.value : String(s.value));
+  }
   const parsed = parseDraft(s, draft);
   const dirty = parsed !== undefined && parsed !== s.value;
   const id = `setting-${s.key}`;

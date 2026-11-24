@@ -7,8 +7,8 @@
  * `verify` es el criterio del cap. 28: re-simula con la versión de motor registrada en la
  * cabecera y comprueba que resultado, hashes intermedios y checkpoints coinciden con el oficial.
  * V1 REPLAYS PR-4 · lee la RECETA S9R/1 por fragmentos (`<dir>/<battleId>.<intento>.s9r`; si hay
- * varias, la del intento más alto). `ingest`, `sweep` y `serve` trabajaban con el formato JSONL
- * anterior (corte D-OP-30): están RETIRADOS y responden con error (PR-4b los quita del código).
+ * varias, la del intento más alto). V1 REPLAYS PR-4b · `ingest`, `sweep` y `serve` (formato JSONL
+ * anterior, corte D-OP-30) se RETIRARON del código: son comandos desconocidos.
  */
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -54,11 +54,6 @@ async function main(): Promise<number> {
       );
       return valid && verification.matches ? 0 : 1;
     }
-    case "ingest":
-    case "sweep":
-    case "serve":
-      console.error(`'${cmd}' retirado: trabajaba con el formato de replay anterior (corte D-OP-30).`);
-      return 2;
     default:
       console.error("comandos: verify");
       return 2;

@@ -29,11 +29,13 @@ deuda que los sigue. La causa técnica completa está en [technical-debt.md](tec
 | Un doble clic en «Crear bot» puede dar un error | carrera con `UNIQUE(owner_id, name)` (sin re-comprobar) | producción y `main` | [TD-013](technical-debt.md#td-013) |
 | Al añadir un miembro por email, el mensaje revela si la cuenta existe | alta inmediata sin invitación (sin re-comprobar) | producción y `main` | [TD-041](technical-debt.md#td-041) |
 | No se puede borrar un mapa ni una versión de mapa | no hay operación de borrado de mapas | producción y `main` | [TD-042](technical-debt.md#td-042) |
+| **Cambio de contrato (V1 REPLAYS PR-4b)**: el reproductor de replays ya no tiene capa de depuración; el índice de `GET /api/v1/replays/{id}/index` deja de llevar el campo `debugOpen` y ningún segmento trae `commands`. Un cliente que leyera `debugOpen` debe tratar su ausencia como «sin depuración» | retirada por decisión del operador: S9R/1 nunca sirvió comandos al visor (el campo valía siempre `false`) y no había pantalla para abrirla | `main` tras mergear PR-4b | (decisión, sin deuda) |
 
 ## Operador
 
 | Síntoma | Causa resumida | Dónde | Deuda |
 |---|---|---|---|
+| El replay-service ya no acepta replays (`POST /replays/:id`, `/retention/sweep`, CLI `ingest`/`sweep`/`serve` retirados) y las variables `REPLAY_SERVICE_URL`, `REPLAY_INGEST_REQUIRED` y `REPLAY_INGEST_SECRET[_FILE]` del Compose no tienen efecto; el lanzador HTTP de la API (apagado) nunca archiva replays (`ingested:false`; estricto ⇒ `failed`) | V1 REPLAYS PR-4b: el único productor de replays es el tournament-worker (S9R/1). Limpiar las variables y el secreto del Compose y retirar el lanzador entero queda como deuda post-V1 (riesgo RB-R4) | `main` tras mergear PR-4b | (post-V1) |
 | El job `nightly` está siempre en rojo | `unshare` no disponible en el runner y la imagen `backup:e2e-test` no se carga; 5 de las últimas 5 ejecuciones fallan | CI | [TD-019](technical-debt.md#td-019) |
 | `GET /api/healthz` responde 200 aunque la API esté caída | el gateway sirve la SPA y `/healthz` es estático | producción y `main` | [TD-020](technical-debt.md#td-020) |
 | La alerta de backup no avisa | el perfil `observability` no está desplegado; las alertas existen en la configuración | producción | [TD-007](technical-debt.md#td-007) |

@@ -98,3 +98,31 @@ describe("RD6 · proyección pública en streaming = proyección del stream comp
     });
   }
 });
+
+/**
+ * V1 REPLAYS PR-4b · recupera la aserción directa del antiguo «segmento por ticks: arranca en el
+ * keyframe anterior y respeta el rango» (sliceSegment, retirado) sobre `rawSegment` (revisión de
+ * #345, P3-3).
+ */
+describe("rawSegment · arranca en el keyframe anterior y respeta el rango", () => {
+  it("fromKeyframeTick = keyframe anterior, primer snapshot = keyframe, nada pasado de toTick, y aterriza en el tick pedido", async () => {
+    const view = await ViewReader.open(viewPath);
+    try {
+      const kfs = view.summary.keyframes;
+      expect(kfs.length).toBeGreaterThan(2);
+      const midTick = Math.floor(replay.result.ticks / 2);
+      const kf = view.nearestKeyframe(midTick)!;
+      expect(kf.tick).toBeLessThanOrEqual(midTick);
+      // Un mid que NO es keyframe: el segmento tiene que retroceder hasta él.
+      expect(kfs.some((k) => k.tick === midTick)).toBe(false);
+      const seg = (await rawSegment({ id: "rd6_battle" }, view, { from: midTick, to: midTick + 90 })) as any;
+      expect(seg.fromKeyframeTick).toBe(kf.tick);
+      expect(seg.snapshots[0].tick).toBe(kf.tick);
+      expect(seg.snapshots.at(-1).tick).toBeLessThanOrEqual(midTick + 90);
+      expect(seg.snapshots.some((s: { tick: number }) => Math.abs(s.tick - midTick) <= 3)).toBe(true);
+      for (const e of seg.events) expect(e.tick).toBeLessThanOrEqual(midTick + 90);
+    } finally {
+      await view.close();
+    }
+  });
+});

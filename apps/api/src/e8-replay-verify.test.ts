@@ -20,7 +20,7 @@ import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { fromJsonl, record, type Replay } from "../../arena-engine/src/replay.js";
+import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import type { S9rFixture as StoredReplay } from "../../replay-service/src/testing/s9r-fixture.js";

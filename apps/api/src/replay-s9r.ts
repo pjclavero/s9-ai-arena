@@ -142,7 +142,6 @@ export function storeIndexOf(battle: Record<string, any>, view: ViewReader): Rec
       score: r.score ?? {},
       finalStateHash: battle.final_state_hash ?? null,
     },
-    debugOpen: false,
   };
 }
 

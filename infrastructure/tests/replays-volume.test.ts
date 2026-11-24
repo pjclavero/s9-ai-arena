@@ -12,7 +12,7 @@
  *
  *  2. `arena_replays` NO estaba montado ni en `api` ni en `tournament-worker`,
  *     que son justamente el CONSUMIDOR y el PRODUCTOR de los replays de torneo
- *     (evidencia en el código: battle-runner.ts llama a `ingestReplay` y deja
+ *     (evidencia en el código: battle-runner.ts publica el S9R/1 (`publishPair`) y deja
  *     la ruta en battles.replay_ref; routes/battles.ts hace
  *     `readFile(battle.replay_ref)`). La ruta de replays de torneo no podía
  *     funcionar.
@@ -69,9 +69,9 @@ function replaysMount(def: Svc): Montaje | undefined {
 // ─────────────────────────── cableado del volumen ───────────────────────────
 
 describe("B7 · productor y consumidor de replays comparten el volumen", () => {
-  it("tournament-worker (PRODUCTOR: ingestReplay) monta arena_replays en escritura", () => {
+  it("tournament-worker (PRODUCTOR: publishPair S9R/1) monta arena_replays en escritura", () => {
     const m = replaysMount(services["tournament-worker"]);
-    expect(m, "tournament-worker escribe replays con ingestReplay y DEBE montar arena_replays").toBeDefined();
+    expect(m, "tournament-worker escribe replays (publishPair) y DEBE montar arena_replays").toBeDefined();
     expect(m!.target).toBe(MOUNT);
     expect(m!.readOnly, "el worker escribe: no puede ser :ro").toBe(false);
   });

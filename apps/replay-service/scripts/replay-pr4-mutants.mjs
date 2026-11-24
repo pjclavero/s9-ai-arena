@@ -131,8 +131,9 @@ export const MUTANTS = [
       {
         file: "apps/replay-service/src/main.ts",
         find: 'mountVersionEndpoint(app, "replay-service");',
+        // V1 REPLAYS PR-4b · `server.js` ya no existe: el mutante reintroduce una ruta de escritura.
         replace:
-          'mountVersionEndpoint(app, "replay-service");\napp.use((await import("./server.js")).createReplayServer({ dir }));',
+          'mountVersionEndpoint(app, "replay-service");\napp.post("/replays/:id", (_req, res) => { res.status(201).json({ ok: true }); });',
       },
     ],
   },

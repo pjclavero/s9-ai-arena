@@ -1,5 +1,7 @@
 /**
- * Replays (T2.6). Formato JSONL: una línea por registro, comprimible con zstd por E8.
+ * Replays (T2.6). V1 REPLAYS: se graban en S9R/1 (receta + vista, por fragmentos; ver
+ * apps/replay-service/src/s9r). Este módulo define el `Replay` en memoria, la cabecera y la
+ * re-simulación/verificación.
  *
  * Un replay NO es un vídeo: es la RECETA para volver a cocinar la batalla.
  * Contiene la cabecera (config + semilla + versiones + checksum de mapa) y los comandos
@@ -108,84 +110,9 @@ export interface Replay {
   result: BattleResult;
 }
 
-/** Registro JSONL con discriminante `t`; un payload con su propia clave `t` es corrupción. */
-function record_(t: string, rec: object): string {
-  if (Object.prototype.hasOwnProperty.call(rec, "t")) {
-    throw new Error(`Replay: el registro ${t} trae una clave "t" propia; no se serializa con ambigüedad`);
-  }
-  return JSON.stringify({ t, ...rec });
-}
-
-/** Serializa a JSONL: una línea por registro. Compacto, streameable y diffable. */
-export function toJsonl(replay: Replay): string {
-  const lines: string[] = [];
-  lines.push(record_("header", replay.header));
-  for (const c of replay.commands) lines.push(record_("cmd", c));
-  for (const e of replay.events) lines.push(record_("evt", e));
-  for (const s of replay.snapshots) lines.push(record_("snap", s));
-  for (const h of replay.stateHashes) lines.push(record_("hash", h));
-  for (const k of replay.checkpoints ?? []) lines.push(record_("ckpt", k));
-  lines.push(record_("result", replay.result));
-  return lines.join("\n") + "\n";
-}
-
-/**
- * Lee un replay v2. ESTRICTO: rechaza formatVersion distinta de 2, registros desconocidos,
- * varias cabeceras o resultados, y registros antes de la cabecera.
- */
-export function fromJsonl(jsonl: string): Replay {
-  const replay: Replay = {
-    header: null as any,
-    commands: [],
-    events: [],
-    snapshots: [],
-    stateHashes: [],
-    checkpoints: [],
-    result: null as any,
-  };
-  for (const line of jsonl.split("\n")) {
-    if (!line.trim()) continue;
-    const rec = JSON.parse(line);
-    const { t, ...rest } = rec;
-    if (t !== "header" && !replay.header) {
-      throw new Error(`Replay corrupto: registro ${JSON.stringify(t)} antes de la cabecera`);
-    }
-    switch (t) {
-      case "header":
-        if (replay.header) throw new Error("Replay corrupto: más de una cabecera");
-        if (rest.formatVersion !== REPLAY_FORMAT_VERSION) {
-          throw new Error(
-            `format_version_mismatch: replay=${JSON.stringify(rest.formatVersion)}, soportada=${REPLAY_FORMAT_VERSION} (BACKWARD_COMPATIBILITY_REQUIRED=NO: los replays v1 no se leen)`,
-          );
-        }
-        replay.header = rest as ReplayHeader;
-        break;
-      case "cmd":
-        replay.commands.push(rest as any);
-        break;
-      case "evt":
-        replay.events.push(rest);
-        break;
-      case "snap":
-        replay.snapshots.push(rest);
-        break;
-      case "hash":
-        replay.stateHashes.push(rest as any);
-        break;
-      case "ckpt":
-        replay.checkpoints.push(rest as any);
-        break;
-      case "result":
-        if (replay.result) throw new Error("Replay corrupto: más de un resultado");
-        replay.result = rest as BattleResult;
-        break;
-      default:
-        throw new Error(`Replay corrupto: registro desconocido t=${JSON.stringify(t)}`);
-    }
-  }
-  if (!replay.header) throw new Error("Replay sin cabecera: archivo corrupto");
-  return replay;
-}
+// V1 REPLAYS PR-4b · `toJsonl`/`fromJsonl` (JSONL v2 de fichero entero) RETIRADOS (D-OP-30): el
+// replay se graba y se lee en S9R/1 (apps/replay-service/src/s9r: ReplayRecorder, RecipeCursor,
+// ViewReader). Un `Replay` en memoria se escribe/lee con s9r/replay-file.ts (herramientas y tests).
 
 /**
  * Agente que NO piensa: reproduce los comandos grabados.
@@ -329,7 +256,8 @@ export function configFromHeader(h: ReplayHeader, recordReplay = false): BattleC
 /** Por qué ESTE motor no puede verificar la cabecera (motivo explícito), o null si puede. */
 export function headerIncompatibility(h: ReplayHeader): string | null {
   if (!h || h.formatVersion !== REPLAY_FORMAT_VERSION) {
-    return `format_version_mismatch: replay=${JSON.stringify(h?.formatVersion)}, soportada=${REPLAY_FORMAT_VERSION}`;
+    // PR-4b · motivo único para un contenido que este motor no entiende (sin rama «formato anterior»).
+    return `unsupported_format: replay=${JSON.stringify(h?.formatVersion)}, soportada=${REPLAY_FORMAT_VERSION}`;
   }
   const cur = runningVersions(h.rulesetId);
   for (const k of ["engine", "physics", "protocol"] as const) {

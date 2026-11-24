@@ -10,16 +10,14 @@
  * opt-in (`S9_RUN_REAL_DOCKER_E2E=1`) y NO corre aquí.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
 import { WebSocket } from "ws";
-import express from "express";
 
 import { verify } from "../../apps/arena-engine/src/replay.js";
-import { createReplayServer } from "../../apps/replay-service/src/server.js";
+import { readS9rReplay } from "../../apps/replay-service/src/s9r/replay-file.js";
+import { verifyFile } from "../../apps/replay-service/src/s9r/verify.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../apps/bot-manager/src/container-runner.js";
 import { readHarnessConfig, runSmokeHarness } from "../../scripts/e2e-real-battle-smoke.js";
 
@@ -113,163 +111,63 @@ describe("R6.2 · arnés e2e-real-battle-smoke (mock/dry-run)", () => {
     expect(cfg.dockerProxyUrl).toContain("docker-proxy");
   });
 
-  it("orquesta la batalla con runner mock, escribe replay a disco y es verificable", async () => {
+  it("orquesta la batalla con runner mock, publica el replay S9R/1 a disco y es verificable", async () => {
     const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
-    const replayOut = join(dir, "replay.jsonl");
     const cfg = readHarnessConfig({
       SMOKE_BOT_DIGEST: REAL_DIGEST,
       ENGINE_HOST: "127.0.0.1",
       SMOKE_TICKS: "150",
       SMOKE_TIMEOUT_MS: "20000",
-      REPLAY_OUT: replayOut,
+      REPLAY_OUT_DIR: dir,
     });
 
-    const { result, replay, replayPath } = await runSmokeHarness(cfg, mockRunner());
+    const { result, replay, replayPath, viewPath, verified } = await runSmokeHarness(cfg, mockRunner());
 
     expect(result.ticks).toBeGreaterThan(0);
     expect(result.finalStateHash).toBeTruthy();
-    expect(replayPath).toBe(replayOut);
-    expect(existsSync(replayOut)).toBe(true);
-    expect(readFileSync(replayOut, "utf8").length).toBeGreaterThan(0);
+    expect(replayPath.startsWith(dir)).toBe(true);
+    expect(replayPath.endsWith(".s9r")).toBe(true);
+    expect(existsSync(replayPath) && existsSync(viewPath)).toBe(true);
+    expect(readFileSync(replayPath).length).toBeGreaterThan(0);
+    expect(verified).toBe(true);
     const v = await verify(replay);
     expect(v.recomputedHash).toBe(result.finalStateHash);
   }, 30000);
 });
 
-const httpServers: Server[] = [];
-afterEach(async () => {
-  await Promise.all(httpServers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
-});
-
-/** B8 · credencial interna compartida por el arnés y el replay-service de estos tests. */
-const E2E_INGEST_SECRET = "secreto-ingesta-e2e";
-
-/** Levanta un replay-service REAL en un puerto libre; devuelve su URL y el dir de replays. */
-async function startReplayService(): Promise<{ url: string; dir: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "s9-replaysvc-"));
-  const app = express();
-  // B8 · el replay-service real exige credencial para ESCRIBIR. Se le da la del
-  // arnés (E2E_INGEST_SECRET) para poder probar el circuito completo de ingesta;
-  // que una ingesta sin credencial se rechace lo cubre
-  // apps/replay-service/tests/ingest-auth.test.ts.
-  app.use(createReplayServer({ dir, internalSecret: E2E_INGEST_SECRET }));
-  const server = await new Promise<Server>((resolve) => {
-    const s = app.listen(0, "127.0.0.1", () => resolve(s));
-  });
-  httpServers.push(server);
-  const port = (server.address() as AddressInfo).port;
-  return { url: `http://127.0.0.1:${port}`, dir };
-}
-
-describe("R7 · el arnés INGESTA el replay real en el replay-service", () => {
-  it("readHarnessConfig lee REPLAY_SERVICE_URL (opcional)", () => {
-    expect(readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST }).replayServiceUrl).toBeUndefined();
+/**
+ * V1 REPLAYS PR-4b · sustituye a «R7 · el arnés INGESTA el replay en el replay-service» y «R7-A ·
+ * modos de ingesta + listado global»: la ingesta HTTP (JSONL) está RETIRADA. Lo que se conserva:
+ * el replay queda como recurso GESTIONADO (S9R/1 publicado con prueba de cierre, el formato que la
+ * API sirve y lista desde la BD), es EXACTAMENTE la batalla jugada, un fichero corrupto no pasa
+ * por bueno y el modo estricto falla cerrado.
+ */
+describe("V1 REPLAYS PR-4b · el arnés publica el replay en S9R/1 (ingesta HTTP retirada)", () => {
+  it("readHarnessConfig: sin variables de ingesta (REPLAY_SERVICE_URL ya no hace nada); el estricto se mantiene", () => {
     const cfg = readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST, REPLAY_SERVICE_URL: "http://replay-service:8083" });
-    expect(cfg.replayServiceUrl).toBe("http://replay-service:8083");
+    expect(cfg).not.toHaveProperty("replayServiceUrl");
+    expect(cfg.replayVerifyRequired).toBe(false);
+    expect(readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST, REPLAY_INGEST_REQUIRED: "1" }).replayVerifyRequired).toBe(
+      true,
+    );
   });
 
-  it("con REPLAY_SERVICE_URL, el replay queda almacenado y recuperable (recurso gestionado)", async () => {
-    const svc = await startReplayService();
-    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
-    const cfg = readHarnessConfig({
-      SMOKE_BOT_DIGEST: REAL_DIGEST,
-      ENGINE_HOST: "127.0.0.1",
-      SMOKE_TICKS: "150",
-      SMOKE_TIMEOUT_MS: "20000",
-      REPLAY_OUT: join(dir, "replay.jsonl"),
-      REPLAY_SERVICE_URL: svc.url,
-      REPLAY_INGEST_SECRET: E2E_INGEST_SECRET,
-    });
-
-    const outcome = await runSmokeHarness(cfg, mockRunner());
-
-    // Ingesta OK (201) con sha256.
-    expect(outcome.ingest?.ok).toBe(true);
-    expect(outcome.ingest?.status).toBe(201);
-    expect((outcome.ingest?.body as { sha256?: string }).sha256).toBeTruthy();
-
-    // El replay es recuperable por su battleId (existe GET /replays/:battleId).
-    const battleId = outcome.replay.header.battleId;
-    const got = await fetch(new URL(`/replays/${battleId}`, svc.url));
-    expect(got.status).toBe(200);
-    expect(Number(got.headers.get("content-length"))).toBeGreaterThan(0);
-  }, 30000);
-
-  it("un replay corrupto es rechazado por el servicio (no se declara ingesta OK)", async () => {
-    const svc = await startReplayService();
-    // B8 · CON credencial válida: lo que se prueba aquí es que el CONTENIDO
-    // inválido se rechaza, no la autenticación (eso va en su propio fichero).
-    const res = await fetch(new URL("/replays/whatever", svc.url), {
-      method: "POST",
-      headers: { "content-type": "application/x-ndjson", "x-replay-ingest-auth": E2E_INGEST_SECRET },
-      body: "esto no es un replay jsonl válido",
-    });
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(res.status).not.toBe(401);
-  });
-});
-
-describe("R7-A · modos de ingesta + listado global", () => {
-  it("modo REQUIRED con servicio caído → runSmokeHarness FALLA (resultado operativo)", async () => {
+  it("el replay publicado es EXACTAMENTE la batalla jugada y un byte alterado no pasa la integridad", async () => {
     const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
     const cfg = readHarnessConfig({
       SMOKE_BOT_DIGEST: REAL_DIGEST,
       ENGINE_HOST: "127.0.0.1",
       SMOKE_TICKS: "120",
       SMOKE_TIMEOUT_MS: "20000",
-      REPLAY_OUT: join(dir, "r.jsonl"),
-      REPLAY_SERVICE_URL: "http://127.0.0.1:59998", // puerto muerto
-      REPLAY_INGEST_REQUIRED: "1",
-      REPLAY_INGEST_RETRIES: "1",
-      REPLAY_INGEST_TIMEOUT_MS: "800",
-    });
-    await expect(runSmokeHarness(cfg, mockRunner())).rejects.toThrow(/REQUIRED/);
-  }, 30000);
-
-  it("modo best-effort con servicio caído → no falla; marca ingest.ok=false con intentos", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
-    const cfg = readHarnessConfig({
-      SMOKE_BOT_DIGEST: REAL_DIGEST,
-      ENGINE_HOST: "127.0.0.1",
-      SMOKE_TICKS: "120",
-      SMOKE_TIMEOUT_MS: "20000",
-      REPLAY_OUT: join(dir, "r.jsonl"),
-      REPLAY_SERVICE_URL: "http://127.0.0.1:59998",
-      REPLAY_INGEST_RETRIES: "1",
-      REPLAY_INGEST_TIMEOUT_MS: "800",
+      REPLAY_OUT_DIR: dir,
+      REPLAY_VERIFY_REQUIRED: "1",
     });
     const outcome = await runSmokeHarness(cfg, mockRunner());
-    expect(outcome.ingest?.ok).toBe(false);
-    expect(outcome.ingest?.attempts).toBeGreaterThanOrEqual(1);
-    expect(outcome.ingest?.verified).toBe(true);
-  }, 30000);
-
-  it("REPLAY_INGEST_ENABLED=0 desactiva la ingesta aunque haya URL", () => {
-    const cfg = readHarnessConfig({
-      SMOKE_BOT_DIGEST: REAL_DIGEST,
-      REPLAY_SERVICE_URL: "http://replay-service:8083",
-      REPLAY_INGEST_ENABLED: "0",
-    });
-    expect(cfg.replayServiceUrl).toBeUndefined();
-  });
-
-  it("tras ingestar, GET /replays lista la batalla", async () => {
-    const svc = await startReplayService();
-    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
-    const cfg = readHarnessConfig({
-      SMOKE_BOT_DIGEST: REAL_DIGEST,
-      ENGINE_HOST: "127.0.0.1",
-      SMOKE_TICKS: "120",
-      SMOKE_TIMEOUT_MS: "20000",
-      REPLAY_OUT: join(dir, "r.jsonl"),
-      REPLAY_SERVICE_URL: svc.url,
-      REPLAY_INGEST_SECRET: E2E_INGEST_SECRET,
-    });
-    const outcome = await runSmokeHarness(cfg, mockRunner());
-    expect(outcome.ingest?.ok).toBe(true);
-    const res = await fetch(new URL("/replays", svc.url));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { items: { battleId: string }[] };
-    expect(body.items.some((i) => i.battleId === outcome.replay.header.battleId)).toBe(true);
+    expect(outcome.verified).toBe(true);
+    expect(await readS9rReplay(outcome.replayPath)).toEqual(outcome.replay);
+    const bytes = readFileSync(outcome.replayPath);
+    bytes[Math.floor(bytes.length / 2)] ^= 0xff;
+    writeFileSync(outcome.replayPath, bytes);
+    expect((await verifyFile(outcome.replayPath)).ok).toBe(false);
   }, 30000);
 });

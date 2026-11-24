@@ -9,7 +9,16 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { initPhysics } from "../../src/sim/physics.js";
-import { fromJsonl, toJsonl, verify } from "../../src/replay.js";
+import { verify } from "../../src/replay.js";
+import { readS9rReplay, writeS9rReplay } from "../../../replay-service/src/testing/s9r-fixture.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+/** V1 REPLAYS PR-4b · round-trip por S9R/1 (el formato real en disco), no por JSONL. */
+async function s9rRoundTrip(r: any): Promise<any> {
+  return readS9rReplay((await writeS9rReplay(mkdtempSync(joinPath(tmpdir(), "s9r-rt-")), r)).path);
+}
+
 import { assertBaselineGolden, sha256 } from "./helpers.js";
 import { REFERENCE_TICKS, recordReference } from "./reference-battle.js";
 
@@ -55,12 +64,14 @@ describe("baseline · batalla de referencia (determinismo, resultado, replay)", 
     const a = await recordReference();
     const b = await recordReference();
     const strip = (r: any) => ({ ...r, header: { ...r.header, recordedAt: "" } });
-    expect(toJsonl(strip(b))).toBe(toJsonl(strip(a)));
+    // Serialización canónica (misma que antes, sin JSONL): el objeto entero, byte a byte.
+    expect(JSON.stringify(strip(b))).toBe(JSON.stringify(strip(a)));
   });
 
-  it("verify() reproduce el replay de referencia y sobrevive al round-trip JSONL", async () => {
+  it("verify() reproduce el replay de referencia y sobrevive al round-trip S9R/1", async () => {
     const r = await recordReference();
-    const back = fromJsonl(toJsonl(r));
+    const back = await s9rRoundTrip(r);
+    expect(back).toEqual(r);
     const v = await verify(back);
     expect(v.matches).toBe(true);
     expect(v.divergedAtTick).toBeNull();

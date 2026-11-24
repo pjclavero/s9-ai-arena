@@ -100,22 +100,21 @@
  *      `verify()`/`verifyAndRecompute()` en replay.ts para el porqué no se
  *      resolvió ampliando `matches` en el propio motor (bajo riesgo elegido:
  *      cero cambios en el código de determinismo compartido).
- *   2. Si verifica y la identidad coincide, serializa a JSONL (mismo formato
- *      que graba el motor, `toJsonl`) el replay RECONSTRUIDO (header+commands
- *      originales, events/snapshots/stateHashes/result recomputados) y hace
- *      `POST /replays/:battleId` al replay-service (HTTP, misma red
- *      `platform` que ya comparten API y replay-service en
- *      infrastructure/docker-compose.yml — sin volumen compartido, sin tocar
- *      el filesystem del contenedor).
- *   3. Un fallo de ingesta (replay-service caído, timeout, respuesta != 201)
- *      es BEST-EFFORT por defecto (`replayIngestRequired: false`, igual
- *      decisión que el arnés E2E): la batalla en sí ya ocurrió y su resultado
- *      es válido aunque el replay tarde en aparecer en el visor; se refleja
- *      honestamente en `replay.ingested: false`, nunca se presenta como
- *      ingerido. Con `REPLAY_INGEST_REQUIRED=1` (modo estricto, mismo nombre
- *      de variable que el arnés E2E) un fallo de ingesta, un replay que no
- *      verifica O una identidad que no coincide hace que el `BattleRunResult`
- *      sea `status: "failed"`.
+ *   2. V1 REPLAYS PR-4b · la INGESTA está RETIRADA (opción 1 del operador). Antes, si
+ *      verificaba, se serializaba a JSONL y se hacía `POST /replays/:battleId` al
+ *      replay-service; ese endpoint y el formato JSONL ya no existen (D-OP-30). El
+ *      ÚNICO camino que publica replays es el tournament-worker (S9R/1, ver
+ *      docs/technical/battles.md). Este lanzador conserva las guardas (identidad y
+ *      `verifyAndRecompute`) y devuelve SIEMPRE `ingested: false`, sin una sola
+ *      petición al replay-service.
+ *   3. Con `REPLAY_INGEST_REQUIRED=1` (modo estricto) la batalla es `status: "failed"`
+ *      SIEMPRE que haya replay: un replay que no verifica, una identidad que no
+ *      coincide o —ya siempre— la imposibilidad de archivarlo. Best-effort por
+ *      defecto: `completed` con `ingested: false` y `verify_matches` honesto.
+ *
+ *   Retirar el lanzador entero es deuda post-V1 (riesgo RB-R4: la ruta API →
+ *   arena-engine queda fuera de la concurrencia del worker); hoy ningún punto de
+ *   producción lo cablea.
  *
  * Sin `cfg.replayServiceUrl` configurado, el comportamiento es EXACTAMENTE el
  * de B2: `replay: { ingested: false, battleId }`, sin `verify_matches`. OJO
@@ -130,8 +129,7 @@ import { readFileSync } from "node:fs";
 import type { Db } from "../db/connection.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
-import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
-import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../../../replay-service/src/auth.js";
+import { verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
 import { arenaMapLabel, sameArenaMap } from "../../../arena-engine/src/arena-map.js";
 import { MAX_SET_TIMEOUT_MS, runHttpTimeoutMs, theoreticalBattleMs } from "../../../../packages/game-rules/index.js";
 import { modeMapIncompatibilities, type ArenaMap } from "../../../arena-engine/src/sim/modes.js";
@@ -196,14 +194,6 @@ export interface HttpBattleRunLauncherConfig {
    * comportamiento respecto a B2 (`ingested: false` siempre).
    */
   replayServiceUrl?: string;
-  /**
-   * B8 · Credencial interna con la que este launcher se autentica ante el
-   * replay-service (cabecera `x-replay-ingest-auth`). Desde B8 la ingesta es
-   * una ruta AUTENTICADA: sin esta credencial el replay-service responde 401 y
-   * la ingesta se reporta honestamente como fallida (nunca `ingested: true`).
-   * Nunca se registra en logs.
-   */
-  replayIngestSecret?: string;
   /** B6 · Si true, un replay que no verifica o una ingesta fallida hacen que el
    *  resultado operativo sea `status: "failed"` (modo estricto). Def. false
    *  (best-effort: la batalla no se pierde por un fallo de ingesta). */
@@ -364,17 +354,12 @@ export function runTimeoutEnvConfig(env: NodeJS.ProcessEnv = process.env): { tim
  */
 export function replayIngestEnvConfig(env: NodeJS.ProcessEnv = process.env): {
   replayServiceUrl?: string;
-  replayIngestSecret?: string;
   replayIngestRequired: boolean;
   replayIngestTimeoutMs: number;
 } {
-  // B8 · misma convención que `ARENA_ENGINE_SHARED_SECRET[_FILE]`: fichero con
-  // precedencia (Docker secrets), variable en claro como respaldo, y ausencia
-  // ⇒ `undefined` (la ingesta fallará con 401 y se reportará, nunca se cuela).
-  const replayIngestSecret = resolveIngestSecretFromEnv(env);
+  // V1 REPLAYS PR-4b · ya no hay credencial de ingesta: el replay-service no ingiere nada.
   return {
     ...(env.REPLAY_SERVICE_URL ? { replayServiceUrl: env.REPLAY_SERVICE_URL } : {}),
-    ...(replayIngestSecret ? { replayIngestSecret } : {}),
     replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
     replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? String(DEFAULT_REPLAY_INGEST_TIMEOUT_MS)),
   };
@@ -412,26 +397,11 @@ interface ReplayIngestOutcome {
  * fuera bueno.
  */
 async function verifyAndIngestReplay(
-  replayServiceUrl: string,
+  _replayServiceUrl: string,
   battleId: string,
   replay: Replay,
-  timeoutMs: number,
-  /** B8 · credencial interna de ingesta. Ausente ⇒ ni se intenta (ver más abajo). */
-  ingestSecret: string | undefined,
+  _timeoutMs: number,
 ): Promise<ReplayIngestOutcome> {
-  // B8 · Guarda 0 · sin credencial no se llega ni a re-simular. El replay-service
-  // respondería 401 igualmente (fail-closed a los dos lados), pero re-simular una
-  // batalla entera para que la respuesta sea siempre 401 es puro gasto, y el
-  // motivo que se reporta así es el REAL ("falta credencial") en vez de un
-  // "HTTP 401" que el operador tendría que ir a descifrar al log del otro servicio.
-  if (!ingestSecret) {
-    return {
-      ingested: false,
-      verifyMatches: false,
-      reason:
-        "ingesta del replay no configurada: falta la credencial interna del replay-service (REPLAY_INGEST_SECRET[_FILE])",
-    };
-  }
   // Guarda 1 · identidad — ANTES de re-simular: un replay de otra batalla no
   // es "casi correcto", es un replay de OTRA batalla, punto.
   if (replay.header?.battleId !== battleId) {
@@ -454,88 +424,23 @@ async function verifyAndIngestReplay(
       reason: `no se pudo verificar el replay: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  const { verification, recomputed } = outcome;
-  if (!verification.matches) {
+  if (!outcome.verification.matches) {
     return {
       ingested: false,
       verifyMatches: false,
-      reason: `el replay no verifica (verify_matches=false, divergedAtTick=${verification.divergedAtTick ?? "final"})`,
+      reason: `el replay no verifica (verify_matches=false, divergedAtTick=${outcome.verification.divergedAtTick ?? "final"})`,
     };
   }
-
-  // Guarda 2 (parte 2) · el JSONL que se ingesta usa SIEMPRE events/snapshots/
-  // stateHashes/result RECOMPUTADOS, nunca los recibidos: header y commands sí
-  // son los originales (son la "receta" que se acaba de comprobar que produce
-  // exactamente estos hashes/eventos/snapshots — no hay nada más que sustituir).
-  const verifiedReplay: Replay = {
-    header: replay.header,
-    commands: replay.commands,
-    events: recomputed.events,
-    snapshots: recomputed.snapshots,
-    stateHashes: recomputed.stateHashes,
-    // OLA2-MD · replay v2: los checkpoints por componente también son los recomputados.
-    checkpoints: recomputed.checkpoints,
-    result: recomputed.result,
+  // V1 REPLAYS PR-4b · la INGESTA está RETIRADA. El replay-service ya no acepta replays (su
+  // `POST /replays/:id` y el formato JSONL se retiraron, D-OP-30): el ÚNICO camino que publica
+  // replays es el tournament-worker (S9R/1, ReplayRecorder + publishPair con prueba de cierre).
+  // Este lanzador (camino legado, sin consumidor en producción) verifica y nunca afirma haber
+  // archivado nada: `ingested:false` siempre; en modo estricto, la batalla se reporta `failed`.
+  return {
+    ingested: false,
+    verifyMatches: true,
+    reason: "ingesta retirada: el único camino que publica replays es el tournament-worker (S9R/1)",
   };
-
-  const jsonl = toJsonl(verifiedReplay);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(new URL(`/replays/${encodeURIComponent(battleId)}`, replayServiceUrl), {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-ndjson",
-        // B8 · credencial interna de escritura. Va en cabecera (no en la URL ni
-        // en el cuerpo) para que no acabe en el access log del gateway.
-        [REPLAY_INGEST_AUTH_HEADER]: ingestSecret,
-      },
-      body: jsonl,
-      signal: controller.signal,
-    });
-    if (res.status !== 201) {
-      // El detalle de la respuesta del replay-service (podría llevar rutas
-      // internas, versiones, etc.) se registra en el log del proceso, no se
-      // devuelve al cliente de la API — este `reason` viaja hasta `error` del
-      // BattleRunResult en modo estricto y ese sí puede ver el llamador.
-      console.error(
-        JSON.stringify({
-          level: "error",
-          service: "api",
-          msg: "replay-service rechazó la ingesta del replay",
-          battleId,
-          status: res.status,
-          body: (await res.text().catch(() => "")).slice(0, 500),
-        }),
-      );
-      return {
-        ingested: false,
-        verifyMatches: true,
-        reason: `la ingesta del replay fue rechazada por el servicio de replays (HTTP ${res.status})`,
-      };
-    }
-    return { ingested: true, verifyMatches: true };
-  } catch (err) {
-    const timedOut = err instanceof Error && err.name === "AbortError";
-    // Igual criterio: el mensaje de red completo (puede llevar el host/puerto
-    // interno del replay-service) se registra, no se expone al llamador.
-    console.error(
-      JSON.stringify({
-        level: "error",
-        service: "api",
-        msg: "no se pudo ingestar el replay en el replay-service",
-        battleId,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    return {
-      ingested: false,
-      verifyMatches: true,
-      reason: timedOut ? "la ingesta del replay superó el timeout" : "el servicio de replays no está disponible",
-    };
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**
@@ -804,6 +709,16 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
         // B6 · sin replayServiceUrl configurado, comportamiento IDÉNTICO a B2: no se
         // toca el replay-service, nunca se afirma "ingested: true" sin haberlo hecho.
         if (!cfg.replayServiceUrl) {
+          // V1 REPLAYS PR-4b · en modo estricto, sin URL tampoco hay archivo posible: failed.
+          if (cfg.replayIngestRequired) {
+            return {
+              status: "failed",
+              runner: HTTP_LAUNCHER_RUNNER_ID,
+              error:
+                "REPLAY_INGEST_REQUIRED y ingesta retirada: el único camino que publica replays es el tournament-worker (S9R/1)",
+              replay: { ingested: false, battleId: input.battleId },
+            };
+          }
           return {
             status: "completed",
             runner: HTTP_LAUNCHER_RUNNER_ID,
@@ -825,7 +740,6 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
           input.battleId,
           replay,
           cfg.replayIngestTimeoutMs ?? DEFAULT_REPLAY_INGEST_TIMEOUT_MS,
-          cfg.replayIngestSecret,
         );
         if (!outcome.ingested && cfg.replayIngestRequired) {
           return {

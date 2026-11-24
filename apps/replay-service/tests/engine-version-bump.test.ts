@@ -17,9 +17,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { fromJsonl } from "../../arena-engine/src/replay.js";
+import { headerIncompatibility } from "../../arena-engine/src/replay.js";
 import engineDeps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
-import { replayPath, verifyStored } from "../src/store.js";
+import { verifyFile } from "../src/s9r/verify.js";
+import { RecipeCursor } from "../src/s9r/recipe.js";
+import { S9rError } from "../src/s9r/errors.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(__dirname, "fixtures", "engine-0.1.0-sin-perimetro.replay.jsonl.gz");
@@ -33,19 +35,19 @@ describe("DEF-R1 · replays del motor anterior tras el perímetro", () => {
     expect(engineDeps.engine.version).not.toBe("0.1.0");
   });
 
-  it("OLA2-MD · un replay v1 real (motor 0.1.0) da format_version_mismatch, no «manipulado»", async () => {
-    // El replay v2 ya no lee el formato 1: se rechaza en la LECTURA con motivo explícito.
+  it("V1 REPLAYS PR-4b · un replay v1 real (motor 0.1.0) no es S9R/1: se rechaza al abrirlo, nunca se re-simula ni se dice «manipulado»", async () => {
+    // Tal como quedaría en disco un replay histórico. Corte D-OP-30: no se lee; la API lo trata
+    // como «sin replay» (404 uniforme, e8-replay-verify.test.ts).
     const bytes = readFileSync(FIXTURE);
-    expect(() => fromJsonl(gunzipSync(bytes).toString("utf8"))).toThrow(/^format_version_mismatch/);
-    // Tal como quedaría en el almacén de producción (escrito antes del cambio de formato).
+    expect(JSON.parse(gunzipSync(bytes).toString("utf8").split("\n")[0]).formatVersion).toBe(1);
     const dir = mkdtempSync(join(tmpdir(), "uxf-r1-"));
-    const battleId = "def-r1-v1";
-    writeFileSync(replayPath(dir, battleId), bytes);
-    const r = await verifyStored(dir, battleId);
-    expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/^format_version_mismatch/);
-    // Nunca se llega a re-simular: no hay veredicto de manipulación.
-    expect(r.verification).toBeNull();
-    expect(r.message).toMatch(/NO significa que esté manipulado/);
+    const path = join(dir, "def-r1-v1.1.s9r");
+    writeFileSync(path, bytes);
+    const v = await verifyFile(path);
+    expect(v.ok).toBe(false);
+    expect(v.error).toBeInstanceOf(S9rError);
+    await expect(RecipeCursor.open(path)).rejects.toBeInstanceOf(S9rError);
+    // Una receta S9R/1 con cabecera de formato 1 tampoco se re-simula: motivo único `unsupported_format`.
+    expect(headerIncompatibility({ formatVersion: 1 } as never)).toMatch(/^unsupported_format/);
   });
 });

@@ -125,13 +125,30 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
     await enqueueJob(h.db, "run_battle", { battleId }, { dedupeKey: `h2:${battleId}` });
 
     // La batalla corre en el worker; el espectador se conecta MIENTRAS corre.
-    const drained = worker.drain();
+    //
+    // CARRERA DEL TEST (CI de #345, fe46eb53, job unit): el ticket ANÓNIMO sólo se emite para una
+    // batalla `running` (directo público, battle-access.ts vía 5). Antes se arrancaba `drain()` y
+    // se exigía 201 al PRIMER intento: si el worker aún no había reclamado la batalla
+    // (`scheduled`), la API respondía 404 —correcto— y el test caía, y con él el siguiente (lee
+    // `replay_ref` de una batalla sin cerrar). Ahora es DETERMINISTA: el worker se arranca sólo
+    // después de ver ese 404 con la batalla `scheduled`, y un 404 sólo se tolera mientras la
+    // batalla siga `scheduled`; en `running` el ticket TIENE que ser 201.
+    let drained: Promise<unknown> | null = null;
 
     let ws: WebSocket | null = null;
+    let notYetRunning = 0;
     const deadline = Date.now() + 60_000;
     while (!ws && Date.now() < deadline) {
       // Ticket de UN SOLO USO: uno nuevo por intento (el jti se quema al conectar).
       const tk = await request(app).post(`/battles/${battleId}/spectate-ticket`);
+      if (tk.status === 404) {
+        const st = (await h.db("battles").where({ id: battleId }).first("status")).status;
+        expect(st, "404 del ticket anónimo con la batalla ya en curso").toBe("scheduled");
+        notYetRunning++;
+        drained ??= worker.drain();
+        await new Promise((r) => setTimeout(r, 10));
+        continue;
+      }
       expect(tk.status).toBe(201);
       // R2.6 (ERR-SEC-16): el ticket viaja como subprotocolo, nunca en la URL.
       const candidate = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}`, [
@@ -150,6 +167,8 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
       else await new Promise((r) => setTimeout(r, 10));
     }
     expect(ws, "el espectador no llegó a conectarse al feed en vivo").toBeTruthy();
+    // El camino de la carrera se ejercita SIEMPRE (el primer ticket es anterior al drain).
+    expect(notYetRunning).toBeGreaterThanOrEqual(1);
     ws!.on("message", (d) => messages.push(JSON.parse(d.toString())));
 
     // Stream hasta el resultado (o hasta que la cola termine y el pump vacíe).

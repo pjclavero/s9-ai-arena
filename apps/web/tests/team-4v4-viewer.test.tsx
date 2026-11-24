@@ -31,7 +31,6 @@ const INDEX: ReplayIndexData = {
   snapshotCount: 1,
   keyframes: [{ tick: 0, snapshotIndex: 0 }],
   result: { winner: "red", ticks: 30, score: { red: 3, blue: 1 }, finalStateHash: "x" },
-  debugOpen: false,
   roster: ROSTER8,
 };
 

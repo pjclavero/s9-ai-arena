@@ -1,22 +1,17 @@
 /**
- * T8.3 · Reproductor de replays contra el replay-service HTTP REAL (supertest):
- * reproducción completa con marcador oficial, salto temporal por keyframes
- * (±1 tick y < 1 s sobre un replay de 5 minutos), velocidades 0,5×–8× con
- * coherencia de eventos, enlaces compartibles y depuración opt-in del dueño.
+ * T8.3 · Reproductor de replays contra replays REALES en S9R/1 servidos con los lectores
+ * incrementales de la API (tests/s9r-replay-source.ts; V1 REPLAYS PR-4b sustituye al
+ * replay-service HTTP retirado): reproducción completa con marcador oficial, salto temporal por
+ * keyframes (±1 tick y < 1 s sobre un replay de 5 minutos), velocidades 0,5×–8× con coherencia
+ * de eventos, enlaces compartibles y AUSENCIA de la capa de depuración (retirada).
  */
-import { beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import request from "supertest";
-import type { Express } from "express";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot, IdleBot } from "../../arena-engine/src/stubs.js";
-import { ingestReplay } from "../../replay-service/src/store.js";
-import { createReplayServer } from "../../replay-service/src/server.js";
+import { hostS9rReplays, type S9rReplayHost } from "./s9r-replay-source.js";
 import { OverlayState } from "../src/viewer/overlay.js";
 import {
   MAX_SPEED,
@@ -28,17 +23,13 @@ import {
   type ReplaySource,
 } from "../src/viewer/replay-player.js";
 
-let app: Express;
+let host: S9rReplayHost;
 let combat: Replay; // batalla con eventos (cazadores)
 let fiveMin: Replay; // 5 minutos de juego (9000 ticks) para el DoD de salto temporal
-let dir: string;
-
-/** Adapta supertest a la interfaz fetch mínima que usa httpReplaySource. */
+let debugCandidate: Replay; // batalla con comandos: la capa de depuración retirada no los expone
+/** Fuente HTTP (httpReplaySource) sobre el anfitrión S9R en memoria. */
 function sourceFor(battleId: string): ReplaySource {
-  return httpReplaySource("", battleId, async (url: string) => {
-    const res = await request(app).get(url);
-    return { ok: res.status < 400, status: res.status, json: async () => res.body };
-  });
+  return host.sourceFor(battleId);
 }
 
 async function recordBattle(seed: string, opts: { hunters?: boolean; ticks: number }): Promise<Replay> {
@@ -62,13 +53,15 @@ async function recordBattle(seed: string, opts: { hunters?: boolean; ticks: numb
 
 beforeAll(async () => {
   await initPhysics();
-  dir = mkdtempSync(join(tmpdir(), "e8-player-"));
   combat = await recordBattle("player_combat", { hunters: true, ticks: 1500 });
   fiveMin = await recordBattle("player_5min", { hunters: false, ticks: 9000 });
-  ingestReplay(dir, combat, { official: true });
-  ingestReplay(dir, fiveMin, { official: true });
-  app = createReplayServer({ dir });
+  debugCandidate = await recordBattle("player_debug_retired", { hunters: true, ticks: 300 });
+  host = await hostS9rReplays([combat, fiveMin, debugCandidate]);
 }, 300000);
+
+afterAll(async () => {
+  await host?.close();
+});
 
 describe("T8.3 reproducción completa (E2E a nivel HTTP)", () => {
   it("un replay oficial se reproduce y su marcador final coincide con el BattleResult almacenado", async () => {
@@ -196,23 +189,41 @@ describe("T8.3 enlaces compartibles con tick inicial", () => {
   });
 });
 
-describe("T8.3 capas de depuración en replay: opt-in del dueño", () => {
-  it("sin permiso del dueño el segmento NO trae comandos; con permiso, sí (para todos)", async () => {
-    const privado = await recordBattle("player_debug_off", { hunters: true, ticks: 300 });
-    const abierto = await recordBattle("player_debug_on", { hunters: true, ticks: 300 });
-    ingestReplay(dir, privado, { official: false });
-    ingestReplay(dir, abierto, { official: false, debugOpen: true });
+/**
+ * V1 REPLAYS PR-4b · T8.3 «capas de depuración en replay» RETIRADA por decisión del operador.
+ * Sustituye al test opt-in (`debugOpen`/`commandsAt`): la capa no existe en el reproductor, el
+ * índice no la anuncia, ningún segmento trae comandos y, aunque una fuente maliciosa o antigua
+ * mandara `debugOpen: true` y `commands`, el reproductor no guarda ni expone ninguno.
+ */
+describe("T8.3 · la capa de depuración del replay ya no existe (retirada)", () => {
+  it("ni el índice ni los segmentos S9R anuncian ni traen comandos, aunque la batalla los tenga", async () => {
+    expect(debugCandidate.commands.length).toBeGreaterThan(0);
+    const src = sourceFor("player_debug_retired");
+    const index = (await src.index()) as unknown as Record<string, unknown>;
+    expect(index).not.toHaveProperty("debugOpen");
+    const total = debugCandidate.result.ticks;
+    for (let from = 0; from <= total; from += 600) {
+      const seg = (await src.segment(from, Math.min(from + 599, total))) as unknown as Record<string, unknown>;
+      expect(seg).not.toHaveProperty("commands");
+      expect(JSON.stringify(seg)).not.toMatch(/"forTick"|"throttle"/);
+    }
+  });
 
-    const pOff = new ReplayPlayer(sourceFor("player_debug_off"));
-    await pOff.init(0);
-    expect(pOff.debugOpen).toBe(false);
-    expect(pOff.commandsAt(0)).toEqual([]);
-
-    const pOn = new ReplayPlayer(sourceFor("player_debug_on"));
-    await pOn.init(0);
-    expect(pOn.debugOpen).toBe(true);
-    const anyCmdTick = abierto.commands[0].tick;
-    await pOn.seekTick(anyCmdTick);
-    expect(pOn.commandsAt(anyCmdTick).length).toBeGreaterThan(0);
+  it("el reproductor no tiene debugOpen ni commandsAt y no retiene comandos de una fuente que los mande", async () => {
+    const real = sourceFor("player_debug_retired");
+    const hostile: ReplaySource = {
+      index: async () => ({ ...(await real.index()), debugOpen: true }) as any,
+      segment: async (f, t) => ({ ...(await real.segment(f, t)), commands: debugCandidate.commands }) as any,
+    };
+    const player = new ReplayPlayer(hostile);
+    await player.init(0);
+    await player.seekTick(debugCandidate.commands[0].tick);
+    const p = player as unknown as Record<string, unknown>;
+    expect("debugOpen" in p).toBe(false);
+    expect("commandsAt" in p).toBe(false);
+    expect("commands" in p).toBe(false);
+    // Ningún campo del reproductor retiene un comando (los comandos llevan `forTick`/`throttle`).
+    const held = Object.values(p).filter((v) => Array.isArray(v));
+    expect(JSON.stringify(held)).not.toMatch(/"forTick"|"throttle"/);
   });
 });

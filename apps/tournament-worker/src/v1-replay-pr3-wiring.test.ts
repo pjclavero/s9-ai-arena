@@ -248,6 +248,44 @@ describe("V1 REPLAYS PR-3 · fallo de grabación o publicación = fallo técnico
   }, 120_000);
 });
 
+/**
+ * V1 REPLAYS PR-4b · H-4b-1 · puerta de completitud del worker. Una ejecución que devuelve un resultado
+ * sin haber grabado nada (ni hashes, ni checkpoints, ni snapshots) NO se publica: fallo técnico.
+ */
+function emptyRecordingDriver(): AgentDriver {
+  return {
+    kind: "in_process_stub",
+    async run({ engine, vehicles }) {
+      for (const v of vehicles) engine.attachBot(v.vehicleId, new HunterBot(v.botId));
+      return {
+        result: {
+          winner: "draw",
+          ticks: 600,
+          score: {},
+          finalStateHash: "sha256:" + "ab".repeat(32),
+          disqualified: [],
+          versions: {},
+        } as any,
+      };
+    },
+  };
+}
+
+describe("V1 REPLAYS PR-4b · H-4b-1 · el worker no publica un replay incompleto", () => {
+  it("W7 resultado sin grabación (0 hashes, 0 checkpoints, 0 snapshots): failed/infrastructure replay_incomplete, nada publicado", async () => {
+    const r = await rig({ agents: emptyRecordingDriver() });
+    const s = await scheduleTournament();
+    const before = await sportingSnapshot(s.botIds, s.tid);
+    await drainAll(r.worker);
+    await expectTechnicalFailure(
+      s,
+      r,
+      before,
+      /replay_incomplete: .*sin hashes intermedios.*sin checkpoints.*sin snapshots/,
+    );
+  }, 120_000);
+});
+
 describe("V1 REPLAYS PR-3 · publicación real", () => {
   it("W4 batalla completa: receta y vista publicadas, verifican ok:true con el sha de la BD y la receta re-simula el resultado", async () => {
     const r = await rig({});
