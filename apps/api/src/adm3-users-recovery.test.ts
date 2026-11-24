@@ -622,6 +622,11 @@ describe("ADM-3 · cuenta admin ⇒ segundo administrador", () => {
     const byB = await issue(tb, target.id, { password: PW, operationId: id });
     expect(byB.status).toBe(403);
     expect(byB.body.error).toBe("second_admin_approval_invalid");
+    // ni un TERCER admin que no la solicitó ni la confirmó
+    const c = await mkAdmin("sa-c");
+    const byC = await issue(await tokenOf(c), target.id, { password: PW, operationId: id });
+    expect(byC.status).toBe(403);
+    expect(byC.body.error).toBe("second_admin_approval_invalid");
     // A emite
     const r = await issue(ta, target.id, { password: PW, operationId: id });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
@@ -704,10 +709,11 @@ describe("ADM-3 · cuenta admin ⇒ segundo administrador", () => {
     expect((await createOp(ta, plain.id)).status).toBe(400);
     expect((await createOp(ta, "00000000-0000-4000-8000-000000000000")).status).toBe(404);
     expect((await createOp(ta, "no-uuid")).status).toBe(400);
+    const target = await mkAdmin("op-extra-t");
     const extra = await request(app)
       .post("/admin/operations")
       .set("Authorization", `Bearer ${ta}`)
-      .send({ kind: "user.recovery_admin", params: { userId: plain.id, rol: "admin" } });
+      .send({ kind: "user.recovery_admin", params: { userId: target.id, rol: "admin" } });
     expect(extra.status).toBe(400);
     expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
   });
