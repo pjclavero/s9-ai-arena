@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { anyTotp, freshTotp } from "./testing/totp-codes.js";
+import { anyTotp, enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -51,7 +51,7 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
 
   beforeAll(async () => {
     const s = await registerAndLogin(email, password);
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${s.accessToken}`);
+    const enable = await enable2faFor(app, s.accessToken, password);
     expect(enable.status).toBe(200);
     otpauthUrl = enable.body.otpauthUrl;
     // Tras activar 2FA el login exige TOTP:
@@ -123,7 +123,7 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     const s1 = await registerAndLogin(email2, password2);
     const s2 = await registerAndLogin(email2, password2);
 
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${s2.accessToken}`);
+    const enable = await enable2faFor(app, s2.accessToken, password2);
     expect(enable.status).toBe(200);
 
     const s1Me = await request(app).get("/users/me").set("Authorization", `Bearer ${s1.accessToken}`);

@@ -149,15 +149,25 @@ export function TwoFactorSection() {
     setError("");
   }
 
-  async function start() {
-    resetForms();
+  async function start(e: FormEvent) {
+    e.preventDefault();
+    setError("");
     setNotice("");
+    if (!password) {
+      setError("Escribe tu contraseña para activar la verificación en dos pasos.");
+      return;
+    }
     setBusy(true);
     try {
-      const r = await api<{ otpauthUrl: string; secret: string; enrollmentToken: string }>("POST", "/auth/2fa/setup");
+      // La contraseña se exige en el servidor: un access token robado no basta para poner una 2FA.
+      const r = await api<{ otpauthUrl: string; secret: string; enrollmentToken: string }>("POST", "/auth/2fa/setup", {
+        password,
+      });
+      resetForms();
       setStage({ kind: "enrolling", otpauthUrl: r.otpauthUrl, secret: r.secret, enrollmentToken: r.enrollmentToken });
     } catch (err) {
-      setError(twoFactorErrorMessage(err, "confirm"));
+      setError(twoFactorErrorMessage(err, "reauth"));
+      setPassword("");
     } finally {
       setBusy(false);
     }
@@ -255,9 +265,23 @@ export function TwoFactorSection() {
           <p data-testid="twofa-status">
             Estado: <strong>desactivada</strong>.
           </p>
-          <button type="button" onClick={() => void start()} disabled={busy}>
-            Activar la verificación en dos pasos
-          </button>
+          <form onSubmit={(e) => void start(e)} noValidate aria-label="activar verificación en dos pasos">
+            <p>
+              <label>
+                Contraseña{" "}
+                <input
+                  aria-label="contraseña para activar"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            </p>
+            <button type="submit" disabled={busy}>
+              Activar la verificación en dos pasos
+            </button>
+          </form>
         </>
       )}
 

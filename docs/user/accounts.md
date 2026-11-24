@@ -35,7 +35,7 @@ Con la verificación en dos pasos (2FA), además de la contraseña se pide un c�
 
 ### Activarla
 
-1. Pulsa **«Activar la verificación en dos pasos»**.
+1. Escribe tu **contraseña** y pulsa **«Activar la verificación en dos pasos»** (se pide para que nadie con tu sesión abierta pueda activarla por ti).
 2. En la app del móvil añade una cuenta escaneando el **código QR**. Si no puedes escanearlo, escribe a mano la clave que aparece debajo (tipo «basada en el tiempo»).
 3. Escribe el código de 6 cifras que muestra la app y pulsa **«Confirmar»**.
    - Hasta que confirmes, **no se activa nada**: si cancelas o cierras la página, tu cuenta sigue como estaba.

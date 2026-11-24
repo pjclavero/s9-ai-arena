@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { anyTotp, freshTotp } from "./testing/totp-codes.js";
+import { anyTotp, enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -152,7 +152,7 @@ describe("V1-B · cambio de contraseña autenticado", () => {
 
   it("con 2FA exige también el TOTP y NO desactiva el 2FA", async () => {
     const u = await newUser("2fa");
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${u.a.accessToken}`);
+    const enable = await enable2faFor(app, u.a.accessToken, OLD);
     expect(enable.status).toBe(200);
     const url = enable.body.otpauthUrl as string;
     const login = await u.login(OLD, await freshTotp(url));
@@ -230,7 +230,7 @@ describe("V1-B · límite de la ruta y aislamiento por usuario", () => {
 describe("V1-B · con 2FA, una petición rechazada por política NO gasta el código de recuperación", () => {
   it("nueva == actual: 400 y el código de recuperación sigue valiendo para el cambio válido", async () => {
     const u = await newUser("2fa-codigo");
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${u.a.accessToken}`);
+    const enable = await enable2faFor(app, u.a.accessToken, OLD);
     expect(enable.status).toBe(200);
     const url = enable.body.otpauthUrl as string;
     const code = (enable.body.recoveryCodes as string[])[0];

@@ -61,7 +61,10 @@ async function startEnrollment() {
     "POST /auth/2fa/confirm": () => ({ recoveryCodes: CODES }),
   });
   render(<TwoFactorSection />);
-  fireEvent.click(await screen.findByRole("button", { name: "Activar la verificación en dos pasos" }));
+  fireEvent.change(await screen.findByLabelText("contraseña para activar"), {
+    target: { value: "mi-contraseña-larga" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
   await screen.findByTestId("totp-qr");
 }
 
@@ -92,6 +95,21 @@ describe("ACC-2FA · estado", () => {
 });
 
 describe("ACC-2FA · activar", () => {
+  it("W_SETUP_PASSWORD: sin contraseña no llama a setup; con ella la envía", async () => {
+    routes({
+      "GET /users/me": meOff,
+      "POST /auth/2fa/setup": () => ({ otpauthUrl: OTPAUTH, secret: SECRET, enrollmentToken: "tok-1", expiresIn: 600 }),
+    });
+    render(<TwoFactorSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Activar la verificación en dos pasos" }));
+    expect((await screen.findByTestId("twofa-error")).textContent).toContain("contraseña");
+    expect(calls("POST", "/auth/2fa/setup")).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("contraseña para activar"), { target: { value: "mi-contraseña-larga" } });
+    fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
+    await screen.findByTestId("totp-qr");
+    expect(calls("POST", "/auth/2fa/setup")[0][2]).toEqual({ password: "mi-contraseña-larga" });
+  });
+
   it("W_QR_Y_SECRETO: el QR codifica EXACTAMENTE el enlace otpauth y la clave se ve agrupada; aún sin confirmar", async () => {
     await startEnrollment();
     const qr = encode(OTPAUTH, { ecc: "M", border: 2 });

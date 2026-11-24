@@ -54,7 +54,7 @@ async function newUser(tag: string) {
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 async function setup(access: string) {
-  const r = await request(app).post("/auth/2fa/setup").set(auth(access));
+  const r = await request(app).post("/auth/2fa/setup").set(auth(access)).send({ password: PASSWORD });
   expect(r.status).toBe(200);
   return r;
 }
@@ -88,6 +88,32 @@ describe("ACC-2FA · alta en dos fases", () => {
     const me = await request(app).get("/users/me").set(auth(u.access));
     expect(me.body.twoFactorEnabled).toBe(false);
     expect(me.body.recoveryCodesRemaining).toBeUndefined();
+  });
+
+  it("SETUP_EXIGE_PASSWORD: sin contraseña o con una mala ⇒ 401 y sin secreto; el token robado no basta", async () => {
+    const u = await newUser("setup-pw");
+    const sin = await request(app).post("/auth/2fa/setup").set(auth(u.access)).send({});
+    expect(sin.status).toBe(401);
+    expect(sin.body.secret).toBeUndefined();
+    const mala = await request(app).post("/auth/2fa/setup").set(auth(u.access)).send({ password: "no-es-la-buena-xx" });
+    expect(mala.status).toBe(401);
+    expect(mala.body.enrollmentToken).toBeUndefined();
+    expect((await h.db("users").where({ id: u.userId }).first()).totp_secret).toBeNull();
+    const ok = await request(app).post("/auth/2fa/setup").set(auth(u.access)).send({ password: PASSWORD });
+    expect(ok.status).toBe(200);
+  });
+
+  it("ALTA_DIRECTA_RETIRADA: POST /auth/2fa responde 410 y no activa nada", async () => {
+    const u = await newUser("retirada");
+    const r = await request(app).post("/auth/2fa").set(auth(u.access)).send({});
+    expect(r.status).toBe(410);
+    expect(r.body.error).toBe("enable2fa_removed");
+    expect(r.body.otpauthUrl).toBeUndefined();
+    expect(r.body.recoveryCodes).toBeUndefined();
+    const row = await h.db("users").where({ id: u.userId }).first();
+    expect(row.totp_secret).toBeNull();
+    expect(row.recovery_codes).toBeNull();
+    expect((await u.login()).status).toBe(200);
   });
 
   it("CONFIRMA_CON_CODIGO: un código incorrecto no activa; el correcto activa, da 8 códigos y revoca otras sesiones", async () => {
@@ -210,7 +236,8 @@ describe("ACC-2FA · alta en dos fases", () => {
 
   it("SETUP_CON_2FA_ACTIVA: setup con la 2FA ya activa ⇒ 409", async () => {
     const u = await enabledUser("setup-409");
-    expect((await request(app).post("/auth/2fa/setup").set(auth(u.access))).status).toBe(409);
+    const r = await request(app).post("/auth/2fa/setup").set(auth(u.access)).send({ password: PASSWORD });
+    expect(r.status).toBe(409);
   });
 });
 

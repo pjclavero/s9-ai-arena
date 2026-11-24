@@ -24,7 +24,7 @@ import {
 } from "../auth/totp.js";
 import { TOTP_ENROLLMENT_TTL_S, openTotpEnrollment, sealTotpEnrollment } from "../auth/totp-enrollment.js";
 import { audit } from "../audit.js";
-import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
+import { ApiError, badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 import { SharedFailedLoginGuard, type LoginGuardLike, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { sessionToJson, userToJson } from "../serialize.js";
@@ -435,37 +435,32 @@ export function authRoutes(deps: AuthDeps): Router {
   });
 
   // ------------------------------------------------------------------ 2FA
-  // Alta directa (contrato anterior a ACC-2FA): activa en el acto, sin comprobar que el usuario pueda generar
-  // códigos. Se conserva por compatibilidad con clientes de la API; está DEPRECADA y la web usa setup+confirm.
-  defineOperation(router, "enable2fa", async (req, res) => {
+  // Alta directa (contrato anterior a ACC-2FA) RETIRADA en V1 (D-OP-30, decisión del coordinador en #351):
+  // activaba en el acto sin confirmar un código y con sólo el access token. Responde 410 y no toca la cuenta.
+  defineOperation(router, "enable2fa", async (_req, res) => {
     res.setHeader("Cache-Control", NO_STORE);
-    const user = await db("users").where({ id: req.auth!.userId }).first();
-    if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
-    const secret = generateTotpSecret();
-    const { plain, hashes } = generateRecoveryCodes();
-    await db("users")
-      .where({ id: user.id })
-      .update({ totp_secret: secret, recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
-    // R2.4 · Cambiar el estado del 2FA invalida el resto de sesiones: cualquier
-    // sesión robada anterior al refuerzo deja de valer.
-    const revoked = await revokeOtherSessions(db, user.id, req.auth!.sessionId);
-    await audit(db, {
-      actorId: user.id,
-      action: "auth.2fa.enabled",
-      target: `user:${user.id}`,
-      detail: { otherSessionsRevoked: revoked },
-      correlationId: req.correlationId,
-    });
-    res.status(200).json({ otpauthUrl: totpUri(secret, user.email), recoveryCodes: plain });
+    throw new ApiError(
+      410,
+      "enable2fa_removed",
+      "El alta directa de 2FA se ha retirado: usa POST /auth/2fa/setup (con contraseña) y POST /auth/2fa/confirm",
+    );
   });
 
   // ACC-2FA · Fase 1 del alta: secreto NUEVO + token de alta sellado. No cambia la cuenta: hasta confirmar
   // con un código, el login sigue sin pedir TOTP. Pedirlo otra vez genera otro secreto (el anterior muere).
+  // Exige la CONTRASEÑA (reautenticación): un access token robado no basta para poner una 2FA que deje
+  // fuera a la víctima. Comparte el límite de intentos de la 2FA (5 fallos ⇒ 429).
   defineOperation(router, "start2faEnrollment", async (req, res) => {
     res.setHeader("Cache-Control", NO_STORE);
     const user = await db("users").where({ id: req.auth!.userId }).first();
     if (!user) throw unauthorized();
     if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
+    const { password } = req.body ?? {};
+    await guarded2fa(req, user.id, "setup", async () => {
+      if (typeof password !== "string" || !(await verifyPassword(String(user.password_hash), password))) {
+        throw unauthorized("Reautenticación requerida: contraseña inválida");
+      }
+    });
     const secret = generateTotpSecret();
     res.status(200).json({
       otpauthUrl: totpUri(secret, user.email),

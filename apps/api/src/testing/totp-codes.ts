@@ -10,6 +10,8 @@
  * Es determinista respecto al reloj: nunca entrega un código que pueda caducar durante la petición.
  */
 import * as otplib from "otplib";
+import request from "supertest";
+import type { Express } from "express";
 import { TOTP_PERIOD_SECONDS } from "../auth/totp.js";
 
 const lastStep = new Map<string, number>();
@@ -52,4 +54,26 @@ export async function freshTotp(secretOrUri: string): Promise<string> {
 export async function anyTotp(secretOrUri: string): Promise<string> {
   const secret = secretOrUri.startsWith("otpauth://") ? secretFromUri(secretOrUri) : secretOrUri;
   return codeForStep(secret, Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS));
+}
+
+/**
+ * ACC-2FA · Activa la 2FA por el flujo de V1 (setup con contraseña + confirm con un código) y devuelve la
+ * misma forma que daba el alta directa retirada: `{ status, body: { otpauthUrl, recoveryCodes } }`.
+ */
+export async function enable2faFor(
+  app: Express,
+  accessToken: string,
+  password: string,
+): Promise<{ status: number; body: { otpauthUrl: string; secret: string; recoveryCodes: string[] } }> {
+  const auth = { Authorization: `Bearer ${accessToken}` };
+  const s = await request(app).post("/auth/2fa/setup").set(auth).send({ password });
+  if (s.status !== 200) return { status: s.status, body: s.body };
+  const c = await request(app)
+    .post("/auth/2fa/confirm")
+    .set(auth)
+    .send({ enrollmentToken: s.body.enrollmentToken, totp: await freshTotp(s.body.secret) });
+  return {
+    status: c.status,
+    body: { otpauthUrl: s.body.otpauthUrl, secret: s.body.secret, recoveryCodes: c.body.recoveryCodes },
+  };
 }

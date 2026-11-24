@@ -139,7 +139,8 @@ info:
   # 0.28.0 · ACC-2FA (aditivo; numerada tras la 0.27.0 de ADM-3): alta de la 2FA en dos fases
   # (start2faEnrollment POST /auth/2fa/setup, confirm2faEnrollment POST /auth/2fa/confirm con límite de
   # intentos), regenerateRecoveryCodes (POST /auth/2fa/recovery-codes, reautenticación fuerte, invalida los
-  # anteriores), User.recoveryCodesRemaining en getMe, 429 en disable2fa y enable2fa DEPRECADA. Todo código
+  # anteriores), User.recoveryCodesRemaining en getMe, 429 en disable2fa; setup exige contraseña; enable2fa
+  # RETIRADA (410 enable2fa_removed, D-OP-30). CAMBIO DE CONTRATO: todo código
   # TOTP o de recuperación vale UNA vez. Respuestas con secretos: Cache-Control no-store. Sin migración.
   version: 0.28.0
   description: |
@@ -260,19 +261,13 @@ paths:
     post:
       tags: [auth]
       operationId: enable2fa
-      summary: 'DEPRECADA (ACC-2FA): activa la 2FA en el acto sin comprobar un código. Usa /auth/2fa/setup + /auth/2fa/confirm.'
+      summary: 'RETIRADA en V1 (ACC-2FA, D-OP-30): el alta directa activaba sin confirmar un código. Responde siempre 410 enable2fa_removed y no cambia la cuenta. Usa /auth/2fa/setup + /auth/2fa/confirm.'
       deprecated: true
       x-min-role: user
       responses:
-        '200':
-          description: Secreto TOTP y códigos de recuperación (se muestran una sola vez; Cache-Control no-store)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  otpauthUrl: { type: string, x-private: true }
-                  recoveryCodes: { type: array, items: { type: string }, x-private: true }
+        '410':
+          description: Operación retirada
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     delete:
       tags: [auth]
       operationId: disable2fa
@@ -300,8 +295,19 @@ paths:
     post:
       tags: [auth]
       operationId: start2faEnrollment
-      summary: 'ACC-2FA · Fase 1 del alta: genera un secreto TOTP nuevo y un token de alta sellado (10 min, atado a la sesión). NO activa nada.'
+      summary: 'ACC-2FA · Fase 1 del alta: exige la contraseña; genera un secreto TOTP nuevo y un token de alta sellado (10 min, atado a la sesión). NO activa nada.'
       x-min-role: user
+      # Un access token robado no basta para poner una 2FA que deje fuera a la víctima.
+      x-reauth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, x-private: true }
       responses:
         '200':
           description: Secreto pendiente de confirmar (Cache-Control no-store)
@@ -315,7 +321,9 @@ paths:
                   secret: { type: string, description: Secreto en base32 para escribirlo a mano, x-private: true }
                   enrollmentToken: { type: string, description: Token opaco que se devuelve en confirm2faEnrollment, x-private: true }
                   expiresIn: { type: integer, description: Segundos de validez del token de alta }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/2fa/confirm:
     post:

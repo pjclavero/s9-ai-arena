@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { freshTotp } from "./testing/totp-codes.js";
+import { enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev, DEV_USERS, DEV_PASSWORD } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -148,7 +148,7 @@ describe("T7.2 2FA TOTP (DoD: activación y uso E2E; la recuperación no lo elud
   it("activación: secreto + códigos de recuperación una sola vez; login exige TOTP", async () => {
     await request(app).post("/auth/register").send({ email, password, displayName: "T" });
     const login = await request(app).post("/auth/login").send({ email, password });
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${login.body.accessToken}`);
+    const enable = await enable2faFor(app, login.body.accessToken, password);
     expect(enable.status).toBe(200);
     otpauthUrl = enable.body.otpauthUrl;
     recoveryCodes = enable.body.recoveryCodes;
