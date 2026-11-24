@@ -78,7 +78,10 @@ beforeEach(() => {
   onSessionExpired(null);
   window.sessionStorage.clear();
   window.localStorage.clear(); // sin marca de sesión: el arranque es anónimo
-  window.location.hash = `#/tournaments/${TID}/invitation/${TOKEN}`;
+  // Como al ABRIR el enlace en una pestaña nueva: la dirección ya trae el fragmento y NO llega ningún
+  // `hashchange` (asignar `location.hash` lo dispararía después del render y la App capturaría el
+  // token por esa vía, ocultando que falte la captura inicial: mutante W14).
+  window.history.replaceState(null, "", `#/tournaments/${TID}/invitation/${TOKEN}`);
   installFetch();
 });
 
