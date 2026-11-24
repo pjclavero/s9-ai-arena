@@ -1172,11 +1172,11 @@ paths:
                 version: { type: integer }
                 invitationToken:
                   type: string
-                  description: 'V1 · INVITACIÓN · obligatorio si el torneo es `enrollment: invitation` (el del enlace). Se ignora en un torneo abierto. Va en el CUERPO, nunca en la URL.'
+                  description: 'V1 · INVITACIÓN · obligatorio para un ALTA en un torneo `enrollment: invitation` (el del enlace); no hace falta para cambiar la versión de una inscripción ya admitida. Se ignora en un torneo abierto. Va en el CUERPO, nunca en la URL.'
       responses:
         '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
-        '403': { description: 'forbidden (el bot no es tuyo) · V1 INVITACIÓN invitation_required (torneo por invitación sin `invitationToken`) · invitation_invalid (token que no es el de la invitación activa: revocado, sustituido al regenerar o inventado). También para la sustitución de una versión pendiente (200). No inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'forbidden (el bot no es tuyo) · V1 INVITACIÓN invitation_required (torneo por invitación sin `invitationToken`) · invitation_invalid (token que no es el de la invitación activa: revocado, sustituido al regenerar o inventado). Sólo para un ALTA nueva: cambiar la versión pendiente de una inscripción YA admitida del propio bot (200) no exige el enlace, aunque se haya revocado, y sigue sujeto a todas las reglas. No inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`) · team_enrollment_required (#287: torneo `teams` con reglas NvN, se inscribe el equipo completo con enterTournamentTeam). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
 
   /tournaments/{tournamentId}/team-entries:

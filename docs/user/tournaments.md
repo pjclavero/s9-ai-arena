@@ -13,7 +13,7 @@ Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, 
 
 ## Ver torneos
 
-«Torneos» lista todos los torneos con su nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle. Los torneos **por invitación** también aparecen, marcados «por invitación»: cualquiera puede ver su ficha, sus participantes, sus resultados y sus directos públicos; sólo la inscripción necesita invitación ([más abajo](#torneos-por-invitación)).
+«Torneos» lista todos los torneos con su nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle. El listado y el detalle se pueden ver **sin cuenta** (sólo lectura); para inscribirte o crear torneos hay que iniciar sesión. Los torneos **por invitación** también aparecen, marcados «por invitación»: cualquiera puede ver su ficha, sus participantes, sus resultados y sus directos públicos; sólo la inscripción necesita invitación ([más abajo](#torneos-por-invitación)).
 
 ## Formatos
 
@@ -85,6 +85,7 @@ Al **cerrar las inscripciones** la plataforma vuelve a comprobarlo todo: si un b
 - **Sin enlace** la ficha dice «La inscripción en este torneo es por invitación» y no ofrece inscribirse. Si el enlace ya no vale, verás «Tu enlace de invitación no es válido o ha sido revocado»: pide uno nuevo.
 - **Organizadores**: en la ficha, el panel **«Inscripción»** permite cambiar la modalidad, **«Generar enlace»** (con **«Copiar»**) y **«Revocar enlace»**. Por seguridad el enlace sólo se ve justo al generarlo; para copiarlo otra vez, genera uno nuevo (el anterior deja de valer). Revocar invalida el enlace al momento; quien ya se inscribió sigue inscrito.
 - Ver las batallas en directo o los replays públicos de un torneo por invitación **no necesita invitación**.
+- Si ya estás inscrito y el enlace se revoca, sigues inscrito y puedes cambiar a otra versión elegible de tu bot sin un enlace nuevo; para inscribir **otro** bot sí necesitas uno.
 
 ## Cerrar inscripciones (organizadores)
 

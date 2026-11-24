@@ -328,35 +328,53 @@ export function App() {
     // UX-A · Sin sesión, una dirección que no es de NINGUNA pantalla es un 404
     // (con la barra para volver), no el formulario de acceso.
     if (!panelRoute && !staticRoute) return shell(<NotFoundPage route={route} loggedIn={false} />);
+    const onLogin = (who: Me) => {
+      setNotice("");
+      // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
+      setDraftOwner(who.id);
+      setMe(who);
+    };
+    // V1 · TI-01 (D-OP-43) · el listado y la ficha de torneos son PÚBLICOS, en sólo lectura, para
+    // todo torneo (abierto o por invitación). Debajo, el acceso: tras entrar o registrarse la MISMA
+    // ruta pinta el panel (y, con un enlace de invitación, el formulario de inscripción).
+    const publicTournamentId = panelRoute?.kind === "tournament" ? panelRoute.id : null;
+    if (publicTournamentId || staticRoute === "tournaments") {
+      return shell(
+        <>
+          {publicTournamentId ? (
+            <TournamentDetailPage id={publicTournamentId} me={null} />
+          ) : (
+            <TournamentsPage me={null} />
+          )}
+          <section aria-label="acceso" data-testid="public-tournament-access">
+            {publicTournamentId && pendingInvitation(publicTournamentId) ? (
+              <p className="warn" role="status" data-testid="invitation-login-notice">
+                Tienes una invitación para inscribirte en este torneo: inicia sesión o regístrate para inscribirte y
+                volverás al formulario de inscripción.
+              </p>
+            ) : (
+              <p className="muted" data-testid="public-tournament-login-hint">
+                Para inscribir tus bots o crear torneos, inicia sesión o crea una cuenta.
+              </p>
+            )}
+            <LoginPage notice={notice} onLogin={onLogin} />
+          </section>
+        </>,
+        "los torneos",
+      );
+    }
     return shell(
       <>
         <h1>S9 AI Arena</h1>
-        {/* V1 · INVITACIÓN · tras entrar o registrarse, la MISMA ruta vuelve a la ficha con el formulario. */}
-        {panelRoute?.kind === "tournament" && pendingInvitation(panelRoute.id) ? (
-          <p className="warn" role="status" data-testid="invitation-login-notice">
-            Tienes una invitación para inscribirte en este torneo: inicia sesión o crea una cuenta y volverás al
-            formulario de inscripción.
+        {staticRoute !== "home" && !notice && (
+          <p className="warn" role="status" data-testid="login-required">
+            Esa pantalla es del panel: inicia sesión o crea una cuenta para verla.
           </p>
-        ) : (
-          staticRoute !== "home" &&
-          !notice && (
-            <p className="warn" role="status" data-testid="login-required">
-              Esa pantalla es del panel: inicia sesión o crea una cuenta para verla.
-            </p>
-          )
         )}
         {/* G-01 · la portada explica qué es S9 y cómo empezar, junto al acceso. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 320px" }}>
-            <LoginPage
-              notice={notice}
-              onLogin={(who) => {
-                setNotice("");
-                // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
-                setDraftOwner(who.id);
-                setMe(who);
-              }}
-            />
+            <LoginPage notice={notice} onLogin={onLogin} />
           </div>
           <div style={{ flex: "2 1 420px" }}>
             <LandingIntro />
@@ -522,6 +540,8 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
             {link("#/maps", "Mapas")}
           </>
         )}
+        {/* V1 · TI-01 · sin sesión, «Torneos» es el listado público de sólo lectura. */}
+        {!me && link("#/tournaments", "Torneos", "nav-tournaments")}
         {/* R11 · #/live y N6 · #/ranking son públicas (sin cuenta). */}
         {link("#/live", "En directo")}
         {link("#/ranking", "Ranking")}

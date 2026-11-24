@@ -32,7 +32,7 @@ En `main` no existía ninguna modalidad de inscripción: cualquier torneo abiert
 ## Consecuencias
 
 - El contrato pasa a 0.28.0, con cinco operaciones nuevas. Es un cambio de contrato para los clientes que inscriben bots, que ahora pueden recibir esos 403; está anotado en `docs/roadmap/known-issues.md`.
-- Con el enlace revocado, el dueño de una inscripción pendiente no elegible no puede cambiar su versión. La inscripción se mantiene y el organizador puede excluirla.
-- La ficha web sigue en el panel, que exige sesión, en las dos modalidades; la API pública no cambia.
+- Cambiar la versión pendiente de una inscripción ya admitida no exige el enlace (no es un alta): sólo su dueño y con todas las reglas (TI-02).
+- El listado y la ficha web de torneos pasan a ser públicos en sólo lectura para todo torneo (TI-01); el resto del panel sigue con sesión.
 
 Detalle y verificación: [../technical/tournament-invitations.md](../technical/tournament-invitations.md).

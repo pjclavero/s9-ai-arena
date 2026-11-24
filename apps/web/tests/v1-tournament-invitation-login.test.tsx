@@ -105,6 +105,9 @@ describe("V1 · invitación: acceso y vuelta al formulario", () => {
     render(<App />);
     const user = userEvent.setup();
     expect(await screen.findByTestId("invitation-login-notice")).toBeTruthy();
+    // TI-01 · sin sesión ya se ve la ficha pública, sin la opción de inscribirse.
+    expect(await screen.findByText("Copa por invitación")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Inscribir" })).toBeNull();
     expect(window.location.hash).toBe(`#/tournaments/${TID}`); // el token ya no está en la barra
     expect(window.location.href).not.toContain(TOKEN);
     await user.type(screen.getByLabelText("email"), ME.email);

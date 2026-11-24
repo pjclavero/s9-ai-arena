@@ -40,7 +40,7 @@ En un torneo `invitation`, la API rechaza **toda** inscripción que no presente 
 
 | Vía | Sin token | Token que no vale (revocado, sustituido o inventado) |
 |---|---|---|
-| `POST /tournaments/{id}/entries` (también la sustitución de una versión pendiente no elegible) | 403 `invitation_required` | 403 `invitation_invalid` |
+| `POST /tournaments/{id}/entries` (alta nueva) | 403 `invitation_required` | 403 `invitation_invalid` |
 | `POST /tournaments/{id}/team-entries` (#287) | 403 `invitation_required` | 403 `invitation_invalid` |
 
 - El token va en el **cuerpo** (`invitationToken`), nunca en la URL.
@@ -56,6 +56,11 @@ En un torneo `invitation`, la API rechaza **toda** inscripción que no presente 
 - Autorizar un bot propio para el equipo (`PUT …/team-consents/{botId}`) no es una inscripción y no exige
   invitación. El equipo sí la necesita al inscribirse.
 - Revocar un enlace **no toca** las inscripciones hechas antes: se mantienen.
+- **Cambiar la versión de una inscripción ya admitida** (la sustitución de una versión pendiente que ya no es
+  elegible, `200` con `replacedVersion`) **no es un alta** y no exige el enlace, aunque se haya revocado
+  (decisión del coordinador sobre TI-02). Sólo puede hacerlo el dueño del bot (403 `forbidden` para cualquier
+  otro) y siguen aplicándose la elegibilidad y el resto de reglas. Un alta nueva del mismo dueño sí exige el
+  enlace. Test: `TI_REPLACE_AFTER_REVOKE`.
 
 ## El enlace y su token
 
@@ -96,8 +101,8 @@ El enlace tiene la forma `<origen>/#/tournaments/<id>/invitation/<token>`.
 1. Al abrirlo, el panel (`apps/web/src/tournament-invitation.ts`) guarda el token en `sessionStorage`, que
    sólo vive en esa pestaña, y **sustituye** la entrada del historial por `#/tournaments/<id>`. El token
    desaparece de la barra de direcciones y del historial.
-2. Sin sesión, el panel enseña el acceso con el aviso «Tienes una invitación…». Tras **iniciar sesión** o
-   **registrarse**, la misma ruta pinta la ficha del torneo.
+2. Sin sesión se ve la **ficha pública** (sólo lectura) y, debajo, el acceso con el aviso «inicia sesión o
+   regístrate para inscribirte». Tras **iniciar sesión** o **registrarse**, la misma ruta pinta la ficha del panel.
 3. La ficha comprueba el enlace con `POST /tournaments/{id}/invitation/check` (token en el cuerpo) y sólo
    entonces enseña «Inscribir» o «Inscribir equipo». Sin enlace, o con uno revocado, dice que la inscripción
    es por invitación y no ofrece la opción.
@@ -158,16 +163,20 @@ torneo vuelve a ser abierto.
 
 Resumen en [ADR-025](../adr/ADR-025-torneos-por-invitacion.md).
 
-- **Regenerar en vez de volver a mostrar.** No se guarda el token cifrado: «copiar otra vez» es generar un
+- **Regenerar en vez de volver a mostrar (confirmado por el coordinador).** No se guarda el token cifrado: «copiar otra vez» es generar un
   enlace nuevo, y el anterior queda revocado. Así nunca hay un secreto recuperable en la BD y la revocación es
   trivial. El coste es que quien ya recibió el enlace anterior necesita el nuevo.
-- **Estricto también al sustituir una versión.** Con el enlace revocado, el dueño de una inscripción pendiente
-  no elegible no puede cambiar su versión sin un enlace nuevo. Lo pide «la API rechaza cualquier inscripción
-  sin invitación válida»; la inscripción en sí se mantiene y el organizador puede excluirla.
-- **Sin excepción para el organizador ni para el staff al inscribir.** El organizador genera el enlace y lo
-  usa como cualquiera.
-- **La ficha web sigue en el panel, que exige sesión, en las dos modalidades.** La API pública no cambia. Abrir
-  la ficha web a anónimos no forma parte de este cambio.
+- **Sustituir una versión no es un alta (TI-02, decidido por el coordinador).** Cambiar la versión pendiente de
+  una inscripción ya admitida no exige el enlace aunque se haya revocado: el contrato mantiene las inscripciones
+  anteriores a la revocación. Sólo el dueño, y con todas las reglas.
+- **Sin excepción para el organizador ni para el staff al inscribir (confirmado por el coordinador).** El
+  organizador genera el enlace y lo usa como cualquiera.
+- **Listado y ficha web públicos (TI-01, obligatorio por el contrato).** `#/tournaments` y `#/tournaments/<id>`
+  se ven sin sesión, en sólo lectura, para todo torneo: los mismos datos que la API pública (que ya proyecta los
+  bots privados y no lleva campos `x-private`), sin formulario de alta ni de inscripción, sin acciones de
+  gestión y sin pedir datos propios. Debajo, el acceso (login o registro); con un enlace de invitación, el aviso
+  «inicia sesión o regístrate para inscribirte». El cuadro (`#/…/bracket`) y el resto de pantallas del panel
+  siguen pidiendo sesión.
 
 ## Verificación
 
@@ -180,5 +189,8 @@ Resumen en [ADR-025](../adr/ADR-025-torneos-por-invitacion.md).
 | Token de 256 bits, sólo sha256 en BD, ausente de audit_log | CODE_VERIFIED + test | `TI_TOKEN_STORAGE`, `TI_TOKEN_OPENAPI` |
 | Abierto sin cambios | CODE_VERIFIED + test | `TI_OPEN_*`; `apps/web/tests/v1-tournament-invitation.test.tsx` (`TIW_OPEN_UNCHANGED`) |
 | Web: ficha sin opción, formulario con enlace, panel del organizador, login y registro con vuelta al formulario | CODE_VERIFIED + test | `apps/web/tests/v1-tournament-invitation*.test.tsx` |
+| Web: listado y ficha públicos para anónimos (abierto y por invitación), sin formulario, gestión ni datos propios; el resto del panel sigue con sesión | CODE_VERIFIED + test | `apps/web/tests/v1-tournament-public.test.tsx` (`TIP_*`) |
+| Lecturas públicas sin campos `x-private`, sin bots privados ni datos del organizador | CODE_VERIFIED + test | `TI_PUBLIC_PRIVATE_SWEEP` |
+| Sustitución de versión de una inscripción ya admitida sin enlace (sólo el dueño, con reglas) | CODE_VERIFIED + test | `TI_REPLACE_AFTER_REVOKE` |
 | Migración 026 | CODE_VERIFIED + test | `apps/api/src/db/migration-026.test.ts` |
 | Calibración por mutantes | script | `scripts/v1-tournament-invitation-mutants.py` |

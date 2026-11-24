@@ -21,6 +21,7 @@ API_T = ("apps/api/src/v1-tournament-invitation.test.ts", "vitest.db.config.ts")
 MIG_T = ("apps/api/src/db/migration-026.test.ts", "vitest.db.config.ts")
 WEB_T = ("apps/web/tests/v1-tournament-invitation.test.tsx", None)
 LOGIN_T = ("apps/web/tests/v1-tournament-invitation-login.test.tsx", None)
+PUB_T = ("apps/web/tests/v1-tournament-public.test.tsx", None)
 ROUTES = "apps/api/src/routes/tournaments.ts"
 SVC = "apps/api/src/services/tournament-invitations.ts"
 MIGR = "apps/api/src/db/migrations.ts"
@@ -51,7 +52,7 @@ VITEST = _vitest_bin()
 M = [
     # ---------------------------------------------------------------- API: inscripción
     ("M1", "la inscripción individual no exige invitación", [(ROUTES,
-        "      await assertInvitationForEntry(db, t, invitationToken);\n", "")],
+        "      if (!alreadyAdmitted) await assertInvitationForEntry(db, t, invitationToken);\n", "")],
      API_T, ["TI_NOINVITE_INDIVIDUAL", "TI_REVOKE_IMMEDIATE", "TI_REVOKE_REGENERATE"]),
     ("M2", "la inscripción de equipo no exige invitación", [(ROUTES,
         "      const invitationId = await assertInvitationForEntry(trx, t, invitationToken);",
@@ -178,9 +179,48 @@ M = [
         '  const [route, setRoute] = useState(window.location.hash || "#/");')],
      LOGIN_T, ["TIW_LOGIN_RETURN", "TIW_LOGIN_REGISTER"]),
     ("W15", "sin aviso de invitación en el acceso", [(APP,
-        '        {panelRoute?.kind === "tournament" && pendingInvitation(panelRoute.id) ? (',
-        "        {false ? (")],
+        "            {publicTournamentId && pendingInvitation(publicTournamentId) ? (",
+        "            {false ? (")],
      LOGIN_T, ["TIW_LOGIN_RETURN", "TIW_LOGIN_REGISTER"]),
+    # ---------------------------------------------------------------- TI-02 (decisión del coordinador)
+    ("M22", "la sustitución de versión de una inscripción ya admitida vuelve a exigir el enlace", [(ROUTES,
+        "      if (!alreadyAdmitted) await assertInvitationForEntry(db, t, invitationToken);",
+        "      await assertInvitationForEntry(db, t, invitationToken);")],
+     API_T, ["TI_REPLACE_AFTER_REVOKE"]),
+    ("M23", "la exención de TI-02 se aplica a cualquier alta", [(ROUTES,
+        "      if (!alreadyAdmitted) await assertInvitationForEntry(db, t, invitationToken);",
+        "      if (false) await assertInvitationForEntry(db, t, invitationToken);")],
+     API_T, ["TI_NOINVITE_INDIVIDUAL", "TI_REPLACE_AFTER_REVOKE"]),
+    ("M24", "se puede cambiar la inscripción de un bot ajeno", [(ROUTES,
+        '      if (bot.owner_id !== req.auth!.userId) throw forbidden("Solo el dueño inscribe su bot");\n', "")],
+     API_T, ["TI_REPLACE_AFTER_REVOKE", "TI_RULES_ELIGIBILITY"]),
+    # ---------------------------------------------------------------- TI-01 (decisión del coordinador)
+    ("WP1", "listado y ficha vuelven a exigir sesión", [(APP,
+        '    if (publicTournamentId || staticRoute === "tournaments") {', "    if (false) {")],
+     PUB_T, ["TIP_LIST_ANON", "TIP_DETAIL_OPEN_ANON", "TIP_DETAIL_INVITATION_ANON"]),
+    ("WP2", "la vía pública se abre a otras pantallas del panel", [(APP,
+        '    if (publicTournamentId || staticRoute === "tournaments") {',
+        '    if (publicTournamentId || staticRoute !== "home") {')],
+     PUB_T, ["TIP_OTHER_PANEL"]),
+    ("WP3", "el anónimo ve el formulario de alta", [(LIST,
+        '      {props.me && (\n        <div className="card">\n          <h3>Crear torneo</h3>',
+        '      {(\n        <div className="card">\n          <h3>Crear torneo</h3>')],
+     PUB_T, ["TIP_LIST_ANON"]),
+    ("WP4", "el anónimo ve el formulario de inscripción", [(DETAIL,
+        "  const canEnter = (t: Tournament) => props.me !== null && entryFormVisible(t, invite);",
+        "  const canEnter = (t: Tournament) => entryFormVisible(t, invite);")],
+     PUB_T, ["TIP_DETAIL_OPEN_ANON"]),
+    ("WP5", "el anónimo pide datos propios (bots)", [(DETAIL,
+        "        : Promise.resolve({ items: [] as OwnBot[] }),",
+        '        : api<{ items: OwnBot[] }>("GET", "/bots?ownerId=anon"),')],
+     PUB_T, ["TIP_DETAIL_OPEN_ANON"]),
+    ("WP6", "sin sesión se intenta comprobar la invitación", [(DETAIL,
+        '    if (enrollment !== "invitation" || !meId) {', '    if (enrollment !== "invitation") {')],
+     PUB_T, ["TIP_INVITE_ANON"]),
+    ("WP7", "sin aviso de invitación en la ficha pública", [(APP,
+        "            {publicTournamentId && pendingInvitation(publicTournamentId) ? (",
+        "            {false ? (")],
+     PUB_T, ["TIP_INVITE_ANON"]),
 ]
 
 

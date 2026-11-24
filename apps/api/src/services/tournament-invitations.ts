@@ -4,8 +4,9 @@
  * Contrato (docs/technical/tournament-invitations.md):
  *  - `enrollment` = 'open' | 'invitation'. NO decide la visibilidad: todo torneo publicado se
  *    lista y se consulta igual; los directos y resultados públicos no dependen de ella.
- *  - En un torneo 'invitation' la API rechaza TODA inscripción (individual, de equipo y la
- *    sustitución de una versión pendiente) sin un token de invitación válido y no revocado.
+ *  - En un torneo 'invitation' la API rechaza TODA alta (individual o de equipo) sin un token de
+ *    invitación válido y no revocado. Cambiar la versión pendiente de una inscripción YA admitida
+ *    (sólo su dueño, con todas las reglas) no es un alta y no lo exige (TI-02).
  *  - El token: 32 bytes de `randomBytes` (256 bits) en base64url. Sólo se guarda su sha256
  *    (hex); el token en claro se devuelve UNA vez, al generarlo, y sólo al organizador.
  *    No se puede volver a leer: «copiar otra vez» = generar uno nuevo, que revoca el anterior.

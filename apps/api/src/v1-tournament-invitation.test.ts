@@ -550,3 +550,129 @@ describe("V1 · torneos por invitación: un torneo abierto no cambia", () => {
     expect(r.status).toBe(201);
   });
 });
+
+/** Loadout que el validador actual rechaza (mismo de TI_RULES_ELIGIBILITY). */
+const BAD_MODULES = JSON.stringify([
+  { slot: "drive", moduleId: "movement.tracks@1" },
+  { slot: "power", moduleId: "power.generator@2" },
+  { slot: "sensor_a", moduleId: "sensor.radar@1" },
+  { slot: "turret_main", moduleId: "weapon.cannon@1" },
+  { slot: "ammo_main", moduleId: "ammo.standard@1" },
+  { slot: "radio_a", moduleId: "radio.short@1" },
+  { slot: "armor_front", moduleId: "armor.steel_front@1" },
+]);
+
+/** Versión `n` publicada del bot con una revisión de loadout NUEVA (buena o mala). */
+async function addVersion(botId: string, n: number, good: boolean): Promise<void> {
+  await createLoadoutRevision(h.db, botId, GUNNER as never, { massKg: 0, costCredits: 0, energyBalanceEUs: 0 });
+  const rev = Number((await h.db("bot_loadouts").where({ bot_id: botId }).max("revision as r").first())!.r);
+  if (!good) {
+    await h
+      .db("bot_loadouts")
+      .where({ bot_id: botId, revision: rev })
+      .update({ chassis: "chassis.heavy@1", modules: BAD_MODULES });
+  }
+  await h.db("bot_versions").insert({
+    bot_id: botId,
+    version: n,
+    state: "published",
+    runtime: "node",
+    loadout_revision: rev,
+    artifact_hash: `hash-ti-${botId}-${n}`,
+  });
+}
+
+describe("V1 · TI-02 · sustitución de versión de una inscripción ya admitida", () => {
+  it("TI_REPLACE_AFTER_REVOKE con el enlace revocado, el DUEÑO cambia su versión no elegible; reglas y dueño se mantienen", async () => {
+    const { id, token } = await invitationTournament();
+    const botId = await playerBot();
+    expect((await enter(id, { botId, version: 1, invitationToken: token })).status).toBe(201);
+    // La versión inscrita deja de ser elegible y se revoca el enlace.
+    await h
+      .db("bot_loadouts")
+      .where({ bot_id: botId, revision: 1 })
+      .update({ chassis: "chassis.heavy@1", modules: BAD_MODULES });
+    expect((await revoke(id)).body.revoked).toBe(true);
+    await addVersion(botId, 2, true);
+    await addVersion(botId, 3, false);
+    // Las reglas siguen: una versión no elegible no sustituye.
+    const bad = await enter(id, { botId, version: 3 });
+    expect(bad.status, JSON.stringify(bad.body)).toBe(409);
+    expect(bad.body.error).toBe("bot_version_not_eligible");
+    // Otro usuario no puede tocar la inscripción ajena.
+    const other = await newUser("intruso", "user");
+    const foreign = await enter(id, { botId, version: 2 }, other.token);
+    expect(foreign.status).toBe(403);
+    expect(foreign.body.error).toBe("forbidden");
+    expect((await entriesOf(id))[0].version).toBe(1);
+    // El dueño, sin enlace (revocado), sí cambia a una versión elegible: no es un alta.
+    const ok = await enter(id, { botId, version: 2 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.replacedVersion).toBe(1);
+    const rows = await entriesOf(id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].version).toBe(2);
+    // Y un ALTA nueva del mismo dueño sigue necesitando invitación.
+    const fresh = await enter(id, { botId: await playerBot(), version: 1 });
+    expect(fresh.status).toBe(403);
+    expect(fresh.body.error).toBe("invitation_required");
+  });
+});
+
+describe("V1 · TI-01 · lecturas públicas sin nada privado", () => {
+  it("TI_PUBLIC_PRIVATE_SWEEP un anónimo lee listado, ficha, batallas y cuadro sin x-private ni bots privados", async () => {
+    const privateFields = loadContract().privateFieldNames;
+    for (const enrollment of ["open", "invitation"]) {
+      const id = await createTournament({ enrollment }); // sin retransmisión pública
+      const pub = await createPublishedBot(h.db, `ti-pubv-${++seq}`);
+      const priv = await createPublishedBot(h.db, `ti-privv-${++seq}`);
+      await h.db("bots").where({ id: priv.botId }).update({ visibility: "private" });
+      for (const b of [pub, priv]) {
+        await h
+          .db("entries")
+          .insert({ tournament_id: id, bot_id: b.botId, version: 1, loadout_revision: 1, frozen: true });
+      }
+      const battle = await insertScheduledBattle(h.db, pub, priv, { tournamentId: id });
+      await h
+        .db("battles")
+        .where({ id: battle })
+        .update({ status: "finished", result: JSON.stringify({ winner: "B" }) });
+      await h.db("matches").insert({
+        tournament_id: id,
+        round: 1,
+        state: "finished",
+        pairing: JSON.stringify({ home: pub.botId, away: priv.botId }),
+        winner_bot_id: priv.botId,
+      });
+      for (const p of [
+        "/tournaments?limit=100",
+        `/tournaments/${id}`,
+        `/tournaments/${id}/battles`,
+        `/tournaments/${id}/matches`,
+      ]) {
+        const r = await request(app).get(p);
+        expect(r.status, p).toBe(200);
+        const keys = new Set<string>();
+        const walk = (v: unknown) => {
+          if (Array.isArray(v)) v.forEach(walk);
+          else if (v && typeof v === "object")
+            for (const [k, x] of Object.entries(v)) {
+              keys.add(k);
+              walk(x);
+            }
+        };
+        walk(r.body);
+        for (const k of keys) expect(privateFields.has(k), `${p} expone ${k} (x-private)`).toBe(false);
+        for (const k of ["created_by", "createdBy", "email", "modules", "loadout", "token_sha256", "invitationToken"]) {
+          expect(keys.has(k), `${p} expone ${k}`).toBe(false);
+        }
+        const text = JSON.stringify(r.body);
+        expect(text, `${p} nombra al bot privado`).not.toContain(priv.name);
+        expect(text, `${p} identifica al bot privado`).not.toContain(priv.botId);
+      }
+      const detail = await request(app).get(`/tournaments/${id}`);
+      expect(detail.body.enrollment).toBe(enrollment);
+      expect(detail.body.viewerCanManage).toBe(false);
+    }
+  });
+});

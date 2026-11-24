@@ -520,15 +520,18 @@ export function tournamentRoutes(
       if (!t) throw notFound();
       if (t.state !== "open") throw conflict("entries_closed", "Las inscripciones no están abiertas");
       const { botId, version, invitationToken } = req.body ?? {};
-      // V1 · INVITACIÓN (D-OP-43) · en un torneo por invitación, TODA inscripción (también la
-      // sustitución de una versión pendiente) exige la invitación activa; con el torneo bloqueado.
-      await assertInvitationForEntry(db, t, invitationToken);
       const bot = await db("bots")
         .where({ id: botId })
         .first()
         .catch(() => null);
       if (!bot) throw badRequest("botId desconocido");
       if (bot.owner_id !== req.auth!.userId) throw forbidden("Solo el dueño inscribe su bot");
+      // V1 · INVITACIÓN (D-OP-43; decisión del coordinador sobre TI-02) · en un torneo por invitación,
+      // un ALTA nueva exige la invitación activa (con el torneo bloqueado). Una inscripción YA admitida
+      // de este bot (su dueño es quien llama: comprobado arriba) no es un alta: cambiar su versión
+      // pendiente no exige el enlace, aunque se haya revocado, y sigue sujeto a TODAS las reglas de abajo.
+      const alreadyAdmitted = await db("entries").where({ tournament_id: t.id, bot_id: botId }).first();
+      if (!alreadyAdmitted) await assertInvitationForEntry(db, t, invitationToken);
       const v = await db("bot_versions").where({ bot_id: botId, version }).first();
       // FROZEN-REUSE (B2-B4) · `published` o `frozen` (congelada por un torneo anterior:
       // inmutable, NO «usada una vez») y elegible con el validador actual. La versión se
