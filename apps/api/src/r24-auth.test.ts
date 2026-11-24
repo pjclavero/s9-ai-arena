@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { anyTotp, enable2faFor, freshTotp } from "./testing/totp-codes.js";
+import { enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -73,7 +73,7 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     const badPass = await request(app)
       .delete("/auth/2fa")
       .set("Authorization", `Bearer ${access}`)
-      .send({ password: "incorrecta-del-todo", totp: await anyTotp(otpauthUrl) });
+      .send({ password: "incorrecta-del-todo", totp: await freshTotp(otpauthUrl) });
     expect(badPass.status).toBe(401);
 
     const badTotp = await request(app)

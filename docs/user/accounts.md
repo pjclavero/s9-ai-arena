@@ -86,7 +86,8 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 | «Ya existe una cuenta con ese email» | El email ya está registrado. |
 | «email inválido» / «displayName obligatorio (máx. 48)» | Datos del formulario no válidos. |
 | «Credenciales inválidas» | Email o contraseña incorrectos. |
-| «Se requiere un código TOTP válido (2FA activo)» | Falta el código de dos pasos, es incorrecto o ya se usó. |
+| «Se requiere un código TOTP válido (2FA activo)» | Falta el código de dos pasos o es incorrecto. |
+| «Ese código ya se ha usado: espera al siguiente…» | Acabas de usar ese código (o uno posterior). Espera a que la app muestre otro; no cuenta como intento fallido. |
 | «Demasiados intentos fallidos: bloqueo temporal» | Muchos fallos seguidos; espera unos minutos. |
 | «Reautenticación requerida: contraseña inválida» | Al cambiar la contraseña, la actual no es correcta. |
 | «La nueva contraseña debe ser distinta de la actual» | La contraseña nueva coincide con la actual. |

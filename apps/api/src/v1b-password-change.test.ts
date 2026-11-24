@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { anyTotp, enable2faFor, freshTotp } from "./testing/totp-codes.js";
+import { enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -161,7 +161,7 @@ describe("V1-B · cambio de contraseña autenticado", () => {
 
     const sinTotp = await change(access, { currentPassword: OLD, newPassword: NEW });
     expect(sinTotp.status).toBe(401);
-    expect((await u.login(NEW, await anyTotp(url))).status).toBe(401);
+    expect((await u.login(NEW, await freshTotp(url))).status).toBe(401);
 
     const ok = await change(access, { currentPassword: OLD, newPassword: NEW, totp: await freshTotp(url) });
     expect(ok.status).toBe(204);

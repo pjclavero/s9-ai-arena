@@ -61,7 +61,7 @@ async function startEnrollment() {
     "POST /auth/2fa/confirm": () => ({ recoveryCodes: CODES }),
   });
   render(<TwoFactorSection />);
-  fireEvent.change(await screen.findByLabelText("contraseña para activar"), {
+  fireEvent.change(await screen.findByLabelText("Contraseña para activar"), {
     target: { value: "mi-contraseña-larga" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
@@ -104,7 +104,7 @@ describe("ACC-2FA · activar", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Activar la verificación en dos pasos" }));
     expect((await screen.findByTestId("twofa-error")).textContent).toContain("contraseña");
     expect(calls("POST", "/auth/2fa/setup")).toHaveLength(0);
-    fireEvent.change(screen.getByLabelText("contraseña para activar"), { target: { value: "mi-contraseña-larga" } });
+    fireEvent.change(screen.getByLabelText("Contraseña para activar"), { target: { value: "mi-contraseña-larga" } });
     fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
     await screen.findByTestId("totp-qr");
     expect(calls("POST", "/auth/2fa/setup")[0][2]).toEqual({ password: "mi-contraseña-larga" });
@@ -126,7 +126,7 @@ describe("ACC-2FA · activar", () => {
 
   it("W_CONFIRMA: envía el token y el código sin espacios; muestra los códigos UNA vez y exige «Los he guardado»", async () => {
     await startEnrollment();
-    fireEvent.change(screen.getByLabelText("código de confirmación"), { target: { value: " 123 456 " } });
+    fireEvent.change(screen.getByLabelText("Código de la app"), { target: { value: " 123 456 " } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
     await screen.findByTestId("recovery-codes");
     expect(calls("POST", "/auth/2fa/confirm")[0][2]).toEqual({ enrollmentToken: "tok-1", totp: "123456" });
@@ -143,7 +143,7 @@ describe("ACC-2FA · activar", () => {
 
   it("W_NO_PERSISTE: ni el secreto ni los códigos van a localStorage, sessionStorage o la URL", async () => {
     await startEnrollment();
-    fireEvent.change(screen.getByLabelText("código de confirmación"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("Código de la app"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
     await screen.findByTestId("recovery-codes");
     const dump = (st: Storage) =>
@@ -153,9 +153,44 @@ describe("ACC-2FA · activar", () => {
     for (const c of CODES) expect(all).not.toContain(c);
   });
 
+  it("W_FOCO_Y_NOMBRE: el nombre accesible es la etiqueta visible y el foco sigue a cada fase", async () => {
+    await startEnrollment();
+    const input = screen.getByLabelText("Código de la app");
+    expect(input.getAttribute("aria-label")).toBeNull(); // el nombre sale de la etiqueta visible
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    const codes = await screen.findByTestId("recovery-codes");
+    await waitFor(() => expect(document.activeElement).toBe(codes));
+    fireEvent.click(screen.getByLabelText("Los he guardado"));
+    fireEvent.click(screen.getByRole("button", { name: "Hecho" }));
+    const status = await screen.findByTestId("twofa-status");
+    await waitFor(() => expect(document.activeElement).toBe(status));
+  });
+
+  it("W_CODIGO_USADO: un código ya usado se explica como tal, no como contraseña mala", async () => {
+    routes({
+      "GET /users/me": meOn(8),
+      "DELETE /auth/2fa": () => {
+        throw Object.assign(new Error("Ese código ya se ha usado"), {
+          status: 401,
+          body: { error: "totp_code_reused", message: "Ese código ya se ha usado" },
+        });
+      },
+    });
+    render(<TwoFactorSection />);
+    await screen.findByTestId("twofa-status");
+    fireEvent.change(screen.getByLabelText("Contraseña de la cuenta"), { target: { value: "buena-larga-12" } });
+    fireEvent.change(screen.getByLabelText("Código de la app o de recuperación"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar la verificación en dos pasos" }));
+    const err = await screen.findByTestId("twofa-error");
+    expect(err.textContent).toContain("ya se ha usado");
+    expect(err.textContent).not.toContain("no son correctos");
+  });
+
   it("W_CODIGO_LOCAL: un código que no son 6 cifras no llega a la API", async () => {
     await startEnrollment();
-    fireEvent.change(screen.getByLabelText("código de confirmación"), { target: { value: "12a" } });
+    fireEvent.change(screen.getByLabelText("Código de la app"), { target: { value: "12a" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
     expect((await screen.findByTestId("twofa-error")).textContent).toContain("6 cifras");
     expect(calls("POST", "/auth/2fa/confirm")).toHaveLength(0);
@@ -168,7 +203,7 @@ describe("ACC-2FA · activar", () => {
         throw Object.assign(new Error("x"), { status });
       });
     const send = () => {
-      fireEvent.change(screen.getByLabelText("código de confirmación"), { target: { value: "123456" } });
+      fireEvent.change(screen.getByLabelText("Código de la app"), { target: { value: "123456" } });
       fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
     };
     fail(401);
@@ -194,8 +229,8 @@ describe("ACC-2FA · activar", () => {
 
 describe("ACC-2FA · regenerar y desactivar", () => {
   function fillReauth(password: string, code: string) {
-    fireEvent.change(screen.getByLabelText("2fa contraseña"), { target: { value: password } });
-    fireEvent.change(screen.getByLabelText("2fa código"), { target: { value: code } });
+    fireEvent.change(screen.getByLabelText("Contraseña de la cuenta"), { target: { value: password } });
+    fireEvent.change(screen.getByLabelText("Código de la app o de recuperación"), { target: { value: code } });
   }
 
   it("W_REGENERA: pide contraseña + código, llama a recovery-codes y muestra los nuevos una vez", async () => {
@@ -242,7 +277,7 @@ describe("ACC-2FA · regenerar y desactivar", () => {
     fillReauth("mala", "000000");
     fireEvent.click(screen.getByRole("button", { name: "Desactivar la verificación en dos pasos" }));
     expect((await screen.findByTestId("twofa-error")).textContent).toContain("no son correctos");
-    expect((screen.getByLabelText("2fa código") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Código de la app o de recuperación") as HTMLInputElement).value).toBe("");
     expect(screen.getByTestId("twofa-status").textContent).toContain("activada");
   });
 });

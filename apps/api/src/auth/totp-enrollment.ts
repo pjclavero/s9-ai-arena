@@ -8,7 +8,8 @@
  *
  * El token es AES-256-GCM con una clave DERIVADA del secreto de sesión (HKDF, separación de dominio): el
  * secreto TOTP no viaja legible dentro de él y nadie puede fabricar uno. Va atado al usuario y a la sesión
- * que lo pidió (datos asociados autenticados) y caduca a los 10 minutos. No hace falta migración.
+ * que lo pidió y al estado de la cuenta (`updated_at`: tras confirmar o desactivar ya no se abre, REV-3), como
+ * datos asociados autenticados, y caduca a los 10 minutos. No hace falta migración.
  */
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { sessionSecret } from "./tokens.js";
@@ -21,18 +22,18 @@ function key(): Buffer {
   return Buffer.from(hkdfSync("sha256", sessionSecret(), "", INFO, 32));
 }
 
-function aad(userId: string, sessionId: string): Buffer {
-  return Buffer.from(`${INFO}|${userId}|${sessionId}`, "utf8");
+function aad(userId: string, sessionId: string, accountState: string): Buffer {
+  return Buffer.from(`${INFO}|${userId}|${sessionId}|${accountState}`, "utf8");
 }
 
 /** Sella el secreto pendiente para (usuario, sesión). `now` en ms (inyectable en tests). */
 export function sealTotpEnrollment(
-  input: { userId: string; sessionId: string; secret: string },
+  input: { userId: string; sessionId: string; accountState: string; secret: string },
   now: number = Date.now(),
 ): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(), iv);
-  cipher.setAAD(aad(input.userId, input.sessionId));
+  cipher.setAAD(aad(input.userId, input.sessionId, input.accountState));
   const payload = JSON.stringify({ s: input.secret, exp: Math.floor(now / 1000) + TOTP_ENROLLMENT_TTL_S });
   const body = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -45,7 +46,7 @@ export function sealTotpEnrollment(
  */
 export function openTotpEnrollment(
   token: unknown,
-  ctx: { userId: string; sessionId: string },
+  ctx: { userId: string; sessionId: string; accountState: string },
   now: number = Date.now(),
 ): string | null {
   if (typeof token !== "string" || token.length > 512) return null;
@@ -57,7 +58,7 @@ export function openTotpEnrollment(
     const tag = Buffer.from(parts[3], "base64url");
     if (iv.length !== 12 || tag.length !== 16) return null;
     const decipher = createDecipheriv("aes-256-gcm", key(), iv);
-    decipher.setAAD(aad(ctx.userId, ctx.sessionId));
+    decipher.setAAD(aad(ctx.userId, ctx.sessionId, ctx.accountState));
     decipher.setAuthTag(tag);
     const plain = Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
     const p = JSON.parse(plain) as { s?: unknown; exp?: unknown };

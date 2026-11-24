@@ -66,7 +66,7 @@ Autenticación:
   - `DELETE /auth/2fa` comparte el límite de 5 fallos (`429`);
   - `POST /auth/2fa` (alta directa) está **retirada**: responde `410 enable2fa_removed` y no cambia la cuenta;
   - `GET /users/me` añade `recoveryCodesRemaining` con la 2FA activa;
-  - todo código TOTP o de recuperación vale una sola vez, también en el login (**cambio de contrato** V1).
+  - todo código TOTP o de recuperación vale una sola vez, también en el login (**cambio de contrato** V1); un TOTP de un paso igual o anterior al último usado da `401 totp_code_reused`, que no suma a los bloqueos.
   - `recover` y `reset` son extensiones y no tienen transporte de correo.
 - **Cambio de contraseña**: no existe en `main`; lo añade el PR #315 (abierto).
 

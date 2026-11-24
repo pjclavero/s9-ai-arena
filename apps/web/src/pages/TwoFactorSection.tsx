@@ -10,7 +10,7 @@
  *  - Regenerar los códigos y desactivar piden contraseña + código (TOTP o de recuperación).
  *  - Ayuda: cómo entrar con un código de recuperación si se pierde el dispositivo.
  */
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { encode } from "uqr";
 import { api, type Me } from "../api.js";
 import { describeApiError } from "../errors.js";
@@ -30,7 +30,11 @@ type Stage =
 
 /** Mensaje legible de un fallo de la API en esta sección. */
 export function twoFactorErrorMessage(err: unknown, ctx: "confirm" | "reauth"): string {
-  const e = err as { status?: number; message?: string };
+  const e = err as { status?: number; message?: string; body?: { error?: unknown } };
+  // REV-5 · código válido pero ya usado: no es un error de contraseña; basta esperar al siguiente.
+  if (e.body?.error === "totp_code_reused") {
+    return "Ese código ya se ha usado: espera a que tu app muestre el siguiente (o usa un código de recuperación).";
+  }
   // 429 antes que los transitorios: describeApiError lo clasifica como «unavailable», pero aquí es el
   // bloqueo por intentos fallidos (15 min), no un servicio caído.
   if (e.status === 429) return "Demasiados intentos fallidos: espera unos 15 minutos antes de volver a intentarlo.";
@@ -81,7 +85,6 @@ export function QrSvg(props: { value: string; label: string }) {
 }
 
 function ReauthFields(props: {
-  idPrefix: string;
   password: string;
   code: string;
   onPassword: (v: string) => void;
@@ -91,9 +94,8 @@ function ReauthFields(props: {
     <>
       <p>
         <label>
-          Contraseña{" "}
+          Contraseña de la cuenta{" "}
           <input
-            aria-label={`${props.idPrefix} contraseña`}
             type="password"
             autoComplete="current-password"
             value={props.password}
@@ -103,9 +105,8 @@ function ReauthFields(props: {
       </p>
       <p>
         <label>
-          Código{" "}
+          Código de la app o de recuperación{" "}
           <input
-            aria-label={`${props.idPrefix} código`}
             autoComplete="one-time-code"
             spellCheck={false}
             value={props.code}
@@ -120,6 +121,22 @@ function ReauthFields(props: {
 
 export function TwoFactorSection() {
   const [stage, setStage] = useState<Stage>({ kind: "loading" });
+  // REV-7 · al cambiar de fase (QR, códigos, estado) el foco va a lo nuevo; no en la carga inicial.
+  const moveFocus = useRef(false);
+  const codeInputRef = useRef<HTMLInputElement>(null);
+  const codesRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  function goTo(next: Stage) {
+    moveFocus.current = true;
+    setStage(next);
+  }
+  useEffect(() => {
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    if (stage.kind === "enrolling") codeInputRef.current?.focus();
+    else if (stage.kind === "codes") codesRef.current?.focus();
+    else if (stage.kind === "on" || stage.kind === "off") statusRef.current?.focus();
+  }, [stage.kind]);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [reauthCode, setReauthCode] = useState("");
@@ -164,7 +181,7 @@ export function TwoFactorSection() {
         password,
       });
       resetForms();
-      setStage({ kind: "enrolling", otpauthUrl: r.otpauthUrl, secret: r.secret, enrollmentToken: r.enrollmentToken });
+      goTo({ kind: "enrolling", otpauthUrl: r.otpauthUrl, secret: r.secret, enrollmentToken: r.enrollmentToken });
     } catch (err) {
       setError(twoFactorErrorMessage(err, "reauth"));
       setPassword("");
@@ -189,11 +206,11 @@ export function TwoFactorSection() {
         totp: typed,
       });
       resetForms();
-      setStage({ kind: "codes", codes: r.recoveryCodes, reason: "enabled" });
+      goTo({ kind: "codes", codes: r.recoveryCodes, reason: "enabled" });
     } catch (err) {
       const status = (err as { status?: number }).status;
       setError(twoFactorErrorMessage(err, "confirm"));
-      if (status === 400) setStage({ kind: "off" });
+      if (status === 400) goTo({ kind: "off" });
       setCode("");
     } finally {
       setBusy(false);
@@ -213,12 +230,12 @@ export function TwoFactorSection() {
       if (action === "regenerate") {
         const r = await api<{ recoveryCodes: string[] }>("POST", "/auth/2fa/recovery-codes", body);
         resetForms();
-        setStage({ kind: "codes", codes: r.recoveryCodes, reason: "regenerated" });
+        goTo({ kind: "codes", codes: r.recoveryCodes, reason: "regenerated" });
       } else {
         await api("DELETE", "/auth/2fa", body);
         resetForms();
         setNotice("Verificación en dos pasos desactivada. Tus otras sesiones se han cerrado.");
-        setStage({ kind: "off" });
+        goTo({ kind: "off" });
       }
     } catch (err) {
       setError(twoFactorErrorMessage(err, "reauth"));
@@ -238,7 +255,7 @@ export function TwoFactorSection() {
         ? "Verificación en dos pasos activada. Tus otras sesiones se han cerrado."
         : "Códigos nuevos guardados. Los anteriores ya no sirven.",
     );
-    setStage({ kind: "on", remaining: n });
+    goTo({ kind: "on", remaining: n });
   }
 
   return (
@@ -262,15 +279,14 @@ export function TwoFactorSection() {
 
       {stage.kind === "off" && (
         <>
-          <p data-testid="twofa-status">
+          <p data-testid="twofa-status" ref={statusRef} tabIndex={-1}>
             Estado: <strong>desactivada</strong>.
           </p>
           <form onSubmit={(e) => void start(e)} noValidate aria-label="activar verificación en dos pasos">
             <p>
               <label>
-                Contraseña{" "}
+                Contraseña para activar{" "}
                 <input
-                  aria-label="contraseña para activar"
                   type="password"
                   autoComplete="current-password"
                   value={password}
@@ -302,7 +318,7 @@ export function TwoFactorSection() {
             <label>
               Código de la app{" "}
               <input
-                aria-label="código de confirmación"
+                ref={codeInputRef}
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 maxLength={9}
@@ -325,7 +341,7 @@ export function TwoFactorSection() {
             className="link"
             onClick={() => {
               resetForms();
-              setStage({ kind: "off" });
+              goTo({ kind: "off" });
             }}
           >
             Cancelar
@@ -334,7 +350,7 @@ export function TwoFactorSection() {
       )}
 
       {stage.kind === "codes" && (
-        <div data-testid="recovery-codes">
+        <div data-testid="recovery-codes" ref={codesRef} tabIndex={-1}>
           <p className="warn" role="alert">
             {stage.reason === "enabled"
               ? "Verificación en dos pasos ACTIVADA. "
@@ -360,7 +376,7 @@ export function TwoFactorSection() {
 
       {stage.kind === "on" && (
         <>
-          <p data-testid="twofa-status">
+          <p data-testid="twofa-status" ref={statusRef} tabIndex={-1}>
             Estado: <strong>activada</strong>. Te quedan <strong>{stage.remaining}</strong> códigos de recuperación.
           </p>
           {stage.remaining < LOW_RECOVERY_CODES && (
@@ -375,13 +391,7 @@ export function TwoFactorSection() {
               también los no usados) o para <strong>desactivar</strong> la verificación (tu cuenta volverá a pedir sólo
               la contraseña y se cerrarán tus otras sesiones), confirma que eres tú:
             </p>
-            <ReauthFields
-              idPrefix="2fa"
-              password={password}
-              code={reauthCode}
-              onPassword={setPassword}
-              onCode={setReauthCode}
-            />
+            <ReauthFields password={password} code={reauthCode} onPassword={setPassword} onCode={setReauthCode} />
             <button type="button" disabled={busy} onClick={() => void reauthAction("regenerate")}>
               Regenerar los códigos
             </button>{" "}

@@ -23,7 +23,7 @@ export function secretFromUri(otpauthUrl: string): string {
   return s;
 }
 
-async function codeForStep(secret: string, step: number): Promise<string> {
+export async function codeForStep(secret: string, step: number): Promise<string> {
   const r = (await otplib.generate({
     secret,
     period: TOTP_PERIOD_SECONDS,

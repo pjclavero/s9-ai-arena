@@ -15,13 +15,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { freshTotp } from "./testing/totp-codes.js";
+import { codeForStep, freshTotp } from "./testing/totp-codes.js";
+import { TOTP_PERIOD_SECONDS } from "./auth/totp.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
 import { FailedLoginGuard } from "./middleware/rate-limit.js";
 import { openTotpEnrollment, sealTotpEnrollment, TOTP_ENROLLMENT_TTL_S } from "./auth/totp-enrollment.js";
-import { verifySecondFactor } from "./routes/auth.js";
+import { requireStrongReauth, verifySecondFactor } from "./routes/auth.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -29,8 +30,13 @@ let app: Express;
 beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
-  // Guard de LOGIN holgado (aquí se inicia sesión muchas veces); el de 2FA es el de producción (5 fallos).
-  app = createApp({ db: h.db, loginGuard: new FailedLoginGuard(1000, 60_000) });
+  // Guard de LOGIN holgado (aquí se inicia sesión muchas veces) y registro sin límite por IP (se crean ~40
+  // cuentas en un minuto). El guard de 2FA y el rate-limit de sus rutas son los de producción.
+  app = createApp({
+    db: h.db,
+    loginGuard: new FailedLoginGuard(1000, 60_000),
+    registerLimiter: { hit: () => true },
+  });
 }, 120000);
 
 afterAll(async () => {
@@ -190,12 +196,13 @@ describe("ACC-2FA · alta en dos fases", () => {
 
   it("TOKEN_CADUCA: el token de alta deja de abrirse pasados 10 minutos", () => {
     const now = Date.UTC(2026, 10, 24, 12, 0, 0);
-    const ctx = { userId: "u1", sessionId: "s1" };
+    const ctx = { userId: "u1", sessionId: "s1", accountState: "2026-11-24T12:00:00.000Z" };
     const t = sealTotpEnrollment({ ...ctx, secret: "JBSWY3DPEHPK3PXP" }, now);
     expect(openTotpEnrollment(t, ctx, now + (TOTP_ENROLLMENT_TTL_S - 1) * 1000)).toBe("JBSWY3DPEHPK3PXP");
     expect(openTotpEnrollment(t, ctx, now + TOTP_ENROLLMENT_TTL_S * 1000)).toBeNull();
     expect(openTotpEnrollment(t, { ...ctx, sessionId: "s2" }, now)).toBeNull();
     expect(openTotpEnrollment(t, { ...ctx, userId: "u2" }, now)).toBeNull();
+    expect(openTotpEnrollment(t, { ...ctx, accountState: "2026-11-24T12:00:01.000Z" }, now)).toBeNull();
     expect(openTotpEnrollment(123, ctx, now)).toBeNull();
   });
 
@@ -217,21 +224,65 @@ describe("ACC-2FA · alta en dos fases", () => {
     expect(blocked.detail.op).toBe("confirm");
   });
 
-  it("CONFIRMA_UNA_VEZ: dos confirmaciones simultáneas con códigos válidos ⇒ una activa y la otra 409", async () => {
-    const u = await newUser("doble");
+  it("CONFIRMA_UNA_VEZ: dos confirmaciones simultáneas con códigos válidos ⇒ una sola activa", async () => {
+    // Con el anti-replay monótono, la perdedora recibe 409 (ya activa) o 401 «código ya usado» según el orden
+    // en que lleguen; lo invariante es que sólo UNA activa. Se repite la carrera con varias cuentas.
+    for (let k = 0; k < 6; k++) {
+      const u = await newUser(`doble-${k}`);
+      const s = await setup(u.access);
+      const [c1, c2] = [await freshTotp(s.body.secret), await freshTotp(s.body.secret)];
+      const send = (totp: string) =>
+        request(app)
+          .post("/auth/2fa/confirm")
+          .set(auth(u.access))
+          .send({ enrollmentToken: s.body.enrollmentToken, totp });
+      const rs = await Promise.all([send(c1), send(c2)]);
+      expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
+      for (const r of rs) expect([200, 401, 409]).toContain(r.status);
+      const enabled = await h.db("audit_log").where({ action: "auth.2fa.enabled", target: `user:${u.userId}` });
+      expect(enabled).toHaveLength(1);
+      // y después de activar, el mismo token ya no sirve para nada
+      expect((await send(await freshTotp(s.body.secret))).status).toBe(409);
+    }
+  });
+
+  it("TOKEN_UN_USO: tras activar y desactivar, el mismo token de alta no reactiva la 2FA", async () => {
+    const u = await newUser("token-uso");
     const s = await setup(u.access);
-    const send = async () =>
-      request(app)
-        .post("/auth/2fa/confirm")
-        .set(auth(u.access))
-        .send({ enrollmentToken: s.body.enrollmentToken, totp: await freshTotp(s.body.secret) });
-    const [r1, r2] = await Promise.all([send(), send()]);
-    expect([r1.status, r2.status].sort()).toEqual([200, 409]);
-    const enabled = await h.db("audit_log").where({ action: "auth.2fa.enabled", target: `user:${u.userId}` });
-    expect(enabled).toHaveLength(1);
-    // y después de activar, el mismo token ya no sirve para nada
-    const again = await send();
-    expect(again.status).toBe(409);
+    const ok = await request(app)
+      .post("/auth/2fa/confirm")
+      .set(auth(u.access))
+      .send({ enrollmentToken: s.body.enrollmentToken, totp: await freshTotp(s.body.secret) });
+    expect(ok.status).toBe(200);
+    const off = await request(app)
+      .delete("/auth/2fa")
+      .set(auth(u.access))
+      .send({ password: PASSWORD, totp: ok.body.recoveryCodes[0] });
+    expect(off.status).toBe(204);
+    const again = await request(app)
+      .post("/auth/2fa/confirm")
+      .set(auth(u.access))
+      .send({ enrollmentToken: s.body.enrollmentToken, totp: await freshTotp(s.body.secret) });
+    expect(again.status).toBe(400);
+    expect((await h.db("users").where({ id: u.userId }).first()).totp_secret).toBeNull();
+  });
+
+  it("RAFAGA_LIMITE: 20 confirmaciones simultáneas con código malo ⇒ como mucho 5 se evalúan", async () => {
+    const u = await newUser("rafaga");
+    const s = await setup(u.access);
+    const rs = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        request(app)
+          .post("/auth/2fa/confirm")
+          .set(auth(u.access))
+          .send({ enrollmentToken: s.body.enrollmentToken, totp: "000000" }),
+      ),
+    );
+    const evaluated = rs.filter((r) => r.status === 401).length;
+    expect(evaluated).toBeLessThanOrEqual(5);
+    expect(rs.filter((r) => r.status === 429).length).toBe(20 - evaluated);
+    const blocked = await h.db("audit_log").where({ action: "auth.2fa.blocked", target: `user:${u.userId}` });
+    expect(blocked).toHaveLength(1);
   });
 
   it("SETUP_CON_2FA_ACTIVA: setup con la 2FA ya activa ⇒ 409", async () => {
@@ -247,6 +298,71 @@ describe("ACC-2FA · ningún código vale dos veces", () => {
     const code = await freshTotp(u.secret);
     expect((await u.login(code)).status).toBe(200);
     expect((await u.login(code)).status).toBe(401);
+  });
+
+  it("MONOTONO: tras usar un paso, un código de un paso ANTERIOR aún vigente no vale", async () => {
+    const u = await enabledUser("monotono");
+    const now = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS);
+    // Punto de partida conocido: último paso consumido = now-1 (el alta pudo gastar now o now+1).
+    await h
+      .db("api_usage")
+      .where({ actor_key: `user:${u.userId}`, route: "auth.totp.last_step" })
+      .update({ count: now - 1 });
+    // now+1 y now son ambos válidos durante ≥ 30 s: el orden es lo único que decide.
+    expect((await u.login(await codeForStep(u.secret, now + 1))).status).toBe(200);
+    const older = await u.login(await codeForStep(u.secret, now));
+    expect(older.status).toBe(401);
+    expect(older.body.error).toBe("totp_code_reused");
+  });
+
+  it("REPLAY_LOGIN: repetir el código recién usado da un error propio y no suma al bloqueo del login", async () => {
+    const u = await enabledUser("replay-login");
+    const code = await freshTotp(u.secret);
+    expect((await u.login(code)).status).toBe(200);
+    const again = await u.login(code);
+    expect(again.status).toBe(401);
+    expect(again.body.error).toBe("totp_code_reused");
+    expect(again.body.message).toContain("ya se ha usado");
+  });
+
+  it("REPLAY_NO_BLOQUEA: 7 reautenticaciones con el código recién usado no bloquean la 2FA; luego entra", async () => {
+    const u = await enabledUser("replay-reauth");
+    const code = await freshTotp(u.secret);
+    expect((await u.login(code)).status).toBe(200);
+    for (let i = 0; i < 7; i++) {
+      const r = await request(app).delete("/auth/2fa").set(auth(u.access)).send({ password: PASSWORD, totp: code });
+      expect(r.status).toBe(401);
+      expect(r.body.error).toBe("totp_code_reused");
+    }
+    const ok = await request(app)
+      .delete("/auth/2fa")
+      .set(auth(u.access))
+      .send({ password: PASSWORD, totp: await freshTotp(u.secret) });
+    expect(ok.status).toBe(204);
+  });
+
+  it("REPLAY_CAMBIO_PASSWORD: en el cambio de contraseña y en ADM-1 el replay no suma al bloqueo", async () => {
+    const u = await enabledUser("replay-pw");
+    const code = await freshTotp(u.secret);
+    expect((await u.login(code)).status).toBe(200);
+    for (let i = 0; i < 7; i++) {
+      const r = await request(app)
+        .post("/auth/password")
+        .set(auth(u.access))
+        .send({ currentPassword: PASSWORD, newPassword: "otra-password-larga-9", totp: code });
+      expect(r.status).toBe(401);
+      expect(r.body.error).toBe("totp_code_reused");
+    }
+    const user = await h.db("users").where({ id: u.userId }).first();
+    await expect(requireStrongReauth(h.db, user, { password: PASSWORD, totp: code })).rejects.toMatchObject({
+      status: 401,
+      code: "totp_code_reused",
+    });
+    const ok = await request(app)
+      .post("/auth/password")
+      .set(auth(u.access))
+      .send({ currentPassword: PASSWORD, newPassword: "otra-password-larga-9", totp: await freshTotp(u.secret) });
+    expect(ok.status).toBe(204);
   });
 
   it("RECUPERACION_PARALELO: el mismo código de recuperación en dos logins simultáneos ⇒ sólo uno entra", async () => {

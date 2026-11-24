@@ -23,6 +23,7 @@ import {
   verifyTotpDetailed,
 } from "../auth/totp.js";
 import { TOTP_ENROLLMENT_TTL_S, openTotpEnrollment, sealTotpEnrollment } from "../auth/totp-enrollment.js";
+import { AtomicAttemptGuard } from "../auth/attempt-guard.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
 import { rateLimit } from "../middleware/rate-limit.js";
@@ -94,9 +95,10 @@ export interface AuthDeps {
   passwordChangeGuard?: LoginGuardLike;
   /**
    * ACC-2FA · guard de fuerza bruta de la verificación en dos pasos (clave por usuario): confirmar el alta,
-   * desactivarla y regenerar los códigos de recuperación. 5 fallos ⇒ 15 min de bloqueo. Persistente.
+   * desactivarla y regenerar los códigos de recuperación. 5 intentos ⇒ 15 min de bloqueo. Persistente y con
+   * reserva ATÓMICA del intento (REV-1): una ráfaga simultánea no evalúa más de 5.
    */
-  twoFactorGuard?: LoginGuardLike;
+  twoFactorGuard?: AtomicAttemptGuard;
 }
 
 /** ACC-2FA · secreto TOTP y códigos de recuperación: ninguna caché (navegador, proxy) los guarda. */
@@ -146,10 +148,23 @@ export async function requireStrongReauth(
     throw unauthorized("Reautenticación requerida: contraseña inválida");
   }
   if (user.totp_secret) {
-    if (!(await verifySecondFactor(db, user, body.totp))) {
-      throw unauthorized("Reautenticación requerida: código TOTP o de recuperación inválido");
-    }
+    const r = await verifySecondFactor(db, user, body.totp);
+    if (r === "replay") throw totpReused();
+    if (!r) throw unauthorized("Reautenticación requerida: código TOTP o de recuperación inválido");
   }
+}
+
+/** ACC-2FA (REV-5) · código TOTP válido pero ya usado: error PROPIO, que no cuenta como fuerza bruta. */
+export const TOTP_REUSED_CODE = "totp_code_reused";
+export function totpReused(): ApiError {
+  return new ApiError(
+    401,
+    TOTP_REUSED_CODE,
+    "Ese código ya se ha usado: espera al siguiente que muestre tu app (o usa un código de recuperación)",
+  );
+}
+export function isTotpReused(e: unknown): boolean {
+  return e instanceof ApiError && e.code === TOTP_REUSED_CODE;
 }
 
 /**
@@ -161,40 +176,52 @@ export async function verifySecondFactor(
   db: Db,
   user: Record<string, unknown>,
   code: unknown,
-): Promise<"totp" | "recovery" | null> {
+): Promise<"totp" | "recovery" | "replay" | null> {
   if (typeof code !== "string" || !code || code.length > 64 || !user.totp_secret) return null;
-  if (await consumeTotpCode(db, String(user.id), String(user.totp_secret), code)) return "totp";
+  const t = await consumeTotpCode(db, String(user.id), String(user.totp_secret), code);
+  if (t === "ok") return "totp";
+  if (t === "replay") return "replay";
   if (await consumeRecoveryCode(db, user, code)) return "recovery";
   return null;
 }
 
-/** Ruta de api_usage donde se marca cada paso TOTP ya aceptado por usuario (anti-replay). */
-export const TOTP_USED_STEP_ROUTE = "auth.totp.used_step";
+/** Ruta de api_usage con el ÚLTIMO paso TOTP aceptado por usuario (anti-replay monótono, REV-4). */
+export const TOTP_LAST_STEP_ROUTE = "auth.totp.last_step";
+const TOTP_EPOCH = new Date(0);
 
 /**
- * ACC-2FA · Verifica el código contra `secret` y CONSUME su paso temporal: la fila (usuario, paso) es única
- * en api_usage (UNIQUE actor_key, route, window_start), así que el mismo código —o cualquier otro del mismo
- * paso— no vuelve a valer aunque siga dentro de la ventana de ±30 s, ni en una petición concurrente.
+ * ACC-2FA · Verifica el código contra `secret` y, si vale, avanza el último paso aceptado del usuario en UNA
+ * sentencia: `INSERT … ON CONFLICT DO UPDATE … WHERE último < paso RETURNING`. Sólo se acepta un paso
+ * ESTRICTAMENTE posterior al último usado (REV-4: ni el mismo código ni uno anterior aún vigente), también con
+ * peticiones simultáneas. `replay` = código válido pero de un paso ya superado (REV-5).
  */
-async function consumeTotpCode(db: Db, userId: string, secret: string, code: string): Promise<boolean> {
+async function consumeTotpCode(
+  db: Db,
+  userId: string,
+  secret: string,
+  code: string,
+): Promise<"ok" | "replay" | "invalid"> {
   const r = await verifyTotpDetailed(code.replace(/\s+/g, ""), secret);
-  if (!r.valid || typeof r.timeStep !== "number") return false;
-  const stepStart = r.timeStep * TOTP_PERIOD_SECONDS * 1000;
-  const now = new Date();
-  await db("api_usage").where({ route: TOTP_USED_STEP_ROUTE }).where("expires_at", "<", now).del();
-  const inserted = await db("api_usage")
-    .insert({
-      actor_key: `user:${userId}`,
-      route: TOTP_USED_STEP_ROUTE,
-      window_start: new Date(stepStart),
-      count: 1,
-      // El código de un paso deja de valer como tarde 2 pasos después (tolerancia ±1): 5 min sobra.
-      expires_at: new Date(stepStart + 5 * 60 * 1000),
-    })
-    .onConflict(["actor_key", "route", "window_start"])
-    .ignore()
-    .returning("id");
-  return inserted.length === 1;
+  if (!r.valid || typeof r.timeStep !== "number") return "invalid";
+  const res = (await db.raw(
+    `INSERT INTO api_usage (actor_key, route, window_start, count, expires_at)
+     VALUES (?, ?, ?, ?, NULL)
+     ON CONFLICT (actor_key, route, window_start) DO UPDATE SET count = EXCLUDED.count
+       WHERE api_usage.count < EXCLUDED.count
+     RETURNING id`,
+    [`user:${userId}`, TOTP_LAST_STEP_ROUTE, TOTP_EPOCH, r.timeStep],
+  )) as { rows: unknown[] };
+  return res.rows.length === 1 ? "ok" : "replay";
+}
+
+/**
+ * ACC-2FA (REV-3) · Estado de la cuenta al que se ata el token de alta: `users.updated_at`. Confirmar o
+ * desactivar la 2FA (y cualquier cambio de la cuenta) lo mueve, así que un token ya usado, o emitido antes
+ * de desactivar, deja de abrirse: es de un solo uso sin guardar nada.
+ */
+function accountStateOf(user: Record<string, unknown>): string {
+  const u = user.updated_at;
+  return u instanceof Date ? u.toISOString() : String(u ?? "");
 }
 
 /** R2.4 · Cambiar el estado del 2FA revoca TODAS las demás sesiones del usuario. */
@@ -209,11 +236,12 @@ async function revokeOtherSessions(db: Db, userId: string, keepSessionId: string
 export function authRoutes(deps: AuthDeps): Router {
   const { db, loginGuard } = deps;
   const passwordChangeGuard = deps.passwordChangeGuard ?? new SharedFailedLoginGuard(db, 5);
-  const twoFactorGuard = deps.twoFactorGuard ?? new SharedFailedLoginGuard(db, 5);
+  const twoFactorGuard = deps.twoFactorGuard ?? new AtomicAttemptGuard(db, 5);
 
   /**
-   * ACC-2FA · Ejecuta una comprobación de credenciales bajo el guard de 2FA del usuario: bloqueado ⇒ 429;
-   * fallo ⇒ cuenta el intento (y audita el bloqueo); éxito ⇒ reinicia el contador.
+   * ACC-2FA · Ejecuta una comprobación de credenciales bajo el guard de 2FA del usuario. El intento se
+   * RESERVA de forma atómica ANTES de comprobar nada (REV-1): más allá del 5.º ⇒ 429 sin evaluar. Éxito ⇒
+   * se libera el contador; repetir el código recién usado ⇒ se devuelve el intento (REV-5).
    */
   async function guarded2fa<T>(
     req: { ip?: string; correlationId?: string },
@@ -222,13 +250,9 @@ export function authRoutes(deps: AuthDeps): Router {
     check: () => Promise<T>,
   ): Promise<T> {
     const key = `2fa|${userId}`;
-    if (await twoFactorGuard.isBlocked(key)) throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
-    try {
-      const out = await check();
-      await twoFactorGuard.recordSuccess(key);
-      return out;
-    } catch (e) {
-      if ((e as { status?: number }).status === 401 && (await twoFactorGuard.recordFailure(key))) {
+    const slot = await twoFactorGuard.reserve(key);
+    if (!slot.allowed) {
+      if (slot.justBlocked) {
         await audit(db, {
           actorId: userId,
           action: "auth.2fa.blocked",
@@ -237,6 +261,14 @@ export function authRoutes(deps: AuthDeps): Router {
           correlationId: req.correlationId,
         });
       }
+      throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
+    }
+    try {
+      const out = await check();
+      await twoFactorGuard.release(key);
+      return out;
+    } catch (e) {
+      if (isTotpReused(e)) await twoFactorGuard.refund(key);
       throw e;
     }
   }
@@ -305,7 +337,10 @@ export function authRoutes(deps: AuthDeps): Router {
       }
 
       if (user.totp_secret) {
-        if (!(await verifySecondFactor(db, user, totp))) {
+        const second = await verifySecondFactor(db, user, totp);
+        // REV-5 · repetir el código recién usado no es fuerza bruta: error propio y sin sumar al bloqueo.
+        if (second === "replay") throw totpReused();
+        if (!second) {
           await loginGuard.recordFailure(key);
           throw unauthorized("Se requiere un código TOTP válido (2FA activo)");
         }
@@ -450,107 +485,136 @@ export function authRoutes(deps: AuthDeps): Router {
   // con un código, el login sigue sin pedir TOTP. Pedirlo otra vez genera otro secreto (el anterior muere).
   // Exige la CONTRASEÑA (reautenticación): un access token robado no basta para poner una 2FA que deje
   // fuera a la víctima. Comparte el límite de intentos de la 2FA (5 fallos ⇒ 429).
-  defineOperation(router, "start2faEnrollment", async (req, res) => {
-    res.setHeader("Cache-Control", NO_STORE);
-    const user = await db("users").where({ id: req.auth!.userId }).first();
-    if (!user) throw unauthorized();
-    if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
-    const { password } = req.body ?? {};
-    await guarded2fa(req, user.id, "setup", async () => {
-      if (typeof password !== "string" || !(await verifyPassword(String(user.password_hash), password))) {
-        throw unauthorized("Reautenticación requerida: contraseña inválida");
-      }
-    });
-    const secret = generateTotpSecret();
-    res.status(200).json({
-      otpauthUrl: totpUri(secret, user.email),
-      secret,
-      enrollmentToken: sealTotpEnrollment({ userId: user.id, sessionId: req.auth!.sessionId, secret }),
-      expiresIn: TOTP_ENROLLMENT_TTL_S,
-    });
-  });
+  defineOperation(
+    router,
+    "start2faEnrollment",
+    async (req, res) => {
+      res.setHeader("Cache-Control", NO_STORE);
+      const user = await db("users").where({ id: req.auth!.userId }).first();
+      if (!user) throw unauthorized();
+      if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
+      const { password } = req.body ?? {};
+      await guarded2fa(req, user.id, "setup", async () => {
+        if (typeof password !== "string" || !(await verifyPassword(String(user.password_hash), password))) {
+          throw unauthorized("Reautenticación requerida: contraseña inválida");
+        }
+      });
+      const secret = generateTotpSecret();
+      res.status(200).json({
+        otpauthUrl: totpUri(secret, user.email),
+        secret,
+        enrollmentToken: sealTotpEnrollment({
+          userId: user.id,
+          sessionId: req.auth!.sessionId,
+          accountState: accountStateOf(user),
+          secret,
+        }),
+        expiresIn: TOTP_ENROLLMENT_TTL_S,
+      });
+    },
+    rateLimit(deps.loginLimiter, "2fa"),
+  );
 
   // ACC-2FA · Fase 2: el código de la app demuestra que el usuario tiene el secreto. Sólo entonces se
   // activa, se generan los códigos de recuperación (se devuelven UNA vez) y se revocan las demás sesiones.
   // Intentos limitados por usuario (429); el código usado consume su paso (no se puede reutilizar).
-  defineOperation(router, "confirm2faEnrollment", async (req, res) => {
-    res.setHeader("Cache-Control", NO_STORE);
-    const userId = req.auth!.userId;
-    const { enrollmentToken, totp } = req.body ?? {};
-    const user = await db("users").where({ id: userId }).first();
-    if (!user) throw unauthorized();
-    if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
-    const secret = openTotpEnrollment(enrollmentToken, { userId, sessionId: req.auth!.sessionId });
-    if (!secret) throw badRequest("Alta de 2FA caducada o inválida: vuelve a empezar");
-    await guarded2fa(req, userId, "confirm", async () => {
-      if (typeof totp !== "string" || !(await consumeTotpCode(db, userId, secret, totp))) {
-        throw unauthorized("Código TOTP inválido: revisa la hora del dispositivo y vuelve a probar");
-      }
-    });
-    const { plain, hashes } = generateRecoveryCodes();
-    const updated = await db("users")
-      .where({ id: userId })
-      .whereNull("totp_secret") // dos confirmaciones simultáneas: sólo una activa
-      .update({ totp_secret: secret, recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
-    if (updated !== 1) throw conflict("totp_already_enabled", "El 2FA ya está activo");
-    const revoked = await revokeOtherSessions(db, userId, req.auth!.sessionId);
-    await audit(db, {
-      actorId: userId,
-      action: "auth.2fa.enabled",
-      target: `user:${userId}`,
-      detail: { otherSessionsRevoked: revoked, method: "confirmed", recoveryCodes: plain.length },
-      correlationId: req.correlationId,
-    });
-    res.status(200).json({ recoveryCodes: plain });
-  });
+  defineOperation(
+    router,
+    "confirm2faEnrollment",
+    async (req, res) => {
+      res.setHeader("Cache-Control", NO_STORE);
+      const userId = req.auth!.userId;
+      const { enrollmentToken, totp } = req.body ?? {};
+      const user = await db("users").where({ id: userId }).first();
+      if (!user) throw unauthorized();
+      if (user.totp_secret) throw conflict("totp_already_enabled", "El 2FA ya está activo");
+      const secret = openTotpEnrollment(enrollmentToken, {
+        userId,
+        sessionId: req.auth!.sessionId,
+        accountState: accountStateOf(user),
+      });
+      if (!secret) throw badRequest("Alta de 2FA caducada o inválida: vuelve a empezar");
+      await guarded2fa(req, userId, "confirm", async () => {
+        const t = typeof totp === "string" ? await consumeTotpCode(db, userId, secret, totp) : "invalid";
+        if (t === "replay") throw totpReused();
+        if (t !== "ok") throw unauthorized("Código TOTP inválido: revisa la hora del dispositivo y vuelve a probar");
+      });
+      const { plain, hashes } = generateRecoveryCodes();
+      const updated = await db("users")
+        .where({ id: userId })
+        .whereNull("totp_secret") // dos confirmaciones simultáneas: sólo una activa
+        .update({ totp_secret: secret, recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
+      if (updated !== 1) throw conflict("totp_already_enabled", "El 2FA ya está activo");
+      const revoked = await revokeOtherSessions(db, userId, req.auth!.sessionId);
+      await audit(db, {
+        actorId: userId,
+        action: "auth.2fa.enabled",
+        target: `user:${userId}`,
+        detail: { otherSessionsRevoked: revoked, method: "confirmed", recoveryCodes: plain.length },
+        correlationId: req.correlationId,
+      });
+      res.status(200).json({ recoveryCodes: plain });
+    },
+    rateLimit(deps.loginLimiter, "2fa"),
+  );
 
   // ACC-2FA · Regenerar los códigos de recuperación: reautenticación fuerte (contraseña + TOTP o un código
   // de recuperación), los anteriores quedan INVÁLIDOS en la misma sentencia y los nuevos se devuelven una sola
   // vez. La auditoría guarda cuántos, nunca cuáles.
-  defineOperation(router, "regenerateRecoveryCodes", async (req, res) => {
-    res.setHeader("Cache-Control", NO_STORE);
-    const userId = req.auth!.userId;
-    const user = await db("users").where({ id: userId }).first();
-    if (!user) throw unauthorized();
-    if (!user.totp_secret) throw conflict("totp_not_enabled", "El 2FA no está activo");
-    await guarded2fa(req, userId, "recovery_codes", () => requireStrongReauth(db, user, req.body ?? {}));
-    const { plain, hashes } = generateRecoveryCodes();
-    const updated = await db("users")
-      .where({ id: userId })
-      .whereNotNull("totp_secret")
-      .update({ recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
-    if (updated !== 1) throw conflict("totp_not_enabled", "El 2FA no está activo");
-    await audit(db, {
-      actorId: userId,
-      action: "auth.2fa.recovery_codes_regenerated",
-      target: `user:${userId}`,
-      detail: { count: plain.length },
-      correlationId: req.correlationId,
-    });
-    res.status(200).json({ recoveryCodes: plain });
-  });
+  defineOperation(
+    router,
+    "regenerateRecoveryCodes",
+    async (req, res) => {
+      res.setHeader("Cache-Control", NO_STORE);
+      const userId = req.auth!.userId;
+      const user = await db("users").where({ id: userId }).first();
+      if (!user) throw unauthorized();
+      if (!user.totp_secret) throw conflict("totp_not_enabled", "El 2FA no está activo");
+      await guarded2fa(req, userId, "recovery_codes", () => requireStrongReauth(db, user, req.body ?? {}));
+      const { plain, hashes } = generateRecoveryCodes();
+      const updated = await db("users")
+        .where({ id: userId })
+        .whereNotNull("totp_secret")
+        .update({ recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
+      if (updated !== 1) throw conflict("totp_not_enabled", "El 2FA no está activo");
+      await audit(db, {
+        actorId: userId,
+        action: "auth.2fa.recovery_codes_regenerated",
+        target: `user:${userId}`,
+        detail: { count: plain.length },
+        correlationId: req.correlationId,
+      });
+      res.status(200).json({ recoveryCodes: plain });
+    },
+    rateLimit(deps.loginLimiter, "2fa"),
+  );
 
   // R2.4 (ERR-SEC-07) · Desactivar el 2FA es una operación SENSIBLE: exige
   // reautenticación fuerte (contraseña + TOTP o código de recuperación) — un
   // access token robado no basta — y revoca el resto de sesiones.
   // ACC-2FA: intentos limitados por usuario (429), como la confirmación.
-  defineOperation(router, "disable2fa", async (req, res) => {
-    const user = await db("users").where({ id: req.auth!.userId }).first();
-    if (!user.totp_secret) throw conflict("totp_not_enabled", "El 2FA no está activo");
-    await guarded2fa(req, user.id, "disable", () => requireStrongReauth(db, user, req.body ?? {}));
-    await db("users")
-      .where({ id: user.id })
-      .update({ totp_secret: null, recovery_codes: null, updated_at: db.fn.now() });
-    const revoked = await revokeOtherSessions(db, user.id, req.auth!.sessionId);
-    await audit(db, {
-      actorId: user.id,
-      action: "auth.2fa.disabled",
-      target: `user:${user.id}`,
-      detail: { otherSessionsRevoked: revoked, reauth: "password+totp" },
-      correlationId: req.correlationId,
-    });
-    res.status(204).end();
-  });
+  defineOperation(
+    router,
+    "disable2fa",
+    async (req, res) => {
+      const user = await db("users").where({ id: req.auth!.userId }).first();
+      if (!user.totp_secret) throw conflict("totp_not_enabled", "El 2FA no está activo");
+      await guarded2fa(req, user.id, "disable", () => requireStrongReauth(db, user, req.body ?? {}));
+      await db("users")
+        .where({ id: user.id })
+        .update({ totp_secret: null, recovery_codes: null, updated_at: db.fn.now() });
+      const revoked = await revokeOtherSessions(db, user.id, req.auth!.sessionId);
+      await audit(db, {
+        actorId: user.id,
+        action: "auth.2fa.disabled",
+        target: `user:${user.id}`,
+        detail: { otherSessionsRevoked: revoked, reauth: "password+totp" },
+        correlationId: req.correlationId,
+      });
+      res.status(204).end();
+    },
+    rateLimit(deps.loginLimiter, "2fa"),
+  );
 
   // ------------------------------------------------- cambio de contraseña
   // V1-B · Usuario AUTENTICADO que conoce su contraseña actual. Exige la actual (y TOTP/código de
@@ -582,6 +646,7 @@ export function authRoutes(deps: AuthDeps): Router {
       try {
         await requireStrongReauth(db, user, { password: currentPassword, totp });
       } catch (e) {
+        if (isTotpReused(e)) throw e; // REV-5 · repetir el código recién usado no suma al bloqueo
         const blocked = await passwordChangeGuard.recordFailure(key);
         if (blocked) {
           await audit(db, {
