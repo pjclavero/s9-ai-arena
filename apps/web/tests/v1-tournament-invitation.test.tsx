@@ -211,6 +211,8 @@ describe("V1 · invitación en la ficha del torneo", () => {
     await screen.findByTestId("tournament-state");
     expect(screen.queryByTestId("entry-form")).toBeNull();
     expect(screen.queryByTestId("team-entry-form")).toBeNull();
+    // Y no se promete un cambio de versión que la ficha no ofrece en NvN.
+    expect(screen.queryByTestId("entry-replace-only")).toBeNull();
   });
 
   it("TIW_INVALID un enlace revocado no habilita nada y se olvida", async () => {
