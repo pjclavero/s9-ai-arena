@@ -194,6 +194,13 @@ gen arena_engine_internal_secret.txt
 # ambos servicios (docker-compose.yml). Sin él, replay-service responde 401 a
 # toda escritura y la API reporta `replay.ingested: false`: fail closed.
 gen replay_ingest_secret.txt
+# V1 ADM-SETUP (D-OP-44) · token de instalación del asistente de primer arranque web
+# (#/setup). Montado SÓLO en `api` (SETUP_TOKEN_FILE). Sólo lo lee quien tiene el
+# host: pegarlo en el navegador prueba que quien crea el primer administrador es el
+# operador de la instalación. Tras crear el primer admin deja de tener efecto (el
+# cierre lo marca la BD, no el fichero); vaciarlo cierra el asistente aunque no se
+# haya usado. Si se vacía, este script lo vuelve a generar (sin reabrir nada).
+gen setup_token.txt
 
 # R-DEPLOY · R2: clave de firma de artefactos (ed25519, PEM PKCS8) para el
 # bot-build-worker (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15). Idempotente.

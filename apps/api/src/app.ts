@@ -14,6 +14,10 @@ import {
 } from "./middleware/shared-rate-limit.js";
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
+import { setupRoutes } from "./routes/setup.js";
+import { recoveryKitRoutes } from "./routes/recovery-kit.js";
+import { setupTokenSourceFromEnv, type SetupTokenSource } from "./services/setup-token.js";
+import type { CreateAdminTestHooks } from "./services/create-admin.js";
 import { teamRoutes } from "./routes/teams.js";
 import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
@@ -121,6 +125,22 @@ export interface AppConfig {
   adminConfirmLimiter?: RateLimiterLike;
   streamingPublicKey?: () => { pem: string; kid: string } | null;
   broadcastBaseUrl?: string;
+  /**
+   * V1 ADM-SETUP · asistente de primer arranque: fuente del token de instalación (por defecto el
+   * secreto `SETUP_TOKEN_FILE` = /run/secrets/setup_token), limitadores y ganchos de test.
+   */
+  setup?: {
+    tokenSource?: SetupTokenSource;
+    ipLimiter?: RateLimiterLike;
+    globalLimiter?: RateLimiterLike;
+    testHooks?: CreateAdminTestHooks;
+  };
+  /** V1 ADM-SETUP · kit de recuperación del admin: limitadores del canje y guard de la regeneración. */
+  recoveryKit?: {
+    redeemIpLimiter?: RateLimiterLike;
+    redeemGlobalLimiter?: RateLimiterLike;
+    regenerateGuard?: LoginGuardLike;
+  };
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -182,6 +202,31 @@ export function createApp(cfg: AppConfig): express.Express {
       refreshLimiter:
         cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
       passwordChangeGuard: cfg.passwordChangeGuard,
+    }),
+  );
+  // V1 ADM-SETUP (D-OP-44) · primer arranque web y kit de recuperación del admin.
+  app.use(
+    setupRoutes({
+      db: cfg.db,
+      tokenSource: cfg.setup?.tokenSource ?? setupTokenSourceFromEnv(),
+      ipLimiter:
+        cfg.setup?.ipLimiter ?? new SharedRateLimiter(cfg.db, "setup.admin.ip", { max: 5, windowMs: 15 * 60_000 }),
+      globalLimiter:
+        cfg.setup?.globalLimiter ??
+        new SharedRateLimiter(cfg.db, "setup.admin.all", { max: 20, windowMs: 60 * 60_000 }),
+      testHooks: cfg.setup?.testHooks,
+    }),
+  );
+  app.use(
+    recoveryKitRoutes({
+      db: cfg.db,
+      redeemIpLimiter:
+        cfg.recoveryKit?.redeemIpLimiter ??
+        new SharedRateLimiter(cfg.db, "recovery_kit.redeem.ip", { max: 10, windowMs: 15 * 60_000 }),
+      redeemGlobalLimiter:
+        cfg.recoveryKit?.redeemGlobalLimiter ??
+        new SharedRateLimiter(cfg.db, "recovery_kit.redeem.all", { max: 60, windowMs: 60 * 60_000 }),
+      regenerateGuard: cfg.recoveryKit?.regenerateGuard ?? new SharedFailedLoginGuard(cfg.db, 5),
     }),
   );
   app.use(userRoutes(cfg.db));

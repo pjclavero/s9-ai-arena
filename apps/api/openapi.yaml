@@ -136,7 +136,13 @@ info:
   # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
   # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
   # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
-  version: 0.26.0
+  # 0.29.0 · V1 ADM-SETUP (D-OP-44, aditivo; 0.27.0 es de #347 y 0.28.0 de #350): primer arranque desde el
+  # navegador y kit de recuperación del admin. getSetupStatus (GET /setup/status, público, sólo {open})
+  # y createFirstAdmin (POST /setup/admin, público con token de instalación; 410 setup_closed para
+  # siempre una vez completada la instalación). getRecoveryKitStatus/regenerateRecoveryKit
+  # (GET/POST /auth/recovery-kit, admin; regenerar exige reautenticación) y redeemRecoveryKit
+  # (POST /auth/recovery-kit/redeem, público, sin oráculo de existencia de cuenta). Migración 027.
+  version: 0.29.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -169,6 +175,7 @@ tags:
   - name: admin
   - name: streaming
   - name: system
+  - name: setup
 
 security:
   - bearerAuth: []
@@ -288,6 +295,102 @@ paths:
         '204': { description: Desactivado (el resto de sesiones quedan revocadas) }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  # V1 ADM-SETUP · D-5 · kit de recuperación del ADMIN (autorrecuperación sin consola).
+  /auth/recovery-kit:
+    get:
+      tags: [auth]
+      operationId: getRecoveryKitStatus
+      summary: ¿Tiene la cuenta (admin) un kit de recuperación activo? Nunca devuelve el kit
+      x-min-role: admin
+      responses:
+        '200': { description: Estado del kit, content: { application/json: { schema: { $ref: '#/components/schemas/RecoveryKitStatus' } } } }
+    post:
+      tags: [auth]
+      operationId: regenerateRecoveryKit
+      summary: Genera un kit de recuperación nuevo (sustituye al anterior) y lo muestra UNA vez
+      description: |
+        Exige reautenticación fuerte (contraseña y, con 2FA activa, TOTP o código de recuperación).
+        Respuesta con `Cache-Control: no-store`. Queda auditado (`auth.recovery_kit.generated`) sin el kit.
+      x-min-role: admin
+      x-reauth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, x-private: true }
+                totp: { type: string, description: Código TOTP vigente o código de recuperación (si hay 2FA), x-private: true }
+      responses:
+        '200': { description: Kit nuevo (se muestra una sola vez), content: { application/json: { schema: { $ref: '#/components/schemas/RecoveryKitIssued' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/recovery-kit/redeem:
+    post:
+      tags: [auth]
+      operationId: redeemRecoveryKit
+      summary: Fija una contraseña nueva con el email y el kit de recuperación (sólo cuentas admin)
+      description: |
+        Un solo uso: el kit queda consumido y se revocan todas las sesiones de la cuenta. NO toca la 2FA:
+        si la cuenta la tiene, exige además un TOTP o un código de recuperación de la 2FA.
+        Sin oráculo: un email inexistente, una cuenta sin kit, una cuenta que no es admin y un kit erróneo
+        responden igual (401 `unauthorized`) y con el mismo coste. Límite de intentos por IP y global.
+      security: []
+      x-min-role: visitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryKitRedeemRequest' }
+      responses:
+        '204': { description: Contraseña cambiada; kit consumido y sesiones revocadas }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { description: 'Email o kit inválidos (`unauthorized`), o falta el segundo factor (`totp_required`)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ----------------------------------------------------------------- SETUP
+  # V1 ADM-SETUP (D-OP-44) · asistente de primer arranque desde el navegador.
+  /setup/status:
+    get:
+      tags: [setup]
+      operationId: getSetupStatus
+      summary: ¿Está abierto el asistente de primer arranque? (sólo abierto/cerrado)
+      description: |
+        Abierto sólo con 0 administradores, la instalación sin completar y el token de instalación
+        presente. No dice cuál de las tres falta. `Cache-Control: no-store`.
+      security: []
+      x-min-role: visitor
+      responses:
+        '200': { description: Estado, content: { application/json: { schema: { $ref: '#/components/schemas/SetupStatus' } } } }
+  /setup/admin:
+    post:
+      tags: [setup]
+      operationId: createFirstAdmin
+      summary: Crea el PRIMER administrador con el token de instalación y deja la sesión iniciada
+      description: |
+        Exige el contenido de `secrets/setup_token.txt` (comparación en tiempo constante). Aplica la
+        política de contraseñas. Crea la cuenta con roles user, developer y admin en una transacción con
+        cerrojo consultivo, cierra la instalación PARA SIEMPRE y emite el kit de recuperación (se muestra
+        una vez). Audita `admin.create_web_setup` (y `setup.token_rejected` en cada token erróneo) sin
+        contraseña ni token. Límite: 5 intentos cada 15 min por IP y 20 por hora en total.
+      security: []
+      x-min-role: visitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetupAdminRequest' }
+      responses:
+        '201': { description: Admin creado y sesión iniciada, content: { application/json: { schema: { $ref: '#/components/schemas/SetupAdminResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'Asistente no disponible: no hay token de instalación', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { description: 'La instalación ya está completada (`setup_closed`): para siempre', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ----------------------------------------------------------------- USERS
   /users/me:
@@ -2574,6 +2677,50 @@ components:
         email: { type: string, format: email }
         password: { type: string, x-private: true }
         totp: { type: string, pattern: '^[0-9]{6}$' }
+
+    SetupStatus:
+      type: object
+      required: [open]
+      properties:
+        open: { type: boolean }
+
+    SetupAdminRequest:
+      type: object
+      required: [setupToken, email, displayName, password]
+      properties:
+        setupToken: { type: string, description: Contenido de secrets/setup_token.txt, x-private: true }
+        email: { type: string, format: email }
+        displayName: { type: string, maxLength: 48 }
+        password: { type: string, minLength: 12, maxLength: 128, x-private: true }
+
+    SetupAdminResult:
+      type: object
+      properties:
+        accessToken: { type: string, x-private: true }
+        refreshToken: { type: string, x-private: true }
+        expiresIn: { type: integer }
+        recoveryKit: { type: string, description: Kit de recuperación del admin; se muestra una sola vez, x-private: true }
+
+    RecoveryKitStatus:
+      type: object
+      properties:
+        active: { type: boolean }
+        createdAt: { type: [string, 'null'], format: date-time }
+
+    RecoveryKitIssued:
+      type: object
+      properties:
+        recoveryKit: { type: string, x-private: true }
+        createdAt: { type: string, format: date-time }
+
+    RecoveryKitRedeemRequest:
+      type: object
+      required: [email, recoveryKit, newPassword]
+      properties:
+        email: { type: string, format: email }
+        recoveryKit: { type: string, x-private: true }
+        newPassword: { type: string, minLength: 12, maxLength: 128, x-private: true }
+        totp: { type: string, description: Código TOTP o de recuperación de la 2FA (obligatorio si la cuenta la tiene), x-private: true }
 
     TokenPair:
       type: object

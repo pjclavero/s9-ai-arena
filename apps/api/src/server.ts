@@ -7,6 +7,8 @@ import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import { startOrphanReconciler, startRetentionScheduler } from "./routes/streaming.js";
 import { streamerClientFromEnv } from "./services/streamer-client.js";
 import { RuntimeSettingsStore } from "./runtime-settings.js";
+import { announceSetupIfOpen } from "./services/install-state.js";
+import { setupTokenSourceFromEnv } from "./services/setup-token.js";
 
 const db = createDb();
 const port = Number(process.env.PORT ?? 8080);
@@ -40,6 +42,9 @@ const runtimeSettings = new RuntimeSettingsStore(db, { bootstrap: true });
 await runtimeSettings.refresh();
 runtimeSettings.start();
 root.use(createApp({ db, trustProxyHops, runtimeSettings }));
+// V1 ADM-SETUP · con el asistente de primer arranque abierto, el log dice dónde abrirlo y la HUELLA
+// del token de instalación (nunca el token).
+await announceSetupIfOpen(db, setupTokenSourceFromEnv());
 
 // EQ5b · retención programada de grabaciones MP4 (sólo si hay streamer configurado
 // y la política está activa en Administración → Streaming; cada borrado se audita).

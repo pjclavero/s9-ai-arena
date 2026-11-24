@@ -53,6 +53,8 @@ const GENERATED = [
   "stream_secrets_public.pem",
   "restic_ssh_key",
   "restic_ssh_known_hosts",
+  // V1 ADM-SETUP · token del asistente de primer arranque web (sólo se monta en `api`).
+  "setup_token.txt",
 ];
 
 let base: string;
@@ -127,6 +129,18 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
       .toString();
     expect(readFileSync(join(secrets, "artifact_verify_key.pem"), "utf8")).toBe(pub);
     expect(readdirSync(secrets).filter((n) => n.includes(".tmp") || n.startsWith(".init-secrets."))).toEqual([]);
+  });
+
+  it("[INFRA-setup-token] genera setup_token.txt: 40 caracteres, 0400, del uid del runtime y estable entre ejecuciones", () => {
+    expect(run().status).toBe(0);
+    const p = join(secrets, "setup_token.txt");
+    const s = lstatSync(p);
+    expect((s.mode & 0o777).toString(8)).toBe("400");
+    expect(s.uid).toBe(uid);
+    const token = readFileSync(p, "utf8");
+    expect(token).toMatch(/^[A-Za-z0-9]{40}$/);
+    expect(run().status).toBe(0);
+    expect(readFileSync(p, "utf8")).toBe(token);
   });
 
   it("es idempotente: la segunda ejecución no cambia ni un byte ni un modo", () => {

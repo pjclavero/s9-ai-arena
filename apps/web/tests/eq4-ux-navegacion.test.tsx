@@ -111,6 +111,7 @@ describe("EQ4 · RBAC del apartado Administración = contrato del servidor", () 
       "#/roles",
       "#/streaming", // EQ5b
       "#/settings", // ADM-1
+      "#/recovery-kit", // V1 ADM-SETUP
     ]);
   });
 
@@ -144,6 +145,7 @@ describe("EQ4 · barra principal agrupada", () => {
       "Roles y permisos",
       "Streaming", // EQ5b
       "Ajustes", // ADM-1
+      "Kit de recuperación", // V1 ADM-SETUP
     ]);
     expect(within(sub).getByRole("link", { name: "Auditoría" }).getAttribute("aria-current")).toBe("page");
   });
