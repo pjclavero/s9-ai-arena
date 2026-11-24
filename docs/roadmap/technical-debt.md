@@ -407,7 +407,7 @@ Estados posibles:
 ## TD-012 — Autenticación: registro abierto, IP de cliente colapsada y gestión de cuenta incompleta
 
 - **Estado:** ABIERTA
-- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA. Verificado: la recuperación de cuenta es inoperante, porque `POST /auth/recover` crea el token y lo descarta (`apps/api/src/routes/auth.ts:392`, `:440`) y no existe ningún transporte (`git grep -niE "nodemailer|smtp|sendMail" -- apps packages` vacío); no hay pantallas de 2FA (activar/desactivar), de sesiones ni de recuperación en la web (`git grep -nE "auth/(2fa|sessions|recover|reset)" -- apps/web/src` vacío). El login sí pide TOTP (`LoginPage.tsx:61-97`).
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA. Verificado: (corregido en ADM-3: `POST /auth/recover` se retiró y el token lo emite un admin) la recuperación de cuenta era inoperante, porque `POST /auth/recover` creaba el token y lo descartaba (`apps/api/src/routes/auth.ts:392`, `:440`) y no existe ningún transporte (`git grep -niE "nodemailer|smtp|sendMail" -- apps packages` vacío); no hay pantallas de 2FA (activar/desactivar), de sesiones ni de recuperación en la web (`git grep -nE "auth/(2fa|sessions|recover|reset)" -- apps/web/src` vacío). El login sí pide TOTP (`LoginPage.tsx:61-97`).
 - **Prioridad:** P1 (auditoría P1-4)
 - **Área:** Seguridad (`api`)
 - **Detectado:** 2026-10-15

@@ -141,7 +141,7 @@ info:
   # issueUserRecoveryToken (POST /admin/users/{userId}/recovery-token: token de recuperación de un solo uso y 30 min,
   # mostrado una vez; cuenta admin ⇒ aprobación de segundo admin). setUserRoles gana 409 last_admin; login 403
   # account_blocked. `POST /auth/recover` se RETIRA (descartaba el token). Nuevo tipo de orden `user.recovery_admin`.
-  # Migración 025.
+  # Migración 025. setUserRoles cambia (reautenticación al conceder/quitar admin; segundo admin para quitarlo a otra cuenta).
   version: 0.27.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -335,7 +335,12 @@ paths:
       tags: [admin]
       operationId: setUserRoles
       summary: >-
-        Asignar roles (queda en audit_log). ADM-3: 409 `last_admin` si quitaría el rol admin al último administrador activo.
+        Asignar roles (queda en audit_log). ADM-3 (cambia el contrato): cualquier cambio del conjunto de roles anula los
+        tokens de recuperación abiertos de la cuenta; CONCEDER `admin` y QUITARLO exigen reautenticación fuerte
+        (`password`, `totp`; 401, límite por admin 429); quitar `admin` a OTRA cuenta exige además `operationId` de una
+        orden `user.revoke_admin` solicitada por quien llama y confirmada por otro admin (403 `second_admin_required` /
+        `second_admin_approval_invalid`; 409 `second_admin_unavailable` si no hay otro admin que pueda aprobar). 409
+        `last_admin` si quitaría el rol admin al último administrador activo.
       x-min-role: admin
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
@@ -347,10 +352,15 @@ paths:
               required: [roles]
               properties:
                 roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
+                password: { type: string, x-private: true, description: 'Reautenticación: obligatoria al conceder o quitar `admin`.' }
+                totp: { type: string, x-private: true }
+                operationId: { type: string, format: uuid, description: 'Obligatorio al quitar `admin` a otra cuenta (`user.revoke_admin` aprobada).' }
       responses:
         '200': { description: Roles actualizados, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { description: Demasiados intentos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   # ----------------------------------------------------------------- TEAMS
   /teams:
@@ -2326,7 +2336,10 @@ paths:
         la frase literal y un `confirmToken` de UN SOLO USO (2 min; sólo se entrega aquí). Sin impacto pasa
         directa a `pending`. `dryRun:true` sólo devuelve el impacto (200, no crea orden). Las irreversibles
         exigen un segundo admin (409 second_admin_unavailable si no lo hay). Una orden activa por tipo
-        (409 operation_in_progress). La API no ejecuta nada: la consume el servicio que posee el privilegio.
+        (409 operation_in_progress; para los tipos `user.*` la regla es POR CUENTA OBJETIVO). La API no ejecuta nada: la
+        consume el servicio que posee el privilegio. ADM-3: los tipos `user.*` exigen reautenticación (`password`,
+        `totp`) y tienen límite por admin (401/429); el segundo admin se busca entre los admins activos distintos del
+        solicitante y del objetivo.
       x-min-role: admin
       requestBody:
         required: true
@@ -2391,10 +2404,22 @@ paths:
     post:
       tags: [admin]
       operationId: cancelAdminOperation
-      summary: ADM-1 · Cancela una orden en `awaiting_confirmation` o `pending` (si ya la tomó un ejecutor, 409 not_cancellable).
+      summary: >-
+        ADM-1 · Cancela una orden en `awaiting_confirmation` o `pending` (si ya la tomó un ejecutor, 409 not_cancellable).
+        ADM-3: las órdenes `user.*`, y cualquier orden ajena, sólo se cancelan con reautenticación (body `password`,
+        `totp`; 401) y límite por admin (429); la cancelación se audita con quién la hizo.
       x-min-role: admin
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string, x-private: true }
+                totp: { type: string, x-private: true }
       responses:
         '200': { description: Cancelada, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOperation' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -3771,7 +3796,9 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop], description: 'Lista CERRADA de tipos (los reales los añaden ADM-4/6/7). `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test); en producción la API no admite ningún tipo todavía.' }
+        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) y `user.revoke_admin` (aprobación para quitar el rol admin a OTRA cuenta); params `{userId}`; la cuenta objetivo debe ser admin.' }
+        password: { type: string, x-private: true, description: 'Reautenticación; obligatoria para los tipos `user.*`.' }
+        totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si el admin tiene 2FA.' }
         params:
           type: object
           description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'

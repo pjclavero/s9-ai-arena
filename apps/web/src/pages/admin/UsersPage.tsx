@@ -49,9 +49,14 @@ interface IssuedToken {
 /** Roles asignables desde la web (los del servidor, sin «visitor», que es el anónimo). */
 export const ASSIGNABLE_ROLES = ["user", "developer", "team_captain", "organizer", "moderator", "admin"] as const;
 export const RECOVERY_KIND = "user.recovery_admin";
+export const REVOKE_KIND = "user.revoke_admin";
 
 type Action =
-  | { kind: "roles"; user: AdminUser; roles: string[] }
+  | { kind: "roles"; user: AdminUser; roles: string[]; reauth: boolean }
+  | { kind: "requestRecovery"; user: AdminUser }
+  | { kind: "requestRevoke"; user: AdminUser }
+  | { kind: "applyRevoke"; op: RecoveryOperation; label: string }
+  | { kind: "cancelOp"; op: RecoveryOperation }
   | { kind: "status"; user: AdminUser; to: "active" | "blocked" }
   | { kind: "token"; user: AdminUser }
   | { kind: "approve"; op: RecoveryOperation }
@@ -68,6 +73,14 @@ export function userActionPhrase(a: Exclude<Action, { kind: "approve" } | { kind
       return `${a.to === "blocked" ? "BLOQUEAR" : "DESBLOQUEAR"} ${a.user.email}`;
     case "token":
       return `RECUPERAR ${a.user.email}`;
+    case "requestRecovery":
+      return `SOLICITAR RECUPERACION ${a.user.email}`;
+    case "requestRevoke":
+      return `SOLICITAR QUITAR ADMIN ${a.user.email}`;
+    case "applyRevoke":
+      return `QUITAR ADMIN ${short(a.op.params.userId ?? "")}`;
+    case "cancelOp":
+      return `CANCELAR ${short(a.op.params.userId ?? "")}`;
   }
 }
 
@@ -101,7 +114,11 @@ export function UsersPage(props: { me: Me }) {
     try {
       const all = await api<RecoveryOperation[]>("GET", "/admin/operations?limit=50");
       setOps(
-        all.filter((o) => o.kind === RECOVERY_KIND && (o.status === "awaiting_confirmation" || o.status === "pending")),
+        all.filter(
+          (o) =>
+            (o.kind === RECOVERY_KIND || o.kind === REVOKE_KIND) &&
+            (o.status === "awaiting_confirmation" || o.status === "pending"),
+        ),
       );
     } catch {
       setOps([]); // las aprobaciones son accesorias: el listado de usuarios no depende de ellas
@@ -173,8 +190,48 @@ export function UsersPage(props: { me: Me }) {
     try {
       const reauth = { password: c.password, ...(c.totp ? { totp: c.totp } : {}) };
       if (a.kind === "roles") {
-        await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles });
+        // Conceder o quitarse «admin» exige reautenticación (el servidor responde 401 sin ella).
+        if (a.reauth) await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles, ...reauth }, { reauth: true });
+        else await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles });
         setNotice(`Roles de ${a.user.email} actualizados.`);
+      } else if (a.kind === "requestRecovery" || a.kind === "requestRevoke") {
+        try {
+          await api(
+            "POST",
+            "/admin/operations",
+            {
+              kind: a.kind === "requestRecovery" ? RECOVERY_KIND : REVOKE_KIND,
+              params: { userId: a.user.id },
+              ...reauth,
+            },
+            { reauth: true },
+          );
+          setNotice(
+            `Solicitada la aprobación de otro administrador para ${a.kind === "requestRecovery" ? "recuperar" : "quitar el rol admin a"} la cuenta de ${a.user.email}.`,
+          );
+          await loadOps();
+        } catch (e) {
+          if (errorCode(e) !== "second_admin_unavailable") throw e;
+          setNotice(
+            a.kind === "requestRecovery"
+              ? "No hay otro administrador activo que pueda aprobar. Usa la recuperación local por consola (cli.ts reset-password), descrita en la guía de operación."
+              : "No hay otro administrador activo que pueda aprobar. La propia cuenta puede quitarse el rol (reautenticada) o hazlo por consola.",
+          );
+        }
+      } else if (a.kind === "applyRevoke") {
+        const userId = a.op.params.userId!;
+        const target = items.find((x) => x.id === userId);
+        await api(
+          "PUT",
+          `/users/${userId}/roles`,
+          { roles: (target?.roles ?? []).filter((r) => r !== "admin"), ...reauth, operationId: a.op.id },
+          { reauth: true },
+        );
+        setNotice(`Rol admin retirado a ${a.label}.`);
+      } else if (a.kind === "cancelOp") {
+        await api("POST", `/admin/operations/${a.op.id}/cancel`, reauth, { reauth: true });
+        setNotice("Solicitud cancelada.");
+        await loadOps();
       } else if (a.kind === "status") {
         await api("PUT", `/admin/users/${a.user.id}/status`, { status: a.to, ...reauth }, { reauth: true });
         setNotice(
@@ -211,29 +268,6 @@ export function UsersPage(props: { me: Me }) {
     }
   }
 
-  async function requestAdminRecovery(u: AdminUser) {
-    await run(async () => {
-      try {
-        await api("POST", "/admin/operations", { kind: RECOVERY_KIND, params: { userId: u.id } });
-        setNotice(`Solicitada la aprobación de otro administrador para recuperar la cuenta de ${u.email}.`);
-        await loadOps();
-      } catch (e) {
-        if (errorCode(e) === "second_admin_unavailable") {
-          setNotice(
-            "Sólo hay un administrador activo: no hay segundo admin que apruebe. Usa la recuperación local por consola (cli.ts reset-password), descrita en la guía de operación.",
-          );
-        } else throw e;
-      }
-    });
-  }
-
-  async function cancelOp(op: RecoveryOperation) {
-    await run(async () => {
-      await api("POST", `/admin/operations/${op.id}/cancel`);
-      await loadOps();
-    });
-  }
-
   if (loading) return <LoadingState label="los usuarios" />;
   if (loadError) return <ErrorState label="los usuarios" error={loadError} onRetry={() => reload(applied)} />;
 
@@ -260,6 +294,41 @@ export function UsersPage(props: { me: Me }) {
       };
     }
     const phrase = userActionPhrase(action);
+    if (action.kind === "requestRecovery" || action.kind === "requestRevoke") {
+      const rec = action.kind === "requestRecovery";
+      return {
+        title: rec
+          ? `Solicitar la recuperación de la cuenta de administrador ${action.user.email}`
+          : `Solicitar quitar el rol admin a ${action.user.email}`,
+        impact: {
+          summary: rec
+            ? "Hace falta la aprobación de OTRO administrador antes de poder emitir el token."
+            : "Hace falta la aprobación de OTRO administrador; después tú aplicas el cambio. Quitarse el rol a uno mismo no la necesita.",
+          counts: {},
+        },
+        phrase,
+        askPassword: true,
+      };
+    }
+    if (action.kind === "applyRevoke") {
+      return {
+        title: `Quitar el rol admin a ${action.label}`,
+        impact: {
+          summary: "Se consume la aprobación del segundo administrador y la cuenta deja de ser admin.",
+          counts: {},
+        },
+        phrase,
+        askPassword: true,
+      };
+    }
+    if (action.kind === "cancelOp") {
+      return {
+        title: "Cancelar la solicitud",
+        impact: { summary: "Se cancela la solicitud pendiente o aprobada; habrá que pedirla de nuevo.", counts: {} },
+        phrase,
+        askPassword: true,
+      };
+    }
     if (action.kind === "roles") {
       return {
         title: `Cambiar los roles de ${action.user.email}`,
@@ -268,7 +337,7 @@ export function UsersPage(props: { me: Me }) {
           counts: {},
         },
         phrase,
-        askPassword: false,
+        askPassword: action.reauth,
       };
     }
     if (action.kind === "status") {
@@ -344,6 +413,7 @@ export function UsersPage(props: { me: Me }) {
         <ConfirmDestructive
           key={`${action!.kind}-${"user" in action! ? action.user.id : action!.op.id}-${"to" in action! ? action.to : ""}`}
           {...confirmProps}
+          needsTotp={props.me.twoFactorEnabled}
           error={actionError}
           busy={busy}
           onConfirm={onConfirm}
@@ -363,9 +433,14 @@ export function UsersPage(props: { me: Me }) {
               const label = labelOf(o.params.userId);
               return (
                 <li key={o.id} data-testid={`recovery-op-${o.id}`}>
+                  {o.kind === REVOKE_KIND ? "quitar rol admin a " : "recuperar a "}
                   {label} ·{" "}
-                  {o.status === "awaiting_confirmation" ? "pendiente de aprobación" : "aprobada: lista para emitir"} ·{" "}
-                  {mine ? "solicitada por ti" : "solicitada por otro administrador"}{" "}
+                  {o.status === "awaiting_confirmation"
+                    ? "pendiente de aprobación"
+                    : o.kind === REVOKE_KIND
+                      ? "aprobada: lista para aplicar"
+                      : "aprobada: lista para emitir"}{" "}
+                  · {mine ? "solicitada por ti" : "solicitada por otro administrador"}{" "}
                   {o.status === "awaiting_confirmation" && !mine && (
                     <Button data-testid={`approve-${o.id}`} onClick={() => setAction({ kind: "approve", op: o })}>
                       Aprobar
@@ -374,13 +449,23 @@ export function UsersPage(props: { me: Me }) {
                   {o.status === "pending" && mine && (
                     <Button
                       data-testid={`issue-admin-${o.id}`}
-                      onClick={() => setAction({ kind: "issueAdmin", op: o, label })}
+                      onClick={() =>
+                        setAction(
+                          o.kind === REVOKE_KIND
+                            ? { kind: "applyRevoke", op: o, label }
+                            : { kind: "issueAdmin", op: o, label },
+                        )
+                      }
                     >
-                      Emitir token
+                      {o.kind === REVOKE_KIND ? "Aplicar" : "Emitir token"}
                     </Button>
                   )}{" "}
                   {mine && (
-                    <Button variant="link" data-testid={`cancel-op-${o.id}`} onClick={() => void cancelOp(o)}>
+                    <Button
+                      variant="link"
+                      data-testid={`cancel-op-${o.id}`}
+                      onClick={() => setAction({ kind: "cancelOp", op: o })}
+                    >
                       Cancelar
                     </Button>
                   )}
@@ -463,7 +548,16 @@ export function UsersPage(props: { me: Me }) {
                       <>
                         <Button
                           data-testid={`roles-save-${u.id}`}
-                          onClick={() => setAction({ kind: "roles", user: u, roles: rolesDraft.roles })}
+                          onClick={() => {
+                            const draft = rolesDraft.roles;
+                            const revokes = u.roles.includes("admin") && !draft.includes("admin");
+                            const grants = !u.roles.includes("admin") && draft.includes("admin");
+                            setAction(
+                              revokes && !isMe
+                                ? { kind: "requestRevoke", user: u }
+                                : { kind: "roles", user: u, roles: draft, reauth: grants || revokes },
+                            );
+                          }}
                         >
                           Guardar roles
                         </Button>{" "}
@@ -492,7 +586,9 @@ export function UsersPage(props: { me: Me }) {
                     {!isMe && u.status === "active" && (
                       <Button
                         data-testid={`recover-${u.id}`}
-                        onClick={() => (isAdmin ? void requestAdminRecovery(u) : setAction({ kind: "token", user: u }))}
+                        onClick={() =>
+                          setAction(isAdmin ? { kind: "requestRecovery", user: u } : { kind: "token", user: u })
+                        }
                       >
                         {isAdmin ? "Solicitar recuperación (admin)" : "Token de recuperación"}
                       </Button>

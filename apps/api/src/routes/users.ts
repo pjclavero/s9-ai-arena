@@ -2,13 +2,15 @@
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { audit } from "../audit.js";
-import { badRequest, conflict, notFound } from "../errors.js";
+import { badRequest, notFound, tooMany } from "../errors.js";
 import { publicProfile, userToJson } from "../serialize.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
-import { lockAdminChanges, otherActiveAdminExists } from "../services/account-recovery.js";
+import { currentRoles, planRoleChange, setUserRoles } from "../services/account-recovery.js";
+import { requireStrongReauth } from "./auth.js";
+import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
+import { isUuid } from "../params.js";
 
-export function userRoutes(db: Db): Router {
+export function userRoutes(db: Db, deps: { actionLimiter: RateLimiterLike }): Router {
   const router = Router();
 
   defineOperation(router, "getMe", async (req, res) => {
@@ -38,36 +40,33 @@ export function userRoutes(db: Db): Router {
   });
 
   defineOperation(router, "setUserRoles", async (req, res) => {
-    const { roles } = req.body ?? {};
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { roles } = body;
     if (!Array.isArray(roles) || roles.some((r) => !ROLES.includes(r as RoleName))) {
       throw badRequest(`roles debe ser un subconjunto de [${ROLES.join(", ")}]`);
     }
-    const user = await db("users")
-      .where({ id: req.params.userId })
-      .first()
-      .catch(() => null);
+    const userId = String(req.params.userId);
+    const user = isUuid(userId) ? await db("users").where({ id: userId }).first() : null;
     if (!user) throw notFound();
 
-    await db.transaction(async (trx) => {
-      // ADM-3 · nunca se deja el sistema sin un administrador ACTIVO: quitar «admin» al último es un 409.
-      await lockAdminChanges(trx as unknown as Db);
-      const wasAdmin = await trx("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
-      if (wasAdmin && !roles.includes("admin") && !(await otherActiveAdminExists(trx as unknown as Db, user.id))) {
-        throw conflict("last_admin", "No se puede quitar el rol admin al último administrador activo");
+    // ADM-3 · conceder o quitar «admin» exige reautenticación fuerte (contraseña y, si hay 2FA, TOTP).
+    const plan = planRoleChange(await currentRoles(db, user.id), roles as string[]);
+    const reauthed = plan.grantsAdmin || plan.revokesAdmin;
+    if (reauthed) {
+      if (!(await deps.actionLimiter.hit(`admin-users:${req.auth!.userId}`))) {
+        throw tooMany("Demasiados intentos: espera unos minutos");
       }
-      await trx("user_roles").where({ user_id: user.id }).delete();
-      if (roles.length > 0) {
-        await trx("user_roles").insert(roles.map((role: string) => ({ user_id: user.id, role })));
-      }
-    });
-    await audit(db, {
-      actorId: req.auth!.userId,
-      action: "admin.user.roles_set",
-      target: `user:${user.id}`,
-      detail: { roles },
-      correlationId: req.correlationId,
-    });
-    res.json(userToJson(user, roles, { includePrivate: true }));
+      const me = await db("users").where({ id: req.auth!.userId }).first();
+      await requireStrongReauth(db, me, { password: body.password, totp: body.totp });
+    }
+    const final = await setUserRoles(
+      db,
+      { actorId: req.auth!.userId, correlationId: req.correlationId },
+      user.id,
+      roles as string[],
+      { operationId: body.operationId, reauthed },
+    );
+    res.json(userToJson(user, final, { includePrivate: true }));
   });
 
   return router;

@@ -1,7 +1,7 @@
 /**
  * R2.5 (ERR-SEC-15) — publicación de la clave PÚBLICA de firma de artefactos.
  *
- * Extensión documentada fuera del contrato de E1 (como recoverAccount/resetPassword):
+ * Extensión documentada fuera del contrato de E1 (como resetPassword; `recoverAccount` se retiró en ADM-3):
  * cualquier verificador (motor, worker de batallas, terceros) obtiene aquí la clave
  * con la que comprobar las firmas ed25519 de los artefactos. Solo se expone la
  * PÚBLICA. REVIEW (cierre funcional): la API ya no necesita la PRIVADA; lee la

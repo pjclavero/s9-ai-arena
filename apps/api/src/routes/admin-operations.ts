@@ -30,15 +30,37 @@ function idParam(raw: unknown): string {
   return raw;
 }
 
-export function adminOperationsRoutes(db: Db, deps: { confirmLimiter: RateLimiterLike }): Router {
+export function adminOperationsRoutes(
+  db: Db,
+  deps: { confirmLimiter: RateLimiterLike; actionLimiter: RateLimiterLike },
+): Router {
   const router = Router();
   const ctx = (req: { auth?: { userId: string }; correlationId?: string }) => ({
     actorId: req.auth?.userId ?? null,
     correlationId: req.correlationId,
   });
 
+  /**
+   * ADM-3 · crear y cancelar órdenes `user.*` (y cancelar las ajenas) exige REAUTENTICACIÓN fuerte y tiene límite por
+   * admin: con un access token robado no se puede ocupar ni liberar a voluntad el hueco de la recuperación de otros.
+   */
+  async function reauth(req: { auth?: { userId: string } }, body: Record<string, unknown>): Promise<void> {
+    if (!(await deps.actionLimiter.hit(`admin-users:${req.auth!.userId}`))) {
+      throw tooMany("Demasiados intentos: espera unos minutos");
+    }
+    const me = await db("users").where({ id: req.auth!.userId }).first();
+    if (!me) throw notFound();
+    await requireStrongReauth(db, me, { password: body.password, totp: body.totp });
+  }
+
   defineOperation(router, "createAdminOperation", async (req, res) => {
-    const r = await createOperation(db, ctx(req), req.body);
+    let payload = req.body;
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const { password, totp, ...rest } = payload as Record<string, unknown>;
+      if (typeof rest.kind === "string" && rest.kind.startsWith("user.")) await reauth(req, { password, totp });
+      payload = rest;
+    }
+    const r = await createOperation(db, ctx(req), payload);
     res.setHeader("Cache-Control", "no-store");
     res.status(r.dryRun ? 200 : 201).json(r);
   });
@@ -70,8 +92,13 @@ export function adminOperationsRoutes(db: Db, deps: { confirmLimiter: RateLimite
   });
 
   defineOperation(router, "cancelAdminOperation", async (req, res) => {
+    const id = idParam(req.params.id);
+    const row = await db("admin_operations").where({ id }).first("kind", "requested_by");
+    if (row && (String(row.kind).startsWith("user.") || row.requested_by !== req.auth!.userId)) {
+      await reauth(req, (req.body ?? {}) as Record<string, unknown>);
+    }
     res.setHeader("Cache-Control", "no-store");
-    res.json(await cancelOperation(db, ctx(req), idParam(req.params.id)));
+    res.json(await cancelOperation(db, ctx(req), id));
   });
 
   return router;

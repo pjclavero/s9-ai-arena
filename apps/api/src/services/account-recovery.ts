@@ -16,9 +16,10 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
-import { MIN_PASSWORD_LENGTH, hashPassword, passwordPolicyViolation } from "../auth/passwords.js";
+import { hashPassword, passwordPolicyViolation } from "../auth/passwords.js";
 import { hashToken } from "../auth/tokens.js";
 import { ApiError, badRequest, conflict, forbidden, notFound, unauthorized } from "../errors.js";
+import { ROLES, type RoleName } from "../db/migrations.js";
 import { isUuid } from "../params.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, runCursorQuery } from "../serialize.js";
 
@@ -32,6 +33,21 @@ export const LAST_ADMIN_LOCK_KEY = 90230003;
 export interface Ctx {
   actorId: string | null;
   correlationId?: string;
+}
+
+/**
+ * Un interbloqueo de PostgreSQL (40P01) entre dos operaciones sobre la misma cuenta se deshace solo: se devuelve un
+ * 409 controlado y reintentable, nunca un 500.
+ */
+export async function mapDeadlock<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (e) {
+    if ((e as { code?: string }).code === "40P01") {
+      throw conflict("concurrent_change", "Otra operación afectó a la misma cuenta a la vez: reintenta");
+    }
+    throw e;
+  }
 }
 
 const EMAIL_ESCAPE = /[\\%_]/g;
@@ -149,43 +165,45 @@ export async function setUserStatus(
   if (targetId === ctx.actorId) {
     throw forbidden("No puedes bloquearte ni desbloquearte a ti mismo: pídeselo a otro administrador");
   }
-  return db.transaction(async (trx) => {
-    const t = trx as unknown as Db;
-    await lockAdminChanges(t);
-    const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
-    if (!user) throw notFound();
-    if (user.status === status) return { id: targetId, status, changed: false, sessionsRevoked: 0 };
-    let sessionsRevoked = 0;
-    if (status === "blocked") {
-      const isAdmin = await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id");
-      if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {
-        throw conflict("last_admin", "No se puede bloquear al último administrador activo");
+  return mapDeadlock(
+    db.transaction(async (trx) => {
+      const t = trx as unknown as Db;
+      await lockAdminChanges(t);
+      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
+      if (!user) throw notFound();
+      if (user.status === status) return { id: targetId, status, changed: false, sessionsRevoked: 0 };
+      let sessionsRevoked = 0;
+      if (status === "blocked") {
+        const isAdmin = await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id");
+        if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {
+          throw conflict("last_admin", "No se puede bloquear al último administrador activo");
+        }
+        await t("users")
+          .where({ id: targetId })
+          .update({ status: "blocked", blocked_at: t.fn.now(), blocked_by: ctx.actorId, updated_at: t.fn.now() });
+        sessionsRevoked = await revokeAllSessions(t, targetId);
+        const voided = await voidOpenResets(t, targetId);
+        await audit(t, {
+          actorId: ctx.actorId,
+          action: "admin.user.blocked",
+          target: `user:${targetId}`,
+          detail: { sessionsRevoked, recoveryTokensVoided: voided },
+          correlationId: ctx.correlationId,
+        });
+      } else {
+        await t("users")
+          .where({ id: targetId })
+          .update({ status: "active", blocked_at: null, blocked_by: null, updated_at: t.fn.now() });
+        await audit(t, {
+          actorId: ctx.actorId,
+          action: "admin.user.unblocked",
+          target: `user:${targetId}`,
+          correlationId: ctx.correlationId,
+        });
       }
-      await t("users")
-        .where({ id: targetId })
-        .update({ status: "blocked", blocked_at: t.fn.now(), blocked_by: ctx.actorId, updated_at: t.fn.now() });
-      sessionsRevoked = await revokeAllSessions(t, targetId);
-      const voided = await voidOpenResets(t, targetId);
-      await audit(t, {
-        actorId: ctx.actorId,
-        action: "admin.user.blocked",
-        target: `user:${targetId}`,
-        detail: { sessionsRevoked, recoveryTokensVoided: voided },
-        correlationId: ctx.correlationId,
-      });
-    } else {
-      await t("users")
-        .where({ id: targetId })
-        .update({ status: "active", blocked_at: null, blocked_by: null, updated_at: t.fn.now() });
-      await audit(t, {
-        actorId: ctx.actorId,
-        action: "admin.user.unblocked",
-        target: `user:${targetId}`,
-        correlationId: ctx.correlationId,
-      });
-    }
-    return { id: targetId, status, changed: true, sessionsRevoked };
-  });
+      return { id: targetId, status, changed: true, sessionsRevoked };
+    }),
+  );
 }
 
 // ------------------------------------------------- emisión del token (admin)
@@ -206,8 +224,27 @@ export async function createPasswordReset(
   return token;
 }
 
-/** Consume (UNA vez) la aprobación de segundo admin de una cuenta ADMIN. Falla con un código claro si no vale. */
-async function consumeSecondAdminApproval(trx: Db, ctx: Ctx, targetId: string, operationId: unknown): Promise<string> {
+/** ¿Hay algún admin ACTIVO fuera de `excluded` que pueda aprobar? */
+export async function approverAvailable(db: Db, excluded: string[]): Promise<boolean> {
+  const r = await db("user_roles as r")
+    .join("users as u", "u.id", "r.user_id")
+    .where({ "r.role": "admin", "u.status": "active" })
+    .whereNotIn("u.id", excluded)
+    .first("u.id");
+  return !!r;
+}
+
+/**
+ * Consume (UNA vez) la aprobación de segundo admin de una acción sobre una cuenta ADMIN (`kind`:
+ * `user.recovery_admin` o `user.revoke_admin`). Falla con un código claro si no vale.
+ */
+export async function consumeSecondAdminApproval(
+  trx: Db,
+  ctx: Ctx,
+  kind: "user.recovery_admin" | "user.revoke_admin",
+  targetId: string,
+  operationId: unknown,
+): Promise<string> {
   if (typeof operationId !== "string" || operationId === "") {
     throw new ApiError(
       403,
@@ -217,10 +254,7 @@ async function consumeSecondAdminApproval(trx: Db, ctx: Ctx, targetId: string, o
   }
   const invalid = (msg: string) => new ApiError(403, "second_admin_approval_invalid", msg);
   if (!isUuid(operationId)) throw invalid("La aprobación no existe, ya se usó o no está vigente");
-  const op = await trx("admin_operations")
-    .where({ id: operationId, kind: "user.recovery_admin", status: "pending" })
-    .forUpdate()
-    .first();
+  const op = await trx("admin_operations").where({ id: operationId, kind, status: "pending" }).forUpdate().first();
   if (!op) throw invalid("La aprobación no existe, ya se usó o no está vigente");
   const params = op.params as { userId?: string };
   if (params.userId !== targetId) throw invalid("La aprobación es para otra cuenta");
@@ -228,6 +262,12 @@ async function consumeSecondAdminApproval(trx: Db, ctx: Ctx, targetId: string, o
   if (!op.confirmed_by || op.confirmed_by === ctx.actorId) {
     throw invalid("La aprobación debe ser de un segundo administrador distinto del solicitante");
   }
+  // Quien aprobó debe SEGUIR siendo admin activo al consumirse (puede haberlo bloqueado o degradado desde entonces).
+  const approver = await trx("users as u")
+    .join("user_roles as r", "r.user_id", "u.id")
+    .where({ "u.id": op.confirmed_by, "u.status": "active", "r.role": "admin" })
+    .first("u.id");
+  if (!approver) throw invalid("Quien aprobó ya no es administrador activo: solicítala de nuevo");
   if (!op.confirmed_at || Date.now() - new Date(op.confirmed_at).getTime() > RECOVERY_APPROVAL_WINDOW_MS) {
     throw invalid("La aprobación caducó: solicítala de nuevo");
   }
@@ -245,7 +285,7 @@ async function consumeSecondAdminApproval(trx: Db, ctx: Ctx, targetId: string, o
     .where({ id: op.id, status: "running" })
     .update({
       status: "done",
-      result: JSON.stringify({ tokenIssued: true }),
+      result: JSON.stringify({ consumed: true }),
       finished_at: trx.fn.now(),
       lease_owner: null,
       lease_expires_at: null,
@@ -262,33 +302,36 @@ export async function issueRecoveryToken(
   if (targetId === ctx.actorId) {
     throw badRequest("Para tu propia cuenta usa «Mi cuenta» (cambio de contraseña), no un token de recuperación");
   }
-  const out = await db.transaction(async (trx) => {
-    const t = trx as unknown as Db;
-    const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
-    if (!user) throw notFound();
-    if (user.status !== "active") {
-      throw conflict("account_blocked", "La cuenta está bloqueada: desbloquéala antes de emitir un token");
-    }
-    const targetIsAdmin = !!(await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id"));
-    let operationId: string | null = null;
-    if (targetIsAdmin) operationId = await consumeSecondAdminApproval(t, ctx, targetId, opts.operationId);
-    const voided = await voidOpenResets(t, targetId);
-    const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId, operationId });
-    const expiresAt = new Date(Date.now() + RECOVERY_TTL_MS).toISOString();
-    // El token NUNCA va a la auditoría ni a ningún log.
-    await audit(t, {
-      actorId: ctx.actorId,
-      action: "admin.user.recovery_token_issued",
-      target: `user:${targetId}`,
-      detail: {
-        expiresInMinutes: RECOVERY_TTL_MS / 60_000,
-        previousTokensVoided: voided,
-        secondAdminOperation: operationId,
-      },
-      correlationId: ctx.correlationId,
-    });
-    return { token, expiresAt, userId: targetId };
-  });
+  const out = await mapDeadlock(
+    db.transaction(async (trx) => {
+      const t = trx as unknown as Db;
+      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
+      if (!user) throw notFound();
+      if (user.status !== "active") {
+        throw conflict("account_blocked", "La cuenta está bloqueada: desbloquéala antes de emitir un token");
+      }
+      const targetIsAdmin = !!(await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id"));
+      let operationId: string | null = null;
+      if (targetIsAdmin)
+        operationId = await consumeSecondAdminApproval(t, ctx, "user.recovery_admin", targetId, opts.operationId);
+      const voided = await voidOpenResets(t, targetId);
+      const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId, operationId });
+      const expiresAt = new Date(Date.now() + RECOVERY_TTL_MS).toISOString();
+      // El token NUNCA va a la auditoría ni a ningún log.
+      await audit(t, {
+        actorId: ctx.actorId,
+        action: "admin.user.recovery_token_issued",
+        target: `user:${targetId}`,
+        detail: {
+          expiresInMinutes: RECOVERY_TTL_MS / 60_000,
+          previousTokensVoided: voided,
+          secondAdminOperation: operationId,
+        },
+        correlationId: ctx.correlationId,
+      });
+      return { token, expiresAt, userId: targetId };
+    }),
+  );
   return out;
 }
 
@@ -306,40 +349,133 @@ export async function redeemRecoveryToken(
   token: unknown,
   newPassword: unknown,
 ): Promise<{ userId: string }> {
-  // Mismo texto que tenía la ruta (los clientes y tests existentes lo conocen).
-  if (
-    typeof token !== "string" ||
-    token === "" ||
-    token.length > 256 ||
-    passwordPolicyViolation(newPassword) !== null
-  ) {
-    throw badRequest(`token y newPassword (≥${MIN_PASSWORD_LENGTH}) obligatorios`);
-  }
+  if (typeof token !== "string" || token === "" || token.length > 256) throw badRequest("token obligatorio");
+  // El texto sale de la función ÚNICA de política: si cambia la política, cambia el mensaje (no hay copia aquí).
+  const violation = passwordPolicyViolation(newPassword, "La nueva contraseña");
+  if (violation) throw badRequest(violation);
   const passwordHash = await hashPassword(newPassword as string);
-  return db.transaction(async (trx) => {
-    const t = trx as unknown as Db;
-    const [reset] = await t("password_resets")
-      .where({ token_hash: hashToken(token) })
-      .whereNull("used_at")
-      .where("expires_at", ">", t.fn.now())
-      .update({ used_at: t.fn.now() })
-      .returning(["id", "user_id", "created_by", "issued_via_operation"]);
-    if (!reset) throw unauthorized(INVALID_TOKEN);
-    const user = await t("users").where({ id: reset.user_id }).forUpdate().first("id", "status");
-    if (!user || user.status !== "active") throw unauthorized(INVALID_TOKEN); // deshace el consumo
-    await t("users").where({ id: user.id }).update({ password_hash: passwordHash, updated_at: t.fn.now() });
-    const sessionsRevoked = await revokeAllSessions(t, user.id);
-    const voided = await voidOpenResets(t, user.id);
-    // La recuperación NO toca el 2FA (DoD T7.2): el siguiente login sigue exigiendo TOTP.
-    await audit(t, {
-      actorId: user.id,
-      action: "auth.password.reset",
-      target: `user:${user.id}`,
-      detail: { sessionsRevoked, otherTokensVoided: voided, issuedBy: reset.created_by ?? null, ip: ctx.ip ?? null },
-      correlationId: ctx.correlationId,
-    });
-    return { userId: user.id as string };
-  });
+  return mapDeadlock(
+    db.transaction(async (trx) => {
+      const t = trx as unknown as Db;
+      const hash = hashToken(token);
+      // Mismo orden de bloqueos que bloquear/emitir (primero la fila de `users`, luego los tokens): sin interbloqueo.
+      const found = await t("password_resets").where({ token_hash: hash }).first("user_id");
+      if (!found) throw unauthorized(INVALID_TOKEN);
+      const user = await t("users").where({ id: found.user_id }).forUpdate().first("id", "status");
+      const [reset] = await t("password_resets")
+        .where({ token_hash: hash })
+        .whereNull("used_at")
+        .where("expires_at", ">", t.fn.now())
+        .update({ used_at: t.fn.now() })
+        .returning(["id", "user_id", "created_by", "issued_via_operation"]);
+      if (!reset) throw unauthorized(INVALID_TOKEN);
+      if (!user || user.status !== "active") throw unauthorized(INVALID_TOKEN); // deshace el consumo
+      // El rol se mira AHORA, no al emitir: una cuenta que es admin en el canje sólo se recupera con un token emitido
+      // con la aprobación de un segundo admin (cierra «degradar, emitir, re-promover, canjear» y «emitir y promover»).
+      const isAdminNow = await t("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
+      if (isAdminNow && !reset.issued_via_operation) throw unauthorized(INVALID_TOKEN); // deshace el consumo
+      await t("users").where({ id: user.id }).update({ password_hash: passwordHash, updated_at: t.fn.now() });
+      const sessionsRevoked = await revokeAllSessions(t, user.id);
+      const voided = await voidOpenResets(t, user.id);
+      // La recuperación NO toca el 2FA (DoD T7.2): el siguiente login sigue exigiendo TOTP.
+      await audit(t, {
+        actorId: user.id,
+        action: "auth.password.reset",
+        target: `user:${user.id}`,
+        detail: { sessionsRevoked, otherTokensVoided: voided, issuedBy: reset.created_by ?? null, ip: ctx.ip ?? null },
+        correlationId: ctx.correlationId,
+      });
+      return { userId: user.id as string };
+    }),
+  );
+}
+
+// ------------------------------------------------------------------- roles
+export interface RoleChangePlan {
+  before: string[];
+  /** Se concede «admin» a quien no lo tenía. */
+  grantsAdmin: boolean;
+  /** Se quita «admin» a quien lo tenía. */
+  revokesAdmin: boolean;
+}
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+
+export function planRoleChange(before: string[], after: string[]): RoleChangePlan {
+  return {
+    before,
+    grantsAdmin: after.includes("admin") && !before.includes("admin"),
+    revokesAdmin: before.includes("admin") && !after.includes("admin"),
+  };
+}
+
+/** Roles actuales de una cuenta (lectura sin bloqueo, para decidir si hace falta reautenticar). */
+export async function currentRoles(db: Db, userId: string): Promise<string[]> {
+  return (await db("user_roles").where({ user_id: userId })).map((r: { role: string }) => r.role);
+}
+
+/**
+ * Asignar roles (reemplaza el conjunto). Reglas de ADM-3:
+ *  - cualquier cambio del conjunto anula los tokens de recuperación abiertos de la cuenta;
+ *  - conceder «admin» y quitarlo (a uno mismo o a otra cuenta) exigen REAUTENTICACIÓN (`reauthed`, hecha por la ruta);
+ *  - quitar «admin» a OTRA cuenta exige además la aprobación de un admin distinto del solicitante (orden
+ *    `user.revoke_admin`, consumida una vez); si no hay otro admin que pueda aprobar, 409 `second_admin_unavailable`;
+ *  - nunca se deja el sistema sin un admin ACTIVO (409 `last_admin`).
+ */
+export async function setUserRoles(
+  db: Db,
+  ctx: Ctx,
+  targetId: string,
+  roles: string[],
+  opts: { operationId?: unknown; reauthed: boolean },
+): Promise<string[]> {
+  for (const r of roles) if (!ROLES.includes(r as RoleName)) throw badRequest(`rol desconocido: ${r}`);
+  const wanted = [...new Set(roles)];
+  return mapDeadlock(
+    db.transaction(async (trx) => {
+      const t = trx as unknown as Db;
+      await lockAdminChanges(t);
+      const user = await t("users").where({ id: targetId }).forUpdate().first("id");
+      if (!user) throw notFound();
+      const before = await currentRoles(t, targetId);
+      const plan = planRoleChange(before, wanted);
+      if ((plan.grantsAdmin || plan.revokesAdmin) && !opts.reauthed) {
+        throw conflict("roles_changed_concurrently", "Los roles de la cuenta cambiaron mientras tanto: reintenta");
+      }
+      let operationId: string | null = null;
+      if (plan.revokesAdmin) {
+        if (!(await otherActiveAdminExists(t, targetId))) {
+          throw conflict("last_admin", "No se puede quitar el rol admin al último administrador activo");
+        }
+        if (targetId !== ctx.actorId) {
+          if (typeof opts.operationId !== "string" || opts.operationId === "") {
+            if (!(await approverAvailable(t, [ctx.actorId ?? "", targetId]))) {
+              throw conflict(
+                "second_admin_unavailable",
+                "Quitar el rol admin a otra cuenta exige la aprobación de un tercer administrador y no hay ninguno: que la propia cuenta se lo quite (reautenticada) o hazlo por consola",
+              );
+            }
+          }
+          operationId = await consumeSecondAdminApproval(t, ctx, "user.revoke_admin", targetId, opts.operationId);
+        }
+      }
+      const changed = !sameSet(before, wanted);
+      let voided = 0;
+      if (changed) {
+        await t("user_roles").where({ user_id: targetId }).delete();
+        if (wanted.length > 0) await t("user_roles").insert(wanted.map((role) => ({ user_id: targetId, role })));
+        voided = await voidOpenResets(t, targetId);
+      }
+      await audit(t, {
+        actorId: ctx.actorId,
+        action: "admin.user.roles_set",
+        target: `user:${targetId}`,
+        detail: { roles: wanted, changed, recoveryTokensVoided: voided, secondAdminOperation: operationId },
+        correlationId: ctx.correlationId,
+      });
+      return wanted;
+    }),
+  );
 }
 
 // ----------------------------------------------------------------- CLI local

@@ -66,6 +66,15 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+/** Rellena la confirmación abierta (frase, contraseña y, si se pide, TOTP) y la envía. */
+async function confirmWith(phrase: string, password: string, totp?: string) {
+  await screen.findByTestId("confirm-destructive");
+  fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: phrase } });
+  fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: password } });
+  if (totp) fireEvent.change(screen.getByTestId("confirm-totp-input"), { target: { value: totp } });
+  fireEvent.click(screen.getByTestId("confirm-submit"));
+}
+
 describe("ADM-3 · página de usuarios", () => {
   it("USUARIOS_LISTA: pinta usuarios, roles, estado y 2FA, sin pedir un UUID a mano", async () => {
     route({ "GET /admin/users": () => page([U1, U2, SELF]), "GET /admin/operations": () => [] });
@@ -206,11 +215,13 @@ describe("ADM-3 · página de usuarios", () => {
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
+    await confirmWith("SOLICITAR RECUPERACION cris@x.es", "mi-clave-larga-1");
     await screen.findByTestId("users-notice");
     expect(calls("POST", "/admin/users/")).toHaveLength(0);
     const c = calls("POST", "/admin/operations")[0];
-    expect(c[2]).toEqual({ kind: "user.recovery_admin", params: { userId: ADM.id } });
-    expect(screen.queryByTestId("confirm-destructive")).toBeNull();
+    // las órdenes user.* exigen reautenticación (revisión de #347)
+    expect(c[2]).toEqual({ kind: "user.recovery_admin", params: { userId: ADM.id }, password: "mi-clave-larga-1" });
+    expect(c[3]).toEqual({ reauth: true });
   });
 
   it("ADMIN_UNICO_CLI: con un solo administrador explica la vía local (no hay segundo admin)", async () => {
@@ -227,6 +238,7 @@ describe("ADM-3 · página de usuarios", () => {
     render(<UsersPage me={ME} />);
     await screen.findByTestId("users-table");
     fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
+    await confirmWith("SOLICITAR RECUPERACION cris@x.es", "mi-clave-larga-1");
     const n = await screen.findByTestId("users-notice");
     expect(n.textContent).toMatch(/reset-password/);
     expect(screen.queryByTestId("users-error")).toBeNull();
@@ -304,6 +316,130 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.click(screen.getByTestId("confirm-submit"));
     await screen.findByTestId("users-error");
     expect(screen.getByTestId("confirm-destructive")).toBeTruthy();
+  });
+});
+
+describe("ADM-3 R1 · revisión de #347", () => {
+  const ME2FA = { ...ME, twoFactorEnabled: true };
+
+  it("NEEDS_TOTP: un admin con 2FA ve el campo TOTP y lo envía; sin 2FA no se pide", async () => {
+    route({
+      "GET /admin/users": () => page([U1]),
+      "GET /admin/operations": () => [],
+      "PUT /admin/users/11111111-1111-4111-8111-111111111111/status": () => ({ status: "blocked", changed: true }),
+    });
+    render(<UsersPage me={ME2FA} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`status-${U1.id}`));
+    await screen.findByTestId("confirm-destructive");
+    expect(screen.getByTestId("confirm-totp-input")).toBeTruthy();
+    const submit = screen.getByTestId("confirm-submit") as HTMLButtonElement;
+    fireEvent.change(screen.getByTestId("confirm-phrase-input"), { target: { value: "BLOQUEAR bea@x.es" } });
+    fireEvent.change(screen.getByTestId("confirm-password-input"), { target: { value: "mi-clave-larga-1" } });
+    expect(submit.disabled).toBe(true); // falta el código 2FA
+    fireEvent.change(screen.getByTestId("confirm-totp-input"), { target: { value: "123456" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
+    expect(calls("PUT", "/admin/users")[0][2]).toEqual({
+      status: "blocked",
+      password: "mi-clave-larga-1",
+      totp: "123456",
+    });
+  });
+
+  it("CONCEDER_ADMIN_REAUTH: dar el rol admin pide contraseña y la envía", async () => {
+    route({
+      "GET /admin/users": () => page([U1]),
+      "GET /admin/operations": () => [],
+      "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
+    fireEvent.click(screen.getByTestId(`role-${U1.id}-admin`));
+    fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
+    await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
+    const c = calls("PUT", "/users/")[0];
+    expect(c[2]).toEqual({ roles: ["user", "developer", "admin"], password: "mi-clave-larga-1" });
+    expect(c[3]).toEqual({ reauth: true });
+  });
+
+  it("QUITAR_ADMIN_A_OTRO_PIDE_APROBACION: quitar «admin» a otra cuenta NO hace el PUT: solicita la orden user.revoke_admin", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [],
+      "POST /admin/operations": () => ({ operation: { id: "op9" }, confirmToken: null }),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`roles-edit-${ADM.id}`));
+    fireEvent.click(screen.getByTestId(`role-${ADM.id}-admin`));
+    fireEvent.click(screen.getByTestId(`roles-save-${ADM.id}`));
+    await confirmWith("SOLICITAR QUITAR ADMIN cris@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("users-notice");
+    expect(calls("PUT", "/users/")).toHaveLength(0);
+    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
+      kind: "user.revoke_admin",
+      params: { userId: ADM.id },
+      password: "mi-clave-larga-1",
+    });
+  });
+
+  it("APLICAR_QUITAR_ADMIN: con la aprobación, quien la solicitó aplica el cambio enviando el operationId", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [
+        {
+          id: "op-rv",
+          kind: "user.revoke_admin",
+          params: { userId: ADM.id },
+          status: "pending",
+          confirmPhrase: null,
+          requestedBy: ME.id,
+          impact: { summary: "x", counts: {} },
+        },
+      ],
+      "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("recovery-ops");
+    expect(screen.getByTestId("issue-admin-op-rv").textContent).toBe("Aplicar");
+    fireEvent.click(screen.getByTestId("issue-admin-op-rv"));
+    await confirmWith("QUITAR ADMIN 33333333", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
+    expect(calls("PUT", "/users/")[0][2]).toEqual({
+      roles: ["user"],
+      password: "mi-clave-larga-1",
+      operationId: "op-rv",
+    });
+  });
+
+  it("CANCELAR_CON_REAUTH: cancelar una solicitud pide confirmación y contraseña", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [
+        {
+          id: "op-c",
+          kind: "user.recovery_admin",
+          params: { userId: ADM.id },
+          status: "awaiting_confirmation",
+          confirmPhrase: "RECUPERAR ADMIN 33333333",
+          requestedBy: ME.id,
+          impact: { summary: "x", counts: {} },
+        },
+      ],
+      "POST /admin/operations/op-c/cancel": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("recovery-ops");
+    fireEvent.click(screen.getByTestId("cancel-op-op-c"));
+    expect(calls("POST", "/admin/operations/op-c/cancel")).toHaveLength(0);
+    await confirmWith("CANCELAR 33333333", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("POST", "/admin/operations/op-c/cancel")).toHaveLength(1));
+    const c = calls("POST", "/admin/operations/op-c/cancel")[0];
+    expect(c[2]).toEqual({ password: "mi-clave-larga-1" });
+    expect(c[3]).toEqual({ reauth: true });
   });
 });
 

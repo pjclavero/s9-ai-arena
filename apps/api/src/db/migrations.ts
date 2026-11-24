@@ -1344,8 +1344,10 @@ const m024_replay_artifacts: Migration = {
 //    y sus sesiones se cierran en la misma transacción. Sin borrado: la cuenta y su historia se conservan.
 //  - `password_resets` gana `created_at`, `created_by` (el admin que lo emitió) e `issued_via_operation` (la orden
 //    de segundo admin con la que se emitió, cuando el objetivo es una cuenta admin). Sigue guardando SÓLO el hash.
-//  - `admin_operations.kind` admite `user.recovery_admin` (autorización de un segundo admin para emitir un token de
-//    recuperación sobre una cuenta ADMIN; ver services/account-recovery.ts).
+//  - `admin_operations.kind` admite `user.recovery_admin` y `user.revoke_admin` (autorización de un segundo admin para
+//    emitir un token de recuperación sobre una cuenta ADMIN o para quitar el rol admin a OTRA cuenta; ver
+//    services/account-recovery.ts). Para los tipos `user.*` la regla «una activa» pasa a ser POR CUENTA OBJETIVO
+//    (`params->>'userId'`): un admin no puede bloquear la recuperación de las demás con una sola solicitud.
 // Depende de la 023 (FK a admin_operations). La vuelta atrás borra las órdenes de ese tipo, quita las columnas
 // (los bloqueos se pierden: las cuentas vuelven a estar activas) y restaura el CHECK de `kind`.
 // Probada en `migration-025.test.ts` (no entra en NAMED_ROLLBACK_ALLOWED: se revierte en orden).
@@ -1366,12 +1368,28 @@ const m025_user_status_recovery: Migration = {
       CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
       ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
       ALTER TABLE admin_operations
-        ADD CONSTRAINT admin_operations_kind_check CHECK (kind IN ('system.noop','user.recovery_admin'));
+        ADD CONSTRAINT admin_operations_kind_check
+        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin'));
+      DROP INDEX admin_operations_one_active_per_kind;
+      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
+        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running') AND kind NOT LIKE 'user.%';
+      CREATE UNIQUE INDEX admin_operations_one_active_per_target
+        ON admin_operations (kind, (params->>'userId')) WHERE status IN ('awaiting_confirmation','pending','running') AND kind LIKE 'user.%';
     `);
   },
   async down(db) {
+    // AVISO: bajar la 025 DESBLOQUEA todas las cuentas bloqueadas (se pierde `users.status`). Queda constancia en la
+    // auditoría antes de borrar las columnas; el runbook de rollback debe volver a bloquearlas si hace falta.
     await db.raw(`
-      DELETE FROM admin_operations WHERE kind = 'user.recovery_admin';
+      INSERT INTO audit_log (action, target, detail)
+        SELECT 'migration.025.down', 'users',
+               jsonb_build_object('blockedAccountsUnblocked', count(*), 'note', 'la vuelta atrás desbloquea las cuentas')
+          FROM users WHERE status = 'blocked';
+      DELETE FROM admin_operations WHERE kind LIKE 'user.%';
+      DROP INDEX admin_operations_one_active_per_target;
+      DROP INDEX admin_operations_one_active_per_kind;
+      CREATE UNIQUE INDEX admin_operations_one_active_per_kind
+        ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running');
       ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
       ALTER TABLE admin_operations ADD CONSTRAINT admin_operations_kind_check CHECK (kind IN ('system.noop'));
       DROP INDEX password_resets_user_open_idx;

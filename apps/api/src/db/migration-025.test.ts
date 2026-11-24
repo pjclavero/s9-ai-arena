@@ -69,8 +69,31 @@ describe("migración 025_user_status_recovery", () => {
     );
   });
 
-  it("MIG025_VUELTA_ATRAS: el down quita columnas y órdenes de su tipo, restaura el CHECK, y se puede reaplicar", async () => {
+  it("MIG025_UNICIDAD_POR_CUENTA: las órdenes user.* son únicas POR CUENTA objetivo y no por tipo; las demás, por tipo", async () => {
+    await h.db("admin_operations").delete();
+    const mk = (kind: string, userId?: string) =>
+      h.db("admin_operations").insert({
+        kind,
+        status: "awaiting_confirmation",
+        params: JSON.stringify(userId ? { userId } : {}),
+      });
+    const u1 = "11111111-1111-4111-8111-111111111111";
+    const u2 = "22222222-2222-4222-8222-222222222222";
+    await mk("user.recovery_admin", u1);
+    await mk("user.recovery_admin", u2); // otra cuenta: convive
+    await mk("user.revoke_admin", u1); // otro tipo sobre la misma cuenta: convive
+    await expect(mk("user.recovery_admin", u1)).rejects.toMatchObject({ code: "23505" });
+    await mk("system.noop");
+    await expect(mk("system.noop")).rejects.toMatchObject({ code: "23505" });
+    await h.db("admin_operations").delete();
+  });
+
+  it("MIG025_VUELTA_ATRAS: el down quita columnas y órdenes de su tipo, restaura el CHECK, AVISA en la auditoría de las cuentas que desbloquea, y se puede reaplicar", async () => {
+    const blockedId = await newUser("m025-blk@test.local");
+    await h.db("users").where({ id: blockedId }).update({ status: "blocked", blocked_at: new Date() });
     await m025().down(h.db);
+    const warn = await h.db("audit_log").where({ action: "migration.025.down" }).orderBy("id", "desc").first();
+    expect(warn.detail.blockedAccountsUnblocked).toBeGreaterThanOrEqual(1);
     expect(await cols("users")).not.toContain("status");
     expect(await cols("password_resets")).not.toContain("issued_via_operation");
     expect(

@@ -36,8 +36,11 @@ Si el objetivo es una **cuenta admin** el token sólo se emite con la aprobació
 
 Sólo cuentan los administradores **activos** (no bloqueados). Sólo puede haber **una** solicitud de este tipo activa a la vez (regla «una orden activa por tipo» de ADM-1).
 
+El **canje revalida el rol**: si la cuenta es admin al canjear y el token no se emitió con una aprobación de segundo admin, se rechaza con la respuesta uniforme (cierra «degradar, emitir, re-promover, canjear» y «emitir y promover»). Cualquier cambio de roles de una cuenta **anula sus tokens abiertos**. Quitar el rol admin a OTRA cuenta exige reautenticación y una aprobación `user.revoke_admin` de un admin distinto del solicitante; la unicidad de estas órdenes es **por cuenta objetivo**, y crearlas o cancelarlas exige reautenticación y tiene límite por admin. El segundo admin se busca entre los admins activos distintos del solicitante y del objetivo.
+
 ### Salvaguardas de administración
 
+- Bajar la migración 025 **desbloquea todas las cuentas bloqueadas** (se pierde `users.status`): queda un aviso en la auditoría (`migration.025.down`) y el runbook de rollback debe volver a bloquearlas si procede.
 - No se puede **bloquear** (ni quitar el rol `admin` a) el **último administrador activo** (409 `last_admin`), ni uno a sí mismo bloquearse.
 - Una cuenta **bloqueada** no inicia sesión (403 `account_blocked` tras acertar la contraseña), no refresca tokens y no puede recibir un token de recuperación.
 

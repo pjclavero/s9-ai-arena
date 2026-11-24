@@ -190,7 +190,9 @@ export function createApp(cfg: AppConfig): express.Express {
       resetLimiter: cfg.resetLimiter,
     }),
   );
-  app.use(userRoutes(cfg.db));
+  const adminUsersLimiter =
+    cfg.adminUsersLimiter ?? new SharedRateLimiter(cfg.db, "admin.users", { max: 20, windowMs: 5 * 60_000 });
+  app.use(userRoutes(cfg.db, { actionLimiter: adminUsersLimiter }));
   app.use(teamRoutes(cfg.db));
   // R2.5 (ERR-SEC-12): por defecto el ENCOLADOR real (tabla jobs): el pipeline de
   // builds corre en el worker del bot-manager, nunca aquí. El worker sigue fallando
@@ -220,6 +222,7 @@ export function createApp(cfg: AppConfig): express.Express {
   );
   app.use(
     adminOperationsRoutes(cfg.db, {
+      actionLimiter: adminUsersLimiter,
       confirmLimiter:
         cfg.adminConfirmLimiter ?? new SharedRateLimiter(cfg.db, "admin.confirm", { max: 10, windowMs: 5 * 60_000 }),
     }),
@@ -227,8 +230,7 @@ export function createApp(cfg: AppConfig): express.Express {
   // ADM-3 · usuarios (listado, bloqueo) y emisión del token de recuperación (sólo admin).
   app.use(
     adminUsersRoutes(cfg.db, {
-      actionLimiter:
-        cfg.adminUsersLimiter ?? new SharedRateLimiter(cfg.db, "admin.users", { max: 20, windowMs: 5 * 60_000 }),
+      actionLimiter: adminUsersLimiter,
     }),
   );
   app.use(

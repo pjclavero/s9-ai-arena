@@ -898,14 +898,12 @@ describe("ADM-1 · registro de tipos y su CHECK", () => {
     }
   });
 
+  const USER_KINDS = ["user.recovery_admin", "user.revoke_admin"];
   it("NOOP_SOLO_EN_TESTS: en producción (y desarrollo) el registro no trae system.noop; sí el tipo real de ADM-3", () => {
     // ADM-3 añade `user.recovery_admin` (segundo admin para recuperar una cuenta admin): es de producción.
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual(["user.recovery_admin"]);
-    expect(Object.keys(buildOperationKinds({}))).toEqual(["user.recovery_admin"]);
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" })).sort()).toEqual([
-      "system.noop",
-      "user.recovery_admin",
-    ]);
-    expect(Object.keys(buildOperationKinds({ NODE_ENV: "development" }))).toEqual(["user.recovery_admin"]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "production" }))).toEqual(USER_KINDS);
+    expect(Object.keys(buildOperationKinds({}))).toEqual(USER_KINDS);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "test" })).sort()).toEqual(["system.noop", ...USER_KINDS]);
+    expect(Object.keys(buildOperationKinds({ NODE_ENV: "development" }))).toEqual(USER_KINDS);
   });
 });

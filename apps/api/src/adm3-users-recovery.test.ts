@@ -192,24 +192,26 @@ describe("ADM-3 · listado de usuarios", () => {
 });
 
 describe("ADM-3 · roles y última cuenta admin", () => {
-  it("ULTIMO_ADMIN_ROLES: quitar «admin» al último administrador activo es 409; con otro admin activo, sí", async () => {
+  it("ULTIMO_ADMIN_ROLES: quitarse «admin» siendo el último administrador activo es 409; con otro activo, sí", async () => {
     const a = await mkAdmin("ultimo-a");
     const b = await mkAdmin("ultimo-b");
     const ta = await tokenOf(a);
-    const put = (id: string, roles: string[]) =>
-      request(app).put(`/users/${id}/roles`).set("Authorization", `Bearer ${ta}`).send({ roles });
+    const selfRevoke = (t: string, id: string) =>
+      request(app)
+        .put(`/users/${id}/roles`)
+        .set("Authorization", `Bearer ${t}`)
+        .send({ roles: ["user"], password: PW });
     // b bloqueado a mano: «a» pasa a ser el único ADMIN ACTIVO
     await h.db("users").where({ id: b.id }).update({ status: "blocked", blocked_at: new Date() });
-    const r = await put(a.id, ["user"]);
+    const r = await selfRevoke(ta, a.id);
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("last_admin");
     expect(await h.db("user_roles").where({ user_id: a.id, role: "admin" }).first()).toBeTruthy();
-    // con b activo, retirarle el rol a b o a a ya es legal
+    // con b activo, «a» puede quitarse el rol a sí mismo (reautenticado)...
     await h.db("users").where({ id: b.id }).update({ status: "active", blocked_at: null });
-    expect((await put(b.id, ["user"])).status).toBe(200);
-    expect(await h.db("user_roles").where({ user_id: b.id, role: "admin" }).first()).toBeFalsy();
-    // y ahora «a» vuelve a ser el último
-    expect((await put(a.id, ["user"])).status).toBe(409);
+    expect((await selfRevoke(ta, a.id)).status).toBe(200);
+    // ...y ahora b es el último: tampoco puede
+    expect((await selfRevoke(await tokenOf(b), b.id)).status).toBe(409);
   });
 
   it("ROLES_AUDITADOS: asignar roles sigue auditado con quien lo hizo", async () => {
@@ -578,7 +580,7 @@ describe("ADM-3 · cuenta admin ⇒ segundo administrador", () => {
     request(app)
       .post("/admin/operations")
       .set("Authorization", `Bearer ${t}`)
-      .send({ kind: "user.recovery_admin", params: { userId }, ...extra });
+      .send({ kind: "user.recovery_admin", params: { userId }, password: PW, ...extra });
   const confirmOp = (t: string, id: string, phrase: string, password = PW) =>
     request(app).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send({ phrase, password });
 
@@ -713,7 +715,7 @@ describe("ADM-3 · cuenta admin ⇒ segundo administrador", () => {
     const extra = await request(app)
       .post("/admin/operations")
       .set("Authorization", `Bearer ${ta}`)
-      .send({ kind: "user.recovery_admin", params: { userId: target.id, rol: "admin" } });
+      .send({ kind: "user.recovery_admin", params: { userId: target.id, rol: "admin" }, password: PW });
     expect(extra.status).toBe(400);
     expect(await h.db("admin_operations").count({ n: "*" }).first()).toMatchObject({ n: "0" });
   });

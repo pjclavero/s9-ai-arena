@@ -22,7 +22,7 @@ import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { isUuid } from "../params.js";
-import { RECOVERY_APPROVAL_WINDOW_MS } from "../services/account-recovery.js";
+import { RECOVERY_APPROVAL_WINDOW_MS, approverAvailable } from "../services/account-recovery.js";
 
 /** Caducidad del token de confirmación. */
 export const CONFIRM_TTL_MS = 120_000;
@@ -54,6 +54,8 @@ export interface OperationKindDef {
    * ocupe el hueco «una activa por tipo» indefinidamente.
    */
   pendingTtlMs?: number;
+  /** Cuentas que NO pueden hacer de segundo admin además del solicitante (p. ej. el propio objetivo). */
+  approverExcludes?(params: Record<string, unknown>): string[];
 }
 
 const NOOP_CLASSES: readonly ImpactClass[] = ["none", "destructive", "irreversible"];
@@ -95,6 +97,7 @@ const SYSTEM_NOOP: OperationKindDef = {
 const USER_RECOVERY_ADMIN: OperationKindDef = {
   kind: "user.recovery_admin",
   pendingTtlMs: RECOVERY_APPROVAL_WINDOW_MS,
+  approverExcludes: (p) => [String(p.userId)],
   parseParams(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "params debe ser un objeto" };
     for (const k of Object.keys(raw)) if (k !== "userId") return { ok: false, error: `parámetro no admitido: ${k}` };
@@ -125,12 +128,40 @@ const USER_RECOVERY_ADMIN: OperationKindDef = {
 };
 
 /**
+ * ADM-3 · Aprobación de un SEGUNDO administrador para QUITAR el rol admin a OTRA cuenta (la consume
+ * `setUserRoles` una sola vez). Quitárselo uno a sí mismo no la necesita (sí reautenticación y la guarda del último admin).
+ */
+const USER_REVOKE_ADMIN: OperationKindDef = {
+  ...USER_RECOVERY_ADMIN,
+  kind: "user.revoke_admin",
+  async impact(db, params) {
+    const user = await db("users").where({ id: params.userId }).first("id", "display_name");
+    if (!user) throw notFound("No existe esa cuenta");
+    const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
+    if (!admin) throw badRequest("La cuenta no es de administrador: no hay nada que quitar");
+    const admins = await db("user_roles as r")
+      .join("users as u", "u.id", "r.user_id")
+      .where({ "r.role": "admin", "u.status": "active" })
+      .countDistinct({ n: "r.user_id" })
+      .first();
+    return {
+      summary: `Quitar el rol de administrador a «${user.display_name}».`,
+      counts: { activeAdmins: Number((admins as { n: string | number }).n) },
+    };
+  },
+  phrase: (p) => `QUITAR ADMIN ${String(p.userId).slice(0, 8)}`,
+};
+
+/**
  * Registro CERRADO de tipos de PRODUCCIÓN. ADM-4/6/7 añaden los suyos aquí (y amplían el CHECK de `kind`).
  * `system.noop` es un tipo de PRUEBA: sólo se registra en tests (NODE_ENV=test); en producción la
  * API acepta `user.recovery_admin` (ADM-3) y los que añadan ADM-4/6/7.
  */
 export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Readonly<Record<string, OperationKindDef>> {
-  const kinds: Record<string, OperationKindDef> = { [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN };
+  const kinds: Record<string, OperationKindDef> = {
+    [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN,
+    [USER_REVOKE_ADMIN.kind]: USER_REVOKE_ADMIN,
+  };
   if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
   return Object.freeze(kinds);
 }
@@ -196,16 +227,6 @@ export interface Ctx {
 
 const OP_AUDIT = (what: string) => `admin.op.${what}`;
 
-async function countAdmins(db: Db): Promise<number> {
-  // Sólo cuentan los administradores ACTIVOS (ADM-3): uno bloqueado no puede aprobar nada.
-  const r = await db("user_roles as r")
-    .join("users as u", "u.id", "r.user_id")
-    .where({ "r.role": "admin", "u.status": "active" })
-    .countDistinct({ n: "r.user_id" })
-    .first();
-  return Number((r as { n: string | number }).n);
-}
-
 export async function createOperation(
   db: Db,
   ctx: Ctx,
@@ -235,10 +256,12 @@ export async function createOperation(
   const requiresSecondAdmin = cls === "irreversible";
   const phrase = def.phrase(params, impact);
 
-  if (requiresSecondAdmin && (await countAdmins(db)) < 2) {
+  // Sólo cuentan los admins ACTIVOS distintos del solicitante (y del objetivo, si el tipo lo declara).
+  const excluded = [ctx.actorId, ...(def.approverExcludes?.(params) ?? [])].filter((x): x is string => !!x);
+  if (requiresSecondAdmin && !(await approverAvailable(db, excluded))) {
     throw conflict(
       "second_admin_unavailable",
-      "Esta acción irreversible exige un segundo administrador y sólo hay uno: hazla por consola",
+      "Esta acción irreversible exige un segundo administrador y no hay ninguno disponible: hazla por consola",
     );
   }
 
@@ -417,7 +440,7 @@ export async function cancelOperation(db: Db, ctx: Ctx, id: string): Promise<Ret
       actorId: ctx.actorId,
       action: OP_AUDIT("cancelled"),
       target: `operation:${id}`,
-      detail: { kind: row.kind },
+      detail: { kind: row.kind, requestedBy: row.requested_by, byRequester: row.requested_by === ctx.actorId },
       correlationId: ctx.correlationId,
     });
     return operationView(row);
