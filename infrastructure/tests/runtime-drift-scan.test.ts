@@ -42,7 +42,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, "..", "..");
-const FIXTURE = JSON.parse(readFileSync(join(here, "fixtures", "drift-facts-vm108.json"), "utf8"));
+const FIXTURE = JSON.parse(readFileSync(join(here, "fixtures", "drift-facts-production.json"), "utf8"));
 const COMPOSE = parse(readFileSync(join(REPO, "infrastructure", "docker-compose.yml"), "utf8"), { merge: true });
 
 const ID_A = "sha256:" + "1".repeat(64);
