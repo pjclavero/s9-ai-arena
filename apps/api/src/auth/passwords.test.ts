@@ -3,7 +3,7 @@
  * distinguir mayúsculas, derivadas de la cuenta y SIN reglas de composición.
  * Cada `it` lleva su mutante en scripts/v1-password-policy-mutants.mjs.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, passwordPolicyViolation } from "./passwords.js";
 import { COMMON_PASSWORDS, COMMON_PASSWORDS_VERSION } from "./common-passwords.js";
 
@@ -40,6 +40,24 @@ describe("V1 política de contraseñas · longitud", () => {
   });
 });
 
+describe("V1 política de contraseñas · entradas hostiles", () => {
+  it("rechaza sustitutos UTF-16 solitarios (texto mal formado)", () => {
+    expect(ok("\ud800".repeat(12))).toMatch(/Unicode no válidos/);
+    expect(ok("contraseña-larga-\ud801")).toMatch(/Unicode no válidos/);
+    expect(ok("contraseña-larga-😀")).toBeNull(); // un par sustituto válido sí
+  });
+
+  it("una entrada enorme se rechaza por longitud ANTES de normalizar", () => {
+    const spy = vi.spyOn(String.prototype, "normalize");
+    try {
+      expect(ok("a".repeat(1_000_000))).toMatch(/no puede superar 128/);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("V1 política de contraseñas · blocklist", () => {
   it("rechaza una contraseña común sin distinguir mayúsculas", () => {
     expect(COMMON_PASSWORDS).toContain("qwertyqwerty");
@@ -49,7 +67,7 @@ describe("V1 política de contraseñas · blocklist", () => {
   });
 
   it("la lista es versionada, de miles de entradas, en minúsculas NFC y de 12 a 128 caracteres", () => {
-    expect(COMMON_PASSWORDS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(COMMON_PASSWORDS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}(\.\d+)?$/);
     expect(COMMON_PASSWORDS.length).toBeGreaterThanOrEqual(5000);
     for (const p of COMMON_PASSWORDS) {
       expect(p).toBe(p.normalize("NFC").toLowerCase());

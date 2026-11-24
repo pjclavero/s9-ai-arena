@@ -16,6 +16,7 @@ const CL = "apps/api/src/auth/common-passwords.ts";
 const RT = "apps/api/src/routes/auth.ts";
 const CA = "apps/api/src/services/create-admin.ts";
 const T_U = "apps/api/src/auth/passwords.test.ts";
+const T_L = "apps/api/src/auth/common-passwords.test.ts";
 const T_I = "apps/api/src/v1-password-policy.test.ts";
 
 const m = (id, fichero, de, a, test, nombre) => ({ id, fichero, de, a, test, nombre });
@@ -137,8 +138,55 @@ const MUTANTES = [
     T_I,
     "reset rechaza 129 caracteres",
   ),
+  m(
+    "P13-acepta-sustitutos-solitarios",
+    PW,
+    "if (!(password as WellFormedCheckable).isWellFormed())",
+    "if (false)",
+    T_U,
+    "rechaza sustitutos UTF-16 solitarios",
+  ),
+  m(
+    "P14-normaliza-antes-de-rechazar-enormes",
+    PW,
+    "if (password.length > 4 * MAX_PASSWORD_LENGTH)",
+    "if (false)",
+    T_U,
+    "una entrada enorme se rechaza por longitud ANTES de normalizar",
+  ),
+  m(
+    "P15-lista-con-email",
+    CL,
+    "readonly string[] = [\n",
+    'readonly string[] = [\n  "alguien@ejemplo.com",\n',
+    T_L,
+    "sin direcciones de email",
+  ),
+  m(
+    "P16-lista-con-dominio",
+    CL,
+    "readonly string[] = [\n",
+    'readonly string[] = [\n  "www.ejemplo.com",\n',
+    T_L,
+    "sin direcciones de email",
+  ),
+  m(
+    "P17-lista-con-hex-o-fffd",
+    CL,
+    "readonly string[] = [\n",
+    'readonly string[] = [\n  "$hex[6173646667]",\n',
+    T_L,
+    "alfabeto latino",
+  ),
   m("E5-createadmin-sin-politica", CA, CA_DE, CA_A, T_I, "createAdmin rechaza 129 caracteres"),
-  m("E6-cli-sin-politica", CA, CA_DE, CA_A, T_I, "CLI create-admin"),
+  m(
+    "E6-cli-codigo-de-salida-de-politica",
+    "apps/api/src/db/cli.ts",
+    'e.code === "invalid_input" ? 2',
+    'e.code === "invalid_input" ? 1',
+    T_I,
+    "CLI create-admin",
+  ),
 ];
 
 function vitest(test, nombre) {

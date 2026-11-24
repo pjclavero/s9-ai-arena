@@ -6,6 +6,7 @@ import { COMMON_PASSWORDS } from "./common-passwords.js";
  * Política de contraseñas ÚNICA (registro, cambio, recuperación, primer administrador y CLI):
  *  - longitud de 12 a 128 CARACTERES, contados en puntos de código Unicode tras normalizar a NFC
  *    (un emoji o una letra acentuada cuentan 1, no sus bytes; «é» precompuesta y «e»+acento son lo mismo);
+ *  - texto Unicode bien formado (sin sustitutos UTF-16 solitarios);
  *  - no estar en la lista de contraseñas comunes/filtradas (sin distinguir mayúsculas);
  *  - no ser trivialmente el email o el nombre visible de la propia cuenta;
  *  - SIN reglas de composición (no se exigen mayúsculas, números ni símbolos).
@@ -26,6 +27,9 @@ export interface PasswordPolicyContext {
   email?: string | null;
   displayName?: string | null;
 }
+
+/** `String.prototype.isWellFormed` (Node >= 20) aún no está en la `lib` de TypeScript del proyecto. */
+type WellFormedCheckable = string & { isWellFormed(): boolean };
 
 let commonSet: Set<string> | null = null;
 function commonPasswords(): Set<string> {
@@ -63,6 +67,11 @@ export function passwordPolicyViolation(
   if (typeof password !== "string") {
     return `${sujeto} debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`;
   }
+  // Barato y antes de normalizar: una entrada enorme no gasta NFC ni el spread. 4 unidades UTF-16 por carácter
+  // cubre cualquier secuencia que NFC compacte a 128 caracteres.
+  if (password.length > 4 * MAX_PASSWORD_LENGTH) return `${sujeto} no puede superar ${MAX_PASSWORD_LENGTH} caracteres`;
+  // Un sustituto UTF-16 solitario no es texto: Argon2 lo codifica como U+FFFD y 12 distintos serían la misma clave.
+  if (!(password as WellFormedCheckable).isWellFormed()) return `${sujeto} contiene caracteres Unicode no válidos`;
   const folded = fold(password);
   const length = [...folded].length;
   if (length < MIN_PASSWORD_LENGTH) return `${sujeto} debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`;
