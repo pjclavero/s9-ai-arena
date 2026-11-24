@@ -64,7 +64,10 @@ export async function createAdminWithHooks(
   if (typeof input.displayName !== "string" || !input.displayName || input.displayName.length > 48) {
     throw new CreateAdminError("invalid_input", "displayName obligatorio (máx. 48)");
   }
-  const violation = passwordPolicyViolation(input.password);
+  const violation = passwordPolicyViolation(input.password, undefined, {
+    email: input.email,
+    displayName: input.displayName,
+  });
   if (violation) throw new CreateAdminError("invalid_input", violation);
 
   const email = input.email.toLowerCase();

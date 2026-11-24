@@ -6,7 +6,7 @@ Crea tu primer bot, publícalo y míralo luchar. Son ocho pasos; el último es j
 
 ## 1. Crea tu cuenta
 
-En la pantalla inicial pulsa **«Crear cuenta»** y rellena **«Nombre visible»** (el que verán los demás), **«Email»** y **«Contraseña»** (al menos 12 caracteres). Pulsa **«Registrarse y entrar»**: entras directamente. Más en [Cuentas](accounts.md).
+En la pantalla inicial pulsa **«Crear cuenta»** y rellena **«Nombre visible»** (el que verán los demás), **«Email»** y **«Contraseña»** (de 12 a 128 caracteres; mejor una frase larga que no sea una contraseña común). Pulsa **«Registrarse y entrar»**: entras directamente. Más en [Cuentas](accounts.md).
 
 ## 2. Crea tu primer bot
 

@@ -108,7 +108,7 @@ usa el prompt.)
 - La contraseña **nunca** va en argv (`--password=…`, `-p…` y similares se rechazan con rc 2, sin
   repetir el valor). El fichero se abre sin seguir enlaces simbólicos y se valida sobre el
   descriptor abierto: debe ser regular, del mismo usuario y sin permisos de grupo/otros (`0600`).
-- Aplica la misma política que el registro (≥ 12 caracteres). Roles resultantes: `user`,
+- Aplica la misma política que el registro (12-128 caracteres, fuera de la lista de contraseñas comunes y distinta de tu email o nombre; sin reglas de composición; ver [seguridad](../technical/security.md#política-de-contraseñas)). Roles resultantes: `user`,
   `developer` y `admin`.
 - **Códigos de salida:** `0` creado · `1` ya existe un administrador · `2` uso o entrada inválidos
   (argumentos, fichero de contraseña inexistente, con permisos/propietario/tipo inválidos o enlace

@@ -218,7 +218,7 @@ describe("H15 · /auth/reset aplica la política de contraseñas", () => {
 
     const r = await request(app).post("/auth/reset").send({ token, newPassword: corta });
     expect(r.status).toBe(400);
-    expect(JSON.stringify(r.body)).toContain(`≥${MIN_PASSWORD_LENGTH}`);
+    expect(JSON.stringify(r.body)).toContain(`al menos ${MIN_PASSWORD_LENGTH}`);
 
     // el token sigue sin usar y la contraseña no cambió
     const stored = await h
@@ -231,7 +231,7 @@ describe("H15 · /auth/reset aplica la política de contraseñas", () => {
     // y con una contraseña válida el MISMO token todavía sirve
     const ok = await request(app)
       .post("/auth/reset")
-      .send({ token, newPassword: "a".repeat(MIN_PASSWORD_LENGTH) });
+      .send({ token, newPassword: "ñ".repeat(MIN_PASSWORD_LENGTH) });
     expect(ok.status).toBe(204);
   });
 });
