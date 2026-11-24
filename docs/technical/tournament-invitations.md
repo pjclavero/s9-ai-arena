@@ -156,6 +156,8 @@ torneo vuelve a ser abierto.
 
 ## Decisiones
 
+Resumen en [ADR-025](../adr/ADR-025-torneos-por-invitacion.md).
+
 - **Regenerar en vez de volver a mostrar.** No se guarda el token cifrado: «copiar otra vez» es generar un
   enlace nuevo, y el anterior queda revocado. Así nunca hay un secreto recuperable en la BD y la revocación es
   trivial. El coste es que quien ya recibió el enlace anterior necesita el nuevo.
