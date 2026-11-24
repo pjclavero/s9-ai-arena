@@ -161,7 +161,7 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
   it("GD-3: no se puede escribir el replay → infraestructura, la batalla NO queda 'finished' sin replay (19.2/23.1)", async () => {
     // V1 REPLAYS PR-3 · el replay se graba en S9R/1 durante la batalla y se PUBLICA (link atómico) al
     // cerrarla. Aquí el disco de replays está lleno al publicar (ENOSPC en el enlace): rollback y fallo
-    // técnico. `storage_unavailable` sigue la política de reintento existente (3 intentos); agotados, la
+    // técnico. `storage_unavailable` tiene política PROPIA (PR-5: 5 intentos, esperas de 1, 2, 5 y 10 min); agotados, la
     // batalla queda para REVISIÓN (failed/infrastructure), nunca 'finished' sin su replay (23.1).
     const replaysDir = mkdtempSync(join(tmpdir(), "gd3-"));
     const fullDisk = faultFs({ failLinkTo: replaysDir, errCode: "ENOSPC" });
@@ -200,9 +200,12 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     });
     // El handler revienta al publicar el replay: el error se clasifica (infraestructura) y, agotados los
     // reintentos, la batalla queda para REVISIÓN MANUAL (failed/infrastructure).
-    for (let i = 1; i <= 5; i++) await w.drain(1, new Date(Date.now() + i * 300_000));
-    expect(log.get(id)).toBe(3);
+    // Reloj inyectado respetando la espera de `storage_unavailable` (1, 2, 5 y 10 min): 15 min por pasada.
+    for (let i = 1; i <= 12; i++) await w.drain(1, new Date(Date.now() + i * 900_000));
+    // PR-5 (P2-1) · política propia de almacenamiento: EXACTAMENTE 5 intentos (ni 3, ni 4, ni 6).
+    expect(log.get(id)).toBe(5);
     const b = await h.db("battles").where({ id }).first();
+    expect(b.run_attempts).toBe(5);
     expect(b.status).not.toBe("finished");
     expect(b.status).toBe("failed");
     expect(b.failure_kind).toBe("infrastructure");
@@ -212,6 +215,12 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
       .where({ dedupe_key: `gd3:${id}` })
       .first();
     expect(job.last_error).toMatch(/storage_unavailable.*replay_publish_failed/);
+    expect(job.status).toBe("needs_review");
+    expect(job.error_class).toBe("infrastructure");
+    // nunca un resultado deportivo: ni Elo ni clasificaciones, y la batalla jamás llegó a `finished`
+    expect(b.result).toBeNull();
+    expect(await h.db("rating_events").where({ battle_id: id })).toHaveLength(0);
+    expect(await h.db("participants").where({ battle_id: id }).whereNotNull("outcome")).toHaveLength(0);
     expect(readdirSync(replaysDir).filter((f) => f !== ".partial")).toEqual([]);
     expect(readdirSync(join(replaysDir, ".partial"))).toEqual([]);
   });

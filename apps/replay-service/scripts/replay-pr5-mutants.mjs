@@ -727,6 +727,32 @@ export const MUTANTS = [
       },
     ],
   },
+  {
+    id: "M-RETRY-storage-6-attempts",
+    why: "storage_unavailable admite 6 intentos",
+    test: "tests/gamedays/gameday-m3.test.ts",
+    t: "GD-3",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/errors.ts",
+        find: "  storage_unavailable: {\n    maxFailures: 5,",
+        replace: "  storage_unavailable: {\n    maxFailures: 6,",
+      },
+    ],
+  },
+  {
+    id: "M-RETRY-storage-4-attempts",
+    why: "storage_unavailable admite sólo 4 intentos",
+    test: "tests/gamedays/gameday-m3.test.ts",
+    t: "GD-3",
+    edits: [
+      {
+        file: "apps/tournament-worker/src/errors.ts",
+        find: "  storage_unavailable: {\n    maxFailures: 5,",
+        replace: "  storage_unavailable: {\n    maxFailures: 4,",
+      },
+    ],
+  },
   // ---- métricas, claves y sonda (PG ligera) ----------------------------------------------------------
   {
     id: "M-SETTINGS-env-ceiling-removed",
