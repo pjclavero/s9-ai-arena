@@ -109,7 +109,10 @@ jobs:
         # soporta el subsistema sftp de un sshd sin privilegios (confirmado
         # con diagnóstico real, ver ese fichero) — de ahí que use el mismo
         # arnés que ya funciona aquí en vez de reinventar uno nuevo.
-        run: npx vitest run apps packages infrastructure --exclude "**/backup-sftp-e2e.test.ts" --exclude "**/restore-sftp-bootstrap.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+        # V1 · tests/acceptance (doc-b/doc-c: topologia interna y enlaces rotos en
+        # docs; mapas publicados) no corria en NINGUN job: el filtro posicional de
+        # esta orden solo cubria apps/packages/infrastructure. Ligero, sin Docker.
+        run: npx vitest run apps packages infrastructure tests/acceptance --exclude "**/backup-sftp-e2e.test.ts" --exclude "**/restore-sftp-bootstrap.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
       - name: Informe de cobertura como artefacto
         if: always()
         uses: actions/upload-artifact@v4
