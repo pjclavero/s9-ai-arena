@@ -13,7 +13,7 @@ Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, 
 
 ## Ver torneos
 
-«Torneos» lista todos los torneos con su nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle.
+«Torneos» lista todos los torneos con su nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle. Los torneos **por invitación** también aparecen, marcados «por invitación»: cualquiera puede ver su ficha, sus participantes, sus resultados y sus directos públicos; sólo la inscripción necesita invitación ([más abajo](#torneos-por-invitación)).
 
 ## Formatos
 
@@ -39,6 +39,7 @@ En «Crear torneo»:
 | **Modo** | En V1 los torneos se juegan en **Deathmatch** y **Deathmatch por equipos** (2 vs 2, 3 vs 3 y 4 vs 4). *Captura la bandera* y *Control de zona* **no se pueden usar en torneos** en esta versión: el formulario no los ofrece y la API rechaza crear un torneo con ellos (error `tournament_mode_not_allowed`, 400). Siguen disponibles en batallas sueltas ([Modos de juego](game-modes.md)). |
 | **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
 | **Tamaño** | Sólo en torneos **Por equipos** de **Deathmatch por equipos**: 2 vs 2, 3 vs 3 o 4 vs 4. Fija cuántos bots inscribe cada equipo. |
+| **Inscripción** | **Abierta** (cualquiera con cuenta inscribe desde la ficha; es lo de siempre) o **Por invitación** (sólo con el enlace que generes en la ficha). El torneo se ve igual en el listado en los dos casos. Se puede cambiar en la ficha mientras el torneo esté en borrador o con inscripciones abiertas. |
 | **Retransmisión pública** | Si se marca, las batallas del torneo se pueden ver y emitir en público con los datos de competición de cada bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. **No se puede cambiar después** ([Visibilidad](visibility.md)). |
 
 El formulario se muestra a todos, pero sin el rol verás «Requiere rol organizer» al pulsar. Desde la web no se configuran el conjunto de mapas, el presupuesto, las fechas ni el número de partidas por enfrentamiento; por defecto el torneo se juega en el mapa de serie `mvp-arena-01`. La plataforma guarda una **copia inmutable de las reglas** del torneo al crearlo: aunque un conjunto de reglas cambie después, el torneo conserva las suyas.
@@ -77,6 +78,13 @@ En un torneo **Por equipos** con tamaño (por ejemplo, 4 vs 4) no se inscriben b
 | «Algún bot no pertenece a este equipo» | El bot salió del equipo mientras elegías. |
 
 Al **cerrar las inscripciones** la plataforma vuelve a comprobarlo todo: si un bot inscrito salió de su equipo, cambió de equipo o se retiró, su dueño retiró la autorización, o su versión dejó de ser elegible (o fue suspendida o retirada), el cierre se rechaza y no se congela nada. Siempre hay salida: el **organizador puede excluir** esas inscripciones (y, si un equipo queda a medias, también el resto de ese equipo), y el dueño puede retirarla o inscribir otra versión válida. Los torneos por equipos creados sin tamaño (anteriores a esta función) siguen inscribiéndose bot a bot.
+
+## Torneos por invitación
+
+- **Si te invitan**: abre el enlace que te han pasado. Si no has iniciado sesión, entra o crea una cuenta; al terminar vuelves a la ficha del torneo con el formulario. El enlace **no te inscribe solo**: elige tu bot (o tu equipo) y pulsa «Inscribir». Se aplican las mismas reglas que en un torneo abierto.
+- **Sin enlace** la ficha dice «La inscripción en este torneo es por invitación» y no ofrece inscribirse. Si el enlace ya no vale, verás «Tu enlace de invitación no es válido o ha sido revocado»: pide uno nuevo.
+- **Organizadores**: en la ficha, el panel **«Inscripción»** permite cambiar la modalidad, **«Generar enlace»** (con **«Copiar»**) y **«Revocar enlace»**. Por seguridad el enlace sólo se ve justo al generarlo; para copiarlo otra vez, genera uno nuevo (el anterior deja de valer). Revocar invalida el enlace al momento; quien ya se inscribió sigue inscrito.
+- Ver las batallas en directo o los replays públicos de un torneo por invitación **no necesita invitación**.
 
 ## Cerrar inscripciones (organizadores)
 

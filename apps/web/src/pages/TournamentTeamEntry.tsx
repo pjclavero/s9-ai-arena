@@ -26,6 +26,10 @@ interface TeamItem {
 export function TournamentTeamEntry(props: {
   tournamentId: string;
   teamSize: number;
+  /** V1 · INVITACIÓN · token del enlace (sólo en torneos por invitación); va en el cuerpo. */
+  invitationToken?: string;
+  /** V1 · INVITACIÓN · la API rechazó la invitación (revocada entre la comprobación y el envío). */
+  onInvitationRejected?: (err: unknown) => boolean;
   onEntered: () => void;
   onMessage: (m: { kind: "ok" | "error"; text: string } | null) => void;
 }) {
@@ -136,10 +140,12 @@ export function TournamentTeamEntry(props: {
       await api("POST", `/tournaments/${encodeURIComponent(props.tournamentId)}/team-entries`, {
         teamId: team.id,
         members: plan.members,
+        ...(props.invitationToken ? { invitationToken: props.invitationToken } : {}),
       });
       props.onMessage({ kind: "ok", text: `Equipo ${team.name} inscrito (${plan.members.length} bots)` });
       props.onEntered();
     } catch (err) {
+      props.onInvitationRejected?.(err);
       props.onMessage({ kind: "error", text: (err as Error).message || "no se pudo inscribir el equipo" });
     } finally {
       setSending(false);

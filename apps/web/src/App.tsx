@@ -56,6 +56,8 @@ import { NotFoundPage } from "./pages/NotFoundPage.js";
 // UX-A (G-01) · portada pública + home con primeros pasos y guía integrada.
 import { HomePage, LandingIntro } from "./pages/HomePage.js";
 import { HelpPage } from "./help/LazyHelpPage.js"; // EQ3 · carga diferida del Centro de Ayuda
+// V1 · TORNEOS POR INVITACIÓN · el token del enlace sale de la barra y vive en sessionStorage.
+import { captureInvitationFromLocation, clearAllInvitations, pendingInvitation } from "./tournament-invitation.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -179,10 +181,12 @@ export function App() {
   /** FC-D (TD-022) · API caída al arrancar: NO es «sin sesión» (antes mandaba al login). */
   const [bootError, setBootError] = useState<unknown>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [route, setRoute] = useState(window.location.hash || "#/");
+  // V1 · INVITACIÓN · un enlace `#/tournaments/<id>/invitation/<token>` se captura ANTES de pintar:
+  // el token pasa a sessionStorage y la ruta queda en la ficha (`#/tournaments/<id>`).
+  const [route, setRoute] = useState(() => captureInvitationFromLocation() ?? (window.location.hash || "#/"));
 
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash || "#/");
+    const onHash = () => setRoute(captureInvitationFromLocation() ?? (window.location.hash || "#/"));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -240,6 +244,7 @@ export function App() {
   if (broadcast) return <BroadcastPage config={broadcast} />;
 
   function doLogout() {
+    clearAllInvitations(); // V1 · INVITACIÓN · un enlace no sobrevive a la sesión en esta pestaña
     void logout().then(() => {
       setNotice("Sesión cerrada.");
       setMe(null);
@@ -326,10 +331,19 @@ export function App() {
     return shell(
       <>
         <h1>S9 AI Arena</h1>
-        {staticRoute !== "home" && !notice && (
-          <p className="warn" role="status" data-testid="login-required">
-            Esa pantalla es del panel: inicia sesión o crea una cuenta para verla.
+        {/* V1 · INVITACIÓN · tras entrar o registrarse, la MISMA ruta vuelve a la ficha con el formulario. */}
+        {panelRoute?.kind === "tournament" && pendingInvitation(panelRoute.id) ? (
+          <p className="warn" role="status" data-testid="invitation-login-notice">
+            Tienes una invitación para inscribirte en este torneo: inicia sesión o crea una cuenta y volverás al
+            formulario de inscripción.
           </p>
+        ) : (
+          staticRoute !== "home" &&
+          !notice && (
+            <p className="warn" role="status" data-testid="login-required">
+              Esa pantalla es del panel: inicia sesión o crea una cuenta para verla.
+            </p>
+          )
         )}
         {/* G-01 · la portada explica qué es S9 y cómo empezar, junto al acceso. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-start" }}>

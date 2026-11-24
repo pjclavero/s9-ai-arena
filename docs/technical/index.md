@@ -161,7 +161,7 @@ API, no en map-service) y cómo guarda y reabre el editor visual.
 Inscripción, congelación de versiones, formatos, calendario, cuadro, series, rating Elo y
 clasificación.
 
-→ [tournaments.md](tournaments.md)
+→ [tournaments.md](tournaments.md) · torneos por invitación: [tournament-invitations.md](tournament-invitations.md)
 
 ### Replays
 

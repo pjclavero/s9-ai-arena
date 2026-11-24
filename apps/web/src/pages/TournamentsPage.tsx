@@ -17,6 +17,8 @@ export interface Tournament {
   entryCount?: number;
   /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
   broadcast?: boolean;
+  /** V1 · INVITACIÓN · modalidad de inscripción; NO cambia la visibilidad (todo torneo se lista). */
+  enrollment?: "open" | "invitation";
   /** ADR-022 · copia de reglas; #287 usa `params.teamSize` (torneos por equipos NvN). */
   rules?: { params?: { teamSize?: number } | null } | null;
   /** #291 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */
@@ -43,6 +45,8 @@ export function TournamentsPage(_props: { me: Me }) {
   const [mode, setMode] = useState("deathmatch");
   const [rulesetId, setRulesetId] = useState("mvp-default");
   const [broadcast, setBroadcast] = useState(false);
+  // V1 · INVITACIÓN · modalidad de inscripción (por defecto, abierta como hasta ahora).
+  const [enrollment, setEnrollment] = useState<"open" | "invitation">("open");
   // #287 · tamaño de equipo de un torneo por equipos de Team Deathmatch (preset `team_deathmatch`).
   const [teamSize, setTeamSize] = useState("4");
   const teamRules = format === "teams" && mode === TEAM_TOURNAMENT_MODE;
@@ -66,6 +70,7 @@ export function TournamentsPage(_props: { me: Me }) {
     setMode("deathmatch");
     setRulesetId("mvp-default");
     setBroadcast(false);
+    setEnrollment("open");
     setError("");
     window.location.hash = "#/tournaments";
   }
@@ -81,6 +86,9 @@ export function TournamentsPage(_props: { me: Me }) {
         mode,
         rulesetId,
         broadcast,
+        // V1 · INVITACIÓN · sólo si es por invitación: el alta de un torneo abierto no cambia (la API
+        // aplica `open` por defecto).
+        ...(enrollment === "invitation" ? { enrollment } : {}),
         ...(teamRules ? { rules: { preset: "team_deathmatch", teamSize: Number(teamSize) } } : {}),
       });
       setName("");
@@ -122,6 +130,7 @@ export function TournamentsPage(_props: { me: Me }) {
                       <td>
                         {labelOf(TOURNAMENT_STATE_NAME, t.state)}
                         {t.broadcast ? " · retransmisión pública" : ""}
+                        {t.enrollment === "invitation" ? " · por invitación" : ""}
                       </td>
                     </tr>
                   ))}
@@ -196,6 +205,24 @@ export function TournamentsPage(_props: { me: Me }) {
               Sus batallas se podrán emitir y ver en público con el nombre, la versión, el equipo y el resultado de cada
               bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. No se
               puede cambiar después de crear el torneo.
+            </small>
+          </p>
+          <p>
+            <label>
+              Inscripción{" "}
+              <select
+                aria-label="modalidad de inscripción"
+                data-testid="tournament-enrollment"
+                value={enrollment}
+                onChange={(e) => setEnrollment(e.target.value === "invitation" ? "invitation" : "open")}
+              >
+                <option value="open">Abierta</option>
+                <option value="invitation">Por invitación</option>
+              </select>
+            </label>{" "}
+            <small>
+              El torneo aparece en el listado en los dos casos. «Por invitación»: sólo se inscribe quien tenga el enlace
+              que generes en la ficha del torneo. Se puede cambiar mientras el torneo esté en borrador o abierto.
             </small>
           </p>
           {error && (

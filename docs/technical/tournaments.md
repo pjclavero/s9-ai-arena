@@ -50,7 +50,7 @@ Datos principales de `tournaments`:
 ## Ciclo de vida
 
 1. **Crear** (`POST /tournaments`, `organizer`). Se valida formato, modo, que `rulesetId` exista en la BD y el rango del presupuesto. Se inserta con `state='open'` (no pasa por `draft`).
-2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` **o `frozen`** (`409 bot_not_published` con `currentState` si su estado es otro) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
+2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` **o `frozen`** (`409 bot_not_published` con `currentState` si su estado es otro) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). En un torneo **por invitación** (`enrollment: invitation`, V1 D-OP-43) hace falta además el `invitationToken` del enlace vigente (403 `invitation_required` / `invitation_invalid`); la modalidad no cambia la visibilidad del torneo ([tournament-invitations.md](tournament-invitations.md)). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
 3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer` **y** quien creó el torneo o staff; si no, `403` sin efectos, #291). Si alguna inscripción pendiente usa una versión no elegible → `409 entries_not_eligible` con sus `entryId` (sin motivo: es del dueño) y no se congela ni se cierra nada. Si no:
    - marca `entries.frozen=true` y pasa cada versión inscrita de `published` a `frozen`; una versión que ya llegó `frozen` (de un torneo anterior) no se toca: ni transición ni auditoría;
    - aplica el commit-reveal de semillas: si el torneo publicó `seed_commitment`, el cierre debe traer `seeds` cuyo `sha256(seeds.join("|"))` coincida (`409 seeds_required` / `seed_reveal_mismatch`); si no, el servidor genera 8 semillas y su compromiso;
@@ -201,6 +201,8 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 - **PENDIENTE**: selector de pool de mapas y resto de parámetros en la web, clasificación por torneo en la web.
 
 ## Documentación relacionada
+
+- Torneos por invitación (modalidad de inscripción y enlace): [tournament-invitations.md](tournament-invitations.md)
 
 - Usuario: [Torneos](../user/tournaments.md), [Clasificaciones](../user/rankings.md), [Equipos](../user/teams.md)
 - Técnica: [battles.md](battles.md), [game-modes.md](game-modes.md), [api.md](api.md)

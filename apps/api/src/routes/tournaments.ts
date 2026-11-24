@@ -3,7 +3,7 @@
  * juntos (cap. 17.2) y cierre de inscripciones (congela versiones y revela semillas).
  * La generación del calendario y la ejecución son de E9 — pendiente de reconciliación.
  */
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
@@ -38,6 +38,18 @@ import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
 import { buildTournamentRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import { ApiError } from "../errors.js";
+import {
+  ENROLLMENT_EDITABLE_STATES,
+  ENROLLMENT_MODES,
+  activeInvitation,
+  assertInvitationForEntry,
+  enrollmentOf,
+  hashInvitationToken,
+  isEnrollmentMode,
+  newInvitationToken,
+  revokeActiveInvitation,
+  validInvitationId,
+} from "../services/tournament-invitations.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -124,6 +136,9 @@ export function tournamentToJson(t: Record<string, unknown>) {
     state: t.state,
     // VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo).
     broadcast: t.broadcast === true,
+    // V1 · INVITACIÓN (D-OP-43) · modalidad de inscripción; NO cambia la visibilidad. Nunca lleva
+    // el token ni su hash (esos sólo viven en tournament_invitations).
+    enrollment: enrollmentOf(t),
     // ADR-022 · copia inmutable de las reglas (ausente en torneos anteriores).
     rules: rulesToJson(rulesOf(t)),
   };
@@ -225,6 +240,7 @@ export function tournamentRoutes(
       seedCommitment,
       rules,
       broadcast,
+      enrollment,
     } = req.body ?? {};
     if (typeof name !== "string" || !name || name.length > 64) throw badRequest("name obligatorio (máx. 64)");
     if (!FORMATS.includes(format)) throw badRequest(`format debe ser uno de ${FORMATS.join(", ")}`);
@@ -256,6 +272,10 @@ export function tournamentRoutes(
     // VISIBILIDAD · autorización de retransmisión: del TORNEO, nunca del bot. Se fija aquí y
     // no cambia (no hay edición de torneos): quien inscribe un bot lo sabe de antemano.
     if (broadcast !== undefined && typeof broadcast !== "boolean") throw badRequest("broadcast debe ser true o false");
+    // V1 · INVITACIÓN · modalidad de inscripción (por defecto, abierta como hasta ahora).
+    if (enrollment !== undefined && !isEnrollmentMode(enrollment)) {
+      throw badRequest(`enrollment debe ser uno de ${ENROLLMENT_MODES.join(", ")}`);
+    }
     // ADR-022 · COPIA INMUTABLE de las reglas del torneo (preset, personalizado o clásico).
     // El scheduler la copia en cada batalla: nada posterior la reinterpreta.
     const snapshot = await buildTournamentRules(db, {
@@ -281,6 +301,7 @@ export function tournamentRoutes(
         seed_commitment: seedCommitment ?? null,
         state: "open",
         broadcast: broadcast === true,
+        enrollment: enrollment ?? "open",
         created_by: req.auth!.userId,
       })
       .returning("*");
@@ -288,7 +309,7 @@ export function tournamentRoutes(
       actorId: req.auth!.userId,
       action: "tournament.created",
       target: `tournament:${t.id}`,
-      detail: { broadcast: t.broadcast === true },
+      detail: { broadcast: t.broadcast === true, enrollment: enrollmentOf(t) },
       correlationId: req.correlationId,
     });
     res.status(201).json(tournamentToJson(t));
@@ -357,6 +378,134 @@ export function tournamentRoutes(
     },
   );
 
+  /**
+   * V1 · TORNEOS POR INVITACIÓN (D-OP-43). Gestión de la modalidad y del enlace: SÓLO quien gestiona
+   * el torneo (canManageTournament, #291/#311: dueño o staff), además del rol mínimo del contrato.
+   * El torneo se bloquea FOR UPDATE: generar, revocar e inscribir se serializan sobre la misma fila.
+   */
+  async function lockManagedTournament(trx: Db, req: Request, lock = true) {
+    const id = pathParam(req, "tournamentId");
+    if (!UUID_RE.test(id)) throw notFound();
+    const q = trx("tournaments").where({ id });
+    const t = await (lock ? q.forUpdate() : q).first();
+    if (!t) throw notFound();
+    assertCanManageTournament(req.auth, t);
+    return t as Record<string, unknown>;
+  }
+
+  function assertEnrollmentEditable(t: Record<string, unknown>, what: string): void {
+    if (!(ENROLLMENT_EDITABLE_STATES as readonly string[]).includes(String(t.state))) {
+      throw conflict("tournament_enrollment_locked", `${what} sólo es posible con el torneo en borrador o abierto`, {
+        currentState: t.state,
+        editableStates: [...ENROLLMENT_EDITABLE_STATES],
+      });
+    }
+  }
+
+  defineOperation(router, "setTournamentEnrollment", async (req, res) => {
+    const { enrollment } = req.body ?? {};
+    if (!isEnrollmentMode(enrollment)) throw badRequest(`enrollment debe ser uno de ${ENROLLMENT_MODES.join(", ")}`);
+    const t = await db.transaction(async (trx) => {
+      const t = await lockManagedTournament(trx, req);
+      assertEnrollmentEditable(t, "Cambiar la modalidad de inscripción");
+      const from = enrollmentOf(t);
+      if (from === enrollment) return t;
+      // Volver a «abierto» revoca el enlace: si luego se vuelve a «por invitación», el viejo no revive.
+      const revoked = enrollment === "open" ? await revokeActiveInvitation(trx, String(t.id), req.auth!.userId) : 0;
+      const [u] = await trx("tournaments").where({ id: t.id }).update({ enrollment }).returning("*");
+      await audit(trx, {
+        actorId: req.auth!.userId,
+        action: "tournament.enrollment_changed",
+        target: `tournament:${t.id}`,
+        detail: { from, to: enrollment, revokedInvitations: revoked },
+        correlationId: req.correlationId,
+      });
+      return u as Record<string, unknown>;
+    });
+    res.json(tournamentToJson(t));
+  });
+
+  defineOperation(router, "getTournamentInvitation", async (req, res) => {
+    const t = await lockManagedTournament(db, req, false);
+    const inv = await activeInvitation(db, String(t.id));
+    res.setHeader("Cache-Control", NO_STORE);
+    // Nunca el token (no se guarda) ni su hash: sólo si hay un enlace vigente y desde cuándo.
+    res.json({
+      enrollment: enrollmentOf(t),
+      active: !!inv,
+      ...(inv ? { createdAt: (inv.created_at as Date).toISOString() } : {}),
+    });
+  });
+
+  defineOperation(router, "createTournamentInvitation", async (req, res) => {
+    const out = await db.transaction(async (trx) => {
+      const t = await lockManagedTournament(trx, req);
+      assertEnrollmentEditable(t, "Generar un enlace de invitación");
+      if (enrollmentOf(t) !== "invitation") {
+        throw conflict(
+          "tournament_not_invitation",
+          "Este torneo es de inscripción abierta: cambia la modalidad a «por invitación» antes de generar un enlace",
+        );
+      }
+      // Generar = enlace NUEVO; el anterior queda revocado en la misma transacción.
+      const revoked = await revokeActiveInvitation(trx, String(t.id), req.auth!.userId);
+      const token = newInvitationToken();
+      const [inv] = await trx("tournament_invitations")
+        .insert({ tournament_id: t.id, token_sha256: hashInvitationToken(token), created_by: req.auth!.userId })
+        .returning(["id", "created_at"]);
+      await audit(trx, {
+        actorId: req.auth!.userId,
+        action: "tournament.invitation_created",
+        target: `tournament:${t.id}`,
+        detail: { invitationId: inv.id, revokedPrevious: revoked },
+        correlationId: req.correlationId,
+      });
+      return { token, inv, revoked };
+    });
+    // El token en claro SÓLO aquí, una vez y sólo al organizador: nunca en una caché.
+    res.setHeader("Cache-Control", NO_STORE);
+    res.status(201).json({
+      invitationToken: out.token,
+      createdAt: (out.inv.created_at as Date).toISOString(),
+      revokedPrevious: out.revoked > 0,
+    });
+  });
+
+  defineOperation(router, "revokeTournamentInvitation", async (req, res) => {
+    const revoked = await db.transaction(async (trx) => {
+      const t = await lockManagedTournament(trx, req);
+      const n = await revokeActiveInvitation(trx, String(t.id), req.auth!.userId);
+      if (n > 0) {
+        await audit(trx, {
+          actorId: req.auth!.userId,
+          action: "tournament.invitation_revoked",
+          target: `tournament:${t.id}`,
+          detail: { revoked: n },
+          correlationId: req.correlationId,
+        });
+      }
+      return n;
+    });
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json({ active: false, revoked: revoked > 0 });
+  });
+
+  /**
+   * El invitado (con sesión) comprueba si su enlace sirve ANTES de ver el formulario. El token va en
+   * el CUERPO (nunca en la URL: no queda en logs del gateway). No inscribe nada.
+   */
+  defineOperation(router, "checkTournamentInvitation", async (req, res) => {
+    const id = pathParam(req, "tournamentId");
+    if (!UUID_RE.test(id)) throw notFound();
+    const t = await db("tournaments").where({ id }).first();
+    if (!t) throw notFound();
+    const { invitationToken } = req.body ?? {};
+    const valid =
+      enrollmentOf(t) === "invitation" && (await validInvitationId(db, String(t.id), invitationToken)) !== null;
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json({ enrollment: enrollmentOf(t), valid, entriesOpen: t.state === "open" });
+  });
+
   defineOperation(router, "enterTournament", async (req, res) => {
     // #287 (ronda 2, H1) · Alta y sustitución en UNA transacción con la fila del torneo
     // bloqueada (FOR UPDATE) y el estado revalidado DESPUÉS del bloqueo: una inscripción
@@ -370,7 +519,10 @@ export function tournamentRoutes(
         .catch(() => null);
       if (!t) throw notFound();
       if (t.state !== "open") throw conflict("entries_closed", "Las inscripciones no están abiertas");
-      const { botId, version } = req.body ?? {};
+      const { botId, version, invitationToken } = req.body ?? {};
+      // V1 · INVITACIÓN (D-OP-43) · en un torneo por invitación, TODA inscripción (también la
+      // sustitución de una versión pendiente) exige la invitación activa; con el torneo bloqueado.
+      await assertInvitationForEntry(db, t, invitationToken);
       const bot = await db("bots")
         .where({ id: botId })
         .first()
@@ -455,7 +607,7 @@ export function tournamentRoutes(
     const userId = req.auth!.userId;
     const tournamentId = pathParam(req, "tournamentId");
     if (!UUID_RE.test(tournamentId)) throw notFound();
-    const { teamId: rawTeamId, members } = req.body ?? {};
+    const { teamId: rawTeamId, members, invitationToken } = req.body ?? {};
     if (typeof rawTeamId !== "string" || !UUID_RE.test(rawTeamId)) throw badRequest("teamId obligatorio");
     // H7 · forma canónica, igual que los botId (PostgreSQL acepta MAYÚSCULAS como uuid).
     const teamId = canonicalUuid(rawTeamId);
@@ -484,6 +636,8 @@ export function tournamentRoutes(
       const t = await trx("tournaments").where({ id: tournamentId }).forUpdate().first();
       if (!t) throw notFound();
       if (t.state !== "open") throw conflict("entries_closed", "Las inscripciones no están abiertas");
+      // V1 · INVITACIÓN (D-OP-43) · misma puerta que la inscripción individual, con el torneo bloqueado.
+      const invitationId = await assertInvitationForEntry(trx, t, invitationToken);
       if (t.format !== "teams") {
         throw conflict("not_a_team_tournament", "La inscripción por equipos sólo existe en torneos de formato 'teams'");
       }
@@ -618,7 +772,8 @@ export function tournamentRoutes(
         actorId: userId,
         action: "tournament.team_entered",
         target: `tournament:${t.id}`,
-        detail: { teamId, members: roster },
+        // V1 · INVITACIÓN · sólo el id de la invitación usada (nunca el token).
+        detail: { teamId, members: roster, ...(invitationId ? { invitationId } : {}) },
         correlationId: req.correlationId,
       });
       return { t, team, rows };

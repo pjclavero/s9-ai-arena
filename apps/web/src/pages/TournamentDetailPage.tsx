@@ -25,6 +25,8 @@ import {
   type EntryVersion,
 } from "../tournament-entry.js";
 import { TournamentTeamEntry } from "./TournamentTeamEntry.js";
+import { ENROLLMENT_NAME, TournamentInvitationPanel } from "./TournamentInvitationPanel.js";
+import { clearInvitation, pendingInvitation } from "../tournament-invitation.js";
 
 export interface TournamentBattle {
   id: string;
@@ -58,6 +60,23 @@ export function teamSizeOfTournament(t: Tournament): number | null {
   if (t.format !== "teams") return null;
   const n = t.rules?.params?.teamSize;
   return typeof n === "number" && n >= 1 ? n : null;
+}
+
+/** V1 · INVITACIÓN · estado del enlace de invitación que trae el invitado (sessionStorage). */
+export type InvitationState =
+  | { status: "checking"; token: string }
+  | { status: "valid"; token: string }
+  | { status: "invalid" }
+  | { status: "error"; token: string };
+
+/**
+ * V1 · INVITACIÓN (D-OP-43) · ¿se enseña la opción de inscribirse? Abierto: como siempre. Por
+ * invitación: SÓLO con un enlace que la API ha dado por válido. La API vuelve a exigirlo al inscribir.
+ */
+export function entryFormVisible(t: Pick<Tournament, "state" | "enrollment">, invite: InvitationState | null): boolean {
+  if (t.state !== "open") return false;
+  if (t.enrollment !== "invitation") return true;
+  return invite?.status === "valid";
 }
 
 /** #288 · Estados con cancelación (los de la API: sin calendario ni batallas). */
@@ -125,6 +144,49 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
   }, [loadBattles]);
 
   // Inscripción de un bot propio (versión publicada o congelada y elegible); la API valida y autoriza.
+  // V1 · INVITACIÓN · si el torneo es por invitación y esta pestaña trae un enlace, se comprueba
+  // con la API (el token va en el cuerpo) antes de enseñar el formulario. No inscribe nada.
+  const enrollment = detail.status === "ready" ? detail.data.enrollment : undefined;
+  const [invite, setInvite] = useState<InvitationState | null>(null);
+  useEffect(() => {
+    if (enrollment !== "invitation") {
+      setInvite(null);
+      return;
+    }
+    const token = pendingInvitation(props.id);
+    if (!token) {
+      setInvite(null);
+      return;
+    }
+    let alive = true;
+    setInvite({ status: "checking", token });
+    api<{ valid?: boolean }>("POST", `/tournaments/${encodeURIComponent(props.id)}/invitation/check`, {
+      invitationToken: token,
+    }).then(
+      (r) => {
+        if (!alive) return;
+        if (r?.valid === true) setInvite({ status: "valid", token });
+        else {
+          clearInvitation(props.id);
+          setInvite({ status: "invalid" });
+        }
+      },
+      () => alive && setInvite({ status: "error", token }),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [enrollment, props.id]);
+  const invitationToken = enrollment === "invitation" && invite?.status === "valid" ? invite.token : undefined;
+  /** Un 403 de invitación al inscribir (revocada entre la comprobación y el envío): fuera el formulario. */
+  function onInvitationRejected(err: unknown): boolean {
+    const code = (err as { body?: { error?: unknown } })?.body?.error;
+    if (code !== "invitation_invalid" && code !== "invitation_required") return false;
+    clearInvitation(props.id);
+    setInvite({ status: "invalid" });
+    return true;
+  }
+
   const [ownBots] = useResource(
     () => api<{ items: OwnBot[] }>("GET", `/bots?ownerId=${encodeURIComponent(props.me.id)}`),
     [props.me.id],
@@ -198,10 +260,12 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
       await api("POST", `/tournaments/${encodeURIComponent(props.id)}/entries`, {
         botId: bot.id,
         version,
+        ...(invitationToken ? { invitationToken } : {}),
       });
       setEntryMsg({ kind: "ok", text: `${bot.name} inscrito (v${version})${frozen ? ` · ${FROZEN_LABEL}` : ""}` });
       reloadDetail();
     } catch (err) {
+      onInvitationRejected(err);
       setEntryMsg({ kind: "error", text: (err as Error).message || "no se pudo inscribir" });
     }
   }
@@ -255,13 +319,48 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                     · <strong data-testid="tournament-broadcast-badge">retransmisión pública</strong>
                   </>
                 )}
+                {t.enrollment === "invitation" && (
+                  <>
+                    {" "}
+                    · <strong data-testid="tournament-invitation-badge">{ENROLLMENT_NAME.invitation}</strong>
+                  </>
+                )}
               </p>
+              {/* V1 · INVITACIÓN · el organizador gestiona la modalidad y el enlace (la API autoriza). */}
+              {t.viewerCanManage && (t.state === "draft" || t.state === "open") && (
+                <TournamentInvitationPanel
+                  tournamentId={props.id}
+                  enrollment={t.enrollment === "invitation" ? "invitation" : "open"}
+                  onChanged={reloadDetail}
+                />
+              )}
+              {/* V1 · INVITACIÓN · la ficha pública de un torneo por invitación NO ofrece inscribirse. */}
+              {t.state === "open" && !entryFormVisible(t, invite) && (
+                <p className="note" data-testid="entry-invitation-only">
+                  {invite?.status === "checking"
+                    ? "Comprobando tu invitación…"
+                    : invite?.status === "invalid"
+                      ? "Tu enlace de invitación no es válido o ha sido revocado: pide uno nuevo a la organización."
+                      : invite?.status === "error"
+                        ? "No se pudo comprobar tu invitación ahora; vuelve a intentarlo en un momento."
+                        : "La inscripción en este torneo es por invitación: sólo se puede inscribir quien tenga un enlace de invitación de la organización."}
+                </p>
+              )}
+              {t.state === "open" && !entryFormVisible(t, invite) && t.viewerCanManage && (
+                <p>
+                  <button type="button" onClick={onCloseEntries} data-testid="close-entries">
+                    Cerrar inscripciones
+                  </button>
+                </p>
+              )}
               {/* #287 · torneo por equipos con tamaño: la unidad de inscripción es el EQUIPO. */}
-              {t.state === "open" && teamSizeOfTournament(t) !== null && (
+              {entryFormVisible(t, invite) && teamSizeOfTournament(t) !== null && (
                 <>
                   <TournamentTeamEntry
                     tournamentId={props.id}
                     teamSize={teamSizeOfTournament(t)!}
+                    invitationToken={invitationToken}
+                    onInvitationRejected={onInvitationRejected}
                     onEntered={reloadDetail}
                     onMessage={setEntryMsg}
                   />
@@ -270,8 +369,8 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                   </button>
                 </>
               )}
-              {t.state === "open" && teamSizeOfTournament(t) === null && (
-                <form onSubmit={onEnter}>
+              {entryFormVisible(t, invite) && teamSizeOfTournament(t) === null && (
+                <form onSubmit={onEnter} data-testid="entry-form">
                   <label>
                     Inscribir bot{" "}
                     <select aria-label="bot a inscribir" value={entryBot} onChange={(e) => setEntryBot(e.target.value)}>
