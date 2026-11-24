@@ -262,10 +262,11 @@ describe("PR-5 · clase A: el tope de la propia batalla", () => {
     expect(fullArt.truncated).toBe(false);
     const fullBytes = Number(fullArt.recipe_bytes) + Number(fullArt.view_bytes);
 
-    // Con un tope a la mitad de lo que ocupa la batalla entera, el tope se alcanza A MITAD.
-    const PER_BATTLE = Math.floor(fullBytes / 2);
+    // Con un tope a un cuarto de lo que ocupa la batalla entera (y el motor a ritmo de reloj, 20 ms cada 25 ticks), el tope
+    // se alcanza pronto y los escritores asíncronos lo notan A MITAD aun con la CI cargada.
+    const PER_BATTLE = Math.floor(fullBytes / 4);
     const r = await rig({
-      paceMs: 5,
+      paceMs: 20,
       replayLimits: { limits: () => ({ ...defaultReplayLimits(), maxBytesPerBattle: PER_BATTLE }) },
       recorderOverrides: SMALL_FRAGMENTS,
     });
