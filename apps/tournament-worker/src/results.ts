@@ -10,6 +10,7 @@
  * liga se registra como empate (draw) para ambos.
  */
 import type { Knex } from "knex";
+import { isNoSportingResultEndReason } from "./battle-end-reasons.js";
 import { generateSwissRound, recommendedSwissRounds, type Pairing, type SwissStanding } from "./formats.js";
 import { buildMaterializeContext, materializeBattles, type MaterializeContext } from "./scheduler.js";
 import { enqueueJob, type JobRow } from "./queue.js";
@@ -291,10 +292,14 @@ export interface TableRow {
   technical: number;
 }
 
-/** ADR-022 · ¿El resultado es la salvaguarda técnica (sin resultado deportivo)? */
+/**
+ * ADR-022 · ¿El resultado se detuvo SIN resultado deportivo? `technical_limit` (salvaguarda técnica de la
+ * prórroga) y, desde V1 REPLAYS PR-5, `recording_limit` (tope de bytes de la grabación): ver
+ * `battle-end-reasons.ts`. El nombre se conserva por los consumidores existentes.
+ */
 export function isTechnicalLimit(result: unknown): boolean {
   const r = typeof result === "string" ? safeJson(result) : result;
-  return Boolean(r && typeof r === "object" && (r as { endReason?: unknown }).endReason === "technical_limit");
+  return Boolean(r && typeof r === "object" && isNoSportingResultEndReason((r as { endReason?: unknown }).endReason));
 }
 function safeJson(s: string): unknown {
   try {

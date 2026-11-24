@@ -139,7 +139,7 @@ El bye (descanso del round robin/liga/suizo con n impar, o hueco del cuadro inic
 
 - oficiales (`battles.official`), terminadas (`status = finished`), del modo y de un torneo no `teams` de la temporada;
 - de un torneo que no esté en `draft` (`open`, `closed`, `running`, `finished` y `cancelled` aportan lo ya disputado);
-- no detenidas por la salvaguarda técnica (`technical_limit`, ADR-022);
+- no detenidas por la salvaguarda técnica (`technical_limit`, ADR-022) ni por el tope de grabación (`recording_limit`, V1 REPLAYS PR-5): sin resultado deportivo;
 - no revertidas: `battles.reverted_at` (migración `018_battle_reverted`) o, además, una batalla cuyos eventos de `rating_events` están todos revertidos.
 
 | Estado del torneo | Efecto |

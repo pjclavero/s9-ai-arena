@@ -158,3 +158,148 @@ tests:
       - eval_time: 10m
         alertname: WorkerMetricsDown
         exp_alerts: []
+
+  # ── V1 REPLAYS PR-5 · almacenamiento de replays ─────────────────────────
+  # ReplayQuotaNearFull / ReplayQuotaCritical (uso de la cuota lógica)
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_volume_used_bytes{job="tournament-worker"}'
+        values: "85x80"
+      - series: 's9_worker_replay_quota_max_bytes{job="tournament-worker"}'
+        values: "100x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayQuotaNearFull
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "El volumen de replays supera el 80% de su cuota lógica"
+      - eval_time: 10m
+        alertname: ReplayQuotaCritical
+        exp_alerts: []
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_volume_used_bytes{job="tournament-worker"}'
+        values: "95x80"
+      - series: 's9_worker_replay_quota_max_bytes{job="tournament-worker"}'
+        values: "100x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayQuotaCritical
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "El volumen de replays supera el 90% de su cuota lógica"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_volume_used_bytes{job="tournament-worker"}'
+        values: "50x80"
+      - series: 's9_worker_replay_quota_max_bytes{job="tournament-worker"}'
+        values: "100x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayQuotaNearFull
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ReplayQuotaCritical
+        exp_alerts: []
+
+  # ReplayFreeSpaceLow (libre < 1,5 x la reserva)
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_volume_free_bytes{job="tournament-worker"}'
+        values: "6x80"
+      - series: 's9_worker_replay_min_free_bytes{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayFreeSpaceLow
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "El espacio libre del volumen de replays está cerca de la reserva mínima"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_volume_free_bytes{job="tournament-worker"}'
+        values: "20x80"
+      - series: 's9_worker_replay_min_free_bytes{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayFreeSpaceLow
+        exp_alerts: []
+
+  # ReplayStorageAbort (aborto por el entorno)
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_aborts_storage_total{job="tournament-worker"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ReplayStorageAbort
+        exp_alerts:
+          - exp_labels: { severity: critical, job: tournament-worker }
+            exp_annotations:
+              summary: "El worker abortó grabaciones de replays por falta de almacenamiento (se reintentan)"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_aborts_storage_total{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayStorageAbort
+        exp_alerts: []
+
+  # ReplayPreflightRejected (compuerta previa)
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_preflight_rejected_total{job="tournament-worker"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ReplayPreflightRejected
+        exp_alerts:
+          - exp_labels: { severity: critical, job: tournament-worker }
+            exp_annotations:
+              summary: "El worker no arranca batallas: sin hueco mínimo en el volumen de replays"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_preflight_rejected_total{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayPreflightRejected
+        exp_alerts: []
+
+  # ReplayBattleLimitReached (tope por batalla)
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_aborts_battle_limit_total{job="tournament-worker"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ReplayBattleLimitReached
+        exp_alerts:
+          - exp_labels: { severity: warning, job: tournament-worker }
+            exp_annotations:
+              summary: "Una batalla alcanzó su tope de grabación (replay truncado); revisar replays.limits.max_bytes_per_battle"
+  - interval: 15s
+    input_series:
+      - series: 's9_worker_replay_aborts_battle_limit_total{job="tournament-worker"}'
+        values: "5x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayBattleLimitReached
+        exp_alerts: []
+  # Sin métricas de replays (capability apagada o sin batallas) NINGUNA de las anteriores dispara.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api"}'
+        values: "1x80"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ReplayQuotaNearFull
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ReplayFreeSpaceLow
+        exp_alerts: []

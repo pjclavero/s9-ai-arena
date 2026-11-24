@@ -58,6 +58,8 @@ const END_REASON_TEXT: Record<string, string> = {
   sporting_failure: "por fallo deportivo",
   // ADR-022 · salvaguarda técnica de la prórroga: no es un resultado deportivo.
   technical_limit: "detenida por límite técnico (sin resultado deportivo)",
+  // V1 REPLAYS PR-5 · la batalla superó su tope de grabación: replay truncado, sin resultado deportivo.
+  recording_limit: "detenida por límite de grabación (replay truncado, sin resultado deportivo)",
 };
 
 /** Texto del final técnico (ADR-022). Nunca «empate». */
@@ -89,6 +91,8 @@ export function summarizeBattle(b: BattleLike): BattleSummaryView {
   let outcome: string | null = null;
   if (b.status === "finished" && r.endReason === "technical_limit") {
     outcome = `${TECHNICAL_LIMIT_TEXT} (sin resultado deportivo)`;
+  } else if (b.status === "finished" && r.endReason === "recording_limit") {
+    outcome = "Detenida por límite de grabación (replay truncado, sin resultado deportivo)";
   } else if (b.status === "finished") {
     if (winner && winner !== "draw") outcome = `gana ${teamText(winner)}`;
     else if (winner === "draw" || (b.participants ?? []).some((p) => p.outcome === "draw")) outcome = "empate";

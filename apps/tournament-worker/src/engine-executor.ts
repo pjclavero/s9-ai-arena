@@ -38,7 +38,13 @@ import {
   type Participant,
 } from "../../arena-engine/src/sim/battle.js";
 import type { ReplaySink } from "../../arena-engine/src/sim/replay-sink.js";
-import { ReplayRecorder, type ClosedRecording, type RecorderOptions } from "../../replay-service/src/s9r/recorder.js";
+import {
+  ReplayRecorder,
+  recordingPaths,
+  type ClosedRecording,
+  type RecorderOptions,
+} from "../../replay-service/src/s9r/recorder.js";
+import { RecordingBudget, preflightCheck } from "../../replay-service/src/s9r/recording-budget.js";
 import { completenessProblems } from "../../replay-service/src/s9r/completeness.js";
 import type { S9rFs } from "../../replay-service/src/s9r/io.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
@@ -48,6 +54,8 @@ import { InfrastructureFailure, toInfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 import { BattleResourceRegistry, defaultBattleResources } from "./battle-resources.js";
+import { defaultReplayLimits, type ReplayLimitsConfig } from "./replay-limits.js";
+import { workerMetrics } from "./worker-metrics.js";
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -171,6 +179,13 @@ export interface EngineExecutorOptions {
    * descarta; nada se acumula en RAM).
    */
   replaysDir?: string;
+  /**
+   * V1 REPLAYS PR-5 · límites de almacenamiento del grabador (tope por batalla, reserva de espacio libre y
+   * cuota del volumen), EN CALIENTE y con la sonda del volumen (`replay-limits.ts`). En producción los
+   * cablea `main.ts` desde `system_settings`. Sin ellos (sólo tests) rigen los defectos del código para el
+   * tope por batalla y NO hay compuerta previa ni reserva/cuota.
+   */
+  replayLimits?: ReplayLimitsConfig;
   /** Sólo tests: sistema de ficheros inyectable del grabador (fallos de disco). */
   replayFs?: S9rFs;
   /** Sólo tests: ajustes del grabador (topes de cola/fichero pequeños). */
@@ -222,6 +237,25 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
   return async (ctx: BattleContext): Promise<BattleExecution> => {
     const db = opts.db;
     const { battle, participants } = ctx;
+
+    // --- V1 REPLAYS PR-5 · COMPUERTA PREVIA de almacenamiento: ANTES de leer nada y, sobre todo, ANTES de
+    //     lanzar ningún contenedor, se exige hueco para una batalla de tamaño máximo más la reserva y que
+    //     quepa en la cuota. Sin hueco: fallo técnico reintentable (`storage_unavailable`), nunca resultado.
+    const limitsCfg = opts.replayLimits;
+    if (opts.replaysDir && limitsCfg) {
+      const l = limitsCfg.limits();
+      workerMetrics.set("replay_quota_max_bytes", l.quotaMaxBytes);
+      workerMetrics.set("replay_min_free_bytes", l.minFreeBytes);
+      workerMetrics.set("replay_max_bytes_per_battle", l.maxBytesPerBattle);
+      if (limitsCfg.probe) {
+        try {
+          await preflightCheck({ limits: l, probe: limitsCfg.probe });
+        } catch (err) {
+          workerMetrics.inc("replay_preflight_rejected_total");
+          throw new InfrastructureFailure("storage_unavailable", `recording_preflight: ${faultText(err)}`);
+        }
+      }
+    }
 
     // --- mapa (E4 real): contenido versionado en BD → ArenaMap del motor ----
     const mapRow = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
@@ -350,11 +384,21 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     let recorder: ReplayRecorder | null = null;
     if (opts.replaysDir) {
       try {
+        const attempt = Number(battle.run_attempts ?? 0);
+        const owner = String(battle.claimed_by ?? "unclaimed");
+        const own = recordingPaths(opts.replaysDir, battle.id, attempt, owner);
+        // PR-5 · presupuesto del intento: tope por batalla FIJADO ahora; reserva y cuota se releen en CADA fragmento.
+        const budget = new RecordingBudget({
+          limits: limitsCfg?.limits ?? defaultReplayLimits,
+          ...(limitsCfg?.probe ? { probe: limitsCfg.probe } : {}),
+          ownPartials: [own.recipePartial, own.viewPartial],
+        });
         recorder = await ReplayRecorder.create({
           dir: opts.replaysDir,
           battleId: battle.id,
-          attempt: Number(battle.run_attempts ?? 0),
-          owner: String(battle.claimed_by ?? "unclaimed"),
+          attempt,
+          owner,
+          budget,
           recipeHeader: buildHeaderV2(config, runningVersions(ruleset.rulesetId)) as unknown as Record<string, unknown>,
           viewHeader: {
             battleId: battle.id,
@@ -471,8 +515,12 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       // V1 REPLAYS PR-3 · CONDICIÓN DEL OPERADOR: un fallo de grabación (cola llena, disco, tope) es un
       // FALLO TÉCNICO, nunca un resultado deportivo. Se decide AQUÍ, antes de devolver la ejecución: la
       // batalla no llega a `finishBattle` (ni completed, ni empate, ni victoria; sin Elo ni standings).
-      if (engine.recordingFault) {
+      // PR-5 · dos clases. CLASE A (el tope es de la PROPIA batalla, `recorder.battleLimit`): no es un fallo
+      // técnico; el replay se cierra TRUNCADO y la batalla termina sin resultado deportivo (más abajo).
+      // CLASE B (disco, cuota, reserva, atasco, cola): fallo técnico reintentable.
+      if (engine.recordingFault && !recorder?.battleLimit) {
         const f = engine.recordingFault;
+        workerMetrics.inc("replay_aborts_storage_total");
         throw new InfrastructureFailure(
           "storage_unavailable",
           `recording_fault: stream=${f.stream} tick=${f.tick} ${faultText(f.cause)}`,
@@ -482,16 +530,23 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         // V1 REPLAYS PR-4b · H-4b-1 · puerta de completitud (la de la ingesta retirada) ANTES de
         // cerrar y publicar: cabecera, checksum del mapa, versiones y contenido no vacío. Un replay
         // incompleto es un FALLO TÉCNICO (la batalla no llega a `finishBattle`), nunca deportivo.
-        const problems = completenessProblems({ ...recorder.content, finalStateHash: result.finalStateHash });
+        // Un replay TRUNCADO por su tope (clase A) está incompleto por definición: no pasa por esta puerta.
+        const problems = recorder.battleLimit
+          ? []
+          : completenessProblems({ ...recorder.content, finalStateHash: result.finalStateHash });
         if (problems.length) {
           throw new InfrastructureFailure("storage_unavailable", `replay_incomplete: ${problems.join("; ")}`);
         }
         try {
           recording = await recorder.finish(result as unknown as Record<string, unknown>);
         } catch (err) {
+          workerMetrics.inc("replay_aborts_storage_total");
           throw new InfrastructureFailure("storage_unavailable", `recording_close_failed: ${faultText(err)}`);
         }
       }
+      // CLASE A cerrada: sin resultado deportivo (`winner: null`, `endReason: recording_limit`), NO se reintenta.
+      const recordingLimit = Boolean(recording?.truncated);
+      if (recordingLimit) workerMetrics.inc("replay_aborts_battle_limit_total");
 
       // El motor descalifica VEHÍCULOS (`veh_N`); el runner y `participants`
       // hablan de BOTS. Antes se pasaba la lista de vehículos tal cual como si
@@ -501,8 +556,12 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       const disqualifiedBots = result.disqualified.map((vid) => botOfVehicle.get(vid) ?? vid);
 
       return {
-        winner: result.winner,
-        ...(result.endReason ? { endReason: result.endReason } : {}),
+        winner: recordingLimit ? null : result.winner,
+        ...(recordingLimit
+          ? { endReason: "recording_limit" as const }
+          : result.endReason
+            ? { endReason: result.endReason }
+            : {}),
         ticks: result.ticks,
         score: result.score,
         finalStateHash: result.finalStateHash,

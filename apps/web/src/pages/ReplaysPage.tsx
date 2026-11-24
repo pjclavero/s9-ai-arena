@@ -383,11 +383,13 @@ export function ReplaysPage() {
                       <td>
                         {r.endReason === "technical_limit"
                           ? "detenida por límite técnico"
-                          : r.winner === "draw"
-                            ? "empate"
-                            : r.winner
-                              ? `gana ${teamText(r.winner)}`
-                              : "—"}
+                          : r.endReason === "recording_limit"
+                            ? "detenida por límite de grabación"
+                            : r.winner === "draw"
+                              ? "empate"
+                              : r.winner
+                                ? `gana ${teamText(r.winner)}`
+                                : "—"}
                       </td>
                       <td>
                         {formatTicksAsDuration(r.ticks)} ({r.ticks} ticks)

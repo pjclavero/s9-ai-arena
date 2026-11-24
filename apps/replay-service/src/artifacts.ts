@@ -43,6 +43,12 @@ export class ReplayPublishError extends Error {
 
 export interface PublishRecordingOptions {
   fs?: S9rFs;
+  /**
+   * PR-5 · publicar un replay TRUNCADO (clase A: la batalla superó su tope de bytes). Sólo lo pide
+   * `finishBattle` cuando la batalla termina con `endReason: recording_limit`: un truncado nunca se
+   * publica bajo un resultado normal.
+   */
+  allowTruncated?: boolean;
 }
 
 export async function publishRecording(
@@ -56,6 +62,13 @@ export async function publishRecording(
   }
   const r = rec.recipe.summary;
   const v = rec.view.summary;
+  const truncated = r.truncated || v.truncated;
+  if (truncated && !opts.allowTruncated) {
+    throw new ReplayPublishError(
+      "truncated_not_allowed",
+      "replay truncado bajo un resultado que no es recording_limit",
+    );
+  }
   try {
     await trx("replay_artifacts").insert({
       battle_id: battle.id,
@@ -72,7 +85,9 @@ export async function publishRecording(
       chain_hash: r.chain,
       view_chain_hash: v.chain,
       ticks: rec.ticks,
-      truncated: r.truncated || v.truncated,
+      truncated,
+      // Un replay truncado no se puede re-simular (receta incompleta): no hay estadísticas que calcular.
+      ...(truncated ? { stats_state: "not_applicable" } : {}),
     });
     await trx("battles").where({ id: battle.id }).update({ replay_ref: rec.recipe.final, replay_hash: r.sha256 });
   } catch (e) {
@@ -86,7 +101,7 @@ export async function publishRecording(
         recipe: { partial: rec.recipe.partial, final: rec.recipe.final },
         view: { partial: rec.view.partial, final: rec.view.final },
       },
-      { proof: r, viewProof: v, ...(opts.fs ? { fs: opts.fs } : {}) },
+      { proof: r, viewProof: v, ...(opts.fs ? { fs: opts.fs } : {}), ...(truncated ? { allowTruncated: true } : {}) },
     );
   } catch (e) {
     const code = e instanceof S9rError ? e.code : "publish_failed";

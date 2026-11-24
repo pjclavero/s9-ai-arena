@@ -117,12 +117,13 @@ export function replayRoutes(
     const items = page.map((b: Record<string, any>) => {
       const result = (b.result ?? {}) as { winner?: string; ticks?: number; endReason?: string };
       // ADR-022 · detenida por la salvaguarda técnica: sin ganador ni empate («none» + motivo).
-      const technical = result.endReason === "technical_limit";
+      // V1 REPLAYS PR-5 · `recording_limit` (tope de bytes de la grabación, replay truncado) tampoco tiene ganador.
+      const technical = result.endReason === "technical_limit" || result.endReason === "recording_limit";
       return {
         battleId: b.id,
         ticks: result.ticks ?? 0,
         winner: technical ? "none" : (result.winner ?? "unknown"),
-        ...(technical ? { endReason: "technical_limit" } : {}),
+        ...(technical ? { endReason: result.endReason } : {}),
         official: Boolean(b.official),
         createdAt: new Date(b.ra_created_at ?? b.finished_at ?? b.created_at).toISOString(),
         sizeBytes: Number(b.ra_recipe_bytes ?? 0) + Number(b.ra_view_bytes ?? 0),

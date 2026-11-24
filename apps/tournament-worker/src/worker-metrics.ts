@@ -11,9 +11,15 @@
  *   s9_worker_orphans_requeued_total          batallas huérfanas reencoladas por el barrido
  *   s9_worker_orphans_failed_total            batallas huérfanas pasadas a `failed` por el barrido
  *   s9_worker_orphan_containers_removed_total contenedores de bot retirados por el reaper
+ *   s9_worker_replay_aborts_battle_limit_total V1 REPLAYS PR-5 · batallas cerradas por su tope de bytes (`recording_limit`)
+ *   s9_worker_replay_aborts_storage_total      PR-5 · grabaciones abortadas por el entorno (disco, cuota, reserva, atasco)
+ *   s9_worker_replay_preflight_rejected_total  PR-5 · batallas no arrancadas por falta de hueco mínimo (compuerta previa)
  * Gauges de BD (los fija el barrido, cada pasada):
  *   s9_worker_jobs_needs_review               trabajos en revisión manual
  *   s9_worker_battles_lease_expired           batallas `running` con el lease vencido
+ * Gauges de almacenamiento de replays (PR-5; los fija el grabador al medir el volumen, sin medir no hay serie):
+ *   s9_worker_replay_volume_free_bytes, s9_worker_replay_volume_used_bytes (publicados + papelera + parciales),
+ *   s9_worker_replay_quota_max_bytes, s9_worker_replay_min_free_bytes, s9_worker_replay_max_bytes_per_battle
  * Gauges de proceso (se leen al renderizar):
  *   s9_worker_heap_used_bytes, s9_worker_heap_limit_bytes, s9_worker_rss_bytes
  */
@@ -25,8 +31,18 @@ export type WorkerCounter =
   | "jobs_parked_total"
   | "orphans_requeued_total"
   | "orphans_failed_total"
-  | "orphan_containers_removed_total";
-export type WorkerGauge = "jobs_needs_review" | "battles_lease_expired";
+  | "orphan_containers_removed_total"
+  | "replay_aborts_battle_limit_total"
+  | "replay_aborts_storage_total"
+  | "replay_preflight_rejected_total";
+export type WorkerGauge =
+  | "jobs_needs_review"
+  | "battles_lease_expired"
+  | "replay_volume_free_bytes"
+  | "replay_volume_used_bytes"
+  | "replay_quota_max_bytes"
+  | "replay_min_free_bytes"
+  | "replay_max_bytes_per_battle";
 
 const COUNTERS: Record<WorkerCounter, string> = {
   job_retries_total: "Trabajos reclamados por segunda vez o mas (reintentos)",
@@ -34,10 +50,20 @@ const COUNTERS: Record<WorkerCounter, string> = {
   orphans_requeued_total: "Batallas huerfanas (lease vencido) reencoladas por el barrido",
   orphans_failed_total: "Batallas huerfanas (lease vencido) pasadas a failed por el barrido",
   orphan_containers_removed_total: "Contenedores de bot huerfanos retirados por el reaper",
+  replay_aborts_battle_limit_total:
+    "Batallas cerradas por su tope de bytes de grabacion (recording_limit, replay truncado)",
+  replay_aborts_storage_total: "Grabaciones abortadas por el entorno (disco, cuota, reserva o atasco): se reintentan",
+  replay_preflight_rejected_total: "Batallas no arrancadas por falta de hueco minimo en el volumen de replays",
 };
 const GAUGES: Record<WorkerGauge, string> = {
   jobs_needs_review: "Trabajos en needs_review (revision manual)",
   battles_lease_expired: "Batallas running con el lease vencido",
+  replay_volume_free_bytes: "Bytes fisicos libres en el volumen de replays",
+  replay_volume_used_bytes: "Bytes usados del volumen de replays (publicados + papelera + parciales vivos)",
+  replay_quota_max_bytes: "Cuota logica maxima del volumen de replays (replays.quota.max_bytes vigente)",
+  replay_min_free_bytes:
+    "Reserva minima de espacio libre del volumen de replays (replays.quota.min_free_bytes vigente)",
+  replay_max_bytes_per_battle: "Tope de bytes por batalla (replays.limits.max_bytes_per_battle vigente)",
 };
 
 export class WorkerMetrics {

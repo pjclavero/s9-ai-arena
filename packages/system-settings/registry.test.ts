@@ -115,9 +115,16 @@ describe("registro de ajustes: construcción", () => {
     expect(() => createSettingsRegistry([{ ...INT, default: 99 }])).toThrow(/por defecto/);
   });
 
-  it("FABRICA_VACIA: el registro de producción no trae sondas ni claves sin consumidor real", () => {
-    expect(SYSTEM_SETTINGS_REGISTRY.defs).toEqual([]);
+  it("FABRICA_VACIA: el registro de producción no trae sondas ni claves sin consumidor real (PR-5: sólo replays.*)", () => {
+    expect(SYSTEM_SETTINGS_REGISTRY.defs.map((d) => d.key).sort()).toEqual([
+      "replays.limits.max_bytes_per_battle",
+      "replays.quota.max_bytes",
+      "replays.quota.min_free_bytes",
+    ]);
     for (const d of SYSTEM_SETTINGS_REGISTRY.defs) {
+      expect(d.key.startsWith("replays.")).toBe(true);
+      expect(d.consumer).toBe("tournament-worker");
+      expect(d.apply).toBe("hot");
       expect(d.consumer.length).toBeGreaterThan(0);
       expect(["hot", "restart"]).toContain(d.apply);
     }

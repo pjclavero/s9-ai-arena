@@ -210,3 +210,51 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "El tournament-worker dejó de exportar métricas (caído o reiniciándose)"
+
+      # V1 REPLAYS PR-5 · almacenamiento de replays (cuota lógica, reserva física y topes del grabador).
+      # Los gauges de volumen se fijan al medir el volumen (al arrancar una batalla y en cada fragmento): sin
+      # batallas no hay serie y NINGUNA de estas salta por ausencia. Probadas con promtool: alerts-worker.test.yml.
+      # Uso de la cuota lógica por encima del 80 %: se acerca a que las batallas dejen de grabarse.
+      - alert: ReplayQuotaNearFull
+        expr: max(s9_worker_replay_volume_used_bytes / s9_worker_replay_quota_max_bytes) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El volumen de replays supera el 80% de su cuota lógica"
+
+      # Por encima del 90 %: crítico (la cuota es la que bloquea la grabación; no se borra nada fuera de política).
+      - alert: ReplayQuotaCritical
+        expr: max(s9_worker_replay_volume_used_bytes / s9_worker_replay_quota_max_bytes) > 0.9
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "El volumen de replays supera el 90% de su cuota lógica"
+
+      # El espacio físico libre se acerca a la reserva mínima (1,5 x): hay que liberar o ampliar el volumen.
+      - alert: ReplayFreeSpaceLow
+        expr: max(s9_worker_replay_volume_free_bytes) < 1.5 * max(s9_worker_replay_min_free_bytes)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El espacio libre del volumen de replays está cerca de la reserva mínima"
+
+      # Una grabación se abortó por el ENTORNO (disco, cuota, reserva, atasco): la batalla se reintenta.
+      - alert: ReplayStorageAbort
+        expr: increase(s9_worker_replay_aborts_storage_total[15m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "El worker abortó grabaciones de replays por falta de almacenamiento (se reintentan)"
+
+      # La compuerta previa rechazó arrancar batallas: no hay hueco mínimo en el volumen de replays.
+      - alert: ReplayPreflightRejected
+        expr: increase(s9_worker_replay_preflight_rejected_total[15m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "El worker no arranca batallas: sin hueco mínimo en el volumen de replays"
+
+      # Una batalla alcanzó su tope de bytes de grabación (replay truncado, sin resultado deportivo).
+      - alert: ReplayBattleLimitReached
+        expr: increase(s9_worker_replay_aborts_battle_limit_total[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Una batalla alcanzó su tope de grabación (replay truncado); revisar replays.limits.max_bytes_per_battle"

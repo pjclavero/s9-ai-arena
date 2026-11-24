@@ -228,7 +228,7 @@ Transiciones de `battles.status` (BATTLE_STATUS):
 | `winner` | Equipo ganador o `"draw"`. El ganador **por bot** es `participants.outcome` |
 | `ticks`, `score` | Del motor |
 | `disqualified` | botIds descalificados (motor + administrativos + culpable deportivo) |
-| `endReason` | `completed`, `walkover` (un solo bando tras DQ administrativas), `sporting_failure` (bot culpable, sin simulación), `technical_limit` (ADR-022: la salvaguarda técnica de la prórroga de CTF la detuvo; `winner: null`, `participants.outcome` NULL, no cuenta en Elo ni V-D-E) |
+| `endReason` | `completed`, `walkover` (un solo bando tras DQ administrativas), `sporting_failure` (bot culpable, sin simulación), `technical_limit` (ADR-022: la salvaguarda técnica de la prórroga de CTF la detuvo; `winner: null`, `participants.outcome` NULL, no cuenta en Elo ni V-D-E), `recording_limit` (V1 REPLAYS PR-5, **cambio de contrato D-3**: la batalla superó su tope de bytes de grabación `replays.limits.max_bytes_per_battle`; `winner: null`, `participants.outcome` NULL, no cuenta en Elo ni V-D-E, replay **truncado** marcado en `replay_artifacts.truncated`, **no se reintenta**; el visor, `verify` y las estadísticas no lo atienden: `unavailable`) |
 | `agents` | Quién condujo los vehículos: `container` (código real, producción), `in_process_stub` (tests), `scripted` (tests de cola) |
 
 Los campos `winner/ticks/score/disqualified` son los históricos (los leen `results.ts`, la API pública y la web); el resto es aditivo. Junto al resultado: `started_at`, `finished_at`, `replay_ref`, `replay_hash`, `final_state_hash`, `engine_versions` (incluye `rulesetEngine`) y `participants.cpu_ms`.

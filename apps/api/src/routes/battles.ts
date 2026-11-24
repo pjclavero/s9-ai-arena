@@ -839,7 +839,11 @@ export function battleRoutes(
     let status: "ready" | "pending" | "unavailable" = "unavailable";
     if (rows.length > 0) status = "ready";
     else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
-    else if (battle.status === "finished" && isS9rReplayRef(battle.replay_ref)) status = "pending";
+    else if (battle.status === "finished" && isS9rReplayRef(battle.replay_ref)) {
+      // V1 REPLAYS PR-5 · un replay TRUNCADO (`recording_limit`) no se puede re-simular: nunca habrá estadísticas.
+      const endReason = (battle.result as { endReason?: unknown } | null)?.endReason;
+      status = endReason === "recording_limit" ? "unavailable" : "pending";
+    }
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
     for (const [team, t] of teams) {
