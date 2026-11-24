@@ -109,10 +109,10 @@ jobs:
         # soporta el subsistema sftp de un sshd sin privilegios (confirmado
         # con diagnóstico real, ver ese fichero) — de ahí que use el mismo
         # arnés que ya funciona aquí en vez de reinventar uno nuevo.
-        # V1 · tests/acceptance (doc-b/doc-c: topologia interna y enlaces rotos en
+        # V1 · tests/acceptance y tests/gamedays (doc-b/doc-c: topologia interna y enlaces rotos en
         # docs; mapas publicados) no corria en NINGUN job: el filtro posicional de
         # esta orden solo cubria apps/packages/infrastructure. Ligero, sin Docker.
-        run: npx vitest run apps packages infrastructure tests/acceptance --exclude "**/backup-sftp-e2e.test.ts" --exclude "**/restore-sftp-bootstrap.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+        run: npx vitest run apps packages infrastructure tests/acceptance tests/gamedays --exclude "**/backup-sftp-e2e.test.ts" --exclude "**/restore-sftp-bootstrap.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
       - name: Informe de cobertura como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -569,7 +569,7 @@ jobs:
         run: |
           set +e
           node infrastructure/scripts/compose-canonical-check.mjs \
-            --facts infrastructure/tests/fixtures/drift-facts-vm108.json \
+            --facts infrastructure/tests/fixtures/drift-facts-production.json \
             --contract infrastructure/deploy-contract.json \
             --compose-env GATEWAY_CONF=nginx-behind-proxy.conf \
             --compose-env HTTP_PORT=8080 --compose-env HTTPS_PORT=8443 > /dev/null
@@ -588,7 +588,7 @@ jobs:
         run: |
           set +e
           node infrastructure/scripts/compose-canonical-check.mjs \
-            --facts infrastructure/tests/fixtures/drift-facts-vm108.json > /dev/null 2>&1
+            --facts infrastructure/tests/fixtures/drift-facts-production.json > /dev/null 2>&1
           rc=$?
           set -e
           if [ "$rc" -ne 2 ]; then
