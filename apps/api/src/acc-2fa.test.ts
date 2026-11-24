@@ -21,6 +21,7 @@ import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
 import { FailedLoginGuard } from "./middleware/rate-limit.js";
 import { openTotpEnrollment, sealTotpEnrollment, TOTP_ENROLLMENT_TTL_S } from "./auth/totp-enrollment.js";
+import { verifySecondFactor } from "./routes/auth.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -228,6 +229,17 @@ describe("ACC-2FA · ningún código vale dos veces", () => {
     expect(rs.map((r) => r.status).sort()).toEqual([200, 401, 401]);
     const row = await h.db("users").where({ id: u.userId }).first();
     expect(row.recovery_codes).toHaveLength(7);
+  });
+
+  it("RECUPERACION_RANCIO: dos peticiones que cargaron la misma fila de usuario no gastan dos veces un código", async () => {
+    // Es lo que pasa con dos logins simultáneos: cada uno leyó `users` ANTES de que el otro consumiera el
+    // código. Con leer-filtrar-escribir sobre esa copia, ambos lo aceptaban. Determinista: la misma copia rancia.
+    const u = await enabledUser("rancio");
+    const stale = await h.db("users").where({ id: u.userId }).first();
+    const code = u.recoveryCodes[5];
+    expect(await verifySecondFactor(h.db, stale, code)).toBe("recovery");
+    expect(await verifySecondFactor(h.db, stale, code)).toBeNull();
+    expect((await h.db("users").where({ id: u.userId }).first()).recovery_codes).toHaveLength(7);
   });
 
   it("RECUPERACION_FORMATO: el login acepta el código con mayúsculas, espacios y guion; luego ya no", async () => {

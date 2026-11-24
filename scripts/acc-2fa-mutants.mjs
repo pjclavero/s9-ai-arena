@@ -95,12 +95,12 @@ const M = [
   ],
   [
     "A8",
-    "código de recuperación leer-filtrar-escribir (no atómico)",
+    "código de recuperación leer-filtrar-escribir sobre la fila ya cargada (código de main)",
     AUTH,
     '  const n = await db("users")\n    .where({ id: user.id })\n    .whereRaw("recovery_codes @> ?::jsonb", [JSON.stringify([h])])\n    .update({ recovery_codes: db.raw("recovery_codes - ?::text", [h]) });\n  return n === 1;',
-    '  const row = await db("users").where({ id: user.id }).first();\n  const list: string[] = Array.isArray(row.recovery_codes) ? row.recovery_codes : [];\n  if (!list.includes(h)) return false;\n  await db("users").where({ id: user.id }).update({ recovery_codes: JSON.stringify(list.filter((x) => x !== h)) });\n  return true;',
+    '  const hashes: string[] = Array.isArray(user.recovery_codes)\n    ? (user.recovery_codes as string[])\n    : JSON.parse((user.recovery_codes as string) ?? "[]");\n  if (!hashes.includes(h)) return false;\n  await db("users")\n    .where({ id: user.id })\n    .update({ recovery_codes: JSON.stringify(hashes.filter((x) => x !== h)) });\n  return true;',
     T_API,
-    "RECUPERACION_PARALELO",
+    "RECUPERACION_RANCIO",
   ],
   [
     "A9",
