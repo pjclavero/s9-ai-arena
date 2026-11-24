@@ -1447,6 +1447,7 @@ Estados posibles:
 - **Solución prevista:** calcular una mini-tabla entre los empatados. Cambia una regla de orden visible, así que necesita decisión del operador.
 - **Condición de cierre:** decisión del operador, mini-tabla implementada y un test con un ciclo de tres que da siempre el mismo orden.
 
+<a id="td-074"></a>
 ## TD-074 — Retirar el lanzador HTTP legado y `POST /run` de arena-engine
 
 - **Estado:** ABIERTA (mitigada en V1)
@@ -1458,4 +1459,4 @@ Estados posibles:
 - **Problema residual:** código muerto y superficie: la ruta, el lanzador, sus tests, `ARENA_ENGINE_URL`/`ARENA_ENGINE_SHARED_SECRET_FILE`/`ARENA_ENGINE_RUN_TIMEOUT_MS` en la API y su entrada en el modelo de readiness (`packages/readiness/config.ts`, clave `required` sin consumidor).
 - **Solución prevista (después de V1):** borrar el lanzador y sus tests, `POST /run` y el interruptor, el secreto `arena_engine_internal_secret` (y su generación en `init-secrets.sh`), las variables huérfanas de la API y la clave del modelo de readiness; arena-engine quedaría como librería.
 - **Condición de cierre:** ningún `git grep` de `/run` de arena-engine, del lanzador ni del secreto; readiness sin la clave; stack desplegado verificado.
-- **Fixtures de deriva (estáticos):** `infrastructure/tests/compose-canonical-check.test.ts` y `runtime-drift-scan.test.ts` esperan hoy un `SECRETO_INESPERADO`/«secreto no declarado: arena_engine_internal_secret» en la API porque `drift-facts-vm108.json` es una captura estática del contenedor vivo. NO se cierra sola al desplegar: cuando se recapturen los hechos tras el despliegue (la API sin el secreto), esas dos aserciones se pondrán rojas y habrá que revertirlas a la lista anterior (sólo los tres secretos ausentes), de forma intencionada.
+- **Fixtures de deriva (estáticos):** `infrastructure/tests/compose-canonical-check.test.ts` y `runtime-drift-scan.test.ts` esperan hoy un `SECRETO_INESPERADO`/«secreto no declarado: arena_engine_internal_secret» en la API porque el fixture de deriva de producción (`infrastructure/tests/fixtures`) es una captura estática del contenedor vivo. NO se cierra sola al desplegar: cuando se recapturen los hechos tras el despliegue (la API sin el secreto), esas dos aserciones se pondrán rojas y habrá que revertirlas a la lista anterior (sólo los tres secretos ausentes), de forma intencionada.

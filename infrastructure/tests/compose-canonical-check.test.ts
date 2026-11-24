@@ -42,7 +42,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, "..", "..");
-const FIXTURE = JSON.parse(readFileSync(join(here, "fixtures", "drift-facts-vm108.json"), "utf8"));
+const FIXTURE = JSON.parse(readFileSync(join(here, "fixtures", "drift-facts-production.json"), "utf8"));
 const COMPOSE = parse(readFileSync(join(REPO, "infrastructure", "docker-compose.yml"), "utf8"), { merge: true });
 
 /** El compose de producción tal y como lo renderiza el despliegue real. */
@@ -268,7 +268,7 @@ describe("CONTRATO · el conjunto canónico lo fija deploy-contract.json, no est
     const tmp = join(tmpdir(), `contrato-sin-perfiles-${process.pid}.json`);
     writeFileSync(tmp, JSON.stringify({ ...CONTRATO, perfiles: [] }));
     try {
-      expect(main(["--facts", join(here, "fixtures", "drift-facts-vm108.json"), "--contract", tmp])).toBe(2);
+      expect(main(["--facts", join(here, "fixtures", "drift-facts-production.json"), "--contract", tmp])).toBe(2);
     } finally {
       rmSync(tmp, { force: true });
     }
@@ -537,7 +537,7 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
   });
 
   it("el fixture no lleva ninguna ruta física del anfitrión ni ninguna IP", () => {
-    const crudo = readFileSync(join(here, "fixtures", "drift-facts-vm108.json"), "utf8");
+    const crudo = readFileSync(join(here, "fixtures", "drift-facts-production.json"), "utf8");
     expect(crudo).not.toMatch(/\/(opt|root|home)\//);
     expect(crudo).not.toMatch(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
   });
