@@ -140,6 +140,9 @@ export class ReplayRecorder {
   private finished = false;
   /** Vista: nº de snapshots y keyframes (uno cada KEYFRAME_EVERY snapshots) para el índice del visor. */
   private snapshotCount = 0;
+  /** Receta: nº de hashes intermedios y checkpoints aceptados (puerta de completitud, H-4b-1). */
+  private hashCount = 0;
+  private checkpointCount = 0;
   private readonly keyframes: { tick: number; snapshotIndex: number }[] = [];
   private waiters: (() => void)[] = [];
 
@@ -207,6 +210,19 @@ export class ReplayRecorder {
   /** Primer fallo de la grabación (backpressure, disco, tope, registro inválido) o null. */
   get recordingError(): Error | null {
     return this.fault;
+  }
+
+  /**
+   * V1 REPLAYS PR-4b · Lo que la puerta de completitud necesita (`completenessProblems`): cabecera
+   * de la receta y cuántos hashes, checkpoints y snapshots se han grabado.
+   */
+  get content(): { header: Record<string, unknown>; stateHashes: number; checkpoints: number; snapshots: number } {
+    return {
+      header: this.o.recipeHeader,
+      stateHashes: this.hashCount,
+      checkpoints: this.checkpointCount,
+      snapshots: this.snapshotCount,
+    };
   }
 
   /** Métricas: pico de la cola por flujo y registros aceptados. */
@@ -283,10 +299,12 @@ export class ReplayRecorder {
   hash(rec: { tick: number; hash: string }): void {
     const t = this.tickOf(rec);
     this.push(this.recipe, JSON.stringify({ k: "h", t, hash: rec.hash }), t);
+    this.hashCount++;
   }
   checkpoint(rec: { tick: number; hash: string; components: Record<string, string> }): void {
     const t = this.tickOf(rec);
     this.push(this.recipe, JSON.stringify({ k: "k", t, hash: rec.hash, components: rec.components }), t);
+    this.checkpointCount++;
     // Fronteras de fragmento de la receta en múltiplos de 3 checkpoints (≈ 900 ticks).
     const every = (this.o.checkpointEveryNTicks ?? 300) * 3;
     if (every > 0 && t > 0 && t % every === 0) {

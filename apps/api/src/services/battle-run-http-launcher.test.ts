@@ -8,7 +8,7 @@
  * failed sin lanzar), timeout, e inalcanzable (conexión rechazada).
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
@@ -25,12 +25,10 @@ import {
 } from "./battle-run-http-launcher.js";
 import type { BattleRunInput } from "../battle-run.js";
 import { initPhysics } from "../../../arena-engine/src/sim/physics.js";
-import { record, toJsonl, type Replay } from "../../../arena-engine/src/replay.js";
+import { record, type Replay } from "../../../arena-engine/src/replay.js";
 import { gunnerLoadout, scoutLoadout } from "../../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../../arena-engine/src/stubs.js";
 import { tmpdir } from "node:os";
-import { createReplayServer } from "../../../replay-service/src/server.js";
-import { listReplays, replayPath } from "../../../replay-service/src/store.js";
 import { validateArenaMap } from "../../../arena-engine/src/arena-map.js";
 import type { ArenaMap } from "../../../arena-engine/src/sim/modes.js";
 import { toEngineMap } from "../../../map-service/src/to-engine-map.js";
@@ -604,7 +602,7 @@ describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowli
   // ejercita daño a destructibles — en esta geometría los bots no llegan a tocar
   // ninguna caja. Que el daño tampoco mute el mapa se prueba donde sí se provoca:
   // apps/arena-engine/tests/arena-map.test.ts.
-  it("el mapa pedido, jugado de verdad en una batalla real, PASA la guarda y se ingesta", async () => {
+  it("el mapa pedido, jugado de verdad en una batalla real, PASA la guarda (verifica; la ingesta está retirada)", async () => {
     const bot = await seedSignedBot("bot_b9_sin_falso_positivo");
     const battleId = "battle_" + randomUUID();
     // Batalla real sobre el mapa REAL pedido: el motor no muta `config.map`, así
@@ -624,16 +622,14 @@ describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowli
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 (integracion del rebase) · la ingesta es fail-closed desde que el
-      // replay-service exige credencial interna: sin esto el launcher ni
-      // re-simula y devuelve ingested:false. Este test es de B9 y es ANTERIOR
-      // a esa autenticacion.
-      replayIngestSecret: "secreto-de-ingesta-de-test",
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
+    // La guarda de mapa la pasa (completed y verify_matches:true); V1 REPLAYS PR-4b · ya no se
+    // ingesta en ningún sitio (ingested:false y 0 peticiones al replay-service).
     expect(result.status).toBe("completed");
-    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(0);
   }, 30_000);
 });
 
@@ -899,10 +895,14 @@ describe("B6 · replayIngestEnvConfig", () => {
   });
 });
 
-/** B8 · credencial interna que el launcher debe enviar al replay-service. */
-const B8_INGEST_SECRET = "secreto-de-ingesta-b8";
-
-describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el replay-service", () => {
+/**
+ * V1 REPLAYS PR-4b · la INGESTA de este lanzador (camino legado sin consumidor) está RETIRADA: el
+ * replay-service ya no acepta replays y el único camino que los publica es el tournament-worker
+ * (S9R/1). Las guardas se conservan (identidad del replay, `verifyAndRecompute`) y se afirma que
+ * el lanzador NUNCA envía nada al replay-service y NUNCA devuelve `ingested:true`; en modo
+ * estricto, `failed`. El servidor falso de replays sigue montado para PROBAR que no recibe nada.
+ */
+describe("B6 · createHttpBattleRunLauncher: verificación del replay real, sin ingesta (retirada)", () => {
   let closeReplayService: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await closeReplayService?.();
@@ -928,6 +928,29 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
     expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
   });
 
+  it("V1 REPLAYS PR-4b · modo estricto SIN replayServiceUrl → failed (no hay archivo posible), nunca ingested:true", async () => {
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: {
+        result: { ticks: 10 },
+        replay: { header: { formatVersion: 1, map: expectedEngineMap("mvp-arena-01.json") } },
+        postures: {},
+      },
+    }));
+    closeEngine = engine.close;
+    const bot = await seedSignedBot("bot_pr4b_estricto_sin_url");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayIngestRequired: true,
+    });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("ingesta retirada");
+    expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
+  });
+
   it("B9 · 200 con cabecera de replay SIN mapa → failed: no se puede confirmar en qué mapa se jugó, así que no se da por buena", async () => {
     const engine = await startFakeEngine(() => ({
       status: 200,
@@ -941,7 +964,7 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
     expect(result.errorCode).toBe("map_identity_mismatch");
   });
 
-  it("replay REAL que verifica → se ingesta en el replay-service (POST con el JSONL correcto) y se refleja ingested:true, verify_matches:true", async () => {
+  it("replay REAL que verifica → verify_matches:true, pero NUNCA ingested:true ni una petición al replay-service", async () => {
     const battleId = "battle_" + randomUUID();
     const realReplay = await recordRealReplay(battleId);
     const engine = await startFakeEngine(() => ({
@@ -965,15 +988,12 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
     expect(result.status).toBe("completed");
-    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
-    expect(rs.received).toHaveLength(1);
-    expect(rs.received[0].ndjson).toBe(toJsonl(realReplay));
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(0);
   });
 
   it("ATAQUE DEL SUPERVISOR 1 — IDENTIDAD: un replay REAL, legítimo y perfectamente verificable, pero grabado para OTRA batalla, se rechaza SIN verificar ni ingestar", async () => {
@@ -1001,8 +1021,6 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId: requestedBattleId });
 
@@ -1030,8 +1048,6 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
       replayIngestRequired: true,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId: requestedBattleId });
@@ -1083,20 +1099,15 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
-    // La batalla EN SÍ es real y verifica (comandos+hashes intactos) → se ingesta.
+    // La batalla EN SÍ es real y verifica (comandos+hashes intactos)…
     expect(result.status).toBe("completed");
-    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
-    expect(rs.received).toHaveLength(1);
-    // Pero lo que se envía al replay-service es la versión HONESTA (recomputada),
-    // NO la falsificada: nada del ataque llega a lo que el visor va a pintar.
-    expect(rs.received[0].ndjson).not.toContain("sup_fake_kill");
-    expect(rs.received[0].ndjson).not.toContain("-999999");
-    expect(rs.received[0].ndjson).toBe(toJsonl(realReplay));
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+    // …y NADA (ni lo honesto ni lo falsificado) llega a ningún almacén de replays: la ingesta está
+    // retirada; el visor sólo pinta lo que publica el worker.
+    expect(rs.received).toHaveLength(0);
   });
 
   it("MUTACIÓN DE INTEGRIDAD: un replay que NO verifica (finalStateHash manipulado) NUNCA se presenta como ingerido ni se envía al replay-service", async () => {
@@ -1128,8 +1139,6 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
@@ -1161,8 +1170,6 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
       replayIngestRequired: true,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
@@ -1172,7 +1179,7 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
     expect(rs.received).toHaveLength(0);
   });
 
-  it("replay-service caído/rechaza (500) con replay que SÍ verifica → best-effort: completed con ingested:false, verify_matches:true", async () => {
+  it("aunque el replay-service esté configurado (y responda 500), con un replay que SÍ verifica: completed, ingested:false, verify_matches:true y 0 peticiones", async () => {
     const battleId = "battle_" + randomUUID();
     const realReplay = await recordRealReplay(battleId);
     const engine = await startFakeEngine(() => ({
@@ -1189,16 +1196,15 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
     expect(result.status).toBe("completed");
     expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(0);
   });
 
-  it("replay-service caído + modo estricto → status failed", async () => {
+  it("modo estricto + replay que SÍ verifica → status failed: ya no existe ingesta posible (nunca completed con un archivo que no hay)", async () => {
     const battleId = "battle_" + randomUUID();
     const realReplay = await recordRealReplay(battleId);
     const engine = await startFakeEngine(() => ({
@@ -1215,150 +1221,35 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
-      // B8 · la ingesta pasa a ser autenticada: sin credencial el launcher ni lo intenta.
-      replayIngestSecret: B8_INGEST_SECRET,
       replayIngestRequired: true,
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("REPLAY_INGEST_REQUIRED");
+    expect(result.error).toContain("ingesta retirada");
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(0);
   });
 });
 
 /**
- * B8 · El productor de ingesta contra el replay-service REAL, no un fake.
- *
- * Los tests de B6 usan `startFakeReplayService`, que acepta cualquier cosa: con
- * él, "el launcher manda la credencial" solo se podría comprobar mirando la
- * cabecera recibida — es decir, comparando cadenas. Aquí se monta el servidor de
- * verdad (`createReplayServer`, con su guarda de autenticación) sobre un puerto
- * efímero y se comprueba el EFECTO: si el replay acaba o no en el directorio.
- * Si el launcher dejara de mandar la credencial, o la mandara mal, el fichero no
- * aparece y el test cae — sin depender de ninguna cadena literal.
+ * V1 REPLAYS PR-4b · sustituto de «B8 · el launcher se autentica contra el replay-service REAL»: el
+ * servicio real ya no tiene rutas de ingesta (service-bootstrap.test: 404 con o sin credencial) y el
+ * lanzador no envía nada (tests de B6). Aquí: la config de entorno ya no resuelve ninguna credencial
+ * de ingesta (no hay a quién enviarla) aunque el entorno la traiga.
  */
-describe("B8 · el launcher se autentica de verdad contra el replay-service REAL", () => {
-  let closeReal: (() => Promise<void>) | undefined;
-  afterEach(async () => {
-    await closeReal?.();
-    closeReal = undefined;
-  });
-
-  /** Levanta el replay-service REAL (no un fake) en un puerto efímero. */
-  async function startRealReplayService(internalSecret?: string) {
-    const dir = mkdtempSync(join(tmpdir(), "b8-launcher-rs-"));
-    const app = createReplayServer(internalSecret === undefined ? { dir } : { dir, internalSecret });
-    const server = http.createServer(app);
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
-    const { port } = server.address() as AddressInfo;
-    return {
-      dir,
-      url: `http://127.0.0.1:${port}`,
-      close: () => new Promise<void>((r) => server.close(() => r())),
-    };
-  }
-
-  async function launchAgainst(rsUrl: string, ingestSecret: string | undefined, battleId: string, replay: Replay) {
-    const engine = await startFakeEngine(() => ({
-      status: 200,
-      body: { result: replay.result, replay, postures: {} },
-    }));
-    closeEngine = engine.close;
-    const bot = await seedSignedBot(`bot_b8_${randomUUID().slice(0, 8)}`);
-    const launcher = createHttpBattleRunLauncher({
-      engineUrl: engine.url,
-      sharedSecret: "s",
-      db: h.db,
-      replayServiceUrl: rsUrl,
-      ...(ingestSecret === undefined ? {} : { replayIngestSecret: ingestSecret }),
-    });
-    return launcher.launch({ ...sampleInput([bot, bot]), battleId });
-  }
-
-  it("con la credencial correcta: el replay REAL queda escrito en el disco del servicio", async () => {
-    const battleId = "battle_" + randomUUID();
-    const realReplay = await recordRealReplay(battleId);
-    const rs = await startRealReplayService(B8_INGEST_SECRET);
-    closeReal = rs.close;
-
-    const result = await launchAgainst(rs.url, B8_INGEST_SECRET, battleId, realReplay);
-
-    expect(result.status).toBe("completed");
-    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
-    // EFECTO observable, no cadena: el fichero existe y el servicio lo lista.
-    expect(existsSync(replayPath(rs.dir, battleId))).toBe(true);
-    expect(listReplays(rs.dir, { limit: 10, order: "desc" }).map((r) => r.battleId)).toContain(battleId);
-  });
-
-  it("SIN credencial configurada: no se ingesta nada y el disco del servicio queda VACÍO", async () => {
-    const battleId = "battle_" + randomUUID();
-    const realReplay = await recordRealReplay(battleId);
-    const rs = await startRealReplayService(B8_INGEST_SECRET);
-    closeReal = rs.close;
-
-    const result = await launchAgainst(rs.url, undefined, battleId, realReplay);
-
-    // La batalla NO se pierde (best-effort), pero jamás se afirma `ingested: true`.
-    expect(result.status).toBe("completed");
-    expect(result.replay?.ingested).toBe(false);
-    expect(existsSync(replayPath(rs.dir, battleId))).toBe(false);
-    expect(listReplays(rs.dir, { limit: 10, order: "desc" })).toHaveLength(0);
-  });
-
-  it("con credencial INCORRECTA: el servicio real responde 401 y no queda nada escrito", async () => {
-    const battleId = "battle_" + randomUUID();
-    const realReplay = await recordRealReplay(battleId);
-    const rs = await startRealReplayService(B8_INGEST_SECRET);
-    closeReal = rs.close;
-
-    const result = await launchAgainst(rs.url, B8_INGEST_SECRET + "-mal", battleId, realReplay);
-
-    expect(result.status).toBe("completed");
-    expect(result.replay?.ingested).toBe(false);
-    expect(existsSync(replayPath(rs.dir, battleId))).toBe(false);
-  });
-
-  it("modo estricto + credencial incorrecta: la batalla se reporta FALLIDA, no como éxito silencioso", async () => {
-    const battleId = "battle_" + randomUUID();
-    const realReplay = await recordRealReplay(battleId);
-    const rs = await startRealReplayService(B8_INGEST_SECRET);
-    closeReal = rs.close;
-    const engine = await startFakeEngine(() => ({
-      status: 200,
-      body: { result: realReplay.result, replay: realReplay, postures: {} },
-    }));
-    closeEngine = engine.close;
-    const bot = await seedSignedBot("bot_b8_estricto");
-    const launcher = createHttpBattleRunLauncher({
-      engineUrl: engine.url,
-      sharedSecret: "s",
-      db: h.db,
-      replayServiceUrl: rs.url,
-      replayIngestSecret: "credencial-que-no-es",
-      replayIngestRequired: true,
-    });
-    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
-    expect(result.status).toBe("failed");
-    expect(existsSync(replayPath(rs.dir, battleId))).toBe(false);
-  });
-
-  it("replayIngestEnvConfig resuelve la credencial del entorno (fichero con precedencia)", () => {
+describe("V1 REPLAYS PR-4b · sin credencial de ingesta", () => {
+  it("replayIngestEnvConfig ignora REPLAY_INGEST_SECRET[_FILE]: no existe ingesta a la que autenticarse", () => {
     const dir = mkdtempSync(join(tmpdir(), "b8-env-"));
     const file = join(dir, "s.txt");
     writeFileSync(file, "  del-fichero\n", "utf8");
-    expect(
-      replayIngestEnvConfig({
-        REPLAY_SERVICE_URL: "http://x:1",
-        REPLAY_INGEST_SECRET: "de-la-var",
-      } as NodeJS.ProcessEnv).replayIngestSecret,
-    ).toBe("de-la-var");
-    expect(
-      replayIngestEnvConfig({
-        REPLAY_SERVICE_URL: "http://x:1",
-        REPLAY_INGEST_SECRET_FILE: file,
-        REPLAY_INGEST_SECRET: "de-la-var",
-      } as NodeJS.ProcessEnv).replayIngestSecret,
-    ).toBe("del-fichero");
-    expect(replayIngestEnvConfig({} as NodeJS.ProcessEnv).replayIngestSecret).toBeUndefined();
+    const cfg = replayIngestEnvConfig({
+      REPLAY_SERVICE_URL: "http://x:1",
+      REPLAY_INGEST_SECRET_FILE: file,
+      REPLAY_INGEST_SECRET: "de-la-var",
+    } as NodeJS.ProcessEnv) as Record<string, unknown>;
+    expect(cfg).toEqual({ replayServiceUrl: "http://x:1", replayIngestRequired: false, replayIngestTimeoutMs: 10000 });
+    expect(JSON.stringify(cfg)).not.toMatch(/del-fichero|de-la-var/);
   });
 });

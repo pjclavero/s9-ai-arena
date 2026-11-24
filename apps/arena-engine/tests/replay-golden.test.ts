@@ -8,12 +8,20 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { zstdCompressSync } from "node:zlib";
 import { join } from "node:path";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleConfig } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
-import { fromJsonl, record, toJsonl, verify } from "../src/replay.js";
+import { record, verify } from "../src/replay.js";
+import { readS9rReplay, writeS9rReplay } from "../../replay-service/src/testing/s9r-fixture.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+/** V1 REPLAYS PR-4b · round-trip por S9R/1 (el formato real en disco), no por JSONL. */
+async function s9rRoundTrip(r: any): Promise<any> {
+  return readS9rReplay((await writeS9rReplay(mkdtempSync(joinPath(tmpdir(), "s9r-rt-")), r)).path);
+}
+
 import {
   ctfArena,
   emptyArena,
@@ -220,10 +228,10 @@ describe("replays (T2.6)", () => {
     expect(v.recomputedResult.score).toEqual(v.officialResult.score);
   }, 60_000);
 
-  it("el replay sobrevive a la serialización JSONL sin perder nada", async () => {
+  it("el replay sobrevive a la grabación S9R/1 sin perder nada", async () => {
     const replay = await record(config(), attach);
-    const jsonl = toJsonl(replay);
-    const parsed = fromJsonl(jsonl);
+    const parsed = await s9rRoundTrip(replay);
+    expect(parsed).toEqual(replay);
 
     expect(parsed.header.seed).toBe(replay.header.seed);
     expect(parsed.commands.length).toBe(replay.commands.length);
@@ -297,19 +305,17 @@ describe("replays (T2.6)", () => {
   }, 60_000);
 
   it("el tamaño de una batalla de 5 minutos se mantiene bajo el umbral (< 5 MB)", async () => {
-    // El umbral de la DoD se mide sobre lo que REALMENTE se almacena. El formato de
-    // replay es JSONL + zstd (T2.6), así que medir el JSONL en crudo mediría un
-    // artefacto que no existe en disco. Se comprime, y se mide lo comprimido.
+    // El umbral de la DoD se mide sobre lo que REALMENTE se almacena: S9R/1 (receta + vista,
+    // fragmentos comprimidos con zstd o gzip). Se mide el tamaño de los dos ficheros publicados.
     const replay = await record({ ...config(), ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 9000 }) }, attach);
-    const jsonl = toJsonl(replay);
-    const raw = Buffer.byteLength(jsonl, "utf8") / 1024 / 1024;
-    const compressed = zstdCompressSync(Buffer.from(jsonl)).length / 1024 / 1024;
-
+    const raw = Buffer.byteLength(JSON.stringify(replay), "utf8") / 1024 / 1024;
+    const fx = await writeS9rReplay(mkdtempSync(joinPath(tmpdir(), "s9r-size-")), replay);
+    const stored = fx.bytes / 1024 / 1024;
     console.log(
       `  replay de ${replay.result.ticks} ticks: ${raw.toFixed(2)} MB en crudo → ` +
-        `${compressed.toFixed(2)} MB con zstd (ratio ${(raw / compressed).toFixed(1)}x)`,
+        `${stored.toFixed(2)} MB en S9R/1 (ratio ${(raw / stored).toFixed(1)}x)`,
     );
-    expect(compressed).toBeLessThan(5);
+    expect(stored).toBeLessThan(5);
   }, 120_000);
 
   it("un replay de CTF reproduce la captura exacta", async () => {

@@ -4,17 +4,25 @@
  *
  *   arena-engine run --seed <s> [--ruleset id] [--map mvp|ctf|empty] [--ticks N]
  *   arena-engine run --config <archivo.json>
- *   arena-engine verify <replay.jsonl>
+ *   arena-engine run ... --out <directorio>   (graba el replay en S9R/1: <id>.1.s9r + .s9v)
+ *   arena-engine verify <receta.s9r>
  *   arena-engine deps
  *
  * Todo lo que hace la CI se puede reproducir a mano desde aquí: es la diferencia entre
  * un motor auditable y una caja negra.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { loadRuleset, safeLookup, TICK_DT } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleConfig } from "./sim/battle.js";
 import { initPhysics } from "./sim/physics.js";
-import { fromJsonl, record, toJsonl, verify } from "./replay.js";
+import { record } from "./replay.js";
+// V1 REPLAYS PR-4b · el replay de la CLI es S9R/1 (el formato real en disco; JSONL retirado). El
+// formato vive en apps/replay-service: se carga con import() SÓLO en los subcomandos que lo usan
+// (`run --out`, `verify`), para que `deps` y `run` sin replay no dependan de él. La imagen
+// arena-engine lo copia igualmente (infrastructure/docker/arena-engine/Dockerfile); lo comprueba
+// infrastructure/tests/image-entry-imports.test.ts.
+const replayFile = () => import("../../replay-service/src/s9r/replay-file.js");
+const recipeVerify = () => import("../../replay-service/src/recipe-verify.js");
 import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoadout } from "./fixtures.js";
 import { CircleBot, ForwardBot, HunterBot, IdleBot } from "./stubs.js";
 import { createInspector, type Inspector } from "./inspector.js";
@@ -127,9 +135,11 @@ async function cmdRun(): Promise<void> {
       throw new Error("--inspect y --speed no son compatibles con --out (grabación de replay)");
     }
     const replay = await record(config, attach);
-    writeFileSync(out, toJsonl(replay));
+    mkdirSync(out, { recursive: true });
+    const { writeS9rReplay } = await replayFile();
+    const fx = await writeS9rReplay(out, replay, { validate: true });
     report(replay.result, performance.now() - t0);
-    console.log(`  replay escrito en ${out}`);
+    console.log(`  replay escrito en ${fx.path} (+ ${fx.viewPath})`);
     return;
   }
 
@@ -179,12 +189,12 @@ function report(result: any, ms: number): void {
 
 async function cmdVerify(file: string): Promise<void> {
   await initPhysics();
-  const replay = fromJsonl(readFileSync(file, "utf8"));
-  const v = await verify(replay);
+  const { verifyRecipePath } = await recipeVerify();
+  const { verification: v, header } = await verifyRecipePath(file);
 
   console.log(`\nverificación de ${file}`);
-  console.log(`  batalla        ${replay.header.battleId} · semilla ${replay.header.seed}`);
-  console.log(`  motor grabado  ${replay.header.versions.engine} · ${replay.header.versions.physics}`);
+  console.log(`  batalla        ${header.battleId} · semilla ${header.seed}`);
+  console.log(`  motor grabado  ${header.versions.engine} · ${header.versions.physics}`);
   console.log(`  hash oficial   ${v.officialHash}`);
   console.log(`  hash recalcul. ${v.recomputedHash}`);
 

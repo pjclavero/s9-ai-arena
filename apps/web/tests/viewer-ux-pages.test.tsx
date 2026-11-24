@@ -27,7 +27,6 @@ const INDEX = {
   snapshotCount: 1,
   keyframes: [{ tick: 0, snapshotIndex: 0 }],
   result: { winner: "red", ticks: 600, score: { red: 1, blue: 0 }, finalStateHash: "x" },
-  debugOpen: false,
   roster: ROSTER,
 };
 

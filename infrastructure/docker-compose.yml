@@ -422,7 +422,7 @@ services:
     volumes:
       # B7 · ESCRITURA, y justificado por el código: finishBattle
       # (apps/tournament-worker/src/battle-runner.ts) llama a
-      # `ingestReplay(replaysDir, …)` y guarda la ruta devuelta en
+      # `publishPair` (S9R/1, ReplayRecorder) en replaysDir y guarda la ruta en
       # battles.replay_ref. El servicio declaraba REPLAYS_DIR=/data/replays
       # desde siempre pero NO montaba el volumen: escribía en el sistema de
       # ficheros efímero del contenedor y la API (otro contenedor) nunca

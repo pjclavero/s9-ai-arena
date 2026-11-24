@@ -39,6 +39,7 @@ import {
 } from "../../arena-engine/src/sim/battle.js";
 import type { ReplaySink } from "../../arena-engine/src/sim/replay-sink.js";
 import { ReplayRecorder, type ClosedRecording, type RecorderOptions } from "../../replay-service/src/s9r/recorder.js";
+import { completenessProblems } from "../../replay-service/src/s9r/completeness.js";
 import type { S9rFs } from "../../replay-service/src/s9r/io.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
@@ -478,6 +479,13 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         );
       }
       if (recorder) {
+        // V1 REPLAYS PR-4b · H-4b-1 · puerta de completitud (la de la ingesta retirada) ANTES de
+        // cerrar y publicar: cabecera, checksum del mapa, versiones y contenido no vacío. Un replay
+        // incompleto es un FALLO TÉCNICO (la batalla no llega a `finishBattle`), nunca deportivo.
+        const problems = completenessProblems({ ...recorder.content, finalStateHash: result.finalStateHash });
+        if (problems.length) {
+          throw new InfrastructureFailure("storage_unavailable", `replay_incomplete: ${problems.join("; ")}`);
+        }
         try {
           recording = await recorder.finish(result as unknown as Record<string, unknown>);
         } catch (err) {

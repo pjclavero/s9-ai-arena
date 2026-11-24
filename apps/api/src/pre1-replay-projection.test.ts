@@ -507,7 +507,9 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
     const player = new ReplayPlayer(httpReplaySource("", B.bcast, fetchImpl));
     await player.init(0);
     expect(player.index!.ticks).toBe(base.result.ticks);
-    expect(player.debugOpen).toBe(false);
+    // V1 REPLAYS PR-4b · la capa de depuración no existe: ni en el reproductor ni en el índice.
+    expect("debugOpen" in (player as unknown as Record<string, unknown>)).toBe(false);
+    expect(player.index as unknown as Record<string, unknown>).not.toHaveProperty("debugOpen");
     expect(player.index!.world?.widthM).toBeGreaterThan(0);
     expect(player.index!.roster?.length).toBe(base.header.participants.length);
     // Salto temporal por keyframe y reproducción hasta el final a 8×.
@@ -552,12 +554,12 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
   });
 });
 
-// ======================================================= depuración abierta (debugOpen)
-describe("PRE-1 · `debugOpen` no abre los comandos a quien no tiene el crudo", () => {
-  // V1 REPLAYS PR-4 · S9R/1 no tiene `debugOpen` (el worker nunca lo activó: no hay comandos en
-  // ningún segmento). Calibración equivalente de los negativos de abajo: la radio secreta SÍ está
-  // en la receta cruda que recibe el moderator (no es un 0 = 0), y ni su índice abre la depuración.
-  it("calibración: la receta cruda del moderator lleva los comandos con la radio; el índice nunca abre la depuración", async () => {
+// ======================================== capa de depuración (debugOpen) RETIRADA · PR-4b
+describe("PRE-1 · la capa de depuración (`debugOpen`) no existe: ningún índice ni segmento la expone", () => {
+  // V1 REPLAYS PR-4b · `debugOpen` RETIRADO por decisión del operador (cambio de contrato: el campo
+  // desaparece del índice). Calibración de los negativos de abajo: la radio secreta SÍ está en la
+  // receta cruda que recibe el moderator (no es un 0 = 0), y ni su índice anuncia la capa.
+  it("calibración: la receta cruda del moderator lleva los comandos con la radio; el índice no tiene debugOpen", async () => {
     const raw = await getBinary(on, "moderator", `/replays/${B.dbg}`);
     expect(raw.status).toBe(200);
     const local = join(dir, `dl-${B.dbg}.s9r`);
@@ -567,17 +569,17 @@ describe("PRE-1 · `debugOpen` no abre los comandos a quien no tiene el crudo", 
     expect(JSON.stringify(commands)).toContain(RADIO_SECRET);
     const index = await get(on, "moderator", `/replays/${B.dbg}/index`);
     expect(index.status).toBe(200);
-    expect(index.body.debugOpen).toBe(false);
+    expect(index.body).not.toHaveProperty("debugOpen");
     const seg = await get(on, "moderator", `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
     expect(seg.body.commands).toBeUndefined();
   });
 
   for (const actor of ["anon", "S", "A", "C", "organizer"] as const) {
-    it(`flag on · ${actor}: índice con debugOpen=false y segmento sin comandos`, async () => {
+    it(`flag on · ${actor}: índice SIN debugOpen y segmento sin comandos`, async () => {
       const index = await get(on, actor, `/replays/${B.dbg}/index`);
       const seg = await get(on, actor, `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
       expect([index.status, seg.status]).toEqual([200, 200]);
-      expect(index.body.debugOpen).toBe(false);
+      expect(index.body).not.toHaveProperty("debugOpen");
       expect(seg.body.commands).toBeUndefined();
       assertClean(`index dbg ${actor}`, index.body);
       assertClean(`segment dbg ${actor}`, seg.body);
@@ -646,7 +648,7 @@ describe("PRE-1 · proyección pura: lista blanca + saneado a cualquier profundi
     expect(s).not.toHaveProperty("observations");
   });
 
-  it("projectIndex y projectReplayDocument: sin almacén ni receta, debugOpen siempre false", () => {
+  it("projectIndex y projectReplayDocument: sin almacén ni receta, y un debugOpen:true de entrada no sale", () => {
     const idx = projectIndex(
       {
         battleId: "b1",
@@ -663,7 +665,7 @@ describe("PRE-1 · proyección pura: lista blanca + saneado a cualquier profundi
       { world: { widthM: 10, heightM: 10, seed: SEED }, roster: [{ id: "v", botId: "b", team: "red" }] },
     );
     assertClean("index hostil", idx);
-    expect(idx.debugOpen).toBe(false);
+    expect(idx).not.toHaveProperty("debugOpen");
     const doc = projectReplayDocument(
       {
         header: { battleId: "b1", seed: SEED, participants: [{ spec: { modules: ["mine.explosive@1"] } }] },

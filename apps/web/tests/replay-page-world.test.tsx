@@ -24,7 +24,6 @@ const INDEX: ReplayIndexData = {
   snapshotCount: 1,
   keyframes: [{ tick: 0, snapshotIndex: 0 }],
   result: { winner: "draw", ticks: 30, score: {}, finalStateHash: "x" },
-  debugOpen: false,
   roster: [{ id: "veh_1", botId: "b1", team: "red", name: "Tanque Rojo" }],
   world: WORLD,
 };

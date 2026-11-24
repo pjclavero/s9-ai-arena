@@ -3,6 +3,10 @@
  * velocidad 0,5×–8×, salto por barra temporal usando los KEYFRAMES del índice y
  * enlaces compartibles con tick inicial (?t=1234).
  *
+ * V1 REPLAYS PR-4b · la capa de DEPURACIÓN del replay (`debugOpen` + `commandsAt`, comandos de
+ * los bots en el visor) está RETIRADA por decisión del operador: S9R/1 nunca sirve comandos al
+ * visor y el reproductor ya no guarda ni expone ninguno, aunque una fuente se los mande.
+ *
  * Igual que el directo: lógica pura sin Phaser ni fetch global — la fuente de
  * datos se inyecta (ReplaySource), así el MISMO reproductor se prueba con vitest
  * contra el replay-service HTTP real (supertest) y corre en el navegador con fetch.
@@ -19,7 +23,6 @@ export interface ReplayIndexData {
   snapshotCount: number;
   keyframes: { tick: number; snapshotIndex: number }[];
   result: { winner: string; ticks: number; score: Record<string, number>; finalStateHash: string };
-  debugOpen: boolean;
   /**
    * R3.4 · Nómina pública opcional (id de vehículo → bot). Si el índice del replay
    * la trae, el reproductor pinta sprite por chasis y NOMBRE en vez del UUID; si no,
@@ -43,8 +46,6 @@ export interface ReplaySegment {
   fromKeyframeTick: number;
   snapshots: any[];
   events: any[];
-  /** Solo presente si el dueño abrió la depuración del replay (debugOpen). */
-  commands?: any[];
 }
 
 /** Fuente de datos del reproductor: el replay-service (HTTP) o un stub en tests. */
@@ -104,7 +105,6 @@ export class ReplayPlayer {
   /** Timeline descargada, ordenada y deduplicada por tick. */
   private snapshots: any[] = [];
   private events: any[] = [];
-  private commands: any[] = [];
   /** Trozos de timeline ya descargados (tick / CHUNK_TICKS). Sin huecos ocultos. */
   private loadedChunks = new Set<number>();
   /** Playhead en ticks de juego (fraccional para velocidades no enteras). */
@@ -134,16 +134,6 @@ export class ReplayPlayer {
 
   get finished(): boolean {
     return this.index !== null && this.playhead >= this.index.ticks;
-  }
-
-  get debugOpen(): boolean {
-    return this.index?.debugOpen === true;
-  }
-
-  /** Comandos grabados visibles en el tick actual (capa de depuración del replay). */
-  commandsAt(tick: number): any[] {
-    if (!this.debugOpen) return [];
-    return this.commands.filter((c) => c.tick === tick);
   }
 
   play(): void {
@@ -236,12 +226,6 @@ export class ReplayPlayer {
     const haveEv = new Set(this.events.map(evKey));
     for (const e of seg.events) if (!haveEv.has(evKey(e))) this.events.push(e);
     this.events.sort((a, b) => a.tick - b.tick);
-
-    if (seg.commands) {
-      const haveCmd = new Set(this.commands.map((c) => `${c.tick}:${c.vehicleId}`));
-      for (const c of seg.commands) if (!haveCmd.has(`${c.tick}:${c.vehicleId}`)) this.commands.push(c);
-      this.commands.sort((a, b) => a.tick - b.tick);
-    }
   }
 
   private snapshotAtOrBefore(tick: number): any | null {

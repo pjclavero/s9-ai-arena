@@ -56,10 +56,10 @@ Estados: «cargando…» → «inicializando visor…» → «reproduciendo» �
 
 ## Cuánto se conservan
 
-Los replays de las batallas oficiales de torneo se conservan siempre. Los de las batallas de práctica son **temporales**: su ficha los da por caducados a los 7 días y la plataforma puede limpiarlos pasado ese tiempo. Si un replay de práctica te importa, míralo pronto.
+Los replays de las batallas oficiales de torneo se conservan siempre. Los de las batallas de práctica están pensados como **temporales**: hoy no se borra ninguno, pero la plataforma podrá limpiarlos en el futuro. Si un replay de práctica te importa, míralo pronto.
 
 ## Para depurar tu bot
 
-El replay es la mejor forma de ver **qué hizo tu código de verdad**. Junto con el campo `debug` de tus órdenes (se guarda en el fichero completo del replay, que sólo recibes si todos los bots de la batalla son tuyos: para depurar, enfréntalo a bots tuyos) y el [diagnóstico](statistics.md#diagnóstico-de-tus-bots) de la batalla, es la base para mejorar: [Probar tu bot](bots/probar.md).
+El replay es la mejor forma de ver **qué hizo tu código de verdad**. El reproductor **no muestra las órdenes** de los bots: la antigua capa de depuración del replay (abrir los comandos en el visor) se ha retirado y no se puede activar. Junto con el campo `debug` de tus órdenes (se guarda en el fichero completo del replay, que sólo recibes si todos los bots de la batalla son tuyos: para depurar, enfréntalo a bots tuyos) y el [diagnóstico](statistics.md#diagnóstico-de-tus-bots) de la batalla, es la base para mejorar: [Probar tu bot](bots/probar.md).
 
 Siguiente: [Estadísticas](statistics.md).

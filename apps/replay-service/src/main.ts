@@ -4,7 +4,7 @@
  * V1 REPLAYS PR-4 · el servicio ya NO sirve ni ingiere replays: el worker publica S9R/1
  * directamente en el volumen y la API los lee por fragmentos (TD-004: /api/v1/replays). Las
  * rutas antiguas (`/replays*`, `/retention/sweep`) leían y escribían el formato JSONL anterior
- * (corte D-OP-30) y NO se montan en producción; su código, sólo para tests, se retira en PR-4b.
+ * (corte D-OP-30); su código (server.ts, store.ts, segment.ts, auth.ts) se RETIRÓ en PR-4b.
  * Quedan `/healthz` y `/version`, y el preflight del volumen (el janitor de PR-6 vivirá aquí).
  */
 import express from "express";

@@ -57,19 +57,20 @@ reales es un paso de <host-arena>.
 | `ARENA_NETWORK` | `arena` | red Docker de los bots. **Debe llamarse EXACTAMENTE `arena`** (lo exige `compliance.mjs`); el Compose la declara con `name: arena`. |
 | `ENGINE_HOST` | `arena-engine` | host del ProtocolServer alcanzable desde `ARENA_NETWORK` (por IP si los bots no tienen DNS). |
 | `SMOKE_BOT_DIGEST` | — (**obligatoria**) | imagen del `s9-smoke-bot` fijada por **repo digest** `name@sha256:…` (nunca tag, nunca placeholder, nunca Image ID pelado). |
-| `SMOKE_TICKS`/`SMOKE_SEED`/`SMOKE_MAP`/`SMOKE_TIMEOUT_MS`/`REPLAY_OUT` | ver script | parámetros de la batalla y ruta del replay. |
-| `REPLAY_SERVICE_URL` | — (opcional, R7) | si se define, el replay se **ingesta** en el replay-service (`POST /replays/:battleId`) → recurso gestionado, recuperable por `GET /replays/{battleId}` y visible en el visor (`#/replay/<battleId>`). Sin él, solo se escribe a disco. |
+| `SMOKE_TICKS`/`SMOKE_SEED`/`SMOKE_MAP`/`SMOKE_TIMEOUT_MS` | ver script | parámetros de la batalla. |
+| `REPLAY_OUT_DIR` | `/data/replays/e2e-real-smoke` | directorio donde se publica el replay en **S9R/1** (`<battleId>.1.s9r` + `.s9v`). |
+| `REPLAY_VERIFY_REQUIRED` (o el antiguo `REPLAY_INGEST_REQUIRED`) | — | `1`: un replay que no verifica (re-simulación de la receta) hace FALLAR el resultado operativo. |
 
-### R7 · replay real como recurso gestionado
+### Replay real (V1 REPLAYS PR-4b)
 
-El arnés ya escribe el replay a disco (`REPLAY_OUT`). Con **`REPLAY_SERVICE_URL`** (p. ej.
-`http://replay-service:8083` desde la red `platform`, o `http://127.0.0.1:8083` si el
-replay-service publica el puerto) hace además `POST /replays/:battleId` con el MISMO JSONL:
-el servicio valida `header.battleId`, lo almacena+indexa y queda disponible en el visor
-existente. La ingesta es **best-effort**: si falla, la batalla no se invalida — el CLI
-reporta `ingested`/`ingestStatus` en su JSON de resultado. Pendiente (no bloqueante): en
-el despliegue <host-arena> el replay-service no publica el puerto por defecto; para ingestar desde
-el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
+El arnés publica el replay con el MISMO grabador que el worker (`ReplayRecorder` + `publishPair`,
+receta y vista con prueba de cierre) y lo verifica re-simulando la receta por fragmentos
+(`verifyRecipePath`); el CLI reporta `replayPath` y `verified` en su JSON de resultado.
+
+La **ingesta HTTP en el replay-service** (`REPLAY_SERVICE_URL`, `POST /replays/:battleId` con
+JSONL, R7/R7-A) está **RETIRADA**: el replay-service ya no acepta replays y el único camino que
+publica replays visibles en la plataforma es el tournament-worker (ver
+[docs/technical/battles.md](../../technical/battles.md)). `REPLAY_SERVICE_URL` ya no tiene efecto.
 
 ## Troubleshooting (bugs reales encontrados en <host-arena>, 2026-07-18)
 
