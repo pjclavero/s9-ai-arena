@@ -98,6 +98,9 @@ describe("V1 política · /auth/reset", () => {
     expect((await reset(COMUN)).status).toBe(400);
     expect((await reset(u.email)).status).toBe(400);
     expect(await estado(token)).toBeNull();
+    // la política se evalúa antes de mirar el token: con un token inventado también es 400, no 401
+    const inventado = await request(app).post("/auth/reset").send({ token: "inventado", newPassword: LARGA });
+    expect(inventado.status).toBe(400);
     expect((await reset("ab".repeat(64))).status).toBe(204);
     expect(await estado(token)).not.toBeNull();
   });
