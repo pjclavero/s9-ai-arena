@@ -1365,7 +1365,8 @@ const m025_user_status_recovery: Migration = {
         ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
       ALTER TABLE password_resets
         ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
-        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL;
+        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN reset_two_factor boolean NOT NULL DEFAULT false;
       CREATE UNIQUE INDEX password_resets_token_hash_uq ON password_resets (token_hash);
       CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
 
@@ -1512,7 +1513,7 @@ const m025_user_status_recovery: Migration = {
       $ig$;
       DROP INDEX password_resets_user_open_idx;
       DROP INDEX password_resets_token_hash_uq;
-      ALTER TABLE password_resets DROP COLUMN created_by, DROP COLUMN created_at;
+      ALTER TABLE password_resets DROP COLUMN reset_two_factor, DROP COLUMN created_by, DROP COLUMN created_at;
       ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
       ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
     `);

@@ -39,7 +39,9 @@ describe("migración 025_user_status_recovery", () => {
     const names = MIGRATIONS.map((m) => m.name);
     expect(names[names.indexOf(NAME) - 1]).toBe("024_replay_artifacts");
     expect(await cols("users")).toEqual(expect.arrayContaining(["status", "blocked_at", "blocked_by"]));
-    expect(await cols("password_resets")).toEqual(expect.arrayContaining(["created_at", "created_by"]));
+    expect(await cols("password_resets")).toEqual(
+      expect.arrayContaining(["created_at", "created_by", "reset_two_factor"]),
+    );
   });
 
   it("MIG025_ESTADO_COHERENTE: la cuenta nace activa; el estado es cerrado y va de la mano de blocked_at", async () => {
@@ -112,6 +114,7 @@ describe("migración 025_user_status_recovery", () => {
     expect(warn.detail.blockedAccountsUnblocked).toBeGreaterThanOrEqual(1);
     expect(await cols("users")).not.toContain("status");
     expect(await cols("password_resets")).not.toContain("created_by");
+    expect(await cols("password_resets")).not.toContain("reset_two_factor");
     // la vuelta atrás restaura la columna y la guarda original (segundo admin) de la 023
     expect(await cols("admin_operations")).toContain("requires_second_admin");
     const [irrev] = await h

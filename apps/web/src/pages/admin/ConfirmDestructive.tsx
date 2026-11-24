@@ -8,7 +8,7 @@
  * La autorización real la hace la API (token, frase y reautenticación; la confirma el mismo admin): esto
  * sólo evita errores humanos y no autoriza nada.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Field, FormError, Panel } from "../../ui/primitives.js";
 
 export interface ConfirmImpact {
@@ -43,6 +43,8 @@ export function ConfirmDestructive(props: {
   /** Fallo de la última confirmación (se pinta en el propio componente). */
   error?: unknown;
   busy?: boolean;
+  /** Opciones propias de la acción (p. ej. una casilla), bajo el impacto. */
+  children?: ReactNode;
   onConfirm: (c: ConfirmCredentials) => void | Promise<void>;
   onCancel: () => void;
 }) {
@@ -61,6 +63,7 @@ export function ConfirmDestructive(props: {
       <p data-testid="confirm-impact-summary">
         <strong>Impacto:</strong> {props.impact.summary}
       </p>
+      {props.children}
       {counts.length > 0 && (
         <ul data-testid="confirm-impact-counts">
           {counts.map(([k, v]) => (

@@ -69,6 +69,7 @@ export function UsersPage(props: { me: Me }) {
   const [notice, setNotice] = useState("");
   const [action, setAction] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resetTwoFactor, setResetTwoFactor] = useState(false);
   const [issued, setIssued] = useState<IssuedToken | null>(null);
   const [rolesDraft, setRolesDraft] = useState<{ id: string; roles: string[]; original: string[] } | null>(null);
 
@@ -153,12 +154,13 @@ export function UsersPage(props: { me: Me }) {
         const r = await api<{ token: string; expiresAt: string; userId: string }>(
           "POST",
           `/admin/users/${a.user.id}/recovery-token`,
-          reauth,
+          { ...reauth, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) },
           { reauth: true },
         );
         setIssued({ ...r, label: a.user.email });
       }
       setAction(null);
+      setResetTwoFactor(false);
       setRolesDraft(null);
       reload(applied);
     } catch (e) {
@@ -204,7 +206,10 @@ export function UsersPage(props: { me: Me }) {
       title: `Emitir un token de recuperación para ${action.user.email}`,
       impact: {
         summary:
-          "Se genera un token de un solo uso (30 min) que anula los anteriores. Quien lo tenga fijará la contraseña de la cuenta y se cerrarán sus sesiones. Se muestra una sola vez.",
+          "Se genera un token de un solo uso (30 min) que anula los anteriores. Quien lo tenga fijará la contraseña de la cuenta y se cerrarán sus sesiones. Se muestra una sola vez." +
+          (resetTwoFactor
+            ? " Al canjearlo también se DESACTIVARÁ la 2FA de la cuenta (se borran el secreto y los códigos de recuperación)."
+            : " La 2FA de la cuenta se conserva."),
         counts: {},
       },
       phrase,
@@ -265,9 +270,22 @@ export function UsersPage(props: { me: Me }) {
           onConfirm={onConfirm}
           onCancel={() => {
             setAction(null);
+            setResetTwoFactor(false);
             setActionError(null);
           }}
-        />
+        >
+          {action!.kind === "token" && action!.user.twoFactorEnabled && (
+            <label>
+              <input
+                type="checkbox"
+                data-testid="reset-two-factor"
+                checked={resetTwoFactor}
+                onChange={(e) => setResetTwoFactor(e.target.checked)}
+              />{" "}
+              Restablecer también la 2FA (la persona perdió el móvil y los códigos)
+            </label>
+          )}
+        </ConfirmDestructive>
       )}
 
       {items.length === 0 ? (

@@ -3851,9 +3851,17 @@ components:
       properties:
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true }
+        resetTwoFactor:
+          type: boolean
+          default: false
+          description: >-
+            D-OP-44 · «Restablecer también la 2FA». Por defecto NO. Si es true, AL CANJEAR el token (no al emitirlo) se
+            borran el secreto TOTP y los códigos de recuperación de la cuenta (sirve a quien perdió móvil y códigos,
+            también si es otro admin). Un token anulado no toca la 2FA. Queda en audit_log.
     AdminRecoveryToken:
       type: object
       properties:
+        resetTwoFactor: { type: boolean }
         token: { type: string, x-private: true, description: 'Un solo uso, 30 min; sólo se entrega aquí.' }
         expiresAt: { type: string, format: date-time }
         userId: { type: string, format: uuid }

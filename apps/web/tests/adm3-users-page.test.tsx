@@ -383,3 +383,43 @@ describe("ADM-3 · canje del token (#/reset)", () => {
     expect(screen.queryByTestId("reset-done")).toBeNull();
   });
 });
+
+describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
+  const OP = "POST /admin/users/11111111-1111-4111-8111-111111111111/recovery-token";
+  const reply = () => ({ token: "T-TFA", expiresAt: "2026-11-24T12:30:00.000Z", userId: U1.id });
+
+  it("TFA_CASILLA_DESMARCADA: por defecto NO se envía resetTwoFactor y el impacto dice que la 2FA se conserva", async () => {
+    route({ "GET /admin/users": () => page([U1]), [OP]: reply });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`recover-${U1.id}`));
+    await screen.findByTestId("confirm-destructive");
+    expect((screen.getByTestId("reset-two-factor") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId("confirm-impact-summary").textContent).toMatch(/2FA de la cuenta se conserva/);
+    await confirmWith("RECUPERAR bea@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("recovery-token-card");
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1" });
+  });
+
+  it("TFA_CASILLA_MARCADA: marcada envía resetTwoFactor:true y el impacto avisa de que se desactivará", async () => {
+    route({ "GET /admin/users": () => page([U1]), [OP]: reply });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`recover-${U1.id}`));
+    await screen.findByTestId("confirm-destructive");
+    fireEvent.click(screen.getByTestId("reset-two-factor"));
+    expect(screen.getByTestId("confirm-impact-summary").textContent).toMatch(/DESACTIVARÁ la 2FA/);
+    await confirmWith("RECUPERAR bea@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("recovery-token-card");
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1", resetTwoFactor: true });
+  });
+
+  it("TFA_SIN_CASILLA_SIN_2FA: una cuenta sin 2FA no ofrece la casilla", async () => {
+    route({ "GET /admin/users": () => page([{ ...U1, twoFactorEnabled: false }]) });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`recover-${U1.id}`));
+    await screen.findByTestId("confirm-destructive");
+    expect(screen.queryByTestId("reset-two-factor")).toBeNull();
+  });
+});

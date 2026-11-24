@@ -236,7 +236,7 @@ M = [
     (
         'M32 el canje no cierra las sesiones',
         [
-            (SVC, '      const sessionsRevoked = await revokeAllSessions(t, user.id);\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación', '      const sessionsRevoked = 0;\n      const voided = await voidOpenResets(t, user.id);\n      // La recuperación'),
+            (SVC, '      const sessionsRevoked = await revokeAllSessions(t, user.id);\n      const voided = await voidOpenResets(t, user.id);\n      // Por defecto la recuperación', '      const sessionsRevoked = 0;\n      const voided = await voidOpenResets(t, user.id);\n      // Por defecto la recuperación'),
         ],
         T, 'CANJE_REVOCA_SESIONES',
     ),
@@ -272,7 +272,7 @@ M = [
         'M48 la emisión no es atómica con su auditoría',
         [
             (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      const user = await t("users").where({ id: targetId }).forUpdate()', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      const user = await t("users").where({ id: targetId }).forUpdate()'),
-            (SVC, '      return { token, expiresAt, userId: targetId };\n    }),\n  );\n  return out;', '      return { token, expiresAt, userId: targetId };\n    })(db),\n  );\n  return out;'),
+            (SVC, '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    }),\n  );\n  return out;', '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    })(db),\n  );\n  return out;'),
         ],
         T, 'AUDITORIA_ATOMICA',
     ),
@@ -524,7 +524,7 @@ M = [
     (
         'N9 el token va a la auditoría',
         [
-            (SVC, 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided },', 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided, token },'),
+            (SVC, 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided, resetTwoFactor },', 'detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided, resetTwoFactor, token },'),
         ],
         T, 'TOKEN_EMISION',
     ),
@@ -684,6 +684,61 @@ M = [
         'N32 la guarda de la 025 sin tabla de transiciones',
         [(MIGS, "        IF NOT (\n             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))\n          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))\n          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))\n        ) THEN\n          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';\n        END IF;\n\n        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo", "        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN\n          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN\n            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';\n          END IF;\n          -- (modelo")],
         'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD_ESTADOS',
+    ),
+    (
+        'N34 el canje ignora la marca y nunca restablece la 2FA',
+        [(SVC, 'const twoFactorReset = reset.reset_two_factor === true;', 'const twoFactorReset = false;')],
+        T2, 'TFA_SOLO_AL_CANJEAR',
+    ),
+    (
+        'N35 el canje restablece la 2FA siempre',
+        [(SVC, 'const twoFactorReset = reset.reset_two_factor === true;', 'const twoFactorReset = true;')],
+        T2, 'TFA_POR_DEFECTO_SE_CONSERVA',
+    ),
+    (
+        'N36 emitir con la marca desactiva ya la 2FA',
+        [(SVC, 'const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId, resetTwoFactor });', 'const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId, resetTwoFactor });\n      if (resetTwoFactor) await t("users").where({ id: targetId }).update({ totp_secret: null });')],
+        T2, 'TFA_SOLO_AL_CANJEAR',
+    ),
+    (
+        'N37 un token anulado con marca sí desactiva la 2FA',
+        [(SVC, 'const twoFactorReset = reset.reset_two_factor === true;', 'const twoFactorReset = !!(await t("password_resets").where({ user_id: user.id, reset_two_factor: true }).first("id"));')],
+        T2, 'TFA_TOKEN_ANULADO_NO_TOCA',
+    ),
+    (
+        'N38 el canje no borra los códigos de recuperación',
+        [(SVC, 'update({ totp_secret: null, recovery_codes: null });', 'update({ totp_secret: null });')],
+        T2, 'TFA_SOLO_AL_CANJEAR',
+    ),
+    (
+        'N39 la ruta ignora la marca',
+        [(RU, '{ resetTwoFactor: flag === true }', '{ resetTwoFactor: false }')],
+        T2, 'TFA_SOLO_AL_CANJEAR',
+    ),
+    (
+        'N40 la ruta no valida la marca',
+        [(RU, 'if (flag !== undefined && typeof flag !== "boolean") throw badRequest("resetTwoFactor debe ser booleano");', '')],
+        T2, 'TFA_MARCA_VALIDADA',
+    ),
+    (
+        'N41 el canje no audita el restablecimiento de 2FA',
+        [(SVC, 'action: "auth.two_factor.reset_by_recovery",', 'action: "auth.password.reset_x",')],
+        T2, 'TFA_SOLO_AL_CANJEAR',
+    ),
+    (
+        'N42 la web ignora la casilla',
+        [(PAGE, '{ ...reauth, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) }', '{ ...reauth }')],
+        WEBT, 'TFA_CASILLA_MARCADA',
+    ),
+    (
+        'N43 la web ofrece la casilla a cuentas sin 2FA',
+        [(PAGE, 'action!.kind === "token" && action!.user.twoFactorEnabled && (', 'action!.kind === "token" && (')],
+        WEBT, 'TFA_SIN_CASILLA_SIN_2FA',
+    ),
+    (
+        'N44 la web envía la marca por defecto',
+        [(PAGE, 'setResetTwoFactor] = useState(false);', 'setResetTwoFactor] = useState(true);')],
+        WEBT, 'TFA_CASILLA_DESMARCADA',
     ),
 ]
 

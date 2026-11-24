@@ -34,7 +34,7 @@ Todas las acciones quedan en la **auditoría** con quién las hizo (`admin.user.
 No hay correo: el token se entrega **en persona o por un canal que controle el usuario**.
 
 1. En la fila del usuario, **«Token de recuperación»**, escribe la frase y tu contraseña. Aparece el **token** una sola vez, con su caducidad (**30 minutos**). Si ya había uno vigente, queda anulado. No hay token para tu propia cuenta (usa «Mi cuenta»).
-2. Dáselo al usuario. Él abre **«¿Has olvidado la contraseña?… canjéalo aquí»** en la pantalla de acceso (`#/reset`), pega el token y **elige él su contraseña** (mínimo 12 caracteres): tú nunca la conoces. El token vale **una sola vez**; al canjearlo se **cierran todas sus sesiones**. Si tiene 2FA, sigue necesitando su código para entrar.
+2. Dáselo al usuario. Él abre **«¿Has olvidado la contraseña?… canjéalo aquí»** en la pantalla de acceso (`#/reset`), pega el token y **elige él su contraseña** (mínimo 12 caracteres): tú nunca la conoces. El token vale **una sola vez**; al canjearlo se **cierran todas sus sesiones**. Si tiene 2FA, sigue necesitando su código para entrar, **salvo** que al emitir hayas marcado **«Restablecer también la 2FA»** (casilla visible si la cuenta tiene 2FA; por defecto desmarcada): entonces, al canjear, se desactiva la 2FA y se borran sus códigos (la persona podrá volver a activarla en «Mi cuenta»).
 3. Un token caducado, usado, anulado (por un cambio de roles o de estado de la cuenta) o de una cuenta bloqueada se rechaza siempre con el mismo mensaje.
 
 La **consola** (`reset-password`) es sólo el último recurso, para cuando ningún admin puede entrar: ver [recuperación de cuentas](../operations/account-recovery.md).

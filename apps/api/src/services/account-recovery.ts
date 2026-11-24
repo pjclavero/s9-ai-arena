@@ -221,7 +221,7 @@ export async function setUserStatus(
 export async function createPasswordReset(
   db: Db,
   userId: string,
-  opts: { createdBy?: string | null } = {},
+  opts: { createdBy?: string | null; resetTwoFactor?: boolean } = {},
 ): Promise<string> {
   const token = randomBytes(24).toString("base64url");
   await db("password_resets").insert({
@@ -229,6 +229,7 @@ export async function createPasswordReset(
     token_hash: hashToken(token),
     expires_at: new Date(Date.now() + RECOVERY_TTL_MS),
     created_by: opts.createdBy ?? null,
+    reset_two_factor: opts.resetTwoFactor === true,
   });
   return token;
 }
@@ -237,7 +238,9 @@ export async function issueRecoveryToken(
   db: Db,
   ctx: Ctx,
   targetId: string,
-): Promise<{ token: string; expiresAt: string; userId: string }> {
+  opts: { resetTwoFactor?: boolean } = {},
+): Promise<{ token: string; expiresAt: string; userId: string; resetTwoFactor: boolean }> {
+  const resetTwoFactor = opts.resetTwoFactor === true;
   if (targetId === ctx.actorId) {
     throw badRequest("Para tu propia cuenta usa «Mi cuenta» (cambio de contraseña), no un token de recuperación");
   }
@@ -251,17 +254,17 @@ export async function issueRecoveryToken(
       }
       // Cualquier cuenta (también la de otro admin): lo hace UN admin reautenticado; queda en audit_log.
       const voided = await voidOpenResets(t, targetId);
-      const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId });
+      const token = await createPasswordReset(t, targetId, { createdBy: ctx.actorId, resetTwoFactor });
       const expiresAt = new Date(Date.now() + RECOVERY_TTL_MS).toISOString();
       // El token NUNCA va a la auditoría ni a ningún log.
       await audit(t, {
         actorId: ctx.actorId,
         action: "admin.user.recovery_token_issued",
         target: `user:${targetId}`,
-        detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided },
+        detail: { expiresInMinutes: RECOVERY_TTL_MS / 60_000, previousTokensVoided: voided, resetTwoFactor },
         correlationId: ctx.correlationId,
       });
-      return { token, expiresAt, userId: targetId };
+      return { token, expiresAt, userId: targetId, resetTwoFactor };
     }),
   );
   return out;
@@ -299,18 +302,37 @@ export async function redeemRecoveryToken(
         .whereNull("used_at")
         .where("expires_at", ">", t.fn.now())
         .update({ used_at: t.fn.now() })
-        .returning(["id", "user_id", "created_by"]);
+        .returning(["id", "user_id", "created_by", "reset_two_factor"]);
       if (!reset) throw unauthorized(INVALID_TOKEN);
       if (!user || user.status !== "active") throw unauthorized(INVALID_TOKEN); // deshace el consumo
       await t("users").where({ id: user.id }).update({ password_hash: passwordHash, updated_at: t.fn.now() });
       const sessionsRevoked = await revokeAllSessions(t, user.id);
       const voided = await voidOpenResets(t, user.id);
-      // La recuperación NO toca el 2FA (DoD T7.2): el siguiente login sigue exigiendo TOTP.
+      // Por defecto la recuperación NO toca el 2FA (DoD T7.2): el siguiente login sigue exigiendo TOTP. Sólo si el admin
+      // marcó «restablecer también la 2FA» al emitir, AL CANJEAR se borran el secreto y los códigos de recuperación
+      // (se canjea un token vigente: uno anulado nunca llega aquí). La cuenta sigue siendo la misma: sin guarda de admin.
+      const twoFactorReset = reset.reset_two_factor === true;
+      if (twoFactorReset) {
+        await t("users").where({ id: user.id }).update({ totp_secret: null, recovery_codes: null });
+        await audit(t, {
+          actorId: user.id,
+          action: "auth.two_factor.reset_by_recovery",
+          target: `user:${user.id}`,
+          detail: { issuedBy: reset.created_by ?? null },
+          correlationId: ctx.correlationId,
+        });
+      }
       await audit(t, {
         actorId: user.id,
         action: "auth.password.reset",
         target: `user:${user.id}`,
-        detail: { sessionsRevoked, otherTokensVoided: voided, issuedBy: reset.created_by ?? null, ip: ctx.ip ?? null },
+        detail: {
+          sessionsRevoked,
+          otherTokensVoided: voided,
+          issuedBy: reset.created_by ?? null,
+          twoFactorReset,
+          ip: ctx.ip ?? null,
+        },
         correlationId: ctx.correlationId,
       });
       return { userId: user.id as string };

@@ -541,3 +541,91 @@ describe("ADM-3 · sin segundo admin ni linaje en el contrato", () => {
     expect(c.rows[0].n).toBe(0);
   });
 });
+
+describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
+  const withTotp = async (label: string, roles?: string[]) => {
+    const u = await mkUser(label, roles);
+    await h
+      .db("users")
+      .where({ id: u.id })
+      .update({ totp_secret: "SECRETO-TOTP-DE-PRUEBA", recovery_codes: JSON.stringify(["h1", "h2"]) });
+    return u;
+  };
+  const tfa = async (id: string) => {
+    const r = await h.db("users").where({ id }).first("totp_secret", "recovery_codes");
+    return { secret: r.totp_secret as string | null, codes: r.recovery_codes as unknown };
+  };
+
+  it("TFA_POR_DEFECTO_SE_CONSERVA: sin la marca la 2FA y los códigos siguen igual tras canjear", async () => {
+    const a = await mkAdmin("tf0-a");
+    const u = await withTotp("tf0-u");
+    const r = await issue(await tokenOf(a), u.id);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.resetTwoFactor).toBe(false);
+    expect((await reset(r.body.token)).status).toBe(204);
+    const t = await tfa(u.id);
+    expect(t.secret).toBe("SECRETO-TOTP-DE-PRUEBA");
+    expect(t.codes).toEqual(["h1", "h2"]);
+  });
+
+  it("TFA_SOLO_AL_CANJEAR: con la marca, emitir NO toca la 2FA; canjear borra secreto y códigos y lo audita", async () => {
+    const a = await mkAdmin("tf1-a");
+    const u = await withTotp("tf1-u");
+    const r = await issue(await tokenOf(a), u.id, { password: PW, resetTwoFactor: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.resetTwoFactor).toBe(true);
+    expect((await tfa(u.id)).secret).toBe("SECRETO-TOTP-DE-PRUEBA"); // emitir no desactiva nada
+    expect((await reset(r.body.token)).status).toBe(204);
+    const t = await tfa(u.id);
+    expect(t.secret).toBeNull();
+    expect(t.codes).toBeNull();
+    const rows = await h
+      .db("audit_log")
+      .where("id", ">", auditFloor)
+      .whereIn("action", ["auth.two_factor.reset_by_recovery", "auth.password.reset"]);
+    expect(rows.map((x: { action: string }) => x.action).sort()).toEqual([
+      "auth.password.reset",
+      "auth.two_factor.reset_by_recovery",
+    ]);
+    expect(JSON.stringify(rows)).not.toContain("SECRETO-TOTP-DE-PRUEBA");
+    // y la persona ya entra sin segundo factor con la contraseña nueva
+    const login = await request(app).post("/auth/login").send({ email: u.email, password: NEWPW });
+    expect(login.status, JSON.stringify(login.body)).toBe(200);
+  });
+
+  it("TFA_TOKEN_ANULADO_NO_TOCA: un token con la marca que fue anulado (nuevo token sin marca o bloqueo) no desactiva la 2FA", async () => {
+    const a = await mkAdmin("tf2-a");
+    const u = await withTotp("tf2-u");
+    const ta = await tokenOf(a);
+    const old = (await issue(ta, u.id, { password: PW, resetTwoFactor: true })).body.token as string;
+    const fresh = (await issue(ta, u.id)).body.token as string; // anula el anterior, ya sin marca
+    expect((await reset(old)).status).toBe(401);
+    expect((await tfa(u.id)).secret).not.toBeNull();
+    expect((await reset(fresh)).status).toBe(204);
+    expect((await tfa(u.id)).secret).not.toBeNull(); // el vigente no llevaba marca
+    const u2 = await withTotp("tf2-u2");
+    const t2 = (await issue(ta, u2.id, { password: PW, resetTwoFactor: true })).body.token as string;
+    expect((await setStatus(ta, u2.id, "blocked")).status).toBe(200);
+    await setStatus(ta, u2.id, "active");
+    expect((await reset(t2)).status).toBe(401);
+    expect((await tfa(u2.id)).secret).not.toBeNull();
+  });
+
+  it("TFA_OTRO_ADMIN: también restablece la 2FA de otro admin (la cuenta sigue siendo admin; sin guarda del último)", async () => {
+    const a = await mkAdmin("tf3-a");
+    const b = await withTotp("tf3-b", ["user", "developer", "admin"]);
+    const r = await issue(await tokenOf(a), b.id, { password: PW, resetTwoFactor: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect((await reset(r.body.token)).status).toBe(204);
+    expect((await tfa(b.id)).secret).toBeNull();
+    expect(await hasAdmin(b.id)).toBe(true);
+  });
+
+  it("TFA_MARCA_VALIDADA: resetTwoFactor no booleano es 400 y exige reautenticación como el resto", async () => {
+    const a = await mkAdmin("tf4-a");
+    const u = await mkUser("tf4-u");
+    const ta = await tokenOf(a);
+    expect((await issue(ta, u.id, { password: PW, resetTwoFactor: "yes" })).status).toBe(400);
+    expect((await issue(ta, u.id, { resetTwoFactor: true })).status).toBe(401);
+  });
+});

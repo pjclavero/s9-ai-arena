@@ -75,7 +75,9 @@ export function adminUsersRoutes(db: Db, deps: AdminUsersDeps): Router {
   defineOperation(router, "issueUserRecoveryToken", async (req, res) => {
     await reauth(req);
     const id = userIdParam(req);
-    const r = await issueRecoveryToken(db, ctx(req), id);
+    const flag = (req.body as Record<string, unknown> | undefined)?.resetTwoFactor;
+    if (flag !== undefined && typeof flag !== "boolean") throw badRequest("resetTwoFactor debe ser booleano");
+    const r = await issueRecoveryToken(db, ctx(req), id, { resetTwoFactor: flag === true });
     // El token se muestra UNA vez: nunca se cachea ni se vuelve a poder leer.
     res.setHeader("Cache-Control", "no-store");
     res.status(201).json(r);
