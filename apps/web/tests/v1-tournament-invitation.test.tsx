@@ -38,7 +38,13 @@ function mock() {
     if (method === "GET" && path === "/tournaments/t1") return tournament;
     if (method === "GET" && path === "/tournaments") return { items: [tournament] };
     if (path === "/tournaments/t1/battles") return { items: [] };
-    if (path.startsWith("/bots?ownerId=")) return { items: [{ id: "b1", name: "Rayo", latestPublishedVersion: 1 }] };
+    if (path.startsWith("/bots?ownerId="))
+      return {
+        items: [
+          { id: "b1", name: "Rayo", latestPublishedVersion: 1 },
+          { id: "b3", name: "Trueno", latestPublishedVersion: 1 },
+        ],
+      };
     if (method === "GET" && path === "/bots/b1/versions")
       return [{ version: 1, state: "published", battleEligibility: OK }];
     if (method === "POST" && path === "/tournaments/t1/invitation/check") return check;
@@ -168,6 +174,43 @@ describe("V1 · invitación en la ficha del torneo", () => {
       ],
       invitationToken: TOKEN,
     });
+  });
+
+  it("TIW_REPLACE_FORM sin enlace, el dueño de un bot YA inscrito puede cambiar su versión (sólo esos bots)", async () => {
+    tournament = { ...tournament, viewerEntries: [{ botId: "b1", version: 1 }] };
+    render(<TournamentDetailPage id="t1" me={ME} />);
+    const user = userEvent.setup();
+    const button = await screen.findByRole("button", { name: "Cambiar versión" });
+    expect(screen.getByTestId("entry-replace-only")).toBeTruthy();
+    expect(screen.queryByTestId("entry-invitation-only")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Inscribir" })).toBeNull();
+    expect(screen.getByRole("option", { name: /Rayo/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /Trueno/ })).toBeNull(); // no inscrito: nada de alta nueva
+    expect(posted("/tournaments/t1/invitation/check")).toHaveLength(0);
+    await user.selectOptions(screen.getByLabelText("bot a inscribir"), "b1");
+    await screen.findByLabelText("versión a inscribir");
+    await user.click(button);
+    await waitFor(() => expect(posted("/tournaments/t1/entries")).toHaveLength(1));
+    expect(posted("/tournaments/t1/entries")[0].body).toEqual({ botId: "b1", version: 1 });
+  });
+
+  it("TIW_REPLACE_NOT_ENROLLED sin bots inscritos (o en un torneo por equipos) no hay formulario", async () => {
+    tournament = { ...tournament, viewerEntries: [] };
+    render(<TournamentDetailPage id="t1" me={ME} />);
+    expect(await screen.findByTestId("entry-invitation-only")).toBeTruthy();
+    expect(screen.queryByTestId("entry-form")).toBeNull();
+    cleanup();
+    tournament = {
+      ...tournament,
+      format: "teams",
+      mode: "team_deathmatch",
+      rules: { params: { teamSize: 2 } },
+      viewerEntries: [{ botId: "b1", version: 1 }],
+    };
+    render(<TournamentDetailPage id="t1" me={ME} />);
+    await screen.findByTestId("tournament-state");
+    expect(screen.queryByTestId("entry-form")).toBeNull();
+    expect(screen.queryByTestId("team-entry-form")).toBeNull();
   });
 
   it("TIW_INVALID un enlace revocado no habilita nada y se olvida", async () => {

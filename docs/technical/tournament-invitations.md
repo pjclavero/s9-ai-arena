@@ -61,6 +61,16 @@ En un torneo `invitation`, la API rechaza **toda** inscripción que no presente 
   (decisión del coordinador sobre TI-02). Sólo puede hacerlo el dueño del bot (403 `forbidden` para cualquier
   otro) y siguen aplicándose la elegibilidad y el resto de reglas. Un alta nueva del mismo dueño sí exige el
   enlace. Test: `TI_REPLACE_AFTER_REVOKE`.
+- **En la web** (P2-1 de la revisión de #350), `GET /tournaments/{id}` devuelve, sólo con sesión, `viewerEntries`
+  (bot y versión de las inscripciones de bots **propios**; nunca de otros, `TI_VIEWER_ENTRIES`). Con ellas, en un
+  torneo por invitación sin enlace válido, la ficha ofrece **«Cambiar la versión de tu bot inscrito»** con sólo
+  esos bots y el botón «Cambiar versión»; nunca un alta nueva. Esto vale en los torneos de inscripción bot a bot;
+  en los torneos por equipos con tamaño (NvN) la ficha no tiene formulario bot a bot y no lo ofrece. Tests:
+  `TIW_REPLACE_FORM`, `TIW_REPLACE_NOT_ENROLLED`.
+- **Límite de intentos** (P3-1): la comprobación del invitado y las inscripciones que **presentan** un
+  `invitationToken` comparten un limitador sobre `api_usage` (`tournaments.invitation`, 60 por minuto) por
+  usuario, o por IP sin sesión; al superarlo, 429 `too_many_requests`. Una inscripción sin token no cuenta.
+  Test: `TI_RATE_LIMIT`.
 
 ## El enlace y su token
 
@@ -99,8 +109,11 @@ La gestión es de quien creó el torneo o del staff (`canManageTournament`, #291
 El enlace tiene la forma `<origen>/#/tournaments/<id>/invitation/<token>`.
 
 1. Al abrirlo, el panel (`apps/web/src/tournament-invitation.ts`) guarda el token en `sessionStorage`, que
-   sólo vive en esa pestaña, y **sustituye** la entrada del historial por `#/tournaments/<id>`. El token
-   desaparece de la barra de direcciones y del historial.
+   sólo vive en esa pestaña, y **sustituye** la entrada del historial de la pestaña por `#/tournaments/<id>`.
+   El token desaparece de la barra de direcciones y de esa entrada. Ojo: sólo se reemplaza la **entrada de esta pestaña**. Si el enlace se pegó o se abrió, el historial global
+   del navegador o el autocompletado de la barra pueden conservar la URL con el fragmento, según el navegador,
+   y el enlace sigue en el canal por el que se compartió (correo, chat…). Por eso revocar y regenerar es la
+   medida de fondo.
 2. Sin sesión se ve la **ficha pública** (sólo lectura) y, debajo, el acceso con el aviso «inicia sesión o
    regístrate para inscribirte». Tras **iniciar sesión** o **registrarse**, la misma ruta pinta la ficha del panel.
 3. La ficha comprueba el enlace con `POST /tournaments/{id}/invitation/check` (token en el cuerpo) y sólo

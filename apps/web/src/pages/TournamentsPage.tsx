@@ -19,6 +19,8 @@ export interface Tournament {
   broadcast?: boolean;
   /** V1 · INVITACIÓN · modalidad de inscripción; NO cambia la visibilidad (todo torneo se lista). */
   enrollment?: "open" | "invitation";
+  /** V1 · TI-02 · inscripciones de bots PROPIOS de quien pregunta (sólo en el detalle y con sesión). */
+  viewerEntries?: { botId: string; version: number }[];
   /** ADR-022 · copia de reglas; #287 usa `params.teamSize` (torneos por equipos NvN). */
   rules?: { params?: { teamSize?: number } | null } | null;
   /** #291 · quien pregunta es quien lo creó o staff (lo calcula la API en el detalle). */

@@ -306,6 +306,19 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
 
   /** V1 · TI-01 · sin sesión nunca hay formulario (ficha pública de sólo lectura). */
   const canEnter = (t: Tournament) => props.me !== null && entryFormVisible(t, invite);
+  /**
+   * V1 · TI-02 (P2-1 de la revisión de #350) · sin enlace válido, el DUEÑO de bots YA inscritos en un
+   * torneo por invitación puede cambiar su versión (no es un alta; la API lo permite y aplica las
+   * reglas). Sólo sus bots inscritos (`viewerEntries`, que la API da sólo con sesión y sólo propios),
+   * sólo en la inscripción bot a bot y nunca como alta nueva.
+   */
+  const replaceOnly = (t: Tournament) =>
+    props.me !== null &&
+    t.state === "open" &&
+    t.enrollment === "invitation" &&
+    !entryFormVisible(t, invite) &&
+    teamSizeOfTournament(t) === null &&
+    (t.viewerEntries?.length ?? 0) > 0;
 
   return (
     <div>
@@ -354,7 +367,13 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                 />
               )}
               {/* V1 · INVITACIÓN · la ficha pública de un torneo por invitación NO ofrece inscribirse. */}
-              {t.state === "open" && !canEnter(t) && (props.me || t.enrollment === "invitation") && (
+              {t.state === "open" && replaceOnly(t) && (
+                <p className="note" data-testid="entry-replace-only">
+                  Ya tienes bots inscritos: puedes cambiar la versión de un bot inscrito sin enlace. Para inscribir otro
+                  bot necesitas un enlace de invitación de la organización.
+                </p>
+              )}
+              {t.state === "open" && !canEnter(t) && !replaceOnly(t) && (props.me || t.enrollment === "invitation") && (
                 <p className="note" data-testid="entry-invitation-only">
                   {invite?.status === "checking"
                     ? "Comprobando tu invitación…"
@@ -365,7 +384,7 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                         : "La inscripción en este torneo es por invitación: sólo se puede inscribir quien tenga un enlace de invitación de la organización."}
                 </p>
               )}
-              {t.state === "open" && !canEnter(t) && t.viewerCanManage && (
+              {t.state === "open" && !canEnter(t) && !replaceOnly(t) && t.viewerCanManage && (
                 <p>
                   <button type="button" onClick={onCloseEntries} data-testid="close-entries">
                     Cerrar inscripciones
@@ -388,19 +407,21 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                   </button>
                 </>
               )}
-              {canEnter(t) && teamSizeOfTournament(t) === null && (
+              {(canEnter(t) || replaceOnly(t)) && teamSizeOfTournament(t) === null && (
                 <form onSubmit={onEnter} data-testid="entry-form">
                   <label>
-                    Inscribir bot{" "}
+                    {replaceOnly(t) ? "Cambiar la versión de tu bot inscrito" : "Inscribir bot"}{" "}
                     <select aria-label="bot a inscribir" value={entryBot} onChange={(e) => setEntryBot(e.target.value)}>
                       <option value="">— elige un bot —</option>
                       {ownBots.status === "ready" &&
-                        ownBots.data.items.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name}
-                            {b.latestPublishedVersion ? ` (v${b.latestPublishedVersion})` : ""}
-                          </option>
-                        ))}
+                        ownBots.data.items
+                          .filter((b) => !replaceOnly(t) || (t.viewerEntries ?? []).some((e) => e.botId === b.id))
+                          .map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                              {b.latestPublishedVersion ? ` (v${b.latestPublishedVersion})` : ""}
+                            </option>
+                          ))}
                     </select>
                   </label>{" "}
                   {readyVersions && (
@@ -439,7 +460,7 @@ export function TournamentDetailPage(props: { id: string; me: Me | null }) {
                       loadout); no se crea ninguna versión nueva ni cambia su estado.
                     </p>
                   )}
-                  <button type="submit">Inscribir</button>{" "}
+                  <button type="submit">{replaceOnly(t) ? "Cambiar versión" : "Inscribir"}</button>{" "}
                   {(() => {
                     const chosen =
                       ownBots.status === "ready" ? ownBots.data.items.find((b) => b.id === entryBot) : undefined;

@@ -32,6 +32,7 @@ LIST = "apps/web/src/pages/TournamentsPage.tsx"
 LINK = "apps/web/src/tournament-invitation.ts"
 APP = "apps/web/src/App.tsx"
 PANEL = "apps/web/src/pages/TournamentInvitationPanel.tsx"
+BACCESS = "apps/api/src/battle-access.ts"
 
 
 def _vitest_bin():
@@ -71,7 +72,7 @@ M = [
      API_T, ["TI_REVOKE_IMMEDIATE", "TI_REVOKE_REGENERATE", "TI_REVOKE_TEAM"]),
     ("M6", "un torneo abierto exige invitación (control positivo)", [(SVC,
         '  if (enrollmentOf(t) !== "invitation") return null;', '  if (false) return null;')],
-     API_T, ["TI_OPEN_UNCHANGED", "TI_OPEN_EXISTING"]),
+     API_T, ["TI_OPEN_UNCHANGED", "TI_OPEN_DEFAULT"]),
     ("M7", "la comprobación del invitado da por bueno cualquier token", [(ROUTES,
         '      enrollmentOf(t) === "invitation" && (await validInvitationId(db, String(t.id), invitationToken)) !== null;',
         '      enrollmentOf(t) === "invitation";')],
@@ -82,8 +83,8 @@ M = [
         '      .select("tournaments.*", db.raw(cursorTsSql("tournaments.created_at")))\n      .where("tournaments.enrollment", "open")\n      .orderBy([')],
      API_T, ["TI_LIST_VISIBLE"]),
     ("M9", "la ficha pública filtra la invitación activa (hash)", [(ROUTES,
-        "        viewerCanManage: canManageTournament(req.auth, t),\n      });",
-        "        viewerCanManage: canManageTournament(req.auth, t),\n        invitation: await activeInvitation(db, String(t.id)),\n      });")],
+        "        viewerCanManage: canManageTournament(req.auth, t),\n",
+        "        viewerCanManage: canManageTournament(req.auth, t),\n        invitation: await activeInvitation(db, String(t.id)),\n")],
      API_T, ["TI_LIST_VISIBLE", "TI_TOKEN_PUBLIC_SWEEP"]),
     ("M10", "el token va a audit_log", [(ROUTES,
         "        detail: { invitationId: inv.id, revokedPrevious: revoked },",
@@ -129,7 +130,7 @@ M = [
      MIG_T, ["M026_INVARIANTS"]),
     ("M21", "los torneos existentes nacen por invitación", [(MIGR,
         "ADD COLUMN enrollment text NOT NULL DEFAULT 'open'", "ADD COLUMN enrollment text NOT NULL DEFAULT 'invitation'")],
-     MIG_T, ["M026_INVARIANTS"]),
+     MIG_T, ["M026_INVARIANTS", "M026_PREEXISTING"]),
     # ---------------------------------------------------------------- web
     ("W1", "la ficha ofrece inscribirse sin invitación", [(DETAIL,
         '  return invite?.status === "valid";\n}', "  return true;\n}")],
@@ -221,6 +222,44 @@ M = [
         "            {publicTournamentId && pendingInvitation(publicTournamentId) ? (",
         "            {false ? (")],
      PUB_T, ["TIP_INVITE_ANON"]),
+    # ---------------------------------------------------------------- revisión de #350
+    ("S1", "las batallas de torneos por invitación dejan de ser públicas (mutante del revisor)", [(BACCESS,
+        "  if (isReplayStaff(auth)) return q;\n  return q.where((w: any) => {\n    // Vías 1-4",
+        "  if (isReplayStaff(auth)) return q;\n"
+        "  q = q.whereNotExists(\n"
+        "    db(\"tournaments\").whereRaw(\"tournaments.id = battles.tournament_id\").where(\"tournaments.enrollment\", \"invitation\"),\n"
+        "  );\n"
+        "  return q.where((w: any) => {\n    // Vías 1-4")],
+     API_T, ["TI_PUBLIC_SPECTATOR"]),
+    ("M25", "viewerEntries incluye bots de otros", [(ROUTES,
+        '      .where("bots.owner_id", userId)\n', "")],
+     API_T, ["TI_VIEWER_ENTRIES"]),
+    ("M26", "sin límite de intentos con token", [(ROUTES,
+        "    limitInvitation && req.body?.invitationToken !== undefined ? limitInvitation(req, res, next) : next();",
+        "    false ? limitInvitation!(req, res, next) : next();")],
+     API_T, ["TI_RATE_LIMIT"]),
+    ("M27", "el límite de invitación frena también las inscripciones sin token", [(ROUTES,
+        "    limitInvitation && req.body?.invitationToken !== undefined ? limitInvitation(req, res, next) : next();",
+        "    limitInvitation ? limitInvitation(req, res, next) : next();")],
+     API_T, ["TI_RATE_LIMIT"]),
+    ("M28", "el down de la 026 no quita la columna", [(MIGR,
+        "      ALTER TABLE tournaments DROP COLUMN IF EXISTS enrollment;\n", "")],
+     MIG_T, ["M026_PREEXISTING", "M026_ROLLBACK"]),
+    ("W16", "la sustitución se ofrece a quien no tiene bots inscritos", [(DETAIL,
+        "    (t.viewerEntries?.length ?? 0) > 0;", "    true;")],
+     WEB_T, ["TIW_REPLACE_NOT_ENROLLED", "TIW_NO_FORM"]),
+    ("W17", "el formulario de sustitución ofrece bots no inscritos (alta nueva)", [(DETAIL,
+        ".filter((b) => !replaceOnly(t) || (t.viewerEntries ?? []).some((e) => e.botId === b.id))",
+        ".filter(() => true)")],
+     WEB_T, ["TIW_REPLACE_FORM"]),
+    ("W18", "la web no ofrece la sustitución sin enlace (P2-1)", [(DETAIL,
+        "              {(canEnter(t) || replaceOnly(t)) && teamSizeOfTournament(t) === null && (",
+        "              {canEnter(t) && teamSizeOfTournament(t) === null && (")],
+     WEB_T, ["TIW_REPLACE_FORM"]),
+    ("W19", "la sustitución sin enlace se ofrece también en torneos por equipos", [(DETAIL,
+        "    teamSizeOfTournament(t) === null &&\n    (t.viewerEntries?.length ?? 0) > 0;",
+        "    (t.viewerEntries?.length ?? 0) > 0;")],
+     WEB_T, ["TIW_REPLACE_NOT_ENROLLED"]),
 ]
 
 

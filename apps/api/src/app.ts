@@ -119,6 +119,8 @@ export interface AppConfig {
   systemSettings?: { registry?: SettingsRegistry; env?: NodeJS.ProcessEnv };
   /** ADM-1 · Límite de intentos de `confirmAdminOperation` por admin (por defecto, compartido en BD). */
   adminConfirmLimiter?: RateLimiterLike;
+  /** V1 · INVITACIÓN · comprobación del invitado e inscripciones con token (por usuario o IP). */
+  invitationLimiter?: RateLimiterLike;
   streamingPublicKey?: () => { pem: string; kid: string } | null;
   broadcastBaseUrl?: string;
 }
@@ -234,7 +236,12 @@ export function createApp(cfg: AppConfig): express.Express {
   // PRC (TD-004) · replays para el navegador, con la política única de acceso.
   app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, replaysOn));
   app.use(standingsRoutes(cfg.db));
-  app.use(tournamentRoutes(cfg.db, visibility));
+  app.use(
+    tournamentRoutes(cfg.db, visibility, {
+      invitationLimiter:
+        cfg.invitationLimiter ?? new SharedRateLimiter(cfg.db, "tournaments.invitation", { max: 60, windowMs: 60_000 }),
+    }),
+  );
   app.use(mapRoutes(cfg.db));
   app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), spectateOn, replaysOn));
 

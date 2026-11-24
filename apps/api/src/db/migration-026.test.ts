@@ -75,6 +75,28 @@ describe("migración 026_tournament_invitations", () => {
     expect(await h.db("tournament_invitations").where({ tournament_id: id })).toHaveLength(0);
   });
 
+  it("M026_PREEXISTING filas ANTERIORES a la 026 quedan open y el down deja tournaments idéntico (sonda RM1)", async () => {
+    await rollbackNamed(h.db, NAME);
+    const [t] = await h
+      .db("tournaments")
+      .insert({ name: "pre026", format: "league", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID, state: "open" })
+      .returning("*");
+    expect("enrollment" in t).toBe(false);
+    const before = await h.db("tournaments").orderBy("id");
+    await migrateNamed(h.db, NAME);
+    expect((await h.db("tournaments").where({ id: t.id }).first()).enrollment).toBe("open");
+    const all = (await h.db("tournaments").select("enrollment")) as { enrollment: string }[];
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.every((r) => r.enrollment === "open")).toBe(true);
+    // Con datos propios de la 026, el down deja el resto de columnas y filas tal cual.
+    await h.db("tournaments").where({ id: t.id }).update({ enrollment: "invitation" });
+    await h.db("tournament_invitations").insert({ tournament_id: t.id, token_sha256: "d".repeat(64) });
+    await rollbackNamed(h.db, NAME);
+    expect(await h.db("tournaments").orderBy("id")).toEqual(before);
+    await migrateNamed(h.db, NAME);
+    expect((await h.db("tournaments").where({ id: t.id }).first()).enrollment).toBe("open");
+  });
+
   it("M026_ROLLBACK rollback por nombre quita tabla y columna; se puede volver a aplicar", async () => {
     await rollbackNamed(h.db, NAME);
     expect(await tables()).not.toContain("tournament_invitations");

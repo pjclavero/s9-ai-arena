@@ -24,6 +24,7 @@ import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { createLoadoutRevision } from "./services/bots.js";
+import { SharedRateLimiter } from "./middleware/shared-rate-limit.js";
 import { loadContract } from "./openapi.js";
 import { createPublishedBot, insertScheduledBattle } from "../../tournament-worker/src/testing/fixtures.js";
 
@@ -534,7 +535,8 @@ describe("V1 · torneos por invitación: un torneo abierto no cambia", () => {
     expect((await enterTeam(team, { teamId: tm.teamId, members: members(tm.bots) })).status).toBe(201);
   });
 
-  it("TI_OPEN_EXISTING los torneos anteriores a la migración quedan abiertos", async () => {
+  // (Las filas ANTERIORES a la migración: M026_PREEXISTING en db/migration-026.test.ts.)
+  it("TI_OPEN_DEFAULT un torneo creado sin modalidad (fila directa) queda abierto e inscribe sin token", async () => {
     const [t] = await h
       .db("tournaments")
       .insert({
@@ -674,5 +676,63 @@ describe("V1 · TI-01 · lecturas públicas sin nada privado", () => {
       expect(detail.body.enrollment).toBe(enrollment);
       expect(detail.body.viewerCanManage).toBe(false);
     }
+  });
+});
+
+describe("V1 · TI-02 · la ficha dice al inscrito qué bots suyos están inscritos", () => {
+  it("TI_VIEWER_ENTRIES viewerEntries sólo con sesión y sólo de bots propios", async () => {
+    const { id, token } = await invitationTournament();
+    const mine = await playerBot();
+    expect((await enter(id, { botId: mine, version: 1, invitationToken: token })).status).toBe(201);
+    const other = await newUser("ajeno-ve", "user");
+    const theirs = await createPublishedBot(h.db, `ti-theirs-${++seq}`, { ownerId: other.id });
+    expect((await enter(id, { botId: theirs.botId, version: 1, invitationToken: token }, other.token)).status).toBe(
+      201,
+    );
+    const asPlayer = await request(app).get(`/tournaments/${id}`).set(as(tok.player));
+    expect(asPlayer.body.viewerEntries).toEqual([{ botId: mine, version: 1 }]);
+    expect(asPlayer.headers["cache-control"]).toMatch(/no-store/);
+    const asUser = await request(app).get(`/tournaments/${id}`).set(as(tok.user));
+    expect(asUser.body.viewerEntries).toEqual([]);
+    const anon = await request(app).get(`/tournaments/${id}`);
+    expect(anon.body).not.toHaveProperty("viewerEntries");
+  });
+});
+
+describe("V1 · P3-1 · límite de intentos con token", () => {
+  it("TI_RATE_LIMIT comprobación e inscripción con token comparten un límite por usuario (429); sin token no cuenta", async () => {
+    const limited = createApp({
+      db: h.db,
+      botManager: new FakeBotManager(h.db),
+      anonQuota: { max: 10_000, windowMs: 3600_000 },
+      invitationLimiter: new SharedRateLimiter(h.db, `test.invitation.${randomUUID()}`, { max: 3, windowMs: 60_000 }),
+    });
+    const { id, token } = await invitationTournament();
+    const check = (who: string) =>
+      request(limited)
+        .post(`/tournaments/${id}/invitation/check`)
+        .set(as(who))
+        .send({ invitationToken: "Z".repeat(43) });
+    for (let i = 0; i < 3; i++) expect((await check(tok.player)).status).toBe(200);
+    const over = await check(tok.player);
+    expect(over.status).toBe(429);
+    expect(over.body.error).toBe("too_many_requests");
+    // La inscripción con token del mismo usuario comparte el límite (ni siquiera con el bueno pasa).
+    const botId = await playerBot();
+    const e = await request(limited)
+      .post(`/tournaments/${id}/entries`)
+      .set(as(tok.player))
+      .send({ botId, version: 1, invitationToken: token });
+    expect(e.status).toBe(429);
+    expect(await entriesOf(id)).toHaveLength(0);
+    // Otro usuario no queda afectado.
+    expect((await check(tok.user)).status).toBe(200);
+    // Una inscripción SIN token (torneo abierto) no cuenta para este límite.
+    const open = await createTournament();
+    const o = await request(limited)
+      .post(`/tournaments/${open}/entries`)
+      .set(as(tok.player))
+      .send({ botId, version: 1 });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
   });
 });

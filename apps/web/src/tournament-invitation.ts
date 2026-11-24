@@ -9,8 +9,9 @@
  *    `Referer` hacia terceros;
  *  - al abrir el enlace, `captureInvitationFromLocation` guarda el token en `sessionStorage`
  *    (sólo esta pestaña; se borra al cerrarla y al cerrar sesión) y REEMPLAZA la entrada del
- *    historial por `#/tournaments/<id>` (`history.replaceState`): el token deja de estar en la
- *    barra de direcciones y en el historial;
+ *    historial DE LA PESTAÑA por `#/tournaments/<id>` (`history.replaceState`): el token deja de
+ *    estar en la barra y en esa entrada (el historial global o el autocompletado del navegador
+ *    pueden conservar la URL: la medida de fondo es revocar y regenerar);
  *  - si no hay sesión, el panel enseña el acceso SIN cambiar de ruta: tras entrar o registrarse,
  *    la misma ruta pinta la ficha y el formulario lee el token de `sessionStorage`. Ningún
  *    parámetro de vuelta lleva el token;

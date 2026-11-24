@@ -1176,6 +1176,7 @@ paths:
       responses:
         '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
+        '429': { description: 'V1 INVITACIÓN · too_many_requests: límite de intentos por usuario (o IP) de las inscripciones que presentan `invitationToken` (compartido con checkTournamentInvitation). Una inscripción sin token no cuenta.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: 'forbidden (el bot no es tuyo) · V1 INVITACIÓN invitation_required (torneo por invitación sin `invitationToken`) · invitation_invalid (token que no es el de la invitación activa: revocado, sustituido al regenerar o inventado). Sólo para un ALTA nueva: cambiar la versión pendiente de una inscripción YA admitida del propio bot (200) no exige el enlace, aunque se haya revocado, y sigue sujeto a todas las reglas. No inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`) · team_enrollment_required (#287: torneo `teams` con reglas NvN, se inscribe el equipo completo con enterTournamentTeam). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
 
@@ -1230,6 +1231,7 @@ paths:
                   teamName: { type: string }
                   entries: { type: array, items: { $ref: '#/components/schemas/Entry' } }
         '400': { description: 'teamId o members mal formados, o un bot repetido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { description: 'V1 INVITACIÓN · too_many_requests: límite de intentos con `invitationToken` (por usuario; compartido con checkTournamentInvitation)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: 'forbidden (no eres miembro del equipo) · V1 INVITACIÓN invitation_required / invitation_invalid (torneo por invitación sin una invitación válida y no revocada; no entra nadie)', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
         '404': { description: 'Torneo o equipo inexistente', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · not_a_team_tournament · team_size_undefined (reglas sin tamaño de equipo) · rules_team_size (no son exactamente N; `teamSize`, `got`) · team_bot_not_member (`botIds`) · bot_retired (`botIds`) · bot_not_published (`notPublished` con `currentState`) · bot_version_not_eligible (`notEligible`) · team_consent_required (algún bot de otro dueño sin su autorización de esa versión; `botIds`) · team_already_entered · already_entered (`botIds`). Ninguno inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
@@ -1421,6 +1423,7 @@ paths:
                   valid: { type: boolean, description: 'true sólo si el torneo es por invitación y el token es el de la invitación activa' }
                   entriesOpen: { type: boolean }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: 'too_many_requests: límite de intentos por usuario (compartido con las inscripciones que presentan token)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
