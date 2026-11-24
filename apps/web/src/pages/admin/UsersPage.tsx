@@ -52,17 +52,20 @@ export const RECOVERY_KIND = "user.recovery_admin";
 export const REVOKE_KIND = "user.revoke_admin";
 export const GRANT_KIND = "user.grant_admin";
 export const BLOCK_KIND = "user.block_admin";
-const USER_KINDS = [RECOVERY_KIND, REVOKE_KIND, GRANT_KIND, BLOCK_KIND];
+export const UNBLOCK_KIND = "user.unblock_admin";
+const USER_KINDS = [RECOVERY_KIND, REVOKE_KIND, GRANT_KIND, BLOCK_KIND, UNBLOCK_KIND];
 const KIND_PHRASE: Record<string, string> = {
   [REVOKE_KIND]: "QUITAR ADMIN",
   [GRANT_KIND]: "CONCEDER ADMIN",
   [BLOCK_KIND]: "BLOQUEAR ADMIN",
+  [UNBLOCK_KIND]: "DESBLOQUEAR ADMIN",
 };
 const KIND_TEXT: Record<string, string> = {
   [RECOVERY_KIND]: "recuperar a ",
   [REVOKE_KIND]: "quitar el rol admin a ",
   [GRANT_KIND]: "conceder el rol admin a ",
   [BLOCK_KIND]: "bloquear a la cuenta admin ",
+  [UNBLOCK_KIND]: "desbloquear a la cuenta admin ",
 };
 
 type Action =
@@ -233,14 +236,14 @@ export function UsersPage(props: { me: Me }) {
         await requestOrder(a.kind === "requestRecovery" ? RECOVERY_KIND : REVOKE_KIND, a.user, reauth);
       } else if (a.kind === "applyOp") {
         const userId = a.op.params.userId!;
-        if (a.op.kind === BLOCK_KIND) {
+        if (a.op.kind === BLOCK_KIND || a.op.kind === UNBLOCK_KIND) {
           await api(
             "PUT",
             `/admin/users/${userId}/status`,
-            { status: "blocked", ...reauth, operationId: a.op.id },
+            { status: a.op.kind === BLOCK_KIND ? "blocked" : "active", ...reauth, operationId: a.op.id },
             { reauth: true },
           );
-          setNotice(`Cuenta ${a.label} bloqueada.`);
+          setNotice(`Cuenta ${a.label} ${a.op.kind === BLOCK_KIND ? "bloqueada" : "desbloqueada"}.`);
         } else {
           // Los roles REALES de la cuenta, pedidos por id: la página cargada puede no contenerla o estar desfasada.
           const fresh = await api<AdminUser>("GET", `/admin/users/${userId}`);
@@ -265,8 +268,8 @@ export function UsersPage(props: { me: Me }) {
           );
         } catch (e) {
           // Bloquear a otra cuenta admin exige la aprobación de otro admin: se solicita la orden.
-          if (!(a.to === "blocked" && errorCode(e) === "second_admin_required")) throw e;
-          await requestOrder(BLOCK_KIND, a.user, reauth);
+          if (errorCode(e) !== "second_admin_required") throw e;
+          await requestOrder(a.to === "blocked" ? BLOCK_KIND : UNBLOCK_KIND, a.user, reauth);
         }
       } else if (a.kind === "token") {
         const r = await api<{ token: string; expiresAt: string; userId: string }>(

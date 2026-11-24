@@ -342,8 +342,8 @@ paths:
         `second_admin_approval_invalid`; 409 `second_admin_unavailable` si no hay otro admin que pueda aprobar). Esa aprobación sólo autoriza quitar `admin`:
         los demás roles deben quedar como están (400). CONCEDER `admin` a otra cuenta exige, si existe otro admin activo
         además de quien llama, `operationId` de una orden `user.grant_admin` aprobada por otro admin; si quien llama es
-        el ÚNICO admin activo basta la reautenticación (bootstrap, auditado). Nunca aprueba el objetivo ni un admin
-        promovido por el solicitante. 409 `last_admin` si quitaría el rol admin al último administrador activo.
+        el ÚNICO admin (activo o bloqueado) basta la reautenticación (bootstrap, auditado). Nunca aprueba el objetivo ni
+        nadie del linaje de promoción del solicitante. 409 `last_admin` si quitaría el rol admin al último administrador activo.
       x-min-role: admin
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
@@ -2465,7 +2465,7 @@ paths:
         ADM-3 · Bloquea o desbloquea una cuenta. Bloquear cierra todas sus sesiones, anula sus tokens de recuperación
         abiertos e impide entrar (login 403 `account_blocked`). Reautenticación fuerte. No se puede aplicar a uno mismo
         (403) ni bloquear al último administrador activo (409 `last_admin`). Bloquear a OTRA cuenta admin exige además
-        `operationId` de una orden `user.block_admin` confirmada por otro admin (403 `second_admin_required`; 409
+        `operationId` de una orden `user.block_admin` (y desbloquear a una cuenta admin, de `user.unblock_admin`) confirmada por otro admin (403 `second_admin_required`; 409
         `second_admin_unavailable` si nadie puede aprobar). Cambio auditado.
       x-min-role: admin
       x-reauth: true
@@ -3812,7 +3812,7 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin, user.grant_admin, user.block_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) `user.revoke_admin` (quitar el rol admin a OTRA cuenta), `user.block_admin` (bloquear a otra cuenta admin) y `user.grant_admin` (conceder admin a otra cuenta); params `{userId}`; el objetivo debe ser admin (no lo es en `user.grant_admin`). Nunca aprueba el propio objetivo ni un admin promovido por el solicitante.' }
+        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin, user.grant_admin, user.block_admin, user.unblock_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) `user.revoke_admin` (quitar el rol admin a OTRA cuenta), `user.block_admin` (bloquear a otra cuenta admin), `user.unblock_admin` (desbloquearla) y `user.grant_admin` (conceder admin a otra cuenta); params `{userId}`; el objetivo debe ser admin (no lo es en `user.grant_admin`). Nunca aprueba el propio objetivo ni nadie del LINAJE de promoción del solicitante (ancestros y descendientes en `admin_granted_by`, a cualquier profundidad).' }
         password: { type: string, x-private: true, description: 'Reautenticación; obligatoria para los tipos `user.*`.' }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si el admin tiene 2FA.' }
         params:
@@ -3844,7 +3844,7 @@ components:
         status: { type: string, enum: [active, blocked] }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta del admin tiene 2FA.' }
-        operationId: { type: string, format: uuid, description: 'Obligatorio al bloquear a otra cuenta admin (`user.block_admin` aprobada).' }
+        operationId: { type: string, format: uuid, description: 'Obligatorio al bloquear o desbloquear a otra cuenta admin (`user.block_admin` / `user.unblock_admin` aprobada).' }
     AdminUserStatusResult:
       type: object
       properties:

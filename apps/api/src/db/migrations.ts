@@ -1372,7 +1372,7 @@ const m025_user_status_recovery: Migration = {
       ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
       ALTER TABLE admin_operations
         ADD CONSTRAINT admin_operations_kind_check
-        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin','user.grant_admin','user.block_admin'));
+        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin','user.grant_admin','user.block_admin','user.unblock_admin'));
       DROP INDEX admin_operations_one_active_per_kind;
       CREATE UNIQUE INDEX admin_operations_one_active_per_kind
         ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running') AND kind NOT LIKE 'user.%';

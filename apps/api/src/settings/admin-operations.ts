@@ -22,7 +22,7 @@ import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { isUuid } from "../params.js";
-import { RECOVERY_APPROVAL_WINDOW_MS, approverAvailable } from "../services/account-recovery.js";
+import { RECOVERY_APPROVAL_WINDOW_MS, approverAvailable, lineageIds } from "../services/account-recovery.js";
 
 /** Caducidad del token de confirmación. */
 export const CONFIRM_TTL_MS = 120_000;
@@ -170,6 +170,12 @@ const USER_BLOCK_ADMIN = userAdminKind(
   "Bloquear la cuenta de administrador",
   "BLOQUEAR ADMIN",
 );
+const USER_UNBLOCK_ADMIN = userAdminKind(
+  "user.unblock_admin",
+  "admin",
+  "Desbloquear la cuenta de administrador",
+  "DESBLOQUEAR ADMIN",
+);
 const USER_GRANT_ADMIN = userAdminKind(
   "user.grant_admin",
   "not_admin",
@@ -187,6 +193,7 @@ export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Reado
     [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN,
     [USER_REVOKE_ADMIN.kind]: USER_REVOKE_ADMIN,
     [USER_BLOCK_ADMIN.kind]: USER_BLOCK_ADMIN,
+    [USER_UNBLOCK_ADMIN.kind]: USER_UNBLOCK_ADMIN,
     [USER_GRANT_ADMIN.kind]: USER_GRANT_ADMIN,
   };
   if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
@@ -421,9 +428,9 @@ export async function confirmOperation(
       if ((row.params as { userId?: string }).userId === ctx.actorId) {
         throw forbidden("La cuenta objetivo no puede aprobar una acción sobre sí misma");
       }
-      const me = await t("users").where({ id: ctx.actorId }).first("admin_granted_by");
-      if (me?.admin_granted_by && me.admin_granted_by === row.requested_by) {
-        throw forbidden("Fuiste promovido a admin por quien solicita esto: hace falta otro administrador");
+      // Nadie del linaje de promoción del solicitante (ancestros ni descendientes, a cualquier profundidad).
+      if (row.requested_by && (await lineageIds(t, row.requested_by)).includes(ctx.actorId as string)) {
+        throw forbidden("Estás en el linaje de promoción de quien solicita esto: hace falta otro administrador");
       }
     }
     if (phrase.trim() !== row.confirm_phrase) throw badRequest("La frase de confirmación no coincide");

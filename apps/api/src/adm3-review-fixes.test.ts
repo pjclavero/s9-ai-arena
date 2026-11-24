@@ -628,3 +628,137 @@ describe("ADM-3 R2 · P2-4 · la retirada de admin sólo quita admin", () => {
     ).toBe(403);
   });
 });
+
+describe("ADM-3 R3 · P1-3 · linaje de promoción, bootstrap y desbloqueo", () => {
+  const register = async (label: string) => {
+    const email = `rv-l-${label}-${++tagN}@test.local`;
+    const r = await request(app)
+      .post("/auth/register")
+      .send({ email, password: PW, displayName: `Linaje ${label}` });
+    expect(r.status).toBe(201);
+    return { id: r.body.id as string, email } as TUser;
+  };
+  const block = (id: string) => h.db("users").where({ id }).update({ status: "blocked", blocked_at: new Date() });
+  const unblock = (t: string, id: string, body: Record<string, unknown> = {}) =>
+    request(app)
+      .put(`/admin/users/${id}/status`)
+      .set(auth(t))
+      .send({ status: "active", password: PW, ...body });
+
+  it("BOOTSTRAP_SIN_OTROS_ADMINS: con otro admin BLOQUEADO ya no hay bootstrap (el ataque S8 se detiene en el paso 1)", async () => {
+    const a = await mkAdmin("s8-a");
+    const b = await mkAdmin("s8-b");
+    await block(b.id);
+    const ta = await tokenOf(a);
+    const x = await register("s8-x");
+    const r = await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("second_admin_unavailable");
+    expect(await hasAdmin(x.id)).toBe(false);
+    // y desbloquear a B sin aprobación tampoco es posible (paso 2 del ataque)
+    expect((await unblock(ta, b.id)).status).toBe(409);
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("blocked");
+  });
+
+  it("DESBLOQUEO_ADMIN: desbloquear a otra cuenta admin exige la aprobación de otro admin (user.unblock_admin)", async () => {
+    const a = await mkAdmin("unb-a");
+    const b = await mkAdmin("unb-b");
+    const c = await mkAdmin("unb-c");
+    await block(b.id);
+    const ta = await tokenOf(a);
+    const direct = await unblock(ta, b.id);
+    expect(direct.status).toBe(403);
+    expect(direct.body.error).toBe("second_admin_required");
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("blocked");
+    const id = await approvedOp("user.unblock_admin", ta, await tokenOf(c), b);
+    const ok = await unblock(ta, b.id, { operationId: id });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("active");
+    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("done");
+  });
+
+  it("LINAJE_CADENA_X_Y: A → X → Y; ni A aprueba lo de X, ni Y lo de A (S9), a cualquier profundidad", async () => {
+    const a = await mkAdmin("s9-a");
+    const ta = await tokenOf(a);
+    const x = await register("s9-x");
+    expect((await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW })).status).toBe(200); // bootstrap
+    const tx = await tokenOf(x);
+    const z = await mkAdmin("s9-z"); // admin real (alta por consola)
+    const y = await register("s9-y");
+    // X pide conceder admin a Y: con sólo A (su promotor) no hay aprobador; con Z sí
+    const op = await createOp(tx, "user.grant_admin", y.id);
+    expect(op.status, JSON.stringify(op.body)).toBe(201); // Z disponible
+    const byA = await confirmOp(ta, op.body.operation.id, op.body.operation.confirmPhrase);
+    expect(byA.status).toBe(403); // A es ANCESTRO de X: S9 paso 2 detenido
+    expect((await confirmOp(await tokenOf(z), op.body.operation.id, op.body.operation.confirmPhrase)).status).toBe(200);
+    const ok = await putRoles(tx, y.id, {
+      roles: ["user", "developer", "admin"],
+      password: PW,
+      operationId: op.body.operation.id,
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await h.db("users").where({ id: y.id }).first()).admin_granted_by).toBe(x.id);
+    const ty = await tokenOf(y);
+    // 3 niveles: Y (nieto de A) no aprueba lo de A, y A (abuelo de Y) no aprueba lo de Y
+    const v = await mkAdmin("s9-v");
+    const opA = await createOp(ta, "user.recovery_admin", v.id);
+    expect(opA.status, JSON.stringify(opA.body)).toBe(201);
+    expect((await confirmOp(ty, opA.body.operation.id, opA.body.operation.confirmPhrase)).status).toBe(403);
+    expect((await confirmOp(await tokenOf(z), opA.body.operation.id, opA.body.operation.confirmPhrase)).status).toBe(
+      200,
+    );
+    const w = await mkAdmin("s9-w");
+    const opY = await createOp(ty, "user.recovery_admin", w.id);
+    expect(opY.status, JSON.stringify(opY.body)).toBe(201);
+    expect((await confirmOp(ta, opY.body.operation.id, opY.body.operation.confirmPhrase)).status).toBe(403);
+    expect((await confirmOp(tx, opY.body.operation.id, opY.body.operation.confirmPhrase)).status).toBe(403);
+    expect((await confirmOp(await tokenOf(z), opY.body.operation.id, opY.body.operation.confirmPhrase)).status).toBe(
+      200,
+    );
+  });
+
+  it("LINAJE_SIN_APROBADOR: si sólo queda gente del linaje, no se puede ni CREAR la orden (409), ni siquiera con un nieto", async () => {
+    const a = await mkAdmin("lsa-a");
+    const ta = await tokenOf(a);
+    const x = await register("lsa-x");
+    expect((await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW })).status).toBe(200);
+    const t = await mkAdmin("lsa-t");
+    // aprobadores posibles para A: X (descendiente) y T (objetivo): ninguno
+    const r = await createOp(ta, "user.recovery_admin", t.id);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("second_admin_unavailable");
+    // para X: A (ancestro) y T (objetivo): tampoco
+    const r2 = await createOp(await tokenOf(x), "user.recovery_admin", t.id);
+    expect(r2.status).toBe(409);
+  });
+
+  it("LINAJE_NO_CONSUME: aunque un ancestro o descendiente figure como confirmador (p. ej. por SQL), emitir el token rechaza la aprobación", async () => {
+    const a = await mkAdmin("lnc-a");
+    const ta = await tokenOf(a);
+    const x = await register("lnc-x");
+    await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW }); // bootstrap
+    const z = await mkAdmin("lnc-z");
+    const t = await mkAdmin("lnc-t");
+    const tx = await tokenOf(x);
+    const op = await createOp(tx, "user.recovery_admin", t.id);
+    expect(op.status, JSON.stringify(op.body)).toBe(201);
+    await confirmOp(await tokenOf(z), op.body.operation.id, op.body.operation.confirmPhrase);
+    await h.db.raw("ALTER TABLE admin_operations DISABLE TRIGGER admin_operations_guard");
+    await h.db("admin_operations").where({ id: op.body.operation.id }).update({ confirmed_by: a.id });
+    await h.db.raw("ALTER TABLE admin_operations ENABLE TRIGGER admin_operations_guard");
+    const r = await issue(tx, t.id, { password: PW, operationId: op.body.operation.id });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("second_admin_approval_invalid");
+  });
+
+  it("LINAJE_SE_CONSERVA: quitar el rol admin a un promovido NO borra su linaje (no se puede «blanquear»)", async () => {
+    const a = await mkAdmin("lsc-a");
+    const ta = await tokenOf(a);
+    const x = await register("lsc-x");
+    await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW }); // bootstrap
+    const tx = await tokenOf(x);
+    // X se quita el rol a sí mismo (hay otro admin: A)
+    expect((await putRoles(tx, x.id, { roles: ["user", "developer"], password: PW })).status).toBe(200);
+    expect((await h.db("users").where({ id: x.id }).first()).admin_granted_by).toBe(a.id);
+  });
+});

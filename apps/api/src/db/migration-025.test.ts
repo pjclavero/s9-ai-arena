@@ -64,7 +64,7 @@ describe("migración 025_user_status_recovery", () => {
 
   it("MIG025_KIND_NUEVO: la BD admite user.recovery_admin y sigue rechazando tipos desconocidos", async () => {
     await h.db("admin_operations").insert({ kind: "user.recovery_admin", status: "awaiting_confirmation" });
-    for (const kind of ["user.revoke_admin", "user.grant_admin", "user.block_admin"]) {
+    for (const kind of ["user.revoke_admin", "user.grant_admin", "user.block_admin", "user.unblock_admin"]) {
       await h.db("admin_operations").insert({ kind, status: "awaiting_confirmation" });
     }
     await expect(h.db("admin_operations").insert({ kind: "x.otro", status: "awaiting_confirmation" })).rejects.toThrow(

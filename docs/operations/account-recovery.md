@@ -42,12 +42,14 @@ El **canje revalida el rol**: si la cuenta es admin al canjear y el token no se 
 
 Para que un solo administrador no se fabrique un «segundo admin»:
 
-- **Conceder `admin` a otra cuenta** exige reautenticación y, si hay **otro admin activo** además de quien lo hace, la aprobación de otro admin (orden `user.grant_admin`). Si quien lo hace es el **único admin activo** basta la reautenticación (así se crea el segundo admin de una instalación nueva); queda auditado como `bootstrap`.
+- **Conceder `admin` a otra cuenta** exige reautenticación y, si existe **cualquier otro admin** (activo o bloqueado) además de quien lo hace, la aprobación de otro admin activo (orden `user.grant_admin`). **Sólo si no existe NINGÚN otro admin** basta la reautenticación (bootstrap del segundo admin de una instalación nueva); queda auditado como `bootstrap`. Un admin bloqueado no abre la puerta al bootstrap.
 - **Bloquear a otra cuenta admin** exige la aprobación de otro admin activo (orden `user.block_admin`); sin nadie que pueda aprobar, 409 `second_admin_unavailable`. Así un admin no puede quedarse solo a la fuerza.
 - **La cuenta objetivo nunca aprueba** una orden `user.*` sobre sí misma.
-- **Un admin promovido por X no aprueba las órdenes `user.*` de X** (se recuerda quién concedió el rol: `users.admin_granted_by`) y tampoco cuenta como aprobador disponible. Consecuencia: el segundo admin creado por bootstrap no sirve de aprobador para las órdenes de quien lo promovió; hace falta un tercero.
+- **Linaje de promoción.** Se recuerda quién concedió cada rol admin (`users.admin_granted_by`, no se borra al quitar el rol). Una orden `user.*` de X **no la puede aprobar nadie de su linaje**: ni sus ANCESTROS (quien lo promovió, quien promovió a éste…) ni sus DESCENDIENTES (a quién promovió, y a quién promovieron ésos…), a cualquier profundidad (cierre transitivo con una consulta recursiva). Se aplica al confirmar, al consumir la aprobación y al decidir si hay aprobador disponible. Así ni A aprueba lo de su títere X ni el nieto Y lo de A.
+- **Desbloquear a otra cuenta admin** exige la aprobación de otro admin activo (`user.unblock_admin`), igual que bloquearla.
+- **Consecuencia operativa:** tras el bootstrap, A y X no pueden aprobarse entre sí ni a sus descendientes: **el tercer admin entra por consola** (`create-admin --allow-additional-admin`). Con dos admins ninguno puede bloquear, desbloquear ni degradar al otro: consola o SQL.
 - **Quitar `admin` a otra cuenta** (`user.revoke_admin`) sólo admite como resultado «los roles actuales menos `admin`» (400 si no). La web lee los roles reales de la cuenta por id (`GET /admin/users/{userId}`) al aplicarla.
-- **Fuera de alcance:** cuentas «títere» creadas antes de esta regla y un administrador malicioso que cuente con DOS personas reales; sólo la consola (acceso local) los resuelve. Bloquear a otro admin sin aprobación ya no es posible, así que en una instalación con dos admins uno no puede bloquear al otro: la vía es la consola.
+- **Límite irreductible:** DOS personas reales que se pongan de acuerdo siempre pueden saltarse el doble control (cada una es admin legítimo sin relación de promoción entre ellas). Tampoco se cubren las cuentas «títere» creadas antes de esta regla. El diseño sólo garantiza que UNA persona no pueda fabricarse al segundo admin con el flujo de la web.
 
 ### Salvaguardas de administración
 

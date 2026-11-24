@@ -324,7 +324,7 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
     });
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
     // con b activo de nuevo, bloquear a «a» deja de ser el último admin pero exige la aprobación de otro admin
-    await setUserStatus(h.db, { actorId: actor.id }, b.id, "active");
+    await h.db("users").where({ id: b.id }).update({ status: "active", blocked_at: null });
     await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
       status: 403,
       code: "second_admin_required",

@@ -508,6 +508,49 @@ describe("ADM-3 R1 · revisión de #347", () => {
     });
   });
 
+  it("DESBLOQUEAR_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al desbloquear a un admin, la web solicita user.unblock_admin", async () => {
+    const blockedAdmin = { ...ADM, status: "blocked" as const, blockedAt: "2026-11-02T10:00:00.000Z" };
+    route({
+      "GET /admin/users": () => page([blockedAdmin]),
+      "GET /admin/operations": () => [],
+      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => {
+        throw Object.assign(new Error("hace falta segundo admin"), {
+          status: 403,
+          body: { error: "second_admin_required" },
+        });
+      },
+      "POST /admin/operations": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
+    await confirmWith("DESBLOQUEAR cris@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("users-notice");
+    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
+      kind: "user.unblock_admin",
+      params: { userId: ADM.id },
+      password: "mi-clave-larga-1",
+    });
+  });
+
+  it("APLICAR_DESBLOQUEAR_ADMIN: desbloquea con el operationId de la aprobación", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [pendingOp("user.unblock_admin", "op-ub")],
+      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("recovery-ops");
+    fireEvent.click(screen.getByTestId("issue-admin-op-ub"));
+    await confirmWith("DESBLOQUEAR ADMIN 33333333", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/admin/users/")).toHaveLength(1));
+    expect(calls("PUT", "/admin/users/")[0][2]).toEqual({
+      status: "active",
+      password: "mi-clave-larga-1",
+      operationId: "op-ub",
+    });
+  });
+
   it("CANCELAR_CON_REAUTH: cancelar una solicitud pide confirmación y contraseña", async () => {
     route({
       "GET /admin/users": () => page([ADM]),

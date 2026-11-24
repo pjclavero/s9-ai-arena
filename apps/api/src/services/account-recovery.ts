@@ -213,6 +213,19 @@ export async function setUserStatus(
           correlationId: ctx.correlationId,
         });
       } else {
+        // Desbloquear a una cuenta ADMIN también exige la aprobación de otro admin activo (`user.unblock_admin`).
+        const wasAdmin = await t("user_roles").where({ user_id: targetId, role: "admin" }).first("user_id");
+        let approval: string | null = null;
+        if (wasAdmin) {
+          approval = await requireSecondAdmin(
+            t,
+            ctx,
+            "user.unblock_admin",
+            targetId,
+            opts.operationId,
+            "Desbloquear a otra cuenta admin exige la aprobación de otro administrador activo y no hay ninguno disponible: hazlo por consola",
+          );
+        }
         await t("users")
           .where({ id: targetId })
           .update({ status: "active", blocked_at: null, blocked_by: null, updated_at: t.fn.now() });
@@ -220,6 +233,7 @@ export async function setUserStatus(
           actorId: ctx.actorId,
           action: "admin.user.unblocked",
           target: `user:${targetId}`,
+          detail: { secondAdminOperation: approval },
           correlationId: ctx.correlationId,
         });
       }
@@ -247,19 +261,48 @@ export async function createPasswordReset(
 }
 
 /**
- * ¿Hay algún admin ACTIVO fuera de `excluded` que pueda aprobar una orden de `requesterId`? Un admin que PROMOVIÓ
- * el solicitante (`admin_granted_by`) nunca cuenta: es la defensa contra el admin «títere».
+ * LINAJE de promoción de `userId` en el grafo `users.admin_granted_by`: todos sus ANCESTROS (quien lo promovió, quien
+ * promovió a éste…) y todos sus DESCENDIENTES (a quién promovió, y a quién promovieron ésos…), a cualquier profundidad.
+ * Un aprobador del linaje del solicitante NUNCA es válido: es la defensa contra el admin «títere» en ambas direcciones
+ * y a cualquier número de saltos (A → X → Y).
  */
-export async function approverAvailable(db: Db, excluded: string[], requesterId?: string | null): Promise<boolean> {
-  const q = db("user_roles as r")
-    .join("users as u", "u.id", "r.user_id")
-    .where({ "r.role": "admin", "u.status": "active" })
-    .whereNotIn("u.id", excluded);
-  if (requesterId) q.where((b) => b.whereNull("u.admin_granted_by").orWhereNot("u.admin_granted_by", requesterId));
-  return !!(await q.first("u.id"));
+export async function lineageIds(db: Db, userId: string): Promise<string[]> {
+  const r = await db.raw(
+    `WITH RECURSIVE up(id) AS (
+       SELECT admin_granted_by FROM users WHERE id = ? AND admin_granted_by IS NOT NULL
+       UNION
+       SELECT u.admin_granted_by FROM users u JOIN up ON u.id = up.id WHERE u.admin_granted_by IS NOT NULL
+     ), down(id) AS (
+       SELECT id FROM users WHERE admin_granted_by = ?
+       UNION
+       SELECT u.id FROM users u JOIN down d ON u.admin_granted_by = d.id
+     )
+     SELECT id FROM up UNION SELECT id FROM down`,
+    [userId, userId],
+  );
+  return (r.rows as { id: string }[]).map((x) => x.id);
 }
 
-export type ApprovalKind = "user.recovery_admin" | "user.revoke_admin" | "user.grant_admin" | "user.block_admin";
+/** ¿Existe algún OTRO admin, esté activo o bloqueado? (el bootstrap sólo es posible si NO existe ninguno). */
+export async function otherAdminExists(db: Db, exceptUserId: string): Promise<boolean> {
+  return !!(await db("user_roles").where({ role: "admin" }).whereNot({ user_id: exceptUserId }).first("user_id"));
+}
+
+/**
+ * ¿Hay algún admin ACTIVO fuera de `excluded` que pueda aprobar una orden de `requesterId`? Nunca cuentan los de su
+ * linaje de promoción (ancestros ni descendientes, a cualquier profundidad).
+ */
+export async function approverAvailable(db: Db, excluded: string[], requesterId?: string | null): Promise<boolean> {
+  const lineage = requesterId ? await lineageIds(db, requesterId) : [];
+  return !!(await db("user_roles as r")
+    .join("users as u", "u.id", "r.user_id")
+    .where({ "r.role": "admin", "u.status": "active" })
+    .whereNotIn("u.id", [...excluded, ...lineage])
+    .first("u.id"));
+}
+
+export type ApprovalKind =
+  "user.recovery_admin" | "user.revoke_admin" | "user.grant_admin" | "user.block_admin" | "user.unblock_admin";
 
 /** Sin `operationId`: 409 si no hay quién pueda aprobar, 403 si hace falta pedirla; con él, la consume (una vez). */
 async function requireSecondAdmin(
@@ -310,12 +353,12 @@ export async function consumeSecondAdminApproval(
   const approver = await trx("users as u")
     .join("user_roles as r", "r.user_id", "u.id")
     .where({ "u.id": op.confirmed_by, "u.status": "active", "r.role": "admin" })
-    .first("u.id", "u.admin_granted_by");
+    .first("u.id");
   if (!approver) throw invalid("Quien aprobó ya no es administrador activo: solicítala de nuevo");
-  // El objetivo nunca aprueba lo suyo, ni un admin PROMOVIDO por el solicitante (admin «títere»).
+  // El objetivo nunca aprueba lo suyo, ni nadie del LINAJE de promoción del solicitante (admin «títere»).
   if (approver.id === targetId) throw invalid("La cuenta objetivo no puede aprobar la acción sobre sí misma");
-  if (approver.admin_granted_by && approver.admin_granted_by === op.requested_by) {
-    throw invalid("Quien aprobó fue promovido a admin por el solicitante: hace falta otro administrador");
+  if ((await lineageIds(trx, op.requested_by as string)).includes(approver.id as string)) {
+    throw invalid("Quien aprobó está en el linaje de promoción del solicitante: hace falta otro administrador");
   }
   if (!op.confirmed_at || Date.now() - new Date(op.confirmed_at).getTime() > RECOVERY_APPROVAL_WINDOW_MS) {
     throw invalid("La aprobación caducó: solicítala de nuevo");
@@ -521,7 +564,7 @@ export async function setUserRoles(
         // Con OTRO admin activo además del solicitante, conceder admin exige su aprobación (`user.grant_admin`): un
         // admin no se fabrica un segundo admin. Si el solicitante es el ÚNICO admin activo basta la reautenticación
         // (bootstrap del segundo admin), y queda auditado.
-        if (await otherActiveAdminExists(t, ctx.actorId ?? "")) {
+        if (await otherAdminExists(t, ctx.actorId ?? "")) {
           operationId = await requireSecondAdmin(
             t,
             ctx,
@@ -542,7 +585,6 @@ export async function setUserRoles(
         voided = await voidOpenResets(t, targetId);
         // Quién concedió el rol admin (para que un promovido no apruebe órdenes de su promotor).
         if (plan.grantsAdmin) await t("users").where({ id: targetId }).update({ admin_granted_by: ctx.actorId });
-        if (plan.revokesAdmin) await t("users").where({ id: targetId }).update({ admin_granted_by: null });
       }
       await audit(t, {
         actorId: ctx.actorId,
