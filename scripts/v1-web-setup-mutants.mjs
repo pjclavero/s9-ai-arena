@@ -30,7 +30,6 @@ const T_MIG = "apps/api/src/db/migration-027.test.ts";
 const T_CMP = "infrastructure/tests/setup-token-compose.test.ts";
 const T_INIT = "infrastructure/tests/init-secrets-nofollow.test.ts";
 const T_WEB = "apps/web/tests/setup-page.test.tsx";
-const T_R37 = "apps/web/tests/r37-session.test.tsx";
 
 const F_ROUTE = "apps/api/src/routes/setup.ts";
 const F_STATE = "apps/api/src/services/install-state.ts";
@@ -268,8 +267,9 @@ export const MUTANTES = [
     fichero: "apps/web/src/pages/RecoveryKitPages.tsx",
     de: 'api<{ open: boolean }>("GET", "/setup/status", undefined, { reauth: true })',
     a: 'api<{ open: boolean }>("GET", "/setup/status")',
-    test: T_R37,
-    nombre: "sin cookie válida el arranque cae al login sin romper nada",
+    // r37-session no lo detecta de forma determinista (carrera con la aserción): lo mata W4.
+    test: T_WEB,
+    nombre: "[W4-aviso-login]",
   },
   {
     id: "M-WEB-no-notice",

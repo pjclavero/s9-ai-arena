@@ -137,6 +137,8 @@ describe("V1 ADM-SETUP · acceso y kit", () => {
     apiMock.mockResolvedValueOnce({ open: true });
     render(<AccessHelp />);
     await screen.findByTestId("setup-open-notice");
+    // Sin sesión: la consulta va con reauth, así un 401 no se toma por sesión caducada (no echa al usuario).
+    expect(apiMock).toHaveBeenCalledWith("GET", "/setup/status", undefined, { reauth: true });
     expect(screen.getByTestId("recover-kit-link")).toBeTruthy();
     cleanup();
     apiMock.mockResolvedValueOnce({ open: false });
