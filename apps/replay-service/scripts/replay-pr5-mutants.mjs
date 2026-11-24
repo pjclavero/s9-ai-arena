@@ -156,7 +156,7 @@ export const MUTANTS = [
     why: "un fallo de clase A descarta la grabación en vez de sellarla truncada",
     test: U,
     t: "A1 tope por batalla",
-    edits: [{ file: RECORDER, find: "if (this.fault && !this.limitFault) {", replace: "if (this.fault) {" }],
+    edits: [{ file: RECORDER, find: "this.finished = true;\n    if (this.fault && !this.limitFault) {", replace: "this.finished = true;\n    if (this.fault) {" }],
   },
   {
     id: "M-RECORDER-limit-not-classified",
@@ -653,6 +653,45 @@ export const MUTANTS = [
         file: "apps/api/src/settings/system-settings.ts",
         find: 'await t.raw("SELECT pg_advisory_xact_lock(hashtext(?))", ["system_settings:replays.cross"]);',
         replace: "",
+      },
+    ],
+  },
+  {
+    id: "M-RACE-no-preflush",
+    why: "finish() cierra receta y vista sin volcar antes los dos búferes: la receta sale completa en una batalla truncada",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1b el motor termina",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/recorder.ts",
+        find: "const flushed = await Promise.allSettled([this.recipe.writer.flushFragment(), this.view.writer.flushFragment()]);",
+        replace: "const flushed: PromiseSettledResult<void>[] = [];",
+      },
+    ],
+  },
+  {
+    id: "M-RACE-recipe-winner",
+    why: "la receta de una batalla recording_limit lleva el ganador del motor",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1b el motor termina",
+    edits: [
+      {
+        file: "apps/replay-service/src/s9r/recorder.ts",
+        find: "closeOne(this.recipe, result, truncatedResult ?? result),",
+        replace: "closeOne(this.recipe, result, result),",
+      },
+    ],
+  },
+  {
+    id: "M-RACE-verify-by-battle",
+    why: "verify no rechaza por la batalla truncada y re-simula la receta",
+    test: "apps/tournament-worker/src/v1-replay-pr5-limits.test.ts",
+    t: "L1b el motor termina",
+    edits: [
+      {
+        file: "apps/api/src/replay-s9r.ts",
+        find: "if (isTruncatedBattle(battle)) {\n    return {",
+        replace: "if (false as boolean) {\n    return {",
       },
     ],
   },

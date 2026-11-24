@@ -382,15 +382,40 @@ export class ReplayRecorder {
    * supera al cerrar), los ficheros se sellan como TRUNCADOS (`closeTruncated`: prefijo íntegro hasta
    * el último fragmento escrito, con su resultado, índice y pie) y `truncated: true` en la prueba.
    */
-  async finish(result: Record<string, unknown>): Promise<ClosedRecording> {
+  async finish(
+    result: Record<string, unknown>,
+    /** Resultado que se escribe en la receta si la grabación sale TRUNCADA (sin ganador: coherente con la BD). */
+    truncatedResult?: Record<string, unknown>,
+  ): Promise<ClosedRecording> {
     if (this.finished) throw new WriterStateError("writer_closed", "grabador ya cerrado");
     this.finished = true;
     if (this.fault && !this.limitFault) {
       await this.discard();
       throw this.fault;
     }
-    const closeOne = async (s: Stream, res: Record<string, unknown>): Promise<WriteSummary> => {
-      if (this.limitFault) return s.writer.closeTruncated({ result: res });
+    // P1-R3 · ANTES de sellar nada se vuelcan los búferes de AMBOS flujos: así el tope se decide para los dos a la vez.
+    // Si cualquiera lo rebasa (aunque el motor ya hubiera terminado), la grabación entera es truncada: nunca una receta
+    // completa, con el resultado del motor, junto a una vista truncada. Tras este volcado, `close()` no tiene datos que
+    // escribir (sólo resultado, índice y pie, con margen de emergencia), así que no puede rebasar el tope por su cuenta.
+    const flushed = await Promise.allSettled([this.recipe.writer.flushFragment(), this.view.writer.flushFragment()]);
+    for (const f of flushed) {
+      if (f.status !== "rejected") continue;
+      const e = f.reason;
+      if (e instanceof ReplayLimitExceededError) this.setFault(e);
+      else if (e instanceof WriterStateError && e.code === "limit_hit")
+        this.setFault(new ReplayLimitExceededError(this.o.budget?.maxBytesPerBattle ?? 0, this.ownBytes()));
+      else this.setFault(e);
+    }
+    if (this.fault && !this.limitFault) {
+      await this.discard();
+      throw this.fault;
+    }
+    const closeOne = async (
+      s: Stream,
+      res: Record<string, unknown>,
+      truncRes: Record<string, unknown> = res,
+    ): Promise<WriteSummary> => {
+      if (this.limitFault) return s.writer.closeTruncated({ result: truncRes });
       try {
         return await s.writer.close({ result: res });
       } catch (e) {
@@ -404,10 +429,13 @@ export class ReplayRecorder {
             ? e
             : new ReplayLimitExceededError(this.o.budget?.maxBytesPerBattle ?? 0, this.ownBytes()),
         );
-        return s.writer.closeTruncated({ result: res });
+        return s.writer.closeTruncated({ result: truncRes });
       }
     };
-    const [r, v] = await Promise.allSettled([closeOne(this.recipe, result), closeOne(this.view, this.viewSummary())]);
+    const [r, v] = await Promise.allSettled([
+      closeOne(this.recipe, result, truncatedResult ?? result),
+      closeOne(this.view, this.viewSummary()),
+    ]);
     // Un fallo del ENTORNO (cualquiera que no sea el tope de la batalla) aborta: ni parcial ni truncado.
     const lateFault = this.fault !== null && this.limitFault === null; // fallo aparecido durante el cierre
     if (r.status === "rejected" || v.status === "rejected" || lateFault) {

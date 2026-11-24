@@ -32,6 +32,7 @@ import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { clearStandingsCache } from "../../api/src/services/standings.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { verifyFile } from "../../replay-service/src/s9r/verify.js";
+import { S9rReader } from "../../replay-service/src/s9r/reader.js";
 import type { StorageProbe } from "../../replay-service/src/s9r/recording-budget.js";
 import { SYSTEM_SETTINGS_REGISTRY } from "../../../packages/system-settings/registry.js";
 import { SystemSettingsReader } from "../../../packages/system-settings/reader.js";
@@ -243,11 +244,18 @@ async function expectTechnicalFailure(
 const SMALL_FRAGMENTS = {
   recipeFragmentBytes: 1024,
   viewFragmentBytes: 1024,
-  recipeMaxPendingBytes: 512 * 1024,
-  viewMaxPendingBytes: 512 * 1024,
+  // Cola de 64 KiB = 2 x fragmento de producción (1 MiB receta / 2 MiB vista): la contrapresión acota el retraso del
+  // escritor en BYTES, no en tiempo. Con ritmo 0 el corte cae siempre en el mismo tick (sin reloj).
+  recipeMaxPendingBytes: 64 * 1024,
+  viewMaxPendingBytes: 64 * 1024,
 };
 
+/** Cola holgada: el motor termina ANTES de que el escritor note el tope (la carrera de P1-R3). */
+const RACE_FRAGMENTS = { ...SMALL_FRAGMENTS, recipeMaxPendingBytes: 512 * 1024, viewMaxPendingBytes: 512 * 1024 };
+
 const FIXED_SEED = "pr5-semilla-fija";
+/** Tick del corte de L1 con la calibración de producción (cola 64 KiB, ritmo 0, tope = 1/4 de la batalla). */
+const CUT_TICK = 252;
 
 describe("PR-5 · clase A: el tope de la propia batalla", () => {
   it("L1 tope alcanzado a mitad de batalla: finished sin resultado deportivo, replay truncado y marcado, SIN reintento ni Elo", async () => {
@@ -262,11 +270,10 @@ describe("PR-5 · clase A: el tope de la propia batalla", () => {
     expect(fullArt.truncated).toBe(false);
     const fullBytes = Number(fullArt.recipe_bytes) + Number(fullArt.view_bytes);
 
-    // Con un tope a un cuarto de lo que ocupa la batalla entera (y el motor a ritmo de reloj, 20 ms cada 25 ticks), el tope
-    // se alcanza pronto y los escritores asíncronos lo notan A MITAD aun con la CI cargada.
+    // Con un tope a un cuarto de lo que ocupa la batalla entera y la cola de producción (64 KiB), el motor queda frenado
+    // por la contrapresión y el corte cae A MITAD, en el mismo tick siempre, sin reloj (ritmo 0).
     const PER_BATTLE = Math.floor(fullBytes / 4);
     const r = await rig({
-      paceMs: 20,
       replayLimits: { limits: () => ({ ...defaultReplayLimits(), maxBytesPerBattle: PER_BATTLE }) },
       recorderOverrides: SMALL_FRAGMENTS,
     });
@@ -293,6 +300,7 @@ describe("PR-5 · clase A: el tope de la propia batalla", () => {
     expect(b.result.winner).toBeNull();
     expect(b.result.winner).not.toBe("draw");
     expect(b.result.ticks).toBeLessThan(fb.result.ticks); // se cortó a mitad: antes del final natural
+    expect(b.result.ticks).toBe(CUT_TICK); // determinista: siempre el mismo tick
     // NO se reintenta (clase A determinista): un solo intento y trabajo terminado.
     expect(b.run_attempts).toBe(1);
     expect(r.driver.runs).toBe(1);
@@ -358,6 +366,56 @@ describe("PR-5 · clase A: el tope de la propia batalla", () => {
     expect(fullDetail.body.replayAvailable).toBe(true);
     const fullRaw = await request(app).get(`/replays/${sf.battleId}`).set(auth).buffer(true);
     expect(fullRaw.headers["x-replay-truncated"]).toBeUndefined();
+  }, 240_000);
+});
+
+describe("PR-5 · clase A: la carrera con el motor ya terminado (P1-R3)", () => {
+  it("L1b el motor termina ANTES de que el escritor note el tope: toda la batalla es truncada, la receta sin ganador y verify «truncated»", async () => {
+    const full = await rig({ replayLimits: { limits: defaultReplayLimits }, recorderOverrides: RACE_FRAGMENTS });
+    const sf = await scheduleTournament(FIXED_SEED);
+    await drainAll(full.worker);
+    const fb = (await h.db("battles").where({ id: sf.battleId }).first()) as Row;
+    expect(fb.status).toBe("finished");
+    const fullArt = (await h.db("replay_artifacts").where({ battle_id: sf.battleId }).first()) as Row;
+    const fullBytes = Number(fullArt.recipe_bytes) + Number(fullArt.view_bytes);
+
+    // Ritmo 0 y cola holgada (512 KiB): el motor termina sus 600 ticks antes de que los escritores procesen el tope.
+    const r = await rig({
+      replayLimits: { limits: () => ({ ...defaultReplayLimits(), maxBytesPerBattle: Math.floor(fullBytes / 4) }) },
+      recorderOverrides: RACE_FRAGMENTS,
+    });
+    const s = await scheduleTournament(FIXED_SEED);
+    await drainAll(r.worker);
+    const b = (await h.db("battles").where({ id: s.battleId }).first()) as Row;
+    expect(b.status).toBe("finished");
+    expect(b.result.endReason).toBe("recording_limit");
+    expect(b.result.winner).toBeNull();
+    expect(b.result.ticks).toBe(fb.result.ticks); // el motor SÍ terminó entero: es la carrera
+    const art = (await h.db("replay_artifacts").where({ battle_id: s.battleId }).first()) as Row;
+    expect(art.truncated).toBe(true);
+    // AMBOS flujos truncados: nunca una receta completa junto a una vista truncada.
+    for (const [path, sha] of [
+      [art.recipe_path, art.recipe_sha256],
+      [art.view_path, art.view_sha256],
+    ]) {
+      const strict = await verifyFile(path, { expectSha256: sha });
+      expect(strict.ok, path).toBe(false);
+      expect(strict.reason, path).toBe("truncated");
+    }
+    // La receta NO lleva el ganador del motor: coherente con la BD (sin ganador).
+    const reader = await S9rReader.open(art.recipe_path, { expectBattleId: s.battleId });
+    const result = (await reader.readResult()) as Row;
+    await reader.close();
+    expect(result.winner).toBeNull();
+    expect(result.endReason).toBe("recording_limit");
+    // verify rechaza por la batalla: ninguna vía certifica una batalla truncada.
+    const auth = { Authorization: `Bearer ${admin}` };
+    const ver = await request(app).post(`/replays/${s.battleId}/verify`).set(auth);
+    expect(ver.status).toBeLessThan(500);
+    expect(ver.body.valid).toBe(false);
+    expect(ver.body.matches).toBe(false);
+    expect(ver.body.reason).toBe("truncated");
+    expect((await request(app).get(`/battles/${s.battleId}`).set(auth)).body.replayAvailable).toBe(false);
   }, 240_000);
 });
 

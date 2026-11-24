@@ -213,7 +213,8 @@ describe("PR-5 · P1-1 · una serie sin resultado deportivo no decide nada", () 
   });
 });
 
-/** Invariante: ningún match `finished` con ganador, con los dos lados y sin bye, que no tenga una batalla CON resultado deportivo. */
+/**
+ * Invariante ACOTADO (sin la formalidad legítima de GF2 con una GF real, S10b): ningún match `finished` con ganador, con los dos lados y sin bye, que no tenga una batalla CON resultado deportivo. */
 async function expectNoWinnerWithoutBattles(tid: string) {
   const ms = await matchesOf(tid);
   for (const m of ms) {
@@ -293,7 +294,7 @@ describe("PR-5 · P1-R1 · la gran final sin resultado no corona (GF2 no es una 
     await expectNoWinnerWithoutBattles(tid);
   });
 
-  it("S10c el invariante se cumple en los casos «todo sin resultado»", async () => {
+  it("S10c el invariante acotado (sin la formalidad legítima de GF2) se cumple en los casos «todo sin resultado»", async () => {
     for (const f of ["single_elimination", "double_elimination", "round_robin"] as const) {
       const { tid } = await tournament(f, 4);
       await playAll(tid);

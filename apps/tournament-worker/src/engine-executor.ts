@@ -538,7 +538,13 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           throw new InfrastructureFailure("storage_unavailable", `replay_incomplete: ${problems.join("; ")}`);
         }
         try {
-          recording = await recorder.finish(result as unknown as Record<string, unknown>);
+          // Si la grabación sale TRUNCADA (clase A), la receta no puede llevar el ganador del motor: la batalla
+          // termina `recording_limit` sin resultado deportivo y el replay tiene que decir lo mismo que la BD.
+          recording = await recorder.finish(result as unknown as Record<string, unknown>, {
+            ...(result as unknown as Record<string, unknown>),
+            winner: null,
+            endReason: "recording_limit",
+          });
         } catch (err) {
           workerMetrics.inc("replay_aborts_storage_total");
           throw new InfrastructureFailure("storage_unavailable", `recording_close_failed: ${faultText(err)}`);

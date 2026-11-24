@@ -274,6 +274,17 @@ export async function streamRecipe(res: Response, battle: Record<string, any>): 
  * (streaming) y re-simulación por fragmentos. Forma de respuesta de `verifyReplay`.
  */
 export async function verifyRecipe(battle: Record<string, any>): Promise<Record<string, unknown>> {
+  // V1 REPLAYS PR-5 (P1-R3) · una batalla truncada (`recording_limit`) no se certifica por ningún camino: se rechaza por la
+  // BATALLA, antes de mirar el fichero (aunque la receta estuviera completa, no se re-simula ni se da por válida).
+  if (isTruncatedBattle(battle)) {
+    return {
+      matches: false,
+      valid: false,
+      reason: "truncated",
+      message:
+        "Replay truncado: la batalla superó su tope de grabación y no tiene resultado deportivo. No se verifica.",
+    };
+  }
   const path = String(battle.replay_ref);
   // Manipulación byte a byte: el hash registrado en la BD manda (DoD T8.1), antes que la
   // estructura. sha256 del fichero entero en streaming (memoria constante).
