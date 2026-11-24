@@ -288,6 +288,64 @@ describe("ADM-3 R1 · P2-1 · carrera del último administrador", () => {
   });
 });
 
+describe("ADM-3 R1 · P2-1 · el cerrojo se toma de verdad (determinista)", () => {
+  /** Mientras otra transacción sostiene el cerrojo del último admin, la operación debe ESPERAR. */
+  async function holdsWhile(run: () => Promise<unknown>): Promise<{ doneWhileHeld: boolean; error: unknown }> {
+    const { lockAdminChanges } = await import("./services/account-recovery.js");
+    let done = false;
+    let error: unknown = null;
+    let pending: Promise<void> = Promise.resolve();
+    await h.db.transaction(async (trx) => {
+      await lockAdminChanges(trx as never);
+      pending = run().then(
+        () => {
+          done = true;
+        },
+        (e) => {
+          done = true;
+          error = e;
+        },
+      );
+      await new Promise((r) => setTimeout(r, 600));
+    });
+    const doneWhileHeld = done;
+    await pending;
+    return { doneWhileHeld, error };
+  }
+
+  it("CERROJO_BLOQUEO: bloquear a un admin espera al cerrojo del último admin", async () => {
+    const { setUserStatus } = await import("./services/account-recovery.js");
+    const a = await mkAdmin("lock-a");
+    const b = await mkAdmin("lock-b");
+    const r = await holdsWhile(() => setUserStatus(h.db, { actorId: a.id }, b.id, "blocked"));
+    expect(r.doneWhileHeld).toBe(false);
+    expect(r.error).toBeNull();
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("blocked");
+  });
+
+  it("CERROJO_ROLES: quitarse el rol admin espera al cerrojo del último admin", async () => {
+    const { setUserRoles } = await import("./services/account-recovery.js");
+    const a = await mkAdmin("lockr-a");
+    await mkAdmin("lockr-b");
+    const r = await holdsWhile(() => setUserRoles(h.db, { actorId: a.id }, a.id, ["user"], { reauthed: true }));
+    expect(r.doneWhileHeld).toBe(false);
+    expect(r.error).toBeNull();
+    expect(await hasAdmin(a.id)).toBe(false);
+  });
+});
+
+describe("ADM-3 R1 · aprobadores", () => {
+  it("APROBADOR_BLOQUEADO_NO_CUENTA: un admin bloqueado no cuenta como segundo admin disponible", async () => {
+    const a = await mkAdmin("apb-a");
+    const t = await mkAdmin("apb-t");
+    const c = await mkAdmin("apb-c");
+    await h.db("users").where({ id: c.id }).update({ status: "blocked", blocked_at: new Date() });
+    const r = await createOp(await tokenOf(a), "user.recovery_admin", t.id);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("second_admin_unavailable");
+  });
+});
+
 describe("ADM-3 R1 · P2-2 · órdenes user.*: reautenticación, límite y unicidad por cuenta", () => {
   it("OP_USER_REAUTH: crear una orden user.* sin credenciales frescas es 401 y no deja fila", async () => {
     const a = await mkAdmin("opre-a");
