@@ -304,7 +304,10 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
     const a = await mkAdmin("bl-self");
     await mkAdmin("bl-self-otro");
     const t = await tokenOf(a);
-    expect((await setStatus(t, a.id, { status: "blocked", password: PW })).status).toBe(403);
+    const r = await setStatus(t, a.id, { status: "blocked", password: PW });
+    expect(r.status).toBe(403);
+    // 403 «forbidden» por ser uno mismo, no por falta de aprobación de segundo admin
+    expect(r.body.error).toBe("forbidden");
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
   });
 
