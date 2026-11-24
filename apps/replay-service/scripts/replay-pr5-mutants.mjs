@@ -108,7 +108,7 @@ export const MUTANTS = [
     id: "M-B-closing-applies-volume",
     why: "el cierre también aplica reserva y cuota (no puede cerrar con el volumen justo)",
     test: U,
-    t: "B6 (grabador)",
+    t: "B6 .grabador. con el disco",
     edits: [{ file: BUDGET, find: "if (!ctx.closing && this.o.probe) {", replace: "if (this.o.probe) {" }],
   },
   {
@@ -705,7 +705,7 @@ export const MUTANTS = [
     id: "M-FLUSH-not-closing",
     why: "el volcado previo de finish() no es de cierre (rechazado con el disco justo en la reserva)",
     test: "apps/replay-service/tests/s9r/recording-budget.test.ts",
-    t: "B6 (grabador)",
+    t: "B6 .grabador. con el disco",
     edits: [
       {
         file: "apps/replay-service/src/s9r/recorder.ts",
@@ -718,7 +718,7 @@ export const MUTANTS = [
     id: "M-FLUSH-view-not-closing",
     why: "el volcado previo de la vista no es de cierre",
     test: "apps/replay-service/tests/s9r/recording-budget.test.ts",
-    t: "B6 (grabador)",
+    t: "B6 .grabador. con el disco",
     edits: [
       {
         file: "apps/replay-service/src/s9r/recorder.ts",
