@@ -18,7 +18,7 @@ import { isUuid, pathParam } from "../params.js";
 import { parseLimit } from "../serialize.js";
 import { requireStrongReauth } from "./auth.js";
 import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
-import { issueRecoveryToken, listUsers, setUserStatus } from "../services/account-recovery.js";
+import { getAdminUser, issueRecoveryToken, listUsers, setUserStatus } from "../services/account-recovery.js";
 
 export interface AdminUsersDeps {
   /** Límite de acciones con reautenticación por admin (por defecto: 20 cada 5 min, sobre api_usage). */
@@ -56,13 +56,19 @@ export function adminUsersRoutes(db: Db, deps: AdminUsersDeps): Router {
     res.json(await listUsers(db, { q: req.query.q, limit, cursor }));
   });
 
+  defineOperation(router, "getAdminUser", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await getAdminUser(db, userIdParam(req)));
+  });
+
   defineOperation(router, "setUserStatus", async (req, res) => {
     await reauth(req);
     const id = userIdParam(req);
     const status = (req.body as { status?: unknown } | undefined)?.status;
     if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");
     res.setHeader("Cache-Control", "no-store");
-    res.json(await setUserStatus(db, ctx(req), id, status));
+    const operationId = (req.body as { operationId?: unknown } | undefined)?.operationId;
+    res.json(await setUserStatus(db, ctx(req), id, status, { operationId }));
   });
 
   defineOperation(router, "issueUserRecoveryToken", async (req, res) => {

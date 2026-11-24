@@ -141,7 +141,7 @@ info:
   # issueUserRecoveryToken (POST /admin/users/{userId}/recovery-token: token de recuperación de un solo uso y 30 min,
   # mostrado una vez; cuenta admin ⇒ aprobación de segundo admin). setUserRoles gana 409 last_admin; login 403
   # account_blocked. `POST /auth/recover` se RETIRA (descartaba el token). Nuevo tipo de orden `user.recovery_admin`.
-  # Migración 025. setUserRoles cambia (reautenticación al conceder/quitar admin; segundo admin para quitarlo a otra cuenta).
+  # Migración 025. getAdminUser (GET /admin/users/{userId}); nuevos tipos user.grant_admin y user.block_admin (segundo admin al conceder admin y al bloquear a una cuenta admin; el objetivo y los promovidos por el solicitante nunca aprueban). setUserRoles cambia (reautenticación al conceder/quitar admin; segundo admin para quitarlo a otra cuenta).
   version: 0.27.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -339,8 +339,11 @@ paths:
         tokens de recuperación abiertos de la cuenta; CONCEDER `admin` y QUITARLO exigen reautenticación fuerte
         (`password`, `totp`; 401, límite por admin 429); quitar `admin` a OTRA cuenta exige además `operationId` de una
         orden `user.revoke_admin` solicitada por quien llama y confirmada por otro admin (403 `second_admin_required` /
-        `second_admin_approval_invalid`; 409 `second_admin_unavailable` si no hay otro admin que pueda aprobar). 409
-        `last_admin` si quitaría el rol admin al último administrador activo.
+        `second_admin_approval_invalid`; 409 `second_admin_unavailable` si no hay otro admin que pueda aprobar). Esa aprobación sólo autoriza quitar `admin`:
+        los demás roles deben quedar como están (400). CONCEDER `admin` a otra cuenta exige, si existe otro admin activo
+        además de quien llama, `operationId` de una orden `user.grant_admin` aprobada por otro admin; si quien llama es
+        el ÚNICO admin activo basta la reautenticación (bootstrap, auditado). Nunca aprueba el objetivo ni un admin
+        promovido por el solicitante. 409 `last_admin` si quitaría el rol admin al último administrador activo.
       x-min-role: admin
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
@@ -2443,6 +2446,17 @@ paths:
         '200': { description: Página de usuarios, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUserPage' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  /admin/users/{userId}:
+    get:
+      tags: [admin]
+      operationId: getAdminUser
+      summary: ADM-3 · Un usuario por id (misma proyección que el listado, con sus roles ACTUALES). Sin secretos.
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Usuario, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUser' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/users/{userId}/status:
     put:
       tags: [admin]
@@ -2450,7 +2464,9 @@ paths:
       summary: >-
         ADM-3 · Bloquea o desbloquea una cuenta. Bloquear cierra todas sus sesiones, anula sus tokens de recuperación
         abiertos e impide entrar (login 403 `account_blocked`). Reautenticación fuerte. No se puede aplicar a uno mismo
-        (403) ni bloquear al último administrador activo (409 `last_admin`). Cambio auditado.
+        (403) ni bloquear al último administrador activo (409 `last_admin`). Bloquear a OTRA cuenta admin exige además
+        `operationId` de una orden `user.block_admin` confirmada por otro admin (403 `second_admin_required`; 409
+        `second_admin_unavailable` si nadie puede aprobar). Cambio auditado.
       x-min-role: admin
       x-reauth: true
       parameters: [{ $ref: '#/components/parameters/UserId' }]
@@ -3796,7 +3812,7 @@ components:
       additionalProperties: false
       required: [kind]
       properties:
-        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) y `user.revoke_admin` (aprobación para quitar el rol admin a OTRA cuenta); params `{userId}`; la cuenta objetivo debe ser admin.' }
+        kind: { type: string, enum: [system.noop, user.recovery_admin, user.revoke_admin, user.grant_admin, user.block_admin], description: 'Lista CERRADA de tipos. `system.noop` es de PRUEBA: sólo se acepta en tests (NODE_ENV=test). ADM-3: `user.recovery_admin` (aprobación de segundo admin para emitir un token de recuperación a una cuenta admin) `user.revoke_admin` (quitar el rol admin a OTRA cuenta), `user.block_admin` (bloquear a otra cuenta admin) y `user.grant_admin` (conceder admin a otra cuenta); params `{userId}`; el objetivo debe ser admin (no lo es en `user.grant_admin`). Nunca aprueba el propio objetivo ni un admin promovido por el solicitante.' }
         password: { type: string, x-private: true, description: 'Reautenticación; obligatoria para los tipos `user.*`.' }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si el admin tiene 2FA.' }
         params:
@@ -3828,6 +3844,7 @@ components:
         status: { type: string, enum: [active, blocked] }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta del admin tiene 2FA.' }
+        operationId: { type: string, format: uuid, description: 'Obligatorio al bloquear a otra cuenta admin (`user.block_admin` aprobada).' }
     AdminUserStatusResult:
       type: object
       properties:

@@ -96,9 +96,9 @@ const audits = async (like: string) =>
     detail: Record<string, unknown>;
   }[];
 
-/** Aprobación completa de `user.revoke_admin`: A solicita, C aprueba. Devuelve el id de la orden. */
-async function approvedRevoke(ta: string, tc: string, target: TUser): Promise<string> {
-  const op = await createOp(ta, "user.revoke_admin", target.id);
+/** Aprobación completa de una orden `user.*`: quien solicita crea, otro admin aprueba. Devuelve el id. */
+async function approvedOp(kind: string, ta: string, tc: string, target: TUser): Promise<string> {
+  const op = await createOp(ta, kind, target.id);
   expect(op.status, JSON.stringify(op.body)).toBe(201);
   expect((await confirmOp(tc, op.body.operation.id, op.body.operation.confirmPhrase)).status).toBe(200);
   return op.body.operation.id as string;
@@ -134,7 +134,7 @@ describe("ADM-3 R1 · P1-1 · un admin solo no recupera una cuenta admin ajena",
     const c = await mkAdmin("rev-c");
     const ta = await tokenOf(a);
     const tc = await tokenOf(c);
-    const id = await approvedRevoke(ta, tc, b);
+    const id = await approvedOp("user.revoke_admin", ta, tc, b);
     // sin reautenticación: 401 y la aprobación no se gasta
     expect((await putRoles(ta, b.id, { roles: ["user"], operationId: id })).status).toBe(401);
     expect(await hasAdmin(b.id)).toBe(true);
@@ -142,12 +142,13 @@ describe("ADM-3 R1 · P1-1 · un admin solo no recupera una cuenta admin ajena",
     expect((await putRoles(tc, b.id, { roles: ["user"], password: PW, operationId: id })).status).toBe(403);
     // para otra cuenta no vale
     expect((await putRoles(ta, c.id, { roles: ["user"], password: PW, operationId: id })).status).toBe(403);
-    const ok = await putRoles(ta, b.id, { roles: ["user"], password: PW, operationId: id });
+    const ok = await putRoles(ta, b.id, { roles: ["user", "developer"], password: PW, operationId: id });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(await hasAdmin(b.id)).toBe(false);
     expect((await h.db("admin_operations").where({ id }).first()).status).toBe("done");
     // reutilizarla: 403 (y B ya no es admin; se la vuelve a dar para comprobar que no basta)
-    expect((await putRoles(ta, b.id, { roles: ["user", "admin"], password: PW })).status).toBe(200); // conceder: reauth
+    const grant = await approvedOp("user.grant_admin", ta, tc, b); // conceder: reauth + aprobación (hay otro admin)
+    expect((await putRoles(ta, b.id, { roles: ["user", "admin"], password: PW, operationId: grant })).status).toBe(200);
     expect((await putRoles(ta, b.id, { roles: ["user"], password: PW, operationId: id })).status).toBe(403);
     expect(await hasAdmin(b.id)).toBe(true);
     const aud = (await audits("admin.user.roles_set")).filter((x) => x.target === `user:${b.id}`);
@@ -169,7 +170,7 @@ describe("ADM-3 R1 · P1-1 · un admin solo no recupera una cuenta admin ajena",
 
   it("ROLES_REAUTENTICACION: conceder o quitarse «admin» exige reautenticación; el resto de cambios, no", async () => {
     const a = await mkAdmin("reauth-a");
-    await mkAdmin("reauth-b");
+    const rb = await mkAdmin("reauth-b");
     const u = await mkUser("reauth-u");
     const ta = await tokenOf(a);
     // conceder admin sin contraseña: 401 y nada cambia
@@ -178,7 +179,10 @@ describe("ADM-3 R1 · P1-1 · un admin solo no recupera una cuenta admin ajena",
       401,
     );
     expect(await hasAdmin(u.id)).toBe(false);
-    expect((await putRoles(ta, u.id, { roles: ["user", "admin"], password: PW })).status).toBe(200);
+    // con otro admin activo, tampoco basta la contraseña: hace falta la aprobación de otro admin
+    expect((await putRoles(ta, u.id, { roles: ["user", "admin"], password: PW })).status).toBe(403);
+    const gr = await approvedOp("user.grant_admin", ta, await tokenOf(rb), u);
+    expect((await putRoles(ta, u.id, { roles: ["user", "admin"], password: PW, operationId: gr })).status).toBe(200);
     expect(await hasAdmin(u.id)).toBe(true);
     // quitarse el rol a uno mismo sin contraseña: 401
     expect((await putRoles(ta, a.id, { roles: ["user"] })).status).toBe(401);
@@ -213,12 +217,13 @@ describe("ADM-3 R1 · P1-1 · un admin solo no recupera una cuenta admin ajena",
 
   it("PROMOCION_TRAS_EMITIR: un token emitido a un usuario normal que luego es promovido a admin NO se puede canjear", async () => {
     const a = await mkAdmin("promo-a");
-    await mkAdmin("promo-b");
+    const pb = await mkAdmin("promo-b");
     const u = await mkUser("promo-u");
     const ta = await tokenOf(a);
     const token = (await issue(ta, u.id)).body.token as string;
     // promoción por la API: además anula el token (capa b)
-    expect((await putRoles(ta, u.id, { roles: ["user", "admin"], password: PW })).status).toBe(200);
+    const gr = await approvedOp("user.grant_admin", ta, await tokenOf(pb), u);
+    expect((await putRoles(ta, u.id, { roles: ["user", "admin"], password: PW, operationId: gr })).status).toBe(200);
     expect((await reset(token)).status).toBe(401);
   });
 
@@ -267,25 +272,6 @@ describe("ADM-3 R1 · P2-1 · carrera del último administrador", () => {
       expect(Number((n as { n: string }).n), `ronda ${round}`).toBe(1);
     }
   });
-
-  it("CARRERA_ULTIMO_ADMIN_BLOQUEO: dos admins que se bloquean a la vez nunca dejan cero admins activos (5 rondas)", async () => {
-    for (let round = 0; round < 5; round++) {
-      await h.db("user_roles").where({ role: "admin" }).delete();
-      const a = await mkAdmin(`carb-r${round}-a`);
-      const b = await mkAdmin(`carb-r${round}-b`);
-      const [ta, tb] = [await tokenOf(a), await tokenOf(b)];
-      const [r1, r2] = await Promise.all([setStatus(ta, b.id, "blocked"), setStatus(tb, a.id, "blocked")]);
-      expect([r1.status, r2.status].sort(), `ronda ${round}`).toEqual([200, 409]);
-      const n = await h
-        .db("user_roles as r")
-        .join("users as u", "u.id", "r.user_id")
-        .where({ "r.role": "admin", "u.status": "active" })
-        .count({ n: "*" })
-        .first();
-      expect(Number((n as { n: string }).n), `ronda ${round}`).toBe(1);
-      await h.db("users").whereIn("id", [a.id, b.id]).update({ status: "active", blocked_at: null });
-    }
-  });
 });
 
 describe("ADM-3 R1 · P2-1 · el cerrojo se toma de verdad (determinista)", () => {
@@ -316,7 +302,7 @@ describe("ADM-3 R1 · P2-1 · el cerrojo se toma de verdad (determinista)", () =
   it("CERROJO_BLOQUEO: bloquear a un admin espera al cerrojo del último admin", async () => {
     const { setUserStatus } = await import("./services/account-recovery.js");
     const a = await mkAdmin("lock-a");
-    const b = await mkAdmin("lock-b");
+    const b = await mkUser("lock-b");
     const r = await holdsWhile(() => setUserStatus(h.db, { actorId: a.id }, b.id, "blocked"));
     expect(r.doneWhileHeld).toBe(false);
     expect(r.error).toBeNull();
@@ -456,5 +442,189 @@ describe("ADM-3 R1 · P3", () => {
     const r = await reset("token-cualquiera-no-importa-1234567890", "corta");
     expect(r.status).toBe(400);
     expect(r.body.message).toBe(passwordPolicyViolation("corta", "La nueva contraseña"));
+  });
+});
+
+describe("ADM-3 R2 · P1-2 · el admin «títere»", () => {
+  const register = async (label: string) => {
+    const email = `rv-ti-${label}-${++tagN}@test.local`;
+    const r = await request(app)
+      .post("/auth/register")
+      .send({ email, password: PW, displayName: `Titere ${label}` });
+    expect(r.status).toBe(201);
+    return { id: r.body.id as string, email } as TUser;
+  };
+
+  it("TITERE_RECUPERACION: con otro admin activo, A NO puede darle admin a una cuenta registrada por él (el ataque de la revisión se detiene)", async () => {
+    const a = await mkAdmin("tit-a");
+    const b = await mkAdmin("tit-b");
+    const ta = await tokenOf(a);
+    const x = await register("x");
+    // paso 2 del ataque: conceder admin a X sólo con la contraseña de A
+    const r = await putRoles(ta, x.id, { roles: ["user", "developer", "admin"], password: PW });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("second_admin_required");
+    expect(await hasAdmin(x.id)).toBe(false);
+    // y sin X como admin, con sólo A y B nadie puede aprobar la recuperación de B
+    const op = await createOp(ta, "user.recovery_admin", b.id);
+    expect(op.status).toBe(409);
+    expect(op.body.error).toBe("second_admin_unavailable");
+  });
+
+  it("GRANT_BOOTSTRAP: el ÚNICO admin activo puede crear al segundo con sólo la reautenticación (queda auditado como bootstrap)", async () => {
+    const a = await mkAdmin("boot-a");
+    const ta = await tokenOf(a);
+    const x = await register("boot-x");
+    expect((await putRoles(ta, x.id, { roles: ["user", "admin"] })).status).toBe(401);
+    const r = await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await hasAdmin(x.id)).toBe(true);
+    expect((await h.db("users").where({ id: x.id }).first()).admin_granted_by).toBe(a.id);
+    const aud = (await audits("admin.user.roles_set")).find((e) => e.target === `user:${x.id}`);
+    expect(aud!.detail).toMatchObject({ bootstrap: true, secondAdminOperation: null });
+  });
+
+  it("PROMOVIDO_NO_APRUEBA: un admin promovido por A NO aprueba órdenes user.* de A (ni cuenta como aprobador disponible)", async () => {
+    const a = await mkAdmin("pro-a");
+    const ta = await tokenOf(a);
+    const x = await register("pro-x");
+    expect((await putRoles(ta, x.id, { roles: ["user", "admin"], password: PW })).status).toBe(200); // bootstrap
+    const b = await mkAdmin("pro-b"); // otro admin «real» (alta por consola)
+    // sólo X podría aprobar (B es el objetivo) y fue promovido por A: no hay aprobador
+    const none = await createOp(ta, "user.recovery_admin", b.id);
+    expect(none.status).toBe(409);
+    expect(none.body.error).toBe("second_admin_unavailable");
+    // con un tercero real C sí se crea, pero X no puede confirmarla; C sí
+    const c = await mkAdmin("pro-c");
+    const op = await createOp(ta, "user.recovery_admin", b.id);
+    expect(op.status, JSON.stringify(op.body)).toBe(201);
+    const byX = await confirmOp(await tokenOf(x), op.body.operation.id, op.body.operation.confirmPhrase);
+    expect(byX.status).toBe(403);
+    expect((await confirmOp(await tokenOf(c), op.body.operation.id, op.body.operation.confirmPhrase)).status).toBe(200);
+  });
+
+  it("PROMOVIDO_NO_CONSUME: aunque la aprobación venga de un promovido (p. ej. por SQL), emitir el token la rechaza", async () => {
+    const a = await mkAdmin("pnc-a");
+    const c = await mkAdmin("pnc-c");
+    const b = await mkAdmin("pnc-b");
+    const ta = await tokenOf(a);
+    const op = await createOp(ta, "user.recovery_admin", b.id);
+    await confirmOp(await tokenOf(c), op.body.operation.id, op.body.operation.confirmPhrase);
+    await h.db("users").where({ id: c.id }).update({ admin_granted_by: a.id }); // C resulta ser promovido por A
+    const r = await issue(ta, b.id, { password: PW, operationId: op.body.operation.id });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("second_admin_approval_invalid");
+  });
+
+  it("OBJETIVO_NO_APRUEBA: la cuenta objetivo no aprueba la orden sobre sí misma (recuperación, degradación ni bloqueo)", async () => {
+    const a = await mkAdmin("obj-a");
+    const t = await mkAdmin("obj-t");
+    await mkAdmin("obj-c");
+    const ta = await tokenOf(a);
+    const tt = await tokenOf(t);
+    for (const kind of ["user.recovery_admin", "user.revoke_admin", "user.block_admin"]) {
+      const op = await createOp(ta, kind, t.id);
+      expect(op.status, `${kind}: ${JSON.stringify(op.body)}`).toBe(201);
+      const r = await confirmOp(tt, op.body.operation.id, op.body.operation.confirmPhrase);
+      expect(r.status, kind).toBe(403);
+      expect((await cancelOp(ta, op.body.operation.id, { password: PW })).status).toBe(200);
+    }
+  });
+
+  it("OBJETIVO_NO_CONSUME: aunque el objetivo figure como confirmador (p. ej. por SQL), emitir el token rechaza la aprobación", async () => {
+    const a = await mkAdmin("onc-a");
+    const c = await mkAdmin("onc-c");
+    const b = await mkAdmin("onc-b");
+    const ta = await tokenOf(a);
+    const op = await createOp(ta, "user.recovery_admin", b.id);
+    await confirmOp(await tokenOf(c), op.body.operation.id, op.body.operation.confirmPhrase);
+    await h.db.raw("ALTER TABLE admin_operations DISABLE TRIGGER admin_operations_guard");
+    await h.db("admin_operations").where({ id: op.body.operation.id }).update({ confirmed_by: b.id });
+    await h.db.raw("ALTER TABLE admin_operations ENABLE TRIGGER admin_operations_guard");
+    const r = await issue(ta, b.id, { password: PW, operationId: op.body.operation.id });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("second_admin_approval_invalid");
+  });
+
+  it("CADENA_BLOQUEO: un admin no puede bloquear a los demás él solo, y no se queda solo a la fuerza", async () => {
+    const a = await mkAdmin("cad-a");
+    const b = await mkAdmin("cad-b");
+    const c = await mkAdmin("cad-c");
+    const ta = await tokenOf(a);
+    const direct = await request(app)
+      .put(`/admin/users/${b.id}/status`)
+      .set(auth(ta))
+      .send({ status: "blocked", password: PW });
+    expect(direct.status).toBe(403);
+    expect(direct.body.error).toBe("second_admin_required");
+    expect((await h.db("users").where({ id: b.id }).first()).status).toBe("active");
+    // con la aprobación de C sí
+    const id = await approvedOp("user.block_admin", ta, await tokenOf(c), b);
+    const ok = await request(app)
+      .put(`/admin/users/${b.id}/status`)
+      .set(auth(ta))
+      .send({ status: "blocked", password: PW, operationId: id });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("done");
+    // ahora quedan A y C: bloquear a C no tiene aprobador (B está bloqueado): 409, A no se queda solo
+    const solo = await request(app)
+      .put(`/admin/users/${c.id}/status`)
+      .set(auth(ta))
+      .send({ status: "blocked", password: PW });
+    expect(solo.status).toBe(409);
+    expect(solo.body.error).toBe("second_admin_unavailable");
+    expect((await h.db("users").where({ id: c.id }).first()).status).toBe("active");
+  });
+
+  it("GRANT_CON_APROBACION: con otro admin, conceder admin funciona con la aprobación y se gasta una vez", async () => {
+    const a = await mkAdmin("gra-a");
+    const b = await mkAdmin("gra-b");
+    const u = await mkUser("gra-u");
+    const ta = await tokenOf(a);
+    const id = await approvedOp("user.grant_admin", ta, await tokenOf(b), u);
+    const ok = await putRoles(ta, u.id, { roles: ["user", "developer", "admin"], password: PW, operationId: id });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(await hasAdmin(u.id)).toBe(true);
+    expect((await h.db("users").where({ id: u.id }).first()).admin_granted_by).toBe(a.id);
+    // reutilizada para otra cuenta: no vale
+    const v = await mkUser("gra-v");
+    expect((await putRoles(ta, v.id, { roles: ["user", "admin"], password: PW, operationId: id })).status).toBe(403);
+  });
+});
+
+describe("ADM-3 R2 · P2-4 · la retirada de admin sólo quita admin", () => {
+  it("REVOCA_SOLO_QUITA_ADMIN: con la aprobación, un conjunto de roles distinto de «los actuales menos admin» es 400 y no consume la aprobación", async () => {
+    const a = await mkAdmin("rso-a");
+    const b = await mkUser("rso-b", ["user", "developer", "organizer", "admin"]);
+    const c = await mkAdmin("rso-c");
+    const ta = await tokenOf(a);
+    const id = await approvedOp("user.revoke_admin", ta, await tokenOf(c), b);
+    expect((await putRoles(ta, b.id, { roles: [], password: PW, operationId: id })).status).toBe(400);
+    expect((await putRoles(ta, b.id, { roles: ["user"], password: PW, operationId: id })).status).toBe(400);
+    expect(await hasAdmin(b.id)).toBe(true);
+    expect((await h.db("admin_operations").where({ id }).first()).status).toBe("pending");
+    const ok = await putRoles(ta, b.id, { roles: ["user", "developer", "organizer"], password: PW, operationId: id });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(await hasAdmin(b.id)).toBe(false);
+  });
+
+  it("GET_ADMIN_USER: devuelve los roles ACTUALES por id (sin secretos), 404 si no existe y sólo para admin", async () => {
+    const a = await mkAdmin("gau-a");
+    const u = await mkUser("gau-u", ["user", "organizer"]);
+    const ta = await tokenOf(a);
+    const r = await request(app).get(`/admin/users/${u.id}`).set(auth(ta));
+    expect(r.status).toBe(200);
+    expect(r.body.roles).toEqual(["organizer", "user"]);
+    expect(JSON.stringify(r.body)).not.toMatch(/argon2|password_hash|totp_secret/);
+    expect((await request(app).get(`/admin/users/00000000-0000-4000-8000-000000000000`).set(auth(ta))).status).toBe(
+      404,
+    );
+    expect(
+      (
+        await request(app)
+          .get(`/admin/users/${u.id}`)
+          .set(auth(await tokenOf(u)))
+      ).status,
+    ).toBe(403);
   });
 });

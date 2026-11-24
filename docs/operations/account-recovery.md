@@ -34,9 +34,20 @@ Si el objetivo es una **cuenta admin** el token sólo se emite con la aprobació
 2. **Otro** administrador la confirma (`POST /admin/operations/{id}/confirm`) con la **frase literal** del servidor y su contraseña (y TOTP). El solicitante no puede aprobarla (403).
 3. El solicitante emite el token (`POST /admin/users/{userId}/recovery-token` con `operationId`). La aprobación **se consume una sola vez**, sólo vale para esa cuenta y para quien la solicitó, y **caduca a los 10 minutos** de la aprobación (una aprobación sin usar se cancela sola al pedir otra).
 
-Sólo cuentan los administradores **activos** (no bloqueados). Sólo puede haber **una** solicitud de este tipo activa a la vez (regla «una orden activa por tipo» de ADM-1).
+Sólo cuentan los administradores **activos** (no bloqueados). Puede haber **una** solicitud activa **por cuenta objetivo** y tipo (no una global): dos recuperaciones de cuentas distintas conviven, y una segunda solicitud sobre la misma cuenta da 409 `operation_in_progress`.
 
 El **canje revalida el rol**: si la cuenta es admin al canjear y el token no se emitió con una aprobación de segundo admin, se rechaza con la respuesta uniforme (cierra «degradar, emitir, re-promover, canjear» y «emitir y promover»). Cualquier cambio de roles de una cuenta **anula sus tokens abiertos**. Quitar el rol admin a OTRA cuenta exige reautenticación y una aprobación `user.revoke_admin` de un admin distinto del solicitante; la unicidad de estas órdenes es **por cuenta objetivo**, y crearlas o cancelarlas exige reautenticación y tiene límite por admin. El segundo admin se busca entre los admins activos distintos del solicitante y del objetivo.
+
+### Defensa frente al admin «títere» (revisión de #347, ronda 2)
+
+Para que un solo administrador no se fabrique un «segundo admin»:
+
+- **Conceder `admin` a otra cuenta** exige reautenticación y, si hay **otro admin activo** además de quien lo hace, la aprobación de otro admin (orden `user.grant_admin`). Si quien lo hace es el **único admin activo** basta la reautenticación (así se crea el segundo admin de una instalación nueva); queda auditado como `bootstrap`.
+- **Bloquear a otra cuenta admin** exige la aprobación de otro admin activo (orden `user.block_admin`); sin nadie que pueda aprobar, 409 `second_admin_unavailable`. Así un admin no puede quedarse solo a la fuerza.
+- **La cuenta objetivo nunca aprueba** una orden `user.*` sobre sí misma.
+- **Un admin promovido por X no aprueba las órdenes `user.*` de X** (se recuerda quién concedió el rol: `users.admin_granted_by`) y tampoco cuenta como aprobador disponible. Consecuencia: el segundo admin creado por bootstrap no sirve de aprobador para las órdenes de quien lo promovió; hace falta un tercero.
+- **Quitar `admin` a otra cuenta** (`user.revoke_admin`) sólo admite como resultado «los roles actuales menos `admin`» (400 si no). La web lee los roles reales de la cuenta por id (`GET /admin/users/{userId}`) al aplicarla.
+- **Fuera de alcance:** cuentas «títere» creadas antes de esta regla y un administrador malicioso que cuente con DOS personas reales; sólo la consola (acceso local) los resuelve. Bloquear a otro admin sin aprobación ya no es posible, así que en una instalación con dos admins uno no puede bloquear al otro: la vía es la consola.
 
 ### Salvaguardas de administración
 

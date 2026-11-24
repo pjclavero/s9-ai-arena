@@ -308,25 +308,23 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
   });
 
-  it("BLOQUEO_ULTIMO_ADMIN: nunca se deja el sistema sin un administrador ACTIVO (409), y con otro activo se puede", async () => {
+  it("BLOQUEO_ULTIMO_ADMIN: nunca se deja el sistema sin un administrador ACTIVO (409), antes incluso de pedir aprobación", async () => {
     const { setUserStatus } = await import("./services/account-recovery.js");
     const a = await mkAdmin("bl-ultimo-a");
     const b = await mkAdmin("bl-ultimo-b");
-    const ta = await tokenOf(a);
-    // con dos activos, bloquear a b es legal
-    expect((await setStatus(ta, b.id, { status: "blocked", password: PW })).status).toBe(200);
-    // ahora «a» es el único activo: un actor distinto (cuya sesión se acaba de ver bloqueada por otra vía) no puede
-    // bloquearlo; la guarda es del SERVICIO, no de quién llame
+    // b bloqueado a mano: «a» es el único activo; un actor cualquiera no puede bloquearlo
+    await h.db("users").where({ id: b.id }).update({ status: "blocked", blocked_at: new Date() });
     const actor = await mkUser("bl-ultimo-actor", ["user"]);
     await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
       status: 409,
       code: "last_admin",
     });
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
-    // desbloquear a b devuelve a dos activos y entonces sí se puede bloquear a «a»
+    // con b activo de nuevo, bloquear a «a» deja de ser el último admin pero exige la aprobación de otro admin
     await setUserStatus(h.db, { actorId: actor.id }, b.id, "active");
-    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).resolves.toMatchObject({
-      status: "blocked",
+    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
+      status: 403,
+      code: "second_admin_required",
     });
   });
 

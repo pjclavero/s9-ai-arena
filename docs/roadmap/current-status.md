@@ -21,7 +21,7 @@ REVISADO:        2026-11-20
 CÓDIGO:          main protegida; foto fija: CI de 80f4952 el 2026-11-20 = 31 check-runs, 30 success + 1 neutral
 DESPLEGADO:      8f380eb (reinstalación del 19-nov-2026, según los informes de migración; el repositorio no puede comprobarlo)
 MAIN VS PROD:    main lleva 36 commits por delante de lo desplegado (#169, #303, #304, #309); sólo #169 y #309 tocan el producto
-MOTOR / API:     motor 0.5.0 · contrato OpenAPI 0.27.0 (116 operaciones) · migraciones 001–025
+MOTOR / API:     motor 0.5.0 · contrato OpenAPI 0.27.0 (117 operaciones) · migraciones 001–025
 P0 / P1 / P2:    el registro de deuda conserva 3 P0, 7 P1 y 13 P2 abiertos; los hallazgos nuevos de V1 están en el roadmap
 P3 CONOCIDOS:    19 P3 y 4 P4 abiertos en el registro (ver technical-debt.md)
 ```
@@ -181,7 +181,7 @@ La clasificación completa (V1, OLA 2, futura, defectos) está en [v1-roadmap.md
 | Producción: 13 contenedores sanos, migraciones hasta la 022, bootstrap sin usuarios | REPORTADO (MIG6, 2026-11-19) | informe de migración MIG6 |
 | Producción: import de 37 bots idempotente, batalla con replay `valid=true`, torneos individual y 2v2 `finished`, cancelación, 403 de propiedad y 409 de mínimo de inscritos | REPORTADO (MIG12, 2026-11-19, 18 gates PASS) | informe de migración MIG12 |
 | Producción: copia restic y restauración real, 41 de 41 tablas idénticas | REPORTADO (MIG16, 2026-11-19) | informe de migración MIG16 |
-| Motor 0.5.0, OpenAPI 0.27.0 con 116 operaciones, migraciones 001–025 (ADM-1: `system_settings` y `admin_operations`; ADM-3: usuarios, bloqueo y recuperación por token, PR en borrador, aún sin integrar en `main`) | CODE_VERIFIED | `packages/game-rules/rules-doc.ts`, `apps/api/openapi.yaml`, `apps/api/src/db/migrations.ts` |
+| Motor 0.5.0, OpenAPI 0.27.0 con 117 operaciones, migraciones 001–025 (ADM-1: `system_settings` y `admin_operations`; ADM-3: usuarios, bloqueo y recuperación por token, PR en borrador, aún sin integrar en `main`) | CODE_VERIFIED | `packages/game-rules/rules-doc.ts`, `apps/api/openapi.yaml`, `apps/api/src/db/migrations.ts` |
 | Ciclo completo de torneos validado en laboratorio (RR, eliminación simple, suizo, TDM 2v2/3v3/4v4) | LAB (PR #317, aún sin merge) | informe V1-C: 32 tests, rc=0 dos veces seguidas; 17 de 17 mutantes muertos |
 | CTF y zona en torneos fallan al jugar | LAB (PR #317) | `v1-tournament-ctf-zone.e2e.test.ts` |
 | Streaming V2 y Broadcast Manager no existen en `main` | CODE_VERIFIED | `git grep -n "StreamSession\|BroadcastQueue" -- apps packages infrastructure` (vacío) |

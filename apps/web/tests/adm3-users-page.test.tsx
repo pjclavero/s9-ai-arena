@@ -386,20 +386,24 @@ describe("ADM-3 R1 · revisión de #347", () => {
     });
   });
 
-  it("APLICAR_QUITAR_ADMIN: con la aprobación, quien la solicitó aplica el cambio enviando el operationId", async () => {
+  const pendingOp = (kind: string, id: string) => ({
+    id,
+    kind,
+    params: { userId: ADM.id },
+    status: "pending",
+    confirmPhrase: null,
+    requestedBy: ME.id,
+    impact: { summary: "x", counts: {} },
+  });
+
+  it("APLICAR_QUITAR_ADMIN: usa los roles REALES del objetivo (pedidos por id, aunque no esté en la página) y envía el operationId", async () => {
     route({
-      "GET /admin/users": () => page([ADM]),
-      "GET /admin/operations": () => [
-        {
-          id: "op-rv",
-          kind: "user.revoke_admin",
-          params: { userId: ADM.id },
-          status: "pending",
-          confirmPhrase: null,
-          requestedBy: ME.id,
-          impact: { summary: "x", counts: {} },
-        },
-      ],
+      "GET /admin/users": () => page([U1]), // el objetivo NO está en la página cargada
+      "GET /admin/operations": () => [pendingOp("user.revoke_admin", "op-rv")],
+      "GET /admin/users/33333333-3333-4333-8333-333333333333": () => ({
+        ...ADM,
+        roles: ["developer", "organizer", "admin", "user"],
+      }),
       "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
     });
     render(<UsersPage me={ME} />);
@@ -409,9 +413,98 @@ describe("ADM-3 R1 · revisión de #347", () => {
     await confirmWith("QUITAR ADMIN 33333333", "mi-clave-larga-1");
     await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
     expect(calls("PUT", "/users/")[0][2]).toEqual({
-      roles: ["user"],
+      roles: ["developer", "organizer", "user"],
       password: "mi-clave-larga-1",
       operationId: "op-rv",
+    });
+  });
+
+  it("APLICAR_CONCEDER_ADMIN: añade «admin» a los roles reales y envía el operationId", async () => {
+    const plain = { ...ADM, roles: ["user", "organizer"] };
+    route({
+      "GET /admin/users": () => page([U1]),
+      "GET /admin/operations": () => [pendingOp("user.grant_admin", "op-gr")],
+      "GET /admin/users/33333333-3333-4333-8333-333333333333": () => plain,
+      "PUT /users/33333333-3333-4333-8333-333333333333/roles": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("recovery-ops");
+    fireEvent.click(screen.getByTestId("issue-admin-op-gr"));
+    await confirmWith("CONCEDER ADMIN 33333333", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
+    expect(calls("PUT", "/users/")[0][2]).toEqual({
+      roles: ["user", "organizer", "admin"],
+      password: "mi-clave-larga-1",
+      operationId: "op-gr",
+    });
+  });
+
+  it("APLICAR_BLOQUEAR_ADMIN: bloquea con el operationId de la aprobación", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [pendingOp("user.block_admin", "op-bl")],
+      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("recovery-ops");
+    fireEvent.click(screen.getByTestId("issue-admin-op-bl"));
+    await confirmWith("BLOQUEAR ADMIN 33333333", "mi-clave-larga-1");
+    await waitFor(() => expect(calls("PUT", "/admin/users/")).toHaveLength(1));
+    expect(calls("PUT", "/admin/users/")[0][2]).toEqual({
+      status: "blocked",
+      password: "mi-clave-larga-1",
+      operationId: "op-bl",
+    });
+  });
+
+  it("CONCEDER_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al conceder, la web solicita user.grant_admin", async () => {
+    route({
+      "GET /admin/users": () => page([U1]),
+      "GET /admin/operations": () => [],
+      "PUT /users/11111111-1111-4111-8111-111111111111/roles": () => {
+        throw Object.assign(new Error("hace falta segundo admin"), {
+          status: 403,
+          body: { error: "second_admin_required" },
+        });
+      },
+      "POST /admin/operations": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`roles-edit-${U1.id}`));
+    fireEvent.click(screen.getByTestId(`role-${U1.id}-admin`));
+    fireEvent.click(screen.getByTestId(`roles-save-${U1.id}`));
+    await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("users-notice");
+    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
+      kind: "user.grant_admin",
+      params: { userId: U1.id },
+      password: "mi-clave-larga-1",
+    });
+    expect(screen.queryByTestId("users-error")).toBeNull();
+  });
+
+  it("BLOQUEAR_ADMIN_PIDE_APROBACION: si el servidor exige segundo admin al bloquear a un admin, la web solicita user.block_admin", async () => {
+    route({
+      "GET /admin/users": () => page([ADM]),
+      "GET /admin/operations": () => [],
+      "PUT /admin/users/33333333-3333-4333-8333-333333333333/status": () => {
+        throw Object.assign(new Error("hace falta segundo admin"), {
+          status: 403,
+          body: { error: "second_admin_required" },
+        });
+      },
+      "POST /admin/operations": () => ({}),
+    });
+    render(<UsersPage me={ME} />);
+    await screen.findByTestId("users-table");
+    fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
+    await confirmWith("BLOQUEAR cris@x.es", "mi-clave-larga-1");
+    await screen.findByTestId("users-notice");
+    expect(calls("POST", "/admin/operations")[0][2]).toEqual({
+      kind: "user.block_admin",
+      params: { userId: ADM.id },
+      password: "mi-clave-larga-1",
     });
   });
 

@@ -50,12 +50,26 @@ interface IssuedToken {
 export const ASSIGNABLE_ROLES = ["user", "developer", "team_captain", "organizer", "moderator", "admin"] as const;
 export const RECOVERY_KIND = "user.recovery_admin";
 export const REVOKE_KIND = "user.revoke_admin";
+export const GRANT_KIND = "user.grant_admin";
+export const BLOCK_KIND = "user.block_admin";
+const USER_KINDS = [RECOVERY_KIND, REVOKE_KIND, GRANT_KIND, BLOCK_KIND];
+const KIND_PHRASE: Record<string, string> = {
+  [REVOKE_KIND]: "QUITAR ADMIN",
+  [GRANT_KIND]: "CONCEDER ADMIN",
+  [BLOCK_KIND]: "BLOQUEAR ADMIN",
+};
+const KIND_TEXT: Record<string, string> = {
+  [RECOVERY_KIND]: "recuperar a ",
+  [REVOKE_KIND]: "quitar el rol admin a ",
+  [GRANT_KIND]: "conceder el rol admin a ",
+  [BLOCK_KIND]: "bloquear a la cuenta admin ",
+};
 
 type Action =
   | { kind: "roles"; user: AdminUser; roles: string[]; reauth: boolean }
   | { kind: "requestRecovery"; user: AdminUser }
   | { kind: "requestRevoke"; user: AdminUser }
-  | { kind: "applyRevoke"; op: RecoveryOperation; label: string }
+  | { kind: "applyOp"; op: RecoveryOperation; label: string }
   | { kind: "cancelOp"; op: RecoveryOperation }
   | { kind: "status"; user: AdminUser; to: "active" | "blocked" }
   | { kind: "token"; user: AdminUser }
@@ -77,8 +91,8 @@ export function userActionPhrase(a: Exclude<Action, { kind: "approve" } | { kind
       return `SOLICITAR RECUPERACION ${a.user.email}`;
     case "requestRevoke":
       return `SOLICITAR QUITAR ADMIN ${a.user.email}`;
-    case "applyRevoke":
-      return `QUITAR ADMIN ${short(a.op.params.userId ?? "")}`;
+    case "applyOp":
+      return `${KIND_PHRASE[a.op.kind] ?? "APLICAR"} ${short(a.op.params.userId ?? "")}`;
     case "cancelOp":
       return `CANCELAR ${short(a.op.params.userId ?? "")}`;
   }
@@ -115,9 +129,7 @@ export function UsersPage(props: { me: Me }) {
       const all = await api<RecoveryOperation[]>("GET", "/admin/operations?limit=50");
       setOps(
         all.filter(
-          (o) =>
-            (o.kind === RECOVERY_KIND || o.kind === REVOKE_KIND) &&
-            (o.status === "awaiting_confirmation" || o.status === "pending"),
+          (o) => USER_KINDS.includes(o.kind) && (o.status === "awaiting_confirmation" || o.status === "pending"),
         ),
       );
     } catch {
@@ -182,6 +194,22 @@ export function UsersPage(props: { me: Me }) {
     }
   }
 
+  /** Solicita una orden `user.*` (aprobación de otro admin); si no hay quien pueda aprobar, explica la vía local. */
+  async function requestOrder(kind: string, user: AdminUser, reauth: Record<string, string>) {
+    try {
+      await api("POST", "/admin/operations", { kind, params: { userId: user.id }, ...reauth }, { reauth: true });
+      setNotice(`Solicitada la aprobación de otro administrador para ${KIND_TEXT[kind]}${user.email}.`);
+      await loadOps();
+    } catch (e) {
+      if (errorCode(e) !== "second_admin_unavailable") throw e;
+      setNotice(
+        kind === RECOVERY_KIND
+          ? "No hay otro administrador activo que pueda aprobar. Usa la recuperación local por consola (cli.ts reset-password), descrita en la guía de operación."
+          : "No hay otro administrador activo que pueda aprobar (los promovidos por ti no cuentan). Hazlo por consola o, para quitar el rol, que la propia cuenta se lo quite (reautenticada).",
+      );
+    }
+  }
+
   async function onConfirm(c: ConfirmCredentials) {
     const a = action;
     if (!a) return;
@@ -191,52 +219,55 @@ export function UsersPage(props: { me: Me }) {
       const reauth = { password: c.password, ...(c.totp ? { totp: c.totp } : {}) };
       if (a.kind === "roles") {
         // Conceder o quitarse «admin» exige reautenticación (el servidor responde 401 sin ella).
-        if (a.reauth) await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles, ...reauth }, { reauth: true });
-        else await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles });
-        setNotice(`Roles de ${a.user.email} actualizados.`);
-      } else if (a.kind === "requestRecovery" || a.kind === "requestRevoke") {
+        const grantsOther = a.roles.includes("admin") && !a.user.roles.includes("admin") && a.user.id !== props.me.id;
         try {
+          if (a.reauth) await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles, ...reauth }, { reauth: true });
+          else await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles });
+          setNotice(`Roles de ${a.user.email} actualizados.`);
+        } catch (e) {
+          // Con otro admin activo, conceder admin necesita la aprobación de otro: se solicita la orden.
+          if (!(grantsOther && errorCode(e) === "second_admin_required")) throw e;
+          await requestOrder(GRANT_KIND, a.user, reauth);
+        }
+      } else if (a.kind === "requestRecovery" || a.kind === "requestRevoke") {
+        await requestOrder(a.kind === "requestRecovery" ? RECOVERY_KIND : REVOKE_KIND, a.user, reauth);
+      } else if (a.kind === "applyOp") {
+        const userId = a.op.params.userId!;
+        if (a.op.kind === BLOCK_KIND) {
           await api(
-            "POST",
-            "/admin/operations",
-            {
-              kind: a.kind === "requestRecovery" ? RECOVERY_KIND : REVOKE_KIND,
-              params: { userId: a.user.id },
-              ...reauth,
-            },
+            "PUT",
+            `/admin/users/${userId}/status`,
+            { status: "blocked", ...reauth, operationId: a.op.id },
             { reauth: true },
           );
+          setNotice(`Cuenta ${a.label} bloqueada.`);
+        } else {
+          // Los roles REALES de la cuenta, pedidos por id: la página cargada puede no contenerla o estar desfasada.
+          const fresh = await api<AdminUser>("GET", `/admin/users/${userId}`);
+          const roles =
+            a.op.kind === GRANT_KIND
+              ? [...new Set([...fresh.roles, "admin"])]
+              : fresh.roles.filter((r) => r !== "admin");
+          await api("PUT", `/users/${userId}/roles`, { roles, ...reauth, operationId: a.op.id }, { reauth: true });
           setNotice(
-            `Solicitada la aprobación de otro administrador para ${a.kind === "requestRecovery" ? "recuperar" : "quitar el rol admin a"} la cuenta de ${a.user.email}.`,
-          );
-          await loadOps();
-        } catch (e) {
-          if (errorCode(e) !== "second_admin_unavailable") throw e;
-          setNotice(
-            a.kind === "requestRecovery"
-              ? "No hay otro administrador activo que pueda aprobar. Usa la recuperación local por consola (cli.ts reset-password), descrita en la guía de operación."
-              : "No hay otro administrador activo que pueda aprobar. La propia cuenta puede quitarse el rol (reautenticada) o hazlo por consola.",
+            a.op.kind === GRANT_KIND ? `Rol admin concedido a ${a.label}.` : `Rol admin retirado a ${a.label}.`,
           );
         }
-      } else if (a.kind === "applyRevoke") {
-        const userId = a.op.params.userId!;
-        const target = items.find((x) => x.id === userId);
-        await api(
-          "PUT",
-          `/users/${userId}/roles`,
-          { roles: (target?.roles ?? []).filter((r) => r !== "admin"), ...reauth, operationId: a.op.id },
-          { reauth: true },
-        );
-        setNotice(`Rol admin retirado a ${a.label}.`);
       } else if (a.kind === "cancelOp") {
         await api("POST", `/admin/operations/${a.op.id}/cancel`, reauth, { reauth: true });
         setNotice("Solicitud cancelada.");
         await loadOps();
       } else if (a.kind === "status") {
-        await api("PUT", `/admin/users/${a.user.id}/status`, { status: a.to, ...reauth }, { reauth: true });
-        setNotice(
-          a.to === "blocked" ? `${a.user.email} bloqueado: sesiones cerradas.` : `${a.user.email} desbloqueado.`,
-        );
+        try {
+          await api("PUT", `/admin/users/${a.user.id}/status`, { status: a.to, ...reauth }, { reauth: true });
+          setNotice(
+            a.to === "blocked" ? `${a.user.email} bloqueado: sesiones cerradas.` : `${a.user.email} desbloqueado.`,
+          );
+        } catch (e) {
+          // Bloquear a otra cuenta admin exige la aprobación de otro admin: se solicita la orden.
+          if (!(a.to === "blocked" && errorCode(e) === "second_admin_required")) throw e;
+          await requestOrder(BLOCK_KIND, a.user, reauth);
+        }
       } else if (a.kind === "token") {
         const r = await api<{ token: string; expiresAt: string; userId: string }>(
           "POST",
@@ -310,13 +341,10 @@ export function UsersPage(props: { me: Me }) {
         askPassword: true,
       };
     }
-    if (action.kind === "applyRevoke") {
+    if (action.kind === "applyOp") {
       return {
-        title: `Quitar el rol admin a ${action.label}`,
-        impact: {
-          summary: "Se consume la aprobación del segundo administrador y la cuenta deja de ser admin.",
-          counts: {},
-        },
+        title: `Aplicar: ${KIND_TEXT[action.op.kind]}${action.label}`,
+        impact: { summary: "Se consume la aprobación del segundo administrador y se aplica el cambio.", counts: {} },
         phrase,
         askPassword: true,
       };
@@ -433,13 +461,13 @@ export function UsersPage(props: { me: Me }) {
               const label = labelOf(o.params.userId);
               return (
                 <li key={o.id} data-testid={`recovery-op-${o.id}`}>
-                  {o.kind === REVOKE_KIND ? "quitar rol admin a " : "recuperar a "}
+                  {KIND_TEXT[o.kind]}
                   {label} ·{" "}
                   {o.status === "awaiting_confirmation"
                     ? "pendiente de aprobación"
-                    : o.kind === REVOKE_KIND
-                      ? "aprobada: lista para aplicar"
-                      : "aprobada: lista para emitir"}{" "}
+                    : o.kind === RECOVERY_KIND
+                      ? "aprobada: lista para emitir"
+                      : "aprobada: lista para aplicar"}{" "}
                   · {mine ? "solicitada por ti" : "solicitada por otro administrador"}{" "}
                   {o.status === "awaiting_confirmation" && !mine && (
                     <Button data-testid={`approve-${o.id}`} onClick={() => setAction({ kind: "approve", op: o })}>
@@ -451,13 +479,13 @@ export function UsersPage(props: { me: Me }) {
                       data-testid={`issue-admin-${o.id}`}
                       onClick={() =>
                         setAction(
-                          o.kind === REVOKE_KIND
-                            ? { kind: "applyRevoke", op: o, label }
-                            : { kind: "issueAdmin", op: o, label },
+                          o.kind === RECOVERY_KIND
+                            ? { kind: "issueAdmin", op: o, label }
+                            : { kind: "applyOp", op: o, label },
                         )
                       }
                     >
-                      {o.kind === REVOKE_KIND ? "Aplicar" : "Emitir token"}
+                      {o.kind === RECOVERY_KIND ? "Emitir token" : "Aplicar"}
                     </Button>
                   )}{" "}
                   {mine && (

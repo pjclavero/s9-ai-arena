@@ -73,7 +73,7 @@ export const MAX_SEARCH_LENGTH = 100;
  */
 export async function listUsers(
   db: Db,
-  p: { q?: unknown; limit: number; cursor?: string },
+  p: { q?: unknown; limit: number; cursor?: string; id?: string },
 ): Promise<{ items: AdminUserView[]; nextCursor?: string }> {
   let q: string | undefined;
   if (p.q !== undefined && p.q !== "") {
@@ -104,6 +104,7 @@ export async function listUsers(
       { column: "u.id", order: "desc" },
     ])
     .limit(p.limit + 1);
+  if (p.id) query = query.where("u.id", p.id);
   if (q) {
     // Los comodines del usuario se escapan: «%» o «_» buscan esos caracteres, no «todo».
     const like = `%${q.toLowerCase().replace(EMAIL_ESCAPE, (c) => `\\${c}`)}%`;
@@ -128,6 +129,13 @@ export async function listUsers(
     })),
     nextCursor: rows.length > p.limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
   };
+}
+
+/** Un usuario por id (misma proyección que el listado), o 404. */
+export async function getAdminUser(db: Db, id: string): Promise<AdminUserView> {
+  const r = await listUsers(db, { id, limit: 1 });
+  if (r.items.length === 0) throw notFound();
+  return r.items[0];
 }
 
 // ------------------------------------------------------------ último admin
@@ -160,6 +168,7 @@ export async function setUserStatus(
   ctx: Ctx,
   targetId: string,
   status: "active" | "blocked",
+  opts: { operationId?: unknown } = {},
 ): Promise<{ id: string; status: "active" | "blocked"; changed: boolean; sessionsRevoked: number }> {
   if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");
   if (targetId === ctx.actorId) {
@@ -178,6 +187,19 @@ export async function setUserStatus(
         if (isAdmin && !(await otherActiveAdminExists(t, targetId))) {
           throw conflict("last_admin", "No se puede bloquear al último administrador activo");
         }
+        // Bloquear a OTRA cuenta admin exige la aprobación de otro admin activo (`user.block_admin`): así un admin no
+        // puede quedarse solo a la fuerza (cierra la cadena «bloquear a los demás, conceder a un títere, recuperar»).
+        let approval: string | null = null;
+        if (isAdmin) {
+          approval = await requireSecondAdmin(
+            t,
+            ctx,
+            "user.block_admin",
+            targetId,
+            opts.operationId,
+            "Bloquear a otra cuenta admin exige la aprobación de otro administrador activo y no hay ninguno disponible: hazlo por consola",
+          );
+        }
         await t("users")
           .where({ id: targetId })
           .update({ status: "blocked", blocked_at: t.fn.now(), blocked_by: ctx.actorId, updated_at: t.fn.now() });
@@ -187,7 +209,7 @@ export async function setUserStatus(
           actorId: ctx.actorId,
           action: "admin.user.blocked",
           target: `user:${targetId}`,
-          detail: { sessionsRevoked, recoveryTokensVoided: voided },
+          detail: { sessionsRevoked, recoveryTokensVoided: voided, secondAdminOperation: approval },
           correlationId: ctx.correlationId,
         });
       } else {
@@ -224,14 +246,36 @@ export async function createPasswordReset(
   return token;
 }
 
-/** ¿Hay algún admin ACTIVO fuera de `excluded` que pueda aprobar? */
-export async function approverAvailable(db: Db, excluded: string[]): Promise<boolean> {
-  const r = await db("user_roles as r")
+/**
+ * ¿Hay algún admin ACTIVO fuera de `excluded` que pueda aprobar una orden de `requesterId`? Un admin que PROMOVIÓ
+ * el solicitante (`admin_granted_by`) nunca cuenta: es la defensa contra el admin «títere».
+ */
+export async function approverAvailable(db: Db, excluded: string[], requesterId?: string | null): Promise<boolean> {
+  const q = db("user_roles as r")
     .join("users as u", "u.id", "r.user_id")
     .where({ "r.role": "admin", "u.status": "active" })
-    .whereNotIn("u.id", excluded)
-    .first("u.id");
-  return !!r;
+    .whereNotIn("u.id", excluded);
+  if (requesterId) q.where((b) => b.whereNull("u.admin_granted_by").orWhereNot("u.admin_granted_by", requesterId));
+  return !!(await q.first("u.id"));
+}
+
+export type ApprovalKind = "user.recovery_admin" | "user.revoke_admin" | "user.grant_admin" | "user.block_admin";
+
+/** Sin `operationId`: 409 si no hay quién pueda aprobar, 403 si hace falta pedirla; con él, la consume (una vez). */
+async function requireSecondAdmin(
+  t: Db,
+  ctx: Ctx,
+  kind: ApprovalKind,
+  targetId: string,
+  operationId: unknown,
+  unavailableMsg: string,
+): Promise<string> {
+  if (typeof operationId !== "string" || operationId === "") {
+    if (!(await approverAvailable(t, [ctx.actorId ?? "", targetId], ctx.actorId))) {
+      throw conflict("second_admin_unavailable", unavailableMsg);
+    }
+  }
+  return consumeSecondAdminApproval(t, ctx, kind, targetId, operationId);
 }
 
 /**
@@ -241,7 +285,7 @@ export async function approverAvailable(db: Db, excluded: string[]): Promise<boo
 export async function consumeSecondAdminApproval(
   trx: Db,
   ctx: Ctx,
-  kind: "user.recovery_admin" | "user.revoke_admin",
+  kind: ApprovalKind,
   targetId: string,
   operationId: unknown,
 ): Promise<string> {
@@ -266,8 +310,13 @@ export async function consumeSecondAdminApproval(
   const approver = await trx("users as u")
     .join("user_roles as r", "r.user_id", "u.id")
     .where({ "u.id": op.confirmed_by, "u.status": "active", "r.role": "admin" })
-    .first("u.id");
+    .first("u.id", "u.admin_granted_by");
   if (!approver) throw invalid("Quien aprobó ya no es administrador activo: solicítala de nuevo");
+  // El objetivo nunca aprueba lo suyo, ni un admin PROMOVIDO por el solicitante (admin «títere»).
+  if (approver.id === targetId) throw invalid("La cuenta objetivo no puede aprobar la acción sobre sí misma");
+  if (approver.admin_granted_by && approver.admin_granted_by === op.requested_by) {
+    throw invalid("Quien aprobó fue promovido a admin por el solicitante: hace falta otro administrador");
+  }
   if (!op.confirmed_at || Date.now() - new Date(op.confirmed_at).getTime() > RECOVERY_APPROVAL_WINDOW_MS) {
     throw invalid("La aprobación caducó: solicítala de nuevo");
   }
@@ -443,20 +492,46 @@ export async function setUserRoles(
         throw conflict("roles_changed_concurrently", "Los roles de la cuenta cambiaron mientras tanto: reintenta");
       }
       let operationId: string | null = null;
+      let bootstrap = false;
       if (plan.revokesAdmin) {
         if (!(await otherActiveAdminExists(t, targetId))) {
           throw conflict("last_admin", "No se puede quitar el rol admin al último administrador activo");
         }
         if (targetId !== ctx.actorId) {
-          if (typeof opts.operationId !== "string" || opts.operationId === "") {
-            if (!(await approverAvailable(t, [ctx.actorId ?? "", targetId]))) {
-              throw conflict(
-                "second_admin_unavailable",
-                "Quitar el rol admin a otra cuenta exige la aprobación de un tercer administrador y no hay ninguno: que la propia cuenta se lo quite (reautenticada) o hazlo por consola",
-              );
-            }
+          operationId = await requireSecondAdmin(
+            t,
+            ctx,
+            "user.revoke_admin",
+            targetId,
+            opts.operationId,
+            "Quitar el rol admin a otra cuenta exige la aprobación de un tercer administrador y no hay ninguno: que la propia cuenta se lo quite (reautenticada) o hazlo por consola",
+          );
+          // (Si falla, la transacción se deshace y la aprobación NO se gasta.) Una aprobación de «quitar admin» sólo autoriza eso: los demás roles de la cuenta deben quedar como están.
+          if (
+            !sameSet(
+              wanted,
+              before.filter((r) => r !== "admin"),
+            )
+          ) {
+            throw badRequest("Quitar el rol admin a otra cuenta sólo admite los roles actuales menos admin");
           }
-          operationId = await consumeSecondAdminApproval(t, ctx, "user.revoke_admin", targetId, opts.operationId);
+        }
+      }
+      if (plan.grantsAdmin && targetId !== ctx.actorId) {
+        // Con OTRO admin activo además del solicitante, conceder admin exige su aprobación (`user.grant_admin`): un
+        // admin no se fabrica un segundo admin. Si el solicitante es el ÚNICO admin activo basta la reautenticación
+        // (bootstrap del segundo admin), y queda auditado.
+        if (await otherActiveAdminExists(t, ctx.actorId ?? "")) {
+          operationId = await requireSecondAdmin(
+            t,
+            ctx,
+            "user.grant_admin",
+            targetId,
+            opts.operationId,
+            "Conceder admin exige la aprobación de otro administrador activo y ninguno puede aprobarla (los promovidos por ti no cuentan): hazlo por consola",
+          );
+        } else {
+          bootstrap = true;
         }
       }
       const changed = !sameSet(before, wanted);
@@ -465,12 +540,15 @@ export async function setUserRoles(
         await t("user_roles").where({ user_id: targetId }).delete();
         if (wanted.length > 0) await t("user_roles").insert(wanted.map((role) => ({ user_id: targetId, role })));
         voided = await voidOpenResets(t, targetId);
+        // Quién concedió el rol admin (para que un promovido no apruebe órdenes de su promotor).
+        if (plan.grantsAdmin) await t("users").where({ id: targetId }).update({ admin_granted_by: ctx.actorId });
+        if (plan.revokesAdmin) await t("users").where({ id: targetId }).update({ admin_granted_by: null });
       }
       await audit(t, {
         actorId: ctx.actorId,
         action: "admin.user.roles_set",
         target: `user:${targetId}`,
-        detail: { roles: wanted, changed, recoveryTokensVoided: voided, secondAdminOperation: operationId },
+        detail: { roles: wanted, changed, recoveryTokensVoided: voided, secondAdminOperation: operationId, bootstrap },
         correlationId: ctx.correlationId,
       });
       return wanted;

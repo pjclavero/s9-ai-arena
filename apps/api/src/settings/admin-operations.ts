@@ -128,29 +128,54 @@ const USER_RECOVERY_ADMIN: OperationKindDef = {
 };
 
 /**
- * ADM-3 · Aprobación de un SEGUNDO administrador para QUITAR el rol admin a OTRA cuenta (la consume
- * `setUserRoles` una sola vez). Quitárselo uno a sí mismo no la necesita (sí reautenticación y la guarda del último admin).
+ * ADM-3 · Aprobaciones de un SEGUNDO administrador sobre OTRA cuenta (las consume, una sola vez, la propia API):
+ *  - `user.revoke_admin`: quitar el rol admin (la cuenta objetivo debe ser admin);
+ *  - `user.block_admin`: bloquear a una cuenta admin (objetivo admin);
+ *  - `user.grant_admin`: conceder admin (objetivo NO admin y activa). Sólo hace falta con otro admin activo además
+ *    del solicitante; con un único admin basta la reautenticación (bootstrap).
  */
-const USER_REVOKE_ADMIN: OperationKindDef = {
-  ...USER_RECOVERY_ADMIN,
-  kind: "user.revoke_admin",
-  async impact(db, params) {
-    const user = await db("users").where({ id: params.userId }).first("id", "display_name");
-    if (!user) throw notFound("No existe esa cuenta");
-    const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
-    if (!admin) throw badRequest("La cuenta no es de administrador: no hay nada que quitar");
-    const admins = await db("user_roles as r")
-      .join("users as u", "u.id", "r.user_id")
-      .where({ "r.role": "admin", "u.status": "active" })
-      .countDistinct({ n: "r.user_id" })
-      .first();
-    return {
-      summary: `Quitar el rol de administrador a «${user.display_name}».`,
-      counts: { activeAdmins: Number((admins as { n: string | number }).n) },
-    };
-  },
-  phrase: (p) => `QUITAR ADMIN ${String(p.userId).slice(0, 8)}`,
-};
+function userAdminKind(kind: string, want: "admin" | "not_admin", verb: string, phraseWord: string): OperationKindDef {
+  return {
+    ...USER_RECOVERY_ADMIN,
+    kind,
+    async impact(db, params) {
+      const user = await db("users").where({ id: params.userId }).first("id", "display_name", "status");
+      if (!user) throw notFound("No existe esa cuenta");
+      const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
+      if (want === "admin" && !admin) throw badRequest("La cuenta no es de administrador: no hay nada que hacer aquí");
+      if (want === "not_admin" && admin) throw badRequest("La cuenta ya es de administrador");
+      if (want === "not_admin" && user.status !== "active") throw badRequest("La cuenta está bloqueada");
+      const admins = await db("user_roles as r")
+        .join("users as u", "u.id", "r.user_id")
+        .where({ "r.role": "admin", "u.status": "active" })
+        .countDistinct({ n: "r.user_id" })
+        .first();
+      return {
+        summary: `${verb} «${user.display_name}».`,
+        counts: { activeAdmins: Number((admins as { n: string | number }).n) },
+      };
+    },
+    phrase: (p) => `${phraseWord} ${String(p.userId).slice(0, 8)}`,
+  };
+}
+const USER_REVOKE_ADMIN = userAdminKind(
+  "user.revoke_admin",
+  "admin",
+  "Quitar el rol de administrador a",
+  "QUITAR ADMIN",
+);
+const USER_BLOCK_ADMIN = userAdminKind(
+  "user.block_admin",
+  "admin",
+  "Bloquear la cuenta de administrador",
+  "BLOQUEAR ADMIN",
+);
+const USER_GRANT_ADMIN = userAdminKind(
+  "user.grant_admin",
+  "not_admin",
+  "Conceder el rol de administrador a",
+  "CONCEDER ADMIN",
+);
 
 /**
  * Registro CERRADO de tipos de PRODUCCIÓN. ADM-4/6/7 añaden los suyos aquí (y amplían el CHECK de `kind`).
@@ -161,6 +186,8 @@ export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Reado
   const kinds: Record<string, OperationKindDef> = {
     [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN,
     [USER_REVOKE_ADMIN.kind]: USER_REVOKE_ADMIN,
+    [USER_BLOCK_ADMIN.kind]: USER_BLOCK_ADMIN,
+    [USER_GRANT_ADMIN.kind]: USER_GRANT_ADMIN,
   };
   if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
   return Object.freeze(kinds);
@@ -258,7 +285,7 @@ export async function createOperation(
 
   // Sólo cuentan los admins ACTIVOS distintos del solicitante (y del objetivo, si el tipo lo declara).
   const excluded = [ctx.actorId, ...(def.approverExcludes?.(params) ?? [])].filter((x): x is string => !!x);
-  if (requiresSecondAdmin && !(await approverAvailable(db, excluded))) {
+  if (requiresSecondAdmin && !(await approverAvailable(db, excluded, ctx.actorId))) {
     throw conflict(
       "second_admin_unavailable",
       "Esta acción irreversible exige un segundo administrador y no hay ninguno disponible: hazla por consola",
@@ -388,6 +415,16 @@ export async function confirmOperation(
     }
     if (row.requires_second_admin && row.requested_by === ctx.actorId) {
       throw forbidden("Esta acción irreversible exige confirmarla un segundo administrador, distinto del solicitante");
+    }
+    // ADM-3 · en las órdenes `user.*` NUNCA aprueba la cuenta objetivo ni un admin PROMOVIDO por el solicitante.
+    if (row.kind.startsWith("user.")) {
+      if ((row.params as { userId?: string }).userId === ctx.actorId) {
+        throw forbidden("La cuenta objetivo no puede aprobar una acción sobre sí misma");
+      }
+      const me = await t("users").where({ id: ctx.actorId }).first("admin_granted_by");
+      if (me?.admin_granted_by && me.admin_granted_by === row.requested_by) {
+        throw forbidden("Fuiste promovido a admin por quien solicita esto: hace falta otro administrador");
+      }
     }
     if (phrase.trim() !== row.confirm_phrase) throw badRequest("La frase de confirmación no coincide");
 

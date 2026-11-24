@@ -1346,7 +1346,9 @@ const m024_replay_artifacts: Migration = {
 //    de segundo admin con la que se emitió, cuando el objetivo es una cuenta admin). Sigue guardando SÓLO el hash.
 //  - `admin_operations.kind` admite `user.recovery_admin` y `user.revoke_admin` (autorización de un segundo admin para
 //    emitir un token de recuperación sobre una cuenta ADMIN o para quitar el rol admin a OTRA cuenta; ver
-//    services/account-recovery.ts). Para los tipos `user.*` la regla «una activa» pasa a ser POR CUENTA OBJETIVO
+//    services/account-recovery.ts), `user.grant_admin` (conceder admin a otra cuenta con otro admin activo) y
+//    `user.block_admin` (bloquear a otra cuenta admin). `users.admin_granted_by` recuerda QUIÉN concedió el rol admin:
+//    un admin promovido por X nunca aprueba órdenes `user.*` de X (contra el admin «títere»). Para los tipos `user.*` la regla «una activa» pasa a ser POR CUENTA OBJETIVO
 //    (`params->>'userId'`): un admin no puede bloquear la recuperación de las demás con una sola solicitud.
 // Depende de la 023 (FK a admin_operations). La vuelta atrás borra las órdenes de ese tipo, quita las columnas
 // (los bloqueos se pierden: las cuentas vuelven a estar activas) y restaura el CHECK de `kind`.
@@ -1359,6 +1361,7 @@ const m025_user_status_recovery: Migration = {
         ADD COLUMN status     text NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
         ADD COLUMN blocked_at timestamptz,
         ADD COLUMN blocked_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN admin_granted_by uuid REFERENCES users(id) ON DELETE SET NULL,
         ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
       ALTER TABLE password_resets
         ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
@@ -1369,7 +1372,7 @@ const m025_user_status_recovery: Migration = {
       ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
       ALTER TABLE admin_operations
         ADD CONSTRAINT admin_operations_kind_check
-        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin'));
+        CHECK (kind IN ('system.noop','user.recovery_admin','user.revoke_admin','user.grant_admin','user.block_admin'));
       DROP INDEX admin_operations_one_active_per_kind;
       CREATE UNIQUE INDEX admin_operations_one_active_per_kind
         ON admin_operations (kind) WHERE status IN ('awaiting_confirmation','pending','running') AND kind NOT LIKE 'user.%';
@@ -1396,7 +1399,7 @@ const m025_user_status_recovery: Migration = {
       DROP INDEX password_resets_token_hash_uq;
       ALTER TABLE password_resets DROP COLUMN issued_via_operation, DROP COLUMN created_by, DROP COLUMN created_at;
       ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
-      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
+      ALTER TABLE users DROP COLUMN admin_granted_by, DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
     `);
   },
 };
