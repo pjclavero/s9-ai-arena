@@ -211,6 +211,17 @@ export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string })
           {mode === "login" ? "Crear cuenta" : "Ya tengo cuenta"}
         </button>
       </form>
+      {mode === "login" && (
+        <p>
+          <small>
+            ¿Has olvidado la contraseña? Pide a un administrador un token de recuperación y{" "}
+            <a href="#/reset" data-testid="reset-link">
+              canjéalo aquí
+            </a>
+            .
+          </small>
+        </p>
+      )}
     </div>
   );
 }

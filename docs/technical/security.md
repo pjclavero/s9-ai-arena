@@ -38,7 +38,7 @@ explotación. Los gates de activación de la ejecución real (Carril I) y del es
 | Token de acceso | JWT HS256, `iss = s9-ai-arena`, `aud = s9-arena/session`; caduca en **15 min**; enviado como `Authorization: Bearer` |
 | 2FA | TOTP (`otplib`) con códigos de recuperación hasheados. Sólo está disponible por API (`enable2fa`, `disable2fa`) |
 | Registro | `POST /auth/register`, abierto a `visitor`, **sin interruptor ni invitación**; concede `user` + `developer` ([TD-012](../roadmap/technical-debt.md#td-012)) |
-| Recuperación | `POST /auth/recover` crea un token de un solo uso, con la misma respuesta exista o no la cuenta; `POST /auth/reset` lo consume (contraseña ≥ 12). **No hay canal** que entregue el token al usuario |
+| Recuperación | Sin correo. Un admin emite desde la web (`POST /admin/users/{id}/recovery-token`, reautenticación + límite) un token de **192 bits, un solo uso y 30 min**; en BD sólo su hash SHA-256; el usuario lo canjea en `POST /auth/reset` (consumo atómico, política de contraseñas, límite por IP, cierra todas sus sesiones, sin tocar el 2FA). Cuenta admin ⇒ aprobación de otro admin (`user.recovery_admin`). Con un solo admin: CLI local `reset-password`. `POST /auth/recover` se retiró. Detalle en [account-recovery](../operations/account-recovery.md) |
 | Cambio de contraseña | **no existe** |
 
 ## Sesiones y refresh

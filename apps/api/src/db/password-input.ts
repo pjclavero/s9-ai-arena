@@ -141,3 +141,35 @@ export function parseCreateAdminArgs(argv: string[]): CreateAdminArgs {
     allowAdditionalAdmin: allow,
   };
 }
+
+export interface ResetPasswordArgs {
+  email: string;
+  source: { kind: "stdin" } | { kind: "file"; path: string };
+}
+
+/** Analiza los argumentos tras `reset-password` (ADM-3). Misma regla: la contraseña NUNCA por argv. */
+export function parseResetPasswordArgs(argv: string[]): ResetPasswordArgs {
+  const positional: string[] = [];
+  let stdin = false;
+  let file: string | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--password-stdin") stdin = true;
+    else if (a === "--password-file") {
+      const v = argv[++i];
+      if (!v) throw new PasswordInputError("--password-file requiere una ruta");
+      file = v;
+    } else if (/^--?password(=|$)/.test(a) || /^-p/.test(a)) {
+      throw new PasswordInputError(
+        "La contraseña NO se pasa por argv: usa --password-stdin o --password-file <ruta 0600>",
+      );
+    } else if (a.startsWith("-")) {
+      throw new PasswordInputError(`Opción desconocida: ${a.split("=")[0]}`);
+    } else positional.push(a);
+  }
+  if (positional.length !== 1) throw new PasswordInputError("Se espera exactamente <email>");
+  if (stdin === (file !== null)) {
+    throw new PasswordInputError("Indica exactamente una fuente: --password-stdin o --password-file <ruta>");
+  }
+  return { email: positional[0], source: file !== null ? { kind: "file", path: file } : { kind: "stdin" } };
+}

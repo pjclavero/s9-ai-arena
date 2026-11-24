@@ -57,9 +57,18 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 | «Reautenticación requerida: contraseña inválida» | Al cambiar la contraseña, la actual no es correcta. |
 | «La nueva contraseña debe ser distinta de la actual» | La contraseña nueva coincide con la actual. |
 
+## Si olvidas la contraseña
+
+La plataforma **no envía correos**: un administrador te da un **token de recuperación** en persona o por un canal que controles tú.
+
+1. En la pantalla de acceso pulsa **«canjéalo aquí»** (o abre `#/reset`).
+2. Pega el **token**, escribe tu **contraseña nueva** (mínimo 12 caracteres) dos veces y pulsa **«Restablecer contraseña»**.
+3. El token **caduca a los 30 minutos y sólo sirve una vez**. Al canjearlo se cierran todas tus sesiones; entra con la contraseña nueva (y tu código 2FA, si lo tienes). El administrador nunca llega a conocer tu contraseña.
+
+Si el token falla («Token de recuperación inválido o expirado») está caducado, ya se usó o fue anulado por otro más reciente: pide uno nuevo. Si tu cuenta está **bloqueada** no puedes recuperarla: un administrador debe desbloquearla.
+
 ## Lo que todavía no puedes hacer desde la web
 
-- **Recuperar la contraseña** si la olvidas: la plataforma no envía correos y todavía no existe un restablecimiento iniciado por un administrador (propuesto, pendiente de decisión). Hasta entonces no hay un procedimiento soportado para recuperar una cuenta cuya contraseña se ha olvidado: guarda la tuya y cámbiala desde «Mi cuenta» mientras tengas la sesión abierta.
 - **Activar la verificación en dos pasos**, ver tus sesiones abiertas o cambiar tu nombre visible: existen en la plataforma, pero no tienen pantalla.
 - El registro está abierto a cualquiera.
 

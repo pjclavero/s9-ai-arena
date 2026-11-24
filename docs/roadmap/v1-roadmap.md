@@ -168,4 +168,4 @@ Comprobado contra `main` (`80f4952`) antes de clasificarlos como futuros:
 | Los PR #307, #308, #311–#317 y #295 están abiertos y en borrador | RUNTIME_VERIFIED (GitHub, 2026-11-20) | `gh pr list --state all` |
 | `POST /tournaments` acepta CTF y zona con reglas clásicas | TEST (en el PR #317, abierto) | `v1-tournament-ctf-zone.e2e.test.ts`; `apps/api/src/services/battle-rules.ts` |
 | La política `failed` cierra el torneo | CODE_VERIFIED | `apps/tournament-worker/src/results.ts` (`settleMatch`); `tournament-lifecycle-failed.test.ts` |
-| Contrato OpenAPI 0.26.0 con 113 operaciones, motor 0.5.0, migraciones 001–023 (ADM-1, PR #334) | CODE_VERIFIED | `apps/api/openapi.yaml`, `packages/game-rules/rules-doc.ts`, `apps/api/src/db/migrations.ts` |
+| Contrato OpenAPI 0.27.0 con 116 operaciones, motor 0.5.0, migraciones 001–025 (ADM-1 #334 y ADM-3) | CODE_VERIFIED | `apps/api/openapi.yaml`, `packages/game-rules/rules-doc.ts`, `apps/api/src/db/migrations.ts` |

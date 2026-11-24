@@ -136,7 +136,13 @@ info:
   # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
   # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
   # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
-  version: 0.26.0
+  # 0.27.0 · ADM-3 (aditivo, admin): listAdminUsers (GET /admin/users: búsqueda y paginación por cursor, sin hashes ni
+  # secretos), setUserStatus (PUT /admin/users/{userId}/status: bloquear/desbloquear, reautenticación),
+  # issueUserRecoveryToken (POST /admin/users/{userId}/recovery-token: token de recuperación de un solo uso y 30 min,
+  # mostrado una vez; cuenta admin ⇒ aprobación de segundo admin). setUserRoles gana 409 last_admin; login 403
+  # account_blocked. `POST /auth/recover` se RETIRA (descartaba el token). Nuevo tipo de orden `user.recovery_admin`.
+  # Migración 025.
+  version: 0.27.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -328,7 +334,8 @@ paths:
     put:
       tags: [admin]
       operationId: setUserRoles
-      summary: Asignar roles (queda en audit_log)
+      summary: >-
+        Asignar roles (queda en audit_log). ADM-3: 409 `last_admin` si quitaría el rol admin al último administrador activo.
       x-min-role: admin
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
@@ -343,6 +350,7 @@ paths:
       responses:
         '200': { description: Roles actualizados, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   # ----------------------------------------------------------------- TEAMS
   /teams:
@@ -2392,6 +2400,78 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # --------------------------------------------------------------- ADMIN · USUARIOS (ADM-3)
+  /admin/users:
+    get:
+      tags: [admin]
+      operationId: listAdminUsers
+      summary: >-
+        ADM-3 · Usuarios para el administrador: búsqueda por nombre o email (`q`, sin distinguir mayúsculas; `%` y `_`
+        son literales) y paginación por cursor (`limit` ≤ 100). Nunca devuelve hashes, secretos TOTP ni códigos de
+        recuperación (el 2FA sólo como booleano).
+      x-min-role: admin
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Página de usuarios, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUserPage' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /admin/users/{userId}/status:
+    put:
+      tags: [admin]
+      operationId: setUserStatus
+      summary: >-
+        ADM-3 · Bloquea o desbloquea una cuenta. Bloquear cierra todas sus sesiones, anula sus tokens de recuperación
+        abiertos e impide entrar (login 403 `account_blocked`). Reautenticación fuerte. No se puede aplicar a uno mismo
+        (403) ni bloquear al último administrador activo (409 `last_admin`). Cambio auditado.
+      x-min-role: admin
+      x-reauth: true
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserStatusChange' }
+      responses:
+        '200': { description: Estado resultante, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUserStatusResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { description: Demasiados intentos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/{userId}/recovery-token:
+    post:
+      tags: [admin]
+      operationId: issueUserRecoveryToken
+      summary: >-
+        ADM-3 (B5, D-OP-8) · Emite un token de recuperación de contraseña de UN solo uso y 30 min para la cuenta
+        indicada. El token se devuelve UNA vez (`Cache-Control: no-store`); en BD sólo queda su hash y el administrador
+        no conoce la contraseña: la elige el usuario al canjearlo en `POST /auth/reset`. Emitir uno anula los anteriores.
+        Reautenticación fuerte y límite de intentos por admin. Si la cuenta objetivo es ADMIN hace falta `operationId`:
+        una orden `user.recovery_admin` (POST /admin/operations) solicitada por quien emite y confirmada por OTRO
+        administrador; se consume al emitir (403 `second_admin_required` / `second_admin_approval_invalid` si falta o no
+        vale). Cuenta bloqueada: 409 `account_blocked`. Para la propia cuenta: 400 (usar «Mi cuenta»).
+      x-min-role: admin
+      x-reauth: true
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminRecoveryTokenRequest' }
+      responses:
+        '201': { description: Token emitido (se muestra una sola vez), content: { application/json: { schema: { $ref: '#/components/schemas/AdminRecoveryToken' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { description: Demasiados intentos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
     get:
@@ -3696,6 +3776,52 @@ components:
           type: object
           description: 'Sólo valores de un conjunto cerrado, UUID o enteros con rango; nunca rutas ni comandos. Para system.noop: {impactClass: none|destructive|irreversible}.'
         dryRun: { type: boolean }
+    AdminUser:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+        roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
+        status: { type: string, enum: [active, blocked] }
+        twoFactorEnabled: { type: boolean }
+        recoveryPending: { type: boolean, description: 'Hay un token de recuperación vigente sin usar.' }
+        createdAt: { type: string, format: date-time }
+        blockedAt: { type: string, format: date-time, nullable: true }
+    AdminUserPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
+        nextCursor: { type: string }
+    AdminUserStatusChange:
+      type: object
+      additionalProperties: false
+      required: [status, password]
+      properties:
+        status: { type: string, enum: [active, blocked] }
+        password: { type: string, x-private: true }
+        totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta del admin tiene 2FA.' }
+    AdminUserStatusResult:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [active, blocked] }
+        changed: { type: boolean }
+        sessionsRevoked: { type: integer }
+    AdminRecoveryTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { type: string, x-private: true }
+        totp: { type: string, x-private: true }
+        operationId: { type: string, format: uuid, description: 'Obligatorio si la cuenta objetivo es admin: orden `user.recovery_admin` confirmada por otro admin.' }
+    AdminRecoveryToken:
+      type: object
+      properties:
+        token: { type: string, x-private: true, description: 'Un solo uso, 30 min; sólo se entrega aquí.' }
+        expiresAt: { type: string, format: date-time }
+        userId: { type: string, format: uuid }
     AdminOperationConfirm:
       type: object
       additionalProperties: false

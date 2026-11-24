@@ -9,11 +9,16 @@
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts bootstrap
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts demo-teams <email> [equipo...]
  *   ... cli.ts create-admin <email> <nombre> (--password-stdin | --password-file <ruta 0600>) [--allow-additional-admin]
+ *   ... cli.ts reset-password <email> (--password-stdin | --password-file <ruta 0600>)
  *
  * `create-admin` (TD-023) crea el primer administrador SIN SQL. La contraseña
  * va por stdin o por un fichero 0600, nunca por argv; aplica la política de
  * contraseñas; se niega si ya hay un admin salvo `--allow-additional-admin`
  * (que queda auditado); no usa `seed`.
+ *
+ * `reset-password` (ADM-3, D-OP-8) es la vía de EMERGENCIA local cuando sólo hay un administrador (con varios se usa
+ * la recuperación por token desde la web): fija la contraseña de una cuenta, cierra sus sesiones y anula sus tokens de
+ * recuperación. Misma entrada segura (stdin o fichero 0600, nunca argv), política única y auditoría sin la contraseña.
  *
  * `seed` incluye usuarios de desarrollo con contraseña conocida: SOLO para
  * desarrollo. `bootstrap` aplica únicamente el contenido base (ruleset,
@@ -36,7 +41,14 @@ import { migrateToLatest, rollbackAll, rollbackLast, rollbackNamed } from "./mig
 import { seedContent, seedDev } from "./seeds/dev.js";
 import { formatDemoTeamsResult, seedDemoTeams } from "./seeds/demo-teams.js";
 import { createAdmin, CreateAdminError } from "../services/create-admin.js";
-import { parseCreateAdminArgs, PasswordInputError, readPasswordFile, readPasswordStdin } from "./password-input.js";
+import {
+  parseCreateAdminArgs,
+  parseResetPasswordArgs,
+  PasswordInputError,
+  readPasswordFile,
+  readPasswordStdin,
+} from "./password-input.js";
+import { resetPasswordLocal, ResetPasswordCliError } from "../services/account-recovery.js";
 
 const cmd = process.argv[2];
 const db = createDb();
@@ -105,6 +117,30 @@ try {
         process.exitCode = 4;
       }
     }
+  } else if (cmd === "reset-password") {
+    // ADM-3 · recuperación local de emergencia. Códigos de salida: 0 hecho · 2 uso o entrada inválidos (incluida la
+    // política de contraseñas) · 3 la cuenta no existe · 4 error inesperado (sin traza).
+    try {
+      const args = parseResetPasswordArgs(process.argv.slice(3));
+      const password = args.source.kind === "file" ? readPasswordFile(args.source.path) : await readPasswordStdin();
+      const r = await resetPasswordLocal(db, { email: args.email, password });
+      console.log(
+        `Contraseña restablecida: ${r.email} (id ${r.userId}); sesiones cerradas: ${r.sessionsRevoked}.` +
+          (r.blocked ? " AVISO: la cuenta sigue BLOQUEADA (desbloquéala desde la web)." : ""),
+      );
+    } catch (e) {
+      if (e instanceof PasswordInputError) {
+        console.error(`reset-password: ${e.message}`);
+        process.exitCode = 2;
+      } else if (e instanceof ResetPasswordCliError) {
+        console.error(`reset-password: ${e.message}`);
+        process.exitCode = e.code === "invalid_input" ? 2 : 3;
+      } else {
+        const err = e as { name?: string; code?: string };
+        console.error(`reset-password: error inesperado (${err.name ?? "Error"}${err.code ? ` ${err.code}` : ""})`);
+        process.exitCode = 4;
+      }
+    }
   } else if (cmd === "demo-teams") {
     const email = process.argv[3];
     if (!email) {
@@ -116,7 +152,9 @@ try {
       console.log(formatDemoTeamsResult(r));
     }
   } else {
-    console.error("Uso: cli.ts <migrate|rollback:1|rollback:name|rollback:all|seed|bootstrap|create-admin|demo-teams>");
+    console.error(
+      "Uso: cli.ts <migrate|rollback:1|rollback:name|rollback:all|seed|bootstrap|create-admin|reset-password|demo-teams>",
+    );
     process.exitCode = 2;
   }
 } finally {

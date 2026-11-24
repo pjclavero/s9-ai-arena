@@ -18,6 +18,7 @@ export interface ConfirmImpact {
 
 export interface ConfirmCredentials {
   phrase: string;
+  /** Vacía si `askPassword` es false (la acción no exige reautenticación en el servidor). */
   password: string;
   totp?: string;
 }
@@ -36,6 +37,11 @@ export function ConfirmDestructive(props: {
   requiresSecondAdmin?: boolean;
   /** La cuenta tiene 2FA: pedir el código. */
   needsTotp?: boolean;
+  /**
+   * ADM-3 · `false` para acciones cuyo servidor NO pide reautenticación (p. ej. asignar roles): sólo frase literal.
+   * Por defecto `true`: no cambia nada para las pantallas existentes.
+   */
+  askPassword?: boolean;
   /** Fallo de la última confirmación (se pinta en el propio componente). */
   error?: unknown;
   busy?: boolean;
@@ -45,8 +51,10 @@ export function ConfirmDestructive(props: {
   const [typed, setTyped] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
+  const askPassword = props.askPassword !== false;
+  const askTotp = askPassword && !!props.needsTotp;
   const ready =
-    phraseMatches(typed, props.phrase) && password.length > 0 && (!props.needsTotp || totp.trim().length > 0);
+    phraseMatches(typed, props.phrase) && (!askPassword || password.length > 0) && (!askTotp || totp.trim().length > 0);
   const counts = Object.entries(props.impact.counts);
 
   return (
@@ -83,19 +91,21 @@ export function ConfirmDestructive(props: {
           />
         )}
       </Field>
-      <Field label="Tu contraseña (reautenticación)">
-        {(c) => (
-          <input
-            {...c}
-            type="password"
-            data-testid="confirm-password-input"
-            value={password}
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        )}
-      </Field>
-      {props.needsTotp && (
+      {askPassword && (
+        <Field label="Tu contraseña (reautenticación)">
+          {(c) => (
+            <input
+              {...c}
+              type="password"
+              data-testid="confirm-password-input"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+      )}
+      {askTotp && (
         <Field label="Código de 2FA (o de recuperación)">
           {(c) => (
             <input
@@ -114,7 +124,7 @@ export function ConfirmDestructive(props: {
           data-testid="confirm-submit"
           disabled={!ready || props.busy}
           onClick={() =>
-            void props.onConfirm({ phrase: typed.trim(), password, totp: props.needsTotp ? totp.trim() : undefined })
+            void props.onConfirm({ phrase: typed.trim(), password, totp: askTotp ? totp.trim() : undefined })
           }
         >
           Confirmar

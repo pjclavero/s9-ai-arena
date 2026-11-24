@@ -4,14 +4,38 @@ Esta página es para quien tiene un rol de **administrador dentro del juego**. N
 
 Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Encima de todas ellas, el panel **«Acceso público / Broadcast»** (ver [Acceso público](#acceso-público)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
 
-No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloqueo ni borrado.
+Los usuarios se gestionan desde la sección **«Usuarios»** de la pantalla *Usuarios y seguridad* (ver [Usuarios](#usuarios)). No hay borrado de cuentas.
 
 ## Usuarios y seguridad
 
-- **Roles de usuario**: escribe el identificador del usuario y los **roles separados por coma** (por ejemplo `user, developer, organizer`) y pulsa **«Asignar roles»**. La lista **sustituye** los roles del usuario, y una lista vacía le deja sin acceso. Sólo se muestran los errores; no hay mensaje de éxito. Hay que conocer el identificador del usuario: la web no lo muestra.
+- **Usuarios**: listado, búsqueda, roles, bloqueo y recuperación de cuentas (sección siguiente).
 - **Catálogo importado**: las versiones del catálogo de equipamiento, con su número de piezas.
 - **Hallazgos de seguridad**: lo que detecta la validación de bots (dependencias no permitidas, secretos en el código…), con fecha, tipo, gravedad y detalle.
 - **Auditoría (solo inserción)**: las últimas acciones registradas.
+
+## Usuarios
+
+La tabla **«Usuarios»** (la primera de *Usuarios y seguridad*) lista las cuentas de 20 en 20 (**«Cargar más»** pide la página siguiente) y se filtra con **«Buscar por nombre o email»** (no distingue mayúsculas; `%` y `_` se buscan tal cual). Cada fila muestra nombre, email, roles, si tiene 2FA y su estado (**activa** o **bloqueada**, y **recuperación pendiente** si hay un token vigente sin usar). Nunca se muestran contraseñas, secretos ni códigos de recuperación.
+
+Acciones por fila (no hay bloqueo ni token sobre tu propia cuenta). Las que cambian algo importante piden **escribir una frase exacta** y, cuando el servidor reautentica, **tu contraseña** (y el código 2FA si tu cuenta lo tiene):
+
+| Acción | Qué hace |
+|---|---|
+| **Roles** | marca los roles y pulsa **«Guardar roles»**. La lista **sustituye** a la actual; vacía deja a la cuenta sin acceso. Nunca se puede quitar el rol `admin` al **último administrador activo** (409 `last_admin`). Pide la frase `CAMBIAR ROLES <email>`. |
+| **Bloquear / Desbloquear** | un usuario bloqueado **no puede iniciar sesión** (aunque acierte la contraseña, ve «Cuenta bloqueada»), se le **cierran todas las sesiones** y se anulan sus tokens de recuperación. No se puede bloquear a uno mismo ni al último administrador activo. Frase `BLOQUEAR <email>` / `DESBLOQUEAR <email>`. |
+| **Token de recuperación** | para un usuario que olvidó su contraseña (ver [abajo](#recuperar-la-cuenta-de-un-usuario)). Frase `RECUPERAR <email>`. |
+
+Todas quedan en la **auditoría** con quién las hizo (`admin.user.roles_set`, `admin.user.blocked`, `admin.user.unblocked`, `admin.user.recovery_token_issued`).
+
+### Recuperar la cuenta de un usuario
+
+No hay correo: el token se entrega **en persona o por un canal que controle el usuario**.
+
+1. En la fila del usuario, **«Token de recuperación»**, escribe la frase y tu contraseña. Aparece el **token** una sola vez, con su caducidad (**30 minutos**). Si ya había uno vigente, queda anulado.
+2. Dáselo al usuario. Él abre **«¿Has olvidado la contraseña?… canjéalo aquí»** en la pantalla de acceso (`#/reset`), pega el token y **elige él su contraseña** (mínimo 12 caracteres): tú nunca la conoces. El token vale **una sola vez**; al canjearlo se **cierran todas sus sesiones**. Si tiene 2FA, sigue necesitando su código para entrar.
+3. Un token caducado, usado, anulado o de una cuenta bloqueada se rechaza siempre con el mismo mensaje.
+
+**Si la cuenta es de un administrador** hace falta la aprobación de **otro administrador**: en la fila pulsa **«Solicitar recuperación (admin)»**; el otro admin ve la solicitud en **«Recuperaciones de cuentas de administrador»**, pulsa **«Aprobar»** y escribe la frase que muestra el servidor con su contraseña; entonces tú pulsas **«Emitir token»** (en los 10 minutos siguientes). Con **un solo administrador activo** no puede haber aprobación: la recuperación es local, por consola, ver [recuperación de cuentas](../operations/account-recovery.md).
 
 ## Sistema
 

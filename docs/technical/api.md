@@ -58,8 +58,11 @@ Autenticación:
   - **rota** el token; reutilizar uno ya rotado revoca toda la familia;
   - vida deslizante de 14 días y absoluta de 30 días.
 - **`POST /auth/logout`** (extensión): revoca la sesión de la cookie.
-- **Otras**: `GET/DELETE /auth/sessions[/{id}]`, `POST/DELETE /auth/2fa`, `POST /auth/recover`, `POST /auth/reset`.
-  - `recover` y `reset` son extensiones y no tienen transporte de correo.
+- **Otras**: `GET/DELETE /auth/sessions[/{id}]`, `POST/DELETE /auth/2fa`, `POST /auth/reset`.
+  - `reset` es una extensión: canjea el token de recuperación (un solo uso, atómico, con límite por IP; cierra todas las sesiones).
+  - **`POST /auth/recover` se retiró (ADM-3, contrato 0.27.0)**: creaba el token y lo descartaba, una vía rota. El token lo emite un administrador (`POST /admin/users/{userId}/recovery-token`) y se entrega fuera de banda; sin correo.
+  - Un usuario **bloqueado** (`users.status = 'blocked'`) recibe 403 `account_blocked` en `login` (tras acertar la contraseña) y no puede refrescar.
+- **Usuarios y recuperación (ADM-3)**: `GET /admin/users` (búsqueda y cursor, sin hashes ni secretos), `PUT /admin/users/{userId}/status` y `POST /admin/users/{userId}/recovery-token` (ambos `x-reauth` y con límite por admin). El token de una cuenta **admin** exige una orden `user.recovery_admin` (ADM-1) aprobada por otro admin.
 - **Cambio de contraseña**: no existe en `main`; lo añade el PR #315 (abierto).
 
 ## Autorización (RBAC)
@@ -230,7 +233,6 @@ Están registradas con `defineExtension` y **no aparecen en `openapi.yaml`**. El
 | operationId | Método y ruta | Rol |
 |---|---|---|
 | `logout` | `POST /auth/logout` | visitor |
-| `recoverAccount` | `POST /auth/recover` | visitor |
 | `resetPassword` | `POST /auth/reset` | visitor |
 | `getSigningPublicKey` | `GET /keys/artifact-signing` | visitor |
 | `listBotLoadouts` | `GET /bots/{botId}/loadouts` | user |

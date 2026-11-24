@@ -3,9 +3,10 @@ import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, conflict, notFound } from "../errors.js";
 import { publicProfile, userToJson } from "../serialize.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
+import { lockAdminChanges, otherActiveAdminExists } from "../services/account-recovery.js";
 
 export function userRoutes(db: Db): Router {
   const router = Router();
@@ -48,6 +49,12 @@ export function userRoutes(db: Db): Router {
     if (!user) throw notFound();
 
     await db.transaction(async (trx) => {
+      // ADM-3 · nunca se deja el sistema sin un administrador ACTIVO: quitar «admin» al último es un 409.
+      await lockAdminChanges(trx as unknown as Db);
+      const wasAdmin = await trx("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
+      if (wasAdmin && !roles.includes("admin") && !(await otherActiveAdminExists(trx as unknown as Db, user.id))) {
+        throw conflict("last_admin", "No se puede quitar el rol admin al último administrador activo");
+      }
       await trx("user_roles").where({ user_id: user.id }).delete();
       if (roles.length > 0) {
         await trx("user_roles").insert(roles.map((role: string) => ({ user_id: user.id, role })));

@@ -1339,6 +1339,50 @@ const m024_replay_artifacts: Migration = {
   },
 };
 
+// V1 ADM-3 · 025_user_status_recovery: usuarios operables desde la web y recuperación por token.
+//  - `users.status` ('active' | 'blocked') con `blocked_at`/`blocked_by`: bloquear impide entrar (login y refresh)
+//    y sus sesiones se cierran en la misma transacción. Sin borrado: la cuenta y su historia se conservan.
+//  - `password_resets` gana `created_at`, `created_by` (el admin que lo emitió) e `issued_via_operation` (la orden
+//    de segundo admin con la que se emitió, cuando el objetivo es una cuenta admin). Sigue guardando SÓLO el hash.
+//  - `admin_operations.kind` admite `user.recovery_admin` (autorización de un segundo admin para emitir un token de
+//    recuperación sobre una cuenta ADMIN; ver services/account-recovery.ts).
+// Depende de la 023 (FK a admin_operations). La vuelta atrás borra las órdenes de ese tipo, quita las columnas
+// (los bloqueos se pierden: las cuentas vuelven a estar activas) y restaura el CHECK de `kind`.
+// Probada en `migration-025.test.ts` (no entra en NAMED_ROLLBACK_ALLOWED: se revierte en orden).
+const m025_user_status_recovery: Migration = {
+  name: "025_user_status_recovery",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE users
+        ADD COLUMN status     text NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
+        ADD COLUMN blocked_at timestamptz,
+        ADD COLUMN blocked_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
+      ALTER TABLE password_resets
+        ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN issued_via_operation uuid REFERENCES admin_operations(id) ON DELETE SET NULL;
+      CREATE UNIQUE INDEX password_resets_token_hash_uq ON password_resets (token_hash);
+      CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
+      ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
+      ALTER TABLE admin_operations
+        ADD CONSTRAINT admin_operations_kind_check CHECK (kind IN ('system.noop','user.recovery_admin'));
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DELETE FROM admin_operations WHERE kind = 'user.recovery_admin';
+      ALTER TABLE admin_operations DROP CONSTRAINT admin_operations_kind_check;
+      ALTER TABLE admin_operations ADD CONSTRAINT admin_operations_kind_check CHECK (kind IN ('system.noop'));
+      DROP INDEX password_resets_user_open_idx;
+      DROP INDEX password_resets_token_hash_uq;
+      ALTER TABLE password_resets DROP COLUMN issued_via_operation, DROP COLUMN created_by, DROP COLUMN created_at;
+      ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
+      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1364,6 +1408,7 @@ export const MIGRATIONS: Migration[] = [
   m022_entries_team,
   m023_system_settings_operations,
   m024_replay_artifacts,
+  m025_user_status_recovery,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1438,8 +1483,9 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "021_runtime_settings",
   // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
   "022_entries_team",
-  // ADM-1 · tablas propias sin dependencias posteriores.
-  "023_system_settings_operations",
+  // ADM-1 · la 023 SALIÓ de esta lista con la 025 (ADM-3): `password_resets.issued_via_operation` apunta a
+  // `admin_operations` y la 025 amplía su CHECK de `kind`, así que la 023 ya no es independiente de las posteriores.
+  // Se revierte en orden (025 → 023) con `rollback:1`.
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",
 ]);

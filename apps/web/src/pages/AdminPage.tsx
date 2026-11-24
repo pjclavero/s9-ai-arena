@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
 import { FormError } from "../ui/primitives.js";
 import { PublicAccessSettings } from "./PublicAccessSettings.js";
+import { UsersPage } from "./admin/UsersPage.js";
 
 export function isAdmin(me: Me | null): boolean {
   return !!me && me.roles.includes("admin");
@@ -37,7 +38,6 @@ export function AdminPage(props: { me: Me }) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [catalogs, setCatalogs] = useState<CatalogVersion[]>([]);
-  const [roleEdit, setRoleEdit] = useState({ userId: "", roles: "" });
   // UX-R · el fallo ORIGINAL: FormError lo clasifica (permiso, servidor, red…).
   const [error, setError] = useState<unknown>(null);
 
@@ -72,35 +72,9 @@ export function AdminPage(props: { me: Me }) {
     <div data-testid="admin-panel">
       {/* MG · espectador y replays públicos: ajustes de runtime, en caliente. */}
       <PublicAccessSettings />
-      <div className="card">
-        <h2>Roles de usuario</h2>
-        <input
-          aria-label="rol-userid"
-          placeholder="userId"
-          value={roleEdit.userId}
-          onChange={(e) => setRoleEdit((s) => ({ ...s, userId: e.target.value }))}
-        />{" "}
-        <input
-          aria-label="rol-roles"
-          placeholder="roles separados por coma"
-          value={roleEdit.roles}
-          onChange={(e) => setRoleEdit((s) => ({ ...s, roles: e.target.value }))}
-        />{" "}
-        <button
-          onClick={async () => {
-            try {
-              await api("PUT", `/users/${roleEdit.userId}/roles`, {
-                roles: roleEdit.roles.split(",").map((r) => r.trim()),
-              });
-            } catch (e) {
-              setError(e);
-            }
-          }}
-        >
-          Asignar roles
-        </button>
-        <FormError error={error} data-testid="admin-error" />
-      </div>
+      {/* ADM-3 · usuarios: listado, roles, bloqueo y recuperación (antes: userId + roles separados por coma). */}
+      <UsersPage me={props.me} />
+      <FormError error={error} data-testid="admin-error" />
 
       <div className="card">
         <h2>Catálogo importado</h2>

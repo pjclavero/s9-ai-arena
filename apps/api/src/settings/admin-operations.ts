@@ -21,6 +21,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
+import { isUuid } from "../params.js";
+import { RECOVERY_APPROVAL_WINDOW_MS } from "../services/account-recovery.js";
 
 /** Caducidad del token de confirmación. */
 export const CONFIRM_TTL_MS = 120_000;
@@ -46,6 +48,12 @@ export interface OperationKindDef {
   impact(db: Db, params: Record<string, unknown>): Promise<Impact>;
   /** Frase literal que se teclea para confirmar (la fija el servidor, no el cliente). */
   phrase(params: Record<string, unknown>, impact: Impact): string;
+  /**
+   * Para tipos que NO los consume un ejecutor sino la propia API (aprobación de segundo admin): una orden
+   * `pending` más antigua que esto (desde su confirmación) se cancela al crear otra del mismo tipo, para que no
+   * ocupe el hueco «una activa por tipo» indefinidamente.
+   */
+  pendingTtlMs?: number;
 }
 
 const NOOP_CLASSES: readonly ImpactClass[] = ["none", "destructive", "irreversible"];
@@ -79,12 +87,50 @@ const SYSTEM_NOOP: OperationKindDef = {
 };
 
 /**
+ * ADM-3 · Aprobación de un SEGUNDO administrador para emitir un token de recuperación de contraseña sobre una cuenta
+ * ADMIN (D-OP-8). No hay ejecutor: la confirma otro admin reautenticado (con su frase) y el solicitante la consume UNA
+ * vez al emitir el token (`services/account-recovery.ts`). Siempre irreversible ⇒ exige segundo admin; con un solo
+ * administrador la creación responde 409 `second_admin_unavailable` y la vía es la CLI local.
+ */
+const USER_RECOVERY_ADMIN: OperationKindDef = {
+  kind: "user.recovery_admin",
+  pendingTtlMs: RECOVERY_APPROVAL_WINDOW_MS,
+  parseParams(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "params debe ser un objeto" };
+    for (const k of Object.keys(raw)) if (k !== "userId") return { ok: false, error: `parámetro no admitido: ${k}` };
+    const id = (raw as { userId?: unknown }).userId;
+    if (typeof id !== "string" || !isUuid(id)) return { ok: false, error: "userId debe ser un uuid" };
+    return { ok: true, params: { userId: id.toLowerCase() } };
+  },
+  classify: () => "irreversible",
+  async impact(db, params) {
+    const user = await db("users").where({ id: params.userId }).first("id", "display_name", "status");
+    if (!user) throw notFound("No existe esa cuenta");
+    const admin = await db("user_roles").where({ user_id: user.id, role: "admin" }).first("user_id");
+    if (!admin) {
+      throw badRequest("La cuenta no es de administrador: emite el token de recuperación directamente, sin aprobación");
+    }
+    const sessions = await db("sessions")
+      .where({ user_id: user.id })
+      .whereNull("revoked_at")
+      .where("expires_at", ">", db.fn.now())
+      .count({ n: "*" })
+      .first();
+    return {
+      summary: `Emitir un token de recuperación de contraseña para la cuenta de administrador «${user.display_name}»: quien lo tenga podrá fijar su contraseña y se cerrarán todas sus sesiones.`,
+      counts: { activeSessions: Number((sessions as { n: string | number }).n) },
+    };
+  },
+  phrase: (p) => `RECUPERAR ADMIN ${String(p.userId).slice(0, 8)}`,
+};
+
+/**
  * Registro CERRADO de tipos de PRODUCCIÓN. ADM-4/6/7 añaden los suyos aquí (y amplían el CHECK de `kind`).
  * `system.noop` es un tipo de PRUEBA: sólo se registra en tests (NODE_ENV=test); en producción la
- * API no acepta ningún tipo todavía.
+ * API acepta `user.recovery_admin` (ADM-3) y los que añadan ADM-4/6/7.
  */
 export function buildOperationKinds(env: NodeJS.ProcessEnv = process.env): Readonly<Record<string, OperationKindDef>> {
-  const kinds: Record<string, OperationKindDef> = {};
+  const kinds: Record<string, OperationKindDef> = { [USER_RECOVERY_ADMIN.kind]: USER_RECOVERY_ADMIN };
   if (env.NODE_ENV === "test") kinds[SYSTEM_NOOP.kind] = SYSTEM_NOOP;
   return Object.freeze(kinds);
 }
@@ -151,7 +197,12 @@ export interface Ctx {
 const OP_AUDIT = (what: string) => `admin.op.${what}`;
 
 async function countAdmins(db: Db): Promise<number> {
-  const r = await db("user_roles").where({ role: "admin" }).countDistinct({ n: "user_id" }).first();
+  // Sólo cuentan los administradores ACTIVOS (ADM-3): uno bloqueado no puede aprobar nada.
+  const r = await db("user_roles as r")
+    .join("users as u", "u.id", "r.user_id")
+    .where({ "r.role": "admin", "u.status": "active" })
+    .countDistinct({ n: "r.user_id" })
+    .first();
   return Number((r as { n: string | number }).n);
 }
 
@@ -223,6 +274,23 @@ export async function createOperation(
           detail: { kind: def.kind },
           correlationId: ctx.correlationId,
         });
+      }
+      // Aprobaciones confirmadas que nadie consumió a tiempo (tipos sin ejecutor): se cancelan para liberar el hueco.
+      if (def.pendingTtlMs !== undefined) {
+        const stale: { id: string }[] = await t("admin_operations")
+          .where({ kind: def.kind, status: "pending" })
+          .where("confirmed_at", "<=", new Date(Date.now() - def.pendingTtlMs))
+          .update({ status: "cancelled", finished_at: t.fn.now() })
+          .returning("id");
+        for (const e of stale) {
+          await audit(t, {
+            actorId: null,
+            action: OP_AUDIT("unused_expired"),
+            target: `operation:${e.id}`,
+            detail: { kind: def.kind },
+            correlationId: ctx.correlationId,
+          });
+        }
       }
       const [inserted]: OpRow[] = await t("admin_operations")
         .insert({

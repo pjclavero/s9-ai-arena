@@ -54,7 +54,9 @@ describe("T7.4 visibilidad del panel de administración", () => {
                 detectedAt: "2026-07-16T00:00:00Z",
               },
             ]
-          : [],
+          : String(url).includes("/admin/users")
+            ? { items: [] } // ADM-3: el panel también lista usuarios (página vacía)
+            : [],
     }));
     vi.stubGlobal("fetch", fetchSpy);
     render(<AdminPage me={asAdmin} />);
