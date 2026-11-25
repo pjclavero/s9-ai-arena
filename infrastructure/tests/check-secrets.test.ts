@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { checkSecrets, secretFiles } from "../scripts/check-secrets.mjs";
@@ -50,6 +50,26 @@ describe("check-secrets", () => {
     expect(checkSecrets(join(dir, "compose.yml")).ok).toBe(true);
     const cli2 = spawnSync(process.execPath, [SCRIPT, "--compose", join(dir, "compose.yml")], { encoding: "utf8" });
     expect(cli2.status).toBe(0);
+  });
+
+  it("[INFRA-check-secrets-sin-yaml] sin el módulo yaml (sin npm ci) es NO COMPROBADO (rc 2), nunca rc 1", () => {
+    // Copia del script en un directorio sin node_modules por encima: `import("yaml")` no resuelve.
+    const lone = mkdtempSync(join(tmpdir(), "check-secrets-solo-"));
+    try {
+      const copy = join(lone, "check-secrets.mjs");
+      writeFileSync(copy, readFileSync(SCRIPT));
+      const probe = spawnSync(process.execPath, ["--input-type=module", "-e", "await import('yaml')"], {
+        cwd: lone,
+        encoding: "utf8",
+      });
+      expect(probe.status, "control: desde ese directorio yaml NO debe resolverse").not.toBe(0);
+      const r = spawnSync(process.execPath, [copy, "--compose", join(dir, "compose.yml")], { encoding: "utf8" });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("NO COMPROBADO");
+      expect(r.stderr).toContain("yaml");
+    } finally {
+      rmSync(lone, { recursive: true, force: true });
+    }
   });
 
   it("un enlace simbólico no cuenta como presente; un compose ilegible es NO COMPROBADO (rc 2)", () => {

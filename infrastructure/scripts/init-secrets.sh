@@ -170,10 +170,11 @@ trust_dir tls "$DIR/tls"
 # en el base64 dejaba MENOS de 40 caracteres (≈3,75 % de las veces) y un secreto más débil de lo
 # diseñado. Ahora se filtran bytes aleatorios a [A-Za-z0-9] (cada símbolo es un único valor de byte:
 # la distribución sigue siendo uniforme) y se repite hasta completar. Sin tuberías que reciban
-# SIGPIPE (pipefail): `head` termina antes de que `tr` lea. S9_INIT_SECRETS_RANDOM_SOURCE sólo
-# existe para que los tests inyecten una fuente determinista; en una instalación no se define.
+# SIGPIPE (pipefail): `head` termina antes de que `tr` lea. REV352-12 · la fuente es SIEMPRE
+# /dev/urandom: NINGUNA variable de entorno la cambia. El segundo argumento sólo lo pasa el test, que
+# extrae esta función del script (el script nunca lo pasa).
 rand_alnum() {
-  local n=$1 out="" chunk src="${S9_INIT_SECRETS_RANDOM_SOURCE:-/dev/urandom}" tries=0
+  local n=$1 out="" chunk src="${2:-/dev/urandom}" tries=0
   while [ "${#out}" -lt "$n" ]; do
     tries=$((tries + 1))
     [ "$tries" -le 1000 ] || die "rand_alnum: la fuente aleatoria no produce caracteres válidos"

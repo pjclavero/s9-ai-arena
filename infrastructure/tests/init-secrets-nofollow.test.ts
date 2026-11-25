@@ -131,30 +131,57 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     expect(readdirSync(secrets).filter((n) => n.includes(".tmp") || n.startsWith(".init-secrets."))).toEqual([]);
   });
 
-  it("[INFRA-generador-longitud] con una fuente que da sólo 10 alfanuméricos por lectura, cada secreto generado sigue teniendo 40", () => {
+  /**
+   * REV352-12 · `rand_alnum` se EXTRAE del script (texto entre `rand_alnum() {` y su `}`) y se ejecuta
+   * aparte con la fuente como 2.º argumento posicional, que el script nunca pasa. Así el test controla
+   * la fuente sin que el script de producción acepte ninguna desde el entorno.
+   */
+  function randAlnum(n: number, source: string) {
+    const text = readFileSync(SUT, "utf8");
+    const m = /^rand_alnum\(\) \{\n[\s\S]*?\n\}\n/m.exec(text);
+    if (!m) throw new Error("rand_alnum no encontrada en init-secrets.sh");
+    const prog = `set -euo pipefail\ndie() { echo "die: $*" >&2; exit 3; }\n${m[0]}\nrand_alnum "$1" "$2"\n`;
+    return spawnSync("bash", ["-c", prog, "rand", String(n), source], { encoding: "utf8" });
+  }
+
+  it("[INFRA-generador-longitud] con una fuente que da sólo 10 alfanuméricos por lectura, rand_alnum completa 40", () => {
     // Fuente DETERMINISTA: 256 bytes con 10 alfanuméricos y el resto `+`/`/` (lo que el base64 anterior
     // tiraba). Un generador de una sola pasada daría 10 caracteres; el bueno repite hasta completar.
     const src = join(base, "fuente-pobre");
     writeFileSync(src, Buffer.from("abcdefghij" + "+/".repeat(123), "latin1"));
-    const r = run({ S9_INIT_SECRETS_RANDOM_SOURCE: src });
+    const r = randAlnum(40, src);
     expect(r.status, r.stderr).toBe(0);
-    for (const f of [
-      "setup_token.txt",
-      "jwt_secret.txt",
-      "postgres_password.txt",
-      "replay_ingest_secret.txt",
-      "streamer_control_secret.txt",
-    ]) {
-      expect(readFileSync(join(secrets, f), "utf8"), f).toBe("abcdefghij".repeat(4));
-    }
+    expect(r.stdout).toBe("abcdefghij".repeat(4));
   });
 
-  it("[INFRA-generador-fuente-vacia] una fuente sin ningún alfanumérico falla cerrado (rc≠0), sin dejar un secreto corto", () => {
+  it("[INFRA-generador-fuente-vacia] una fuente sin ningún alfanumérico falla cerrado (rc≠0), sin devolver un secreto corto", () => {
     const src = join(base, "fuente-inutil");
     writeFileSync(src, Buffer.from("+/".repeat(128), "latin1"));
-    const r = run({ S9_INIT_SECRETS_RANDOM_SOURCE: src });
+    const r = randAlnum(40, src);
     expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe("");
     expect(r.stderr).toContain("rand_alnum");
+  });
+
+  it("[INFRA-generador-sin-fuente-de-entorno] el script ignora cualquier fuente del entorno: secretos distintos entre ejecuciones y nunca el contenido del fichero", () => {
+    const src = join(base, "fuente-fija");
+    writeFileSync(src, Buffer.from("abcdefghij" + "+/".repeat(123), "latin1"));
+    const env = { S9_INIT_SECRETS_RANDOM_SOURCE: src, INIT_SECRETS_RANDOM_SOURCE: src, RANDOM_SOURCE: src };
+    const r1 = run(env);
+    expect(r1.status, r1.stderr).toBe(0);
+    const files = ["setup_token.txt", "jwt_secret.txt", "postgres_password.txt"];
+    const first = files.map((f) => readFileSync(join(secrets, f), "utf8"));
+    for (const v of first) {
+      expect(v).toMatch(/^[A-Za-z0-9]{40}$/);
+      expect(v).not.toBe("abcdefghij".repeat(4));
+    }
+    expect(new Set(first).size).toBe(first.length); // cada secreto, distinto de los demás
+    for (const f of files) rmSync(join(secrets, f), { force: true });
+    const r2 = run(env);
+    expect(r2.status, r2.stderr).toBe(0);
+    files.forEach((f, i) => expect(readFileSync(join(secrets, f), "utf8"), f).not.toBe(first[i]));
+    // Y el texto del script no lee ninguna variable que sustituya a /dev/urandom.
+    expect(readFileSync(SUT, "utf8")).not.toMatch(/RANDOM_SOURCE/);
   });
 
   it("[INFRA-setup-token] genera setup_token.txt: 40 caracteres, 0400, del uid del runtime y estable entre ejecuciones", () => {

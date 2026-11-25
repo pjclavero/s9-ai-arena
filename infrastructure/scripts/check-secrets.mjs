@@ -15,10 +15,21 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse } from "yaml";
+
+// REV352-13 · sin `npm ci` en el clon no hay `yaml`: eso es NO COMPROBADO (rc 2), nunca «falta un
+// secreto» (rc 1) ni una traza.
+let parse = null;
+try {
+  ({ parse } = await import("yaml"));
+} catch {
+  parse = null;
+}
+
+export class NotChecked extends Error {}
 
 /** Ficheros de secreto declarados en el compose, resueltos contra su directorio. */
 export function secretFiles(composePath) {
+  if (!parse) throw new NotChecked("falta el módulo yaml (¿npm ci en el clon?)");
   const doc = parse(readFileSync(composePath, "utf8"));
   const base = dirname(resolve(composePath));
   return Object.entries(doc?.secrets ?? {})
@@ -51,7 +62,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     r = checkSecrets(compose);
   } catch (e) {
-    console.error(`check-secrets: NO COMPROBADO, no se pudo leer ${compose} (${e?.code ?? e?.name ?? "error"})`);
+    const why = e instanceof NotChecked ? e.message : `no se pudo leer ${compose} (${e?.code ?? e?.name ?? "error"})`;
+    console.error(`check-secrets: NO COMPROBADO, ${why}`);
     process.exit(2);
   }
   if (r.ok) {

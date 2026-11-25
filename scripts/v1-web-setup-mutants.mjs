@@ -290,6 +290,24 @@ export const MUTANTES = [
     nombre: "[INFRA-generador-longitud]",
   },
   {
+    // REV352-12 · reintroduce una fuente aleatoria inyectable por entorno en un script de producción.
+    id: "M-SETUP-random-source-from-env",
+    fichero: "infrastructure/scripts/init-secrets.sh",
+    de: 'src="${2:-/dev/urandom}"',
+    a: 'src="${2:-${S9_INIT_SECRETS_RANDOM_SOURCE:-/dev/urandom}}"',
+    test: T_INIT,
+    nombre: "[INFRA-generador-sin-fuente-de-entorno]",
+  },
+  {
+    // REV352-13 · sin yaml, el script volvería a fallar con rc 1 (como «falta un secreto»).
+    id: "M-SETUP-check-secrets-sin-yaml-rc1",
+    fichero: "infrastructure/scripts/check-secrets.mjs",
+    de: "process.exit(2);",
+    a: "process.exit(1);",
+    test: T_CHK,
+    nombre: "[INFRA-check-secrets-sin-yaml]",
+  },
+  {
     id: "M-SETUP-check-secrets-ignora-faltantes",
     fichero: "infrastructure/scripts/check-secrets.mjs",
     de: 'missing.push({ ...s, why: "no existe" });',
