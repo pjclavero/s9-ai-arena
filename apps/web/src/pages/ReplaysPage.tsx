@@ -383,11 +383,13 @@ export function ReplaysPage() {
                       <td>
                         {r.endReason === "technical_limit"
                           ? "detenida por límite técnico"
-                          : r.winner === "draw"
-                            ? "empate"
-                            : r.winner
-                              ? `gana ${teamText(r.winner)}`
-                              : "—"}
+                          : r.endReason === "recording_limit"
+                            ? "detenida por límite de grabación"
+                            : r.winner === "draw"
+                              ? "empate"
+                              : r.winner
+                                ? `gana ${teamText(r.winner)}`
+                                : "—"}
                       </td>
                       <td>
                         {formatTicksAsDuration(r.ticks)} ({r.ticks} ticks)
@@ -395,9 +397,13 @@ export function ReplaysPage() {
                       <td>{r.official ? "sí" : "no"}</td>
                       <td>{new Date(r.createdAt).toLocaleString()}</td>
                       <td>
-                        <a href={`#/replay/${encodeURIComponent(r.battleId)}?t=0`} data-testid="replay-open">
-                          Ver replay
-                        </a>
+                        {r.endReason === "recording_limit" ? (
+                          <span data-testid="replay-truncated">Truncado: sólo descarga</span>
+                        ) : (
+                          <a href={`#/replay/${encodeURIComponent(r.battleId)}?t=0`} data-testid="replay-open">
+                            Ver replay
+                          </a>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -36,7 +36,8 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { S9rError, WriterStateError } from "./errors.js";
+import { ReplayLimitExceededError, S9rError, WriterStateError } from "./errors.js";
+import type { RecordingBudget } from "./recording-budget.js";
 import { discardPartial } from "./publish.js";
 import { S9rWriter, type WriteSummary } from "./writer.js";
 import type { Algo } from "./codec.js";
@@ -108,6 +109,12 @@ export interface RecorderOptions {
   stallMs?: number;
   algo?: Algo;
   fs?: S9rFs;
+  /**
+   * PR-5 · presupuesto de almacenamiento: tope por batalla (clase A) y reserva/cuota del volumen
+   * (clase B), comprobados ANTES de cada fragmento de ambos flujos. Sin él, sólo valen los topes de
+   * fichero de cada flujo (`maxRecipeBytes`/`maxViewBytes`).
+   */
+  budget?: RecordingBudget;
 }
 
 const MiB = 1024 * 1024;
@@ -131,10 +138,19 @@ export interface ClosedRecording {
   recipe: { partial: string; final: string; summary: WriteSummary };
   view: { partial: string; final: string; summary: WriteSummary };
   ticks: number;
+  /**
+   * PR-5 · CLASE A: el replay está TRUNCADO porque la batalla superó su tope de bytes (receta y/o vista
+   * selladas con `closeTruncated`). Se publica sólo con `allowTruncated` y con `endReason: recording_limit`.
+   */
+  truncated: boolean;
+  /** Tope superado (sólo si `truncated`). */
+  limit?: { limit: number; attempted: number };
 }
 
 export class ReplayRecorder {
   private fault: Error | null = null;
+  /** PR-5 · el primer fallo fue el tope de la propia batalla (clase A), no del entorno (clase B). */
+  private limitFault: ReplayLimitExceededError | null = null;
   private readonly lastCmd = new Map<string, string>();
   private lastTick = 0;
   private finished = false;
@@ -162,6 +178,13 @@ export class ReplayRecorder {
     const rPend = o.recipeMaxPendingBytes ?? 2 * rFrag;
     const vPend = o.viewMaxPendingBytes ?? 2 * vFrag;
     const vRecord = 1 * MiB;
+    // PR-5 · el tope por batalla del presupuesto acota también a cada flujo (receta o vista no pueden,
+    // por sí solas, superarlo); el tope COMBINADO lo aplica `admit` antes de cada fragmento.
+    const perBattle = o.budget?.maxBytesPerBattle;
+    let self: ReplayRecorder | null = null;
+    const admit = o.budget
+      ? (n: number, ctx: { closing: boolean }) => o.budget!.admit(n, ctx, self ? self.ownBytes() : 0)
+      : undefined;
     // `battleId` de la cabecera = el de la simulación (el motor lo usa al re-simular); en producción
     // coincide con la fila `battles`. `s9r.battleId` es siempre el de la batalla que lo grabó.
     const header = (h: Record<string, unknown>, content: string) => ({
@@ -172,8 +195,9 @@ export class ReplayRecorder {
     const recipeW = await S9rWriter.create(paths.recipePartial, {
       kind: "R",
       header: header(o.recipeHeader, RECIPE_CONTENT),
-      maxBytes: o.maxRecipeBytes ?? DEFAULT_MAX_RECIPE_BYTES,
+      maxBytes: o.maxRecipeBytes ?? perBattle ?? DEFAULT_MAX_RECIPE_BYTES,
       fragmentBytes: rFrag,
+      ...(admit ? { admit } : {}),
       // La cola del escritor nunca debe rechazar antes que la nuestra (que es la que se mide).
       maxQueuedBytes: rPend + 256 * 1024,
       ...(o.algo ? { algo: o.algo } : {}),
@@ -184,8 +208,9 @@ export class ReplayRecorder {
       viewW = await S9rWriter.create(paths.viewPartial, {
         kind: "V",
         header: header(o.viewHeader, VIEW_CONTENT),
-        maxBytes: o.maxViewBytes ?? DEFAULT_MAX_VIEW_BYTES,
+        maxBytes: o.maxViewBytes ?? perBattle ?? DEFAULT_MAX_VIEW_BYTES,
         fragmentBytes: vFrag,
+        ...(admit ? { admit } : {}),
         maxRecordBytes: vRecord,
         maxQueuedBytes: vPend + vRecord,
         ...(o.algo ? { algo: o.algo } : {}),
@@ -204,12 +229,26 @@ export class ReplayRecorder {
       peakPending: 0,
       records: 0,
     });
-    return new ReplayRecorder(paths, o, stream("recipe", recipeW, rPend), stream("view", viewW, vPend));
+    self = new ReplayRecorder(paths, o, stream("recipe", recipeW, rPend), stream("view", viewW, vPend));
+    return self;
+  }
+
+  /** Bytes ya escritos por este intento (receta + vista), para el tope combinado y la cuota. */
+  private ownBytes(): number {
+    return this.recipe.writer.bytesWritten + this.view.writer.bytesWritten;
   }
 
   /** Primer fallo de la grabación (backpressure, disco, tope, registro inválido) o null. */
   get recordingError(): Error | null {
     return this.fault;
+  }
+
+  /**
+   * PR-5 · ¿El primer fallo fue el tope de la PROPIA batalla (clase A)? Si es así el replay se puede
+   * cerrar como truncado (`finish`); cualquier otro fallo (clase B) descarta los parciales.
+   */
+  get battleLimit(): ReplayLimitExceededError | null {
+    return this.limitFault;
   }
 
   /**
@@ -234,7 +273,9 @@ export class ReplayRecorder {
   }
 
   private setFault(e: unknown): void {
-    if (!this.fault) this.fault = e instanceof Error ? e : new Error(String(e));
+    if (this.fault) return; // el PRIMER fallo manda: decide la clase (A truncado / B abortar)
+    this.fault = e instanceof Error ? e : new Error(String(e));
+    if (e instanceof ReplayLimitExceededError) this.limitFault = e;
   }
 
   private wake(): void {
@@ -334,25 +375,82 @@ export class ReplayRecorder {
 
   /**
    * Cierra los dos ficheros (resultado en la receta) y devuelve las PRUEBAS de cierre. Si hubo
-   * cualquier fallo antes o durante el cierre, descarta los parciales y lanza: nunca hay una
-   * grabación «cerrada» con registros perdidos.
+   * cualquier fallo del ENTORNO (clase B) antes o durante el cierre, descarta los parciales y lanza:
+   * nunca hay una grabación «cerrada» con registros perdidos.
+   *
+   * PR-5 · CLASE A: si el primer fallo fue el tope de la PROPIA batalla (o el último fragmento lo
+   * supera al cerrar), los ficheros se sellan como TRUNCADOS (`closeTruncated`: prefijo íntegro hasta
+   * el último fragmento escrito, con su resultado, índice y pie) y `truncated: true` en la prueba.
    */
-  async finish(result: Record<string, unknown>): Promise<ClosedRecording> {
+  async finish(
+    result: Record<string, unknown>,
+    /** Resultado que se escribe en la receta si la grabación sale TRUNCADA (sin ganador: coherente con la BD). */
+    truncatedResult?: Record<string, unknown>,
+  ): Promise<ClosedRecording> {
     if (this.finished) throw new WriterStateError("writer_closed", "grabador ya cerrado");
     this.finished = true;
-    if (this.fault) {
+    if (this.fault && !this.limitFault) {
       await this.discard();
       throw this.fault;
     }
-    const [r, v] = await Promise.allSettled([
-      this.recipe.writer.close({ result }),
-      this.view.writer.close({ result: this.viewSummary() }),
+    // P1-R3 · ANTES de sellar nada se vuelcan los búferes de AMBOS flujos: así el tope se decide para los dos a la vez.
+    // Si cualquiera lo rebasa (aunque el motor ya hubiera terminado), la grabación entera es truncada: nunca una receta
+    // completa, con el resultado del motor, junto a una vista truncada. Tras este volcado, `close()` no tiene datos que
+    // escribir (sólo resultado, índice y pie, con margen de emergencia), así que no puede rebasar el tope por su cuenta.
+    // Es el volcado del ÚLTIMO fragmento: `closing: true` (exención de cierre del diseño 2.6.4: sin reserva ni cuota).
+    const flushed = await Promise.allSettled([
+      this.recipe.writer.flushFragment({ closing: true }),
+      this.view.writer.flushFragment({ closing: true }),
     ]);
-    if (this.fault || r.status === "rejected" || v.status === "rejected") {
-      this.setFault(r.status === "rejected" ? r.reason : v.status === "rejected" ? v.reason : this.fault);
+    for (const f of flushed) {
+      if (f.status !== "rejected") continue;
+      const e = f.reason;
+      if (e instanceof ReplayLimitExceededError) this.setFault(e);
+      else if (e instanceof WriterStateError && e.code === "limit_hit")
+        this.setFault(new ReplayLimitExceededError(this.o.budget?.maxBytesPerBattle ?? 0, this.ownBytes()));
+      else this.setFault(e);
+    }
+    if (this.fault && !this.limitFault) {
       await this.discard();
       throw this.fault;
     }
+    const closeOne = async (
+      s: Stream,
+      res: Record<string, unknown>,
+      truncRes: Record<string, unknown> = res,
+    ): Promise<WriteSummary> => {
+      if (this.limitFault) return s.writer.closeTruncated({ result: truncRes });
+      try {
+        return await s.writer.close({ result: res });
+      } catch (e) {
+        // El tope de la batalla se superó: o el último fragmento al cerrar (`ReplayLimitExceededError`) o un
+        // `append` ENCOLADO antes del cierre (el escritor es asíncrono: el fallo llega cuando `close()` ya
+        // estaba en la cola y éste lo rechaza con `limit_hit`). En ambos casos se sella lo escrito como truncado.
+        const queuedLimit = e instanceof WriterStateError && e.code === "limit_hit";
+        if (!(e instanceof ReplayLimitExceededError) && !queuedLimit) throw e;
+        this.setFault(
+          e instanceof ReplayLimitExceededError
+            ? e
+            : new ReplayLimitExceededError(this.o.budget?.maxBytesPerBattle ?? 0, this.ownBytes()),
+        );
+        return s.writer.closeTruncated({ result: truncRes });
+      }
+    };
+    const [r, v] = await Promise.allSettled([
+      closeOne(this.recipe, result, truncatedResult ?? result),
+      closeOne(this.view, this.viewSummary()),
+    ]);
+    // Un fallo del ENTORNO (cualquiera que no sea el tope de la batalla) aborta: ni parcial ni truncado.
+    const lateFault = this.fault !== null && this.limitFault === null; // fallo aparecido durante el cierre
+    if (r.status === "rejected" || v.status === "rejected" || lateFault) {
+      const closeFailure = r.status === "rejected" ? r.reason : v.status === "rejected" ? v.reason : this.fault;
+      this.limitFault = null;
+      this.fault = null;
+      this.setFault(closeFailure);
+      await this.discard();
+      throw this.fault;
+    }
+    const truncated = r.value.truncated || v.value.truncated;
     return {
       battleId: this.o.battleId,
       attempt: this.o.attempt,
@@ -360,6 +458,10 @@ export class ReplayRecorder {
       recipe: { partial: this.paths.recipePartial, final: this.paths.recipeFinal, summary: r.value },
       view: { partial: this.paths.viewPartial, final: this.paths.viewFinal, summary: v.value },
       ticks: Number(result.ticks ?? this.lastTick),
+      truncated,
+      ...(truncated && this.limitFault
+        ? { limit: { limit: this.limitFault.limit, attempted: this.limitFault.attempted } }
+        : {}),
     };
   }
 

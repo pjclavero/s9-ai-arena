@@ -61,6 +61,16 @@ export interface WriterOptions {
   maxQueuedBytes?: number;
   algo?: Algo;
   fs?: S9rFs;
+  /**
+   * V1 REPLAYS PR-5 · ADMISIÓN de cada fragmento de DATOS, ANTES de escribirlo (tope por batalla,
+   * reserva de disco y cuota del volumen, ver `recording-budget.ts`). Recibe los bytes del fragmento ya
+   * comprimido y si se está CERRANDO el fichero. Puede lanzar:
+   *  - `ReplayLimitExceededError` (clase A, el tope es de la batalla): no envenena el escritor; sólo
+   *    cabe `closeTruncated()`;
+   *  - cualquier `StorageError` (clase B, el límite es del entorno): envenena el escritor.
+   * No se invoca para el resultado, el índice ni el pie (usan `emergencyBytes`).
+   */
+  admit?: (frameBytes: number, ctx: { closing: boolean }) => void | Promise<void>;
 }
 
 /**
@@ -119,7 +129,7 @@ export class S9rWriter {
     readonly path: string,
     private readonly file: S9rFile,
     private readonly fs: S9rFs,
-    private readonly o: Required<Omit<WriterOptions, "fs" | "header">>,
+    private readonly o: Required<Omit<WriterOptions, "fs" | "header" | "admit">> & Pick<WriterOptions, "admit">,
     private readonly headerFrameLen: number,
     chain0: Buffer,
   ) {
@@ -137,6 +147,7 @@ export class S9rWriter {
       emergencyBytes: opts.emergencyBytes ?? 64 * 1024,
       maxQueuedBytes: opts.maxQueuedBytes ?? 4 * fragmentBytes,
       algo: opts.algo ?? PREFERRED_ALGO,
+      ...(opts.admit ? { admit: opts.admit } : {}),
     };
     // Un fragmento sin comprimir nunca supera esto: el lector lo usa como tope de descompresión.
     if (o.fragmentBytes + o.maxRecordBytes > MAX_RAW_FRAGMENT_BYTES) {
@@ -275,15 +286,15 @@ export class S9rWriter {
     if (this.firstTick === null) this.firstTick = tick;
     this.lastTick = tick;
     if (this.bufBytes > this.peakBufferBytes) this.peakBufferBytes = this.bufBytes;
-    if (this.bufBytes >= this.o.fragmentBytes) await this.flushInner();
+    if (this.bufBytes >= this.o.fragmentBytes) await this.flushInner(false);
   }
 
   /** Cierra el fragmento en curso (útil para alinear fronteras con checkpoints). */
-  flushFragment(): Promise<void> {
-    return this.enqueue(() => this.flushInner());
+  flushFragment(opts: { closing?: boolean } = {}): Promise<void> {
+    return this.enqueue(() => this.flushInner(opts.closing === true));
   }
 
-  private async flushInner(): Promise<void> {
+  private async flushInner(closing: boolean): Promise<void> {
     this.assertOpen();
     this.assertNoLimit();
     if (this.bufRecords === 0) return;
@@ -295,7 +306,7 @@ export class S9rWriter {
     this.bufRecords = 0;
     this.firstTick = null;
     this.lastTick = null;
-    await this.writeFrame(FT.data, raw, meta, this.o.maxBytes);
+    await this.writeFrame(FT.data, raw, meta, this.o.maxBytes, closing);
     this.totalRecords += meta.records;
   }
 
@@ -304,6 +315,7 @@ export class S9rWriter {
     raw: Buffer,
     meta: { firstTick: number | null; lastTick: number | null; records: number },
     limit: number,
+    closing = false,
   ): Promise<void> {
     const comp = await this.guard("compress", () => compress(this.o.algo, raw));
     const frameLen = FRAME_HEADER_LEN + comp.length;
@@ -311,6 +323,25 @@ export class S9rWriter {
     if (this.offset + frameLen > limit) {
       this.limitHit = true;
       throw new ReplayLimitExceededError(limit, this.offset + frameLen);
+    }
+    // PR-5 · admisión ANTES de escribir cada fragmento de datos (tope por batalla, reserva y cuota).
+    if (type === FT.data && this.o.admit) {
+      try {
+        await this.o.admit(frameLen, { closing });
+      } catch (e) {
+        if (e instanceof ReplayLimitExceededError) {
+          // Clase A: el tope es de la batalla. No envenena; sólo cabe closeTruncated().
+          this.limitHit = true;
+          throw e;
+        }
+        // Clase B: el entorno no admite escribir. Envenena el escritor (no acepta más datos).
+        const err = toStorageError(e, "admit");
+        this.state = "failed";
+        this.failure = err;
+        this.lines = [];
+        this.bufBytes = 0;
+        throw err;
+      }
     }
     const frameStart = this.offset;
     await this.rawWrite(Buffer.concat([encodeFrameHeader(type, comp.length, crc32(comp)), comp]), "write_fragment");
@@ -346,7 +377,7 @@ export class S9rWriter {
       }
       // Tras un límite de bytes faltan registros: cerrar como «completo» sería mentir.
       this.assertNotLimited();
-      await this.flushInner();
+      await this.flushInner(true);
       // Sólo `closeTruncated()` puede sellar un fichero como truncado: no hay segunda vía.
       return this.finish({ result: opts.result, truncated: false });
     });
@@ -388,7 +419,7 @@ export class S9rWriter {
       // Se conserva el prefijo aceptado: lo pendiente en el búfer se vuelca salvo que el tope lo impida.
       if (!this.limitHit) {
         try {
-          await this.flushInner();
+          await this.flushInner(true);
         } catch (e) {
           if (!(e instanceof ReplayLimitExceededError)) throw e;
         }

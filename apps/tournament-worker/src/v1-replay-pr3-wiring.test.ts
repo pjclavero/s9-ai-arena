@@ -156,10 +156,13 @@ async function rig(opts: {
   return { replaysDir, worker };
 }
 
-/** Procesa la cola saltando el backoff de los reintentos (reloj inyectado), hasta vaciarla. */
+/**
+ * Procesa la cola saltando el backoff de los reintentos (reloj inyectado, 15 min por pasada: `storage_unavailable` espera
+ * 1, 2, 5 y 10 min), hasta vaciarla.
+ */
 async function drainAll(w: TournamentWorker): Promise<void> {
   for (let i = 1; i <= 12; i++) {
-    if ((await w.drain(100, new Date(Date.now() + i * 300_000))) === 0 && i > 3) return;
+    if ((await w.drain(100, new Date(Date.now() + i * 900_000))) === 0 && i > 3) return;
   }
 }
 
@@ -192,7 +195,7 @@ async function expectTechnicalFailure(
   expect(b.replay_ref).toBeNull();
   expect(b.replay_hash).toBeNull();
   expect(b.final_state_hash).toBeNull();
-  expect(b.run_attempts).toBeGreaterThanOrEqual(3); // la política de reintento existente se aplicó
+  expect(b.run_attempts).toBe(5); // la política propia de storage_unavailable (5 fallos) se aplicó
   const parts = await h.db("participants").where({ battle_id: s.battleId });
   expect(parts.map((p: Row) => p.outcome)).toEqual([null, null]);
   const job = (await h

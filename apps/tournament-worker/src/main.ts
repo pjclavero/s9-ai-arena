@@ -14,6 +14,7 @@ import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { startWorkerRuntimeSettings } from "./runtime-settings-wiring.js";
+import { buildReplayLimits } from "./replay-limits.js";
 import { makeRunBattleHandler } from "./battle-runner.js";
 import { onBattleJobExhausted, settleOrphanFailed, startTournamentRescue } from "./battle-failure.js";
 import { makeEngineExecutor } from "./engine-executor.js";
@@ -68,6 +69,11 @@ const replaysDir = process.env.REPLAYS_DIR ?? "/data/replays";
 // escribible, en vez de tumbar cada batalla al final con un EACCES.
 requireWritableDataDir("tournament-worker", replaysDir);
 
+// V1 REPLAYS PR-5 · cuota, reserva de espacio libre y tope por batalla del grabador: claves `replays.*` de
+// `system_settings`, releídas por sondeo (en caliente) y FAIL-CLOSED a los defectos del código. Un fallo de la
+// primera lectura no es fatal (valen los defectos). La compuerta previa y el grabador las aplican.
+const { config: replayLimits } = await buildReplayLimits(db, replaysDir);
+
 // Espectador en vivo (E8/T8.2): el gateway vive AQUÍ porque las batallas se
 // simulan en este proceso; attachBattle() necesita el objeto Battle en memoria.
 // El nginx del gateway enruta /ws/ a este puerto.
@@ -120,6 +126,7 @@ async function buildExecutor() {
       spectate,
       // V1 REPLAYS PR-3 · el motor graba S9R/1 por fragmentos en este directorio (parciales en .partial/).
       replaysDir,
+      replayLimits,
       agents: containerAgents({
         runner: (proxyRunner = new ProxyContainerRunner(proxyUrl)),
         provider,

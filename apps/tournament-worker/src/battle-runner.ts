@@ -105,8 +105,12 @@ export type AgentsKind = "container" | "in_process_stub" | "scripted";
 export interface BattleExecution {
   /** Equipo ganador, "draw", o null si la batalla se detuvo sin resultado deportivo. */
   winner: string | "draw" | null;
-  /** ADR-022 · `technical_limit` si la salvaguarda técnica del motor la detuvo. */
-  endReason?: "technical_limit";
+  /**
+   * ADR-022 · `technical_limit` si la salvaguarda técnica del motor la detuvo. V1 REPLAYS PR-5 (D-3) ·
+   * `recording_limit` si la batalla superó su tope de bytes de grabación (replay TRUNCADO, `winner: null`).
+   * En ambos casos: sin resultado deportivo.
+   */
+  endReason?: "technical_limit" | "recording_limit";
   ticks: number;
   score: Record<string, number>;
   finalStateHash: string;
@@ -533,7 +537,10 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
           throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason));
         }
         // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
-        const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
+        const endReason: EndReason =
+          execution.endReason === "technical_limit" || execution.endReason === "recording_limit"
+            ? execution.endReason
+            : "completed";
         await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps);
         endOk = true;
       } finally {
@@ -596,6 +603,8 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
   // V1 REPLAYS PR-4 · sólo recetas S9R/1 (`.s9r`, leídas por fragmentos); una referencia de otro
   // formato es «sin replay» (corte D-OP-30): no hay estadísticas que calcular.
   if (!row?.replay_ref || !isS9rReplayRef(row.replay_ref)) return;
+  // PR-5 · un replay TRUNCADO (`recording_limit`) no se puede re-simular: sin estadísticas que calcular.
+  if ((row.result as { endReason?: unknown } | null)?.endReason === "recording_limit") return;
   try {
     await runStatsJob(db, deps.replaysDir, battleId);
   } catch (err) {
@@ -608,7 +617,7 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
 }
 
 /** Motivo de cierre que queda en `battles.result.endReason`. */
-export type EndReason = "completed" | "walkover" | "sporting_failure" | "technical_limit";
+export type EndReason = "completed" | "walkover" | "sporting_failure" | "technical_limit" | "recording_limit";
 
 /**
  * BATTLE_RESULT · forma de `battles.result` (jsonb), versión 1. Documentada en
@@ -706,7 +715,11 @@ async function finishBattle(
     // resultado deportivo.
     if (execution.recording && deps.replaysDir) {
       try {
-        await publishRecording(trx, battle, execution.recording, deps.replayFs ? { fs: deps.replayFs } : {});
+        await publishRecording(trx, battle, execution.recording, {
+          ...(deps.replayFs ? { fs: deps.replayFs } : {}),
+          // PR-5 · un replay TRUNCADO sólo se publica bajo `recording_limit` (nunca bajo un resultado normal).
+          allowTruncated: endReason === "recording_limit",
+        });
       } catch (err) {
         throw new InfrastructureFailure(
           "storage_unavailable",

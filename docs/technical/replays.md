@@ -53,6 +53,33 @@ En `REPLAYS_DIR` (`/data/replays` por defecto; el worker lo monta en escritura y
 
 El volumen entra en la copia de seguridad que documenta C ([backup.md](../operations/backup.md)).
 
+## Límites de almacenamiento y fallo seguro (V1 REPLAYS PR-5)
+
+El worker comprueba tres límites **antes de cada fragmento** (receta y vista juntas), no sólo al empezar ni al terminar. Son claves de `system_settings` (pantalla «Ajustes» de la administración web), con defecto en código, rango validado en servidor, **techo por variable de entorno**, y se releen por sondeo (≈ 5 s) **en caliente**; sin lectura válida de la BD valen los defectos (fail-closed).
+
+| Clave | Defecto | Rango | Entorno (techo) | Qué limita |
+|---|---|---|---|---|
+| `replays.quota.max_bytes` | 20 GiB | 1 GiB – 16 TiB | `REPLAYS_QUOTA_MAX_BYTES` | Cuota lógica del volumen: publicados + papelera (`replay_artifacts`, caché 30 s) + parciales vivos |
+| `replays.quota.min_free_bytes` | 5 GiB | 512 MiB – 1 TiB | `REPLAYS_MIN_FREE_BYTES` | Reserva mínima de espacio **físico** libre (`statfs`) |
+| `replays.limits.max_bytes_per_battle` | 64 MiB (provisional, a calibrar con tamaños reales) | 4 MiB – 1 GiB | `REPLAYS_MAX_BYTES_PER_BATTLE` | Bytes de **un intento** (receta + vista, comprimidos). Un intento en curso conserva el valor con el que empezó |
+
+**Dos clases de fallo (decisión D-PR3-3), con política distinta:**
+
+| Clase | Causa | Qué pasa | Reintento |
+|---|---|---|---|
+| **A · el límite es de la batalla** | `max_bytes_per_battle` superado | El grabador deja de aceptar registros, cierra receta y vista como **truncadas** (`closeTruncated`) y se publican con `allowTruncated`. La batalla termina `finished` con `endReason: recording_limit`, `winner: null`, outcome NULL, sin Elo ni V-D-E. `replay_artifacts.truncated = true` y `stats_state = not_applicable` | **No** (determinista) |
+| **B · el límite es del entorno** | Reserva de espacio libre, cuota del volumen, `ENOSPC`/`EIO`, cola llena o escritor atascado | Se **aborta** el grabador, se borran los parciales y el ejecutor lanza `storage_unavailable` | **Sí**, con la política de reintentos; agotada, `failed`/`infrastructure` (#329), nunca resultado deportivo |
+
+Nunca se acumula en RAM como alternativa. El orden de comprobación es B (entorno) antes que A (batalla): si el volumen no admite escribir no se sella nada truncado en él.
+
+**Compuerta previa.** Antes de leer nada y de lanzar ningún contenedor, el ejecutor exige hueco para una batalla de tamaño máximo más la reserva (`libre − max_bytes_per_battle ≥ min_free_bytes`) y que quepa en la cuota. Si no, la batalla no arranca: `storage_unavailable` (`recording_preflight`), reintentable.
+
+El **cierre** (último fragmento de datos, resultado, índice y pie) no aplica reserva ni cuota (la reserva existe para poder cerrar); sí el tope por batalla, con un margen de emergencia de 64 KiB por flujo para resultado, índice y pie.
+
+**Un replay truncado no se reproduce ni se verifica en V1:** el visor, `index`/`segment` y las estadísticas responden como «sin replay» (404 / `unavailable`) y `verify` devuelve `matches:false` (`corrupt_file: truncated`). Sigue íntegro y descargable por quien tenga acceso al crudo.
+
+**Métricas** (`s9_worker_*`, con `S9_METRICS_ENABLED`): `replay_volume_used_bytes`, `replay_volume_free_bytes`, `replay_quota_max_bytes`, `replay_min_free_bytes`, `replay_max_bytes_per_battle` (gauges, sólo medidos) y los contadores `replay_aborts_battle_limit_total`, `replay_aborts_storage_total`, `replay_preflight_rejected_total`. Alertas: `ReplayQuotaNearFull` (>80 %), `ReplayQuotaCritical` (>90 %), `ReplayFreeSpaceLow` (libre < 1,5 × reserva), `ReplayStorageAbort`, `ReplayPreflightRejected` y `ReplayBattleLimitReached`.
+
 ## Escritura (publicación)
 
 1. **Único camino**: el worker graba la batalla con `ReplayRecorder` (cola acotada) y, en `finishBattle`, como último paso de la transacción y sólo si su `UPDATE … WHERE claimed_by` casó, llama a `publishRecording` (`apps/replay-service/src/artifacts.ts`): fila `replay_artifacts`, `replay_ref`/`replay_hash` y `publishPair` con las pruebas de cierre del escritor (vista primero, receta al final, sin sobrescribir). Un fallo es `storage_unavailable` y hace rollback ([battles.md](battles.md#battle_result-forma-de-battlesresult)).

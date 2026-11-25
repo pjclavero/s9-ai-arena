@@ -16,6 +16,8 @@
  * puertos, imágenes y límites de contenedor. Esas claves quedan sólo en entorno/compose.
  */
 
+import { REPLAY_SETTING_DEFS } from "./replay-settings.js";
+
 export type SettingType = "integer" | "number" | "boolean" | "enum";
 /** `hot`: el consumidor lo aplica al sondear (≈5 s). `restart`: sólo tras reiniciar el consumidor. */
 export type ApplyClass = "hot" | "restart";
@@ -180,8 +182,8 @@ export function effectiveValue(
 }
 
 /**
- * Claves registradas de fábrica. Vacío a propósito: ADM-1 sólo trae el marco. ADM-2 (worker) y el
- * PR de replays añaden AQUÍ sus claves reales, con su consumidor, sin tocar nada más. Los tests
- * registran sus propias claves de prueba con `createSettingsRegistry`.
+ * Claves registradas de fábrica: sólo las que tienen un consumidor REAL (sin sondas). ADM-2 (worker)
+ * y los demás PR de replays añaden AQUÍ las suyas. PR-5: cuota, reserva y tope por batalla del grabador
+ * (`replay-settings.ts`). Los tests registran sus propias claves de prueba con `createSettingsRegistry`.
  */
-export const SYSTEM_SETTINGS_REGISTRY: SettingsRegistry = createSettingsRegistry([]);
+export const SYSTEM_SETTINGS_REGISTRY: SettingsRegistry = createSettingsRegistry([...REPLAY_SETTING_DEFS]);

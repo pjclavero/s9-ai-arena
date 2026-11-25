@@ -15,6 +15,7 @@
  *  - Suma conservada: los deltas son intercambios por pareja (suma cero por
  *    construcción), también en batallas por equipos.
  */
+import { isNoSportingResultEndReason } from "./battle-end-reasons.js";
 import { resolveSeasonId } from "./season.js";
 import type { Knex } from "knex";
 
@@ -98,7 +99,8 @@ export async function applyBattleRating(
   if (!battle || battle.status !== "finished") return false;
   if (!battle.official) return false; // práctica privada: no puntúa
   // ADR-022 · detenida por la salvaguarda técnica: sin resultado deportivo, no puntúa.
-  if (resultOf(battle)?.endReason === "technical_limit") return false;
+  // V1 REPLAYS PR-5 · `recording_limit` (tope de bytes de la grabación) tampoco tiene resultado deportivo.
+  if (isNoSportingResultEndReason(resultOf(battle)?.endReason)) return false;
 
   // D-OP-24 · un bye (avance/descanso administrativo) no es una batalla jugada: nunca da Elo.
   // Normalmente no existe batalla colgando de un bye; la guarda cierra la puerta por si aparece.
