@@ -24,6 +24,8 @@ export interface AdminUser {
   status: "active" | "blocked";
   twoFactorEnabled: boolean;
   recoveryPending: boolean;
+  /** El token pendiente restablecerá también la 2FA al canjearse. */
+  recoveryResetsTwoFactor?: boolean;
   createdAt: string;
   blockedAt: string | null;
 }
@@ -47,14 +49,14 @@ type Action =
   | { kind: "token"; user: AdminUser };
 
 /** Frase literal de cada acción (la fija la web: las acciones son directas, sin orden del servidor). */
-export function userActionPhrase(a: Action): string {
+export function userActionPhrase(a: Action, resetTwoFactor = false): string {
   switch (a.kind) {
     case "roles":
       return `CAMBIAR ROLES ${a.user.email}`;
     case "status":
       return `${a.to === "blocked" ? "BLOQUEAR" : "DESBLOQUEAR"} ${a.user.email}`;
     case "token":
-      return `RECUPERAR ${a.user.email}`;
+      return resetTwoFactor ? `RESTABLECER 2FA ${a.user.email}` : `RECUPERAR ${a.user.email}`;
   }
 }
 
@@ -142,11 +144,22 @@ export function UsersPage(props: { me: Me }) {
       const reauth = { password: c.password, ...(c.totp ? { totp: c.totp } : {}) };
       if (a.kind === "roles") {
         // Conceder o quitar «admin» (a quien sea) exige reautenticación; el resto de cambios, no.
-        if (a.reauth) await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles, ...reauth }, { reauth: true });
+        if (a.reauth)
+          await api(
+            "PUT",
+            `/users/${a.user.id}/roles`,
+            { roles: a.roles, ...reauth, confirmPhrase: c.phrase },
+            { reauth: true },
+          );
         else await api("PUT", `/users/${a.user.id}/roles`, { roles: a.roles });
         setNotice(`Roles de ${a.user.email} actualizados.`);
       } else if (a.kind === "status") {
-        await api("PUT", `/admin/users/${a.user.id}/status`, { status: a.to, ...reauth }, { reauth: true });
+        await api(
+          "PUT",
+          `/admin/users/${a.user.id}/status`,
+          { status: a.to, ...reauth, confirmPhrase: c.phrase },
+          { reauth: true },
+        );
         setNotice(
           a.to === "blocked" ? `${a.user.email} bloqueado: sesiones cerradas.` : `${a.user.email} desbloqueado.`,
         );
@@ -154,7 +167,7 @@ export function UsersPage(props: { me: Me }) {
         const r = await api<{ token: string; expiresAt: string; userId: string }>(
           "POST",
           `/admin/users/${a.user.id}/recovery-token`,
-          { ...reauth, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) },
+          { ...reauth, confirmPhrase: c.phrase, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) },
           { reauth: true },
         );
         setIssued({ ...r, label: a.user.email });
@@ -175,7 +188,7 @@ export function UsersPage(props: { me: Me }) {
 
   const confirmProps = (() => {
     if (!action) return null;
-    const phrase = userActionPhrase(action);
+    const phrase = userActionPhrase(action, resetTwoFactor);
     if (action.kind === "roles") {
       const touchesAdmin = action.reauth;
       return {
@@ -350,7 +363,11 @@ export function UsersPage(props: { me: Me }) {
                     {u.recoveryPending && (
                       <>
                         {" "}
-                        <StatusBadge variant="warn">recuperación pendiente</StatusBadge>
+                        <StatusBadge variant="warn">
+                          {u.recoveryResetsTwoFactor
+                            ? "recuperación pendiente (restablece la 2FA)"
+                            : "recuperación pendiente"}
+                        </StatusBadge>
                       </>
                     )}
                   </td>

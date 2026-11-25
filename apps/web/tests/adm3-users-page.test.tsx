@@ -138,7 +138,7 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.click(submit);
     await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
     const c = calls("PUT", "/admin/users")[0];
-    expect(c[2]).toEqual({ status: "blocked", password: "mi-clave-larga-1" });
+    expect(c[2]).toEqual({ status: "blocked", password: "mi-clave-larga-1", confirmPhrase: "BLOQUEAR bea@x.es" });
     expect(c[3]).toEqual({ reauth: true });
     await screen.findByTestId("users-notice");
   });
@@ -153,7 +153,11 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.click(screen.getByTestId(`status-${ADM.id}`));
     await confirmWith("BLOQUEAR cris@x.es", "mi-clave-larga-1");
     await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
-    expect(calls("PUT", "/admin/users")[0][2]).toEqual({ status: "blocked", password: "mi-clave-larga-1" });
+    expect(calls("PUT", "/admin/users")[0][2]).toEqual({
+      status: "blocked",
+      password: "mi-clave-larga-1",
+      confirmPhrase: "BLOQUEAR cris@x.es",
+    });
     expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
 
@@ -171,7 +175,11 @@ describe("ADM-3 · página de usuarios", () => {
     expect(screen.getByTestId("confirm-phrase").textContent).toBe("DESBLOQUEAR blas@x.es");
     await confirmWith("DESBLOQUEAR blas@x.es", "mi-clave-larga-1");
     await waitFor(() => expect(calls("PUT", "/admin/users")).toHaveLength(1));
-    expect(calls("PUT", "/admin/users")[0][2]).toEqual({ status: "active", password: "mi-clave-larga-1" });
+    expect(calls("PUT", "/admin/users")[0][2]).toEqual({
+      status: "active",
+      password: "mi-clave-larga-1",
+      confirmPhrase: "DESBLOQUEAR blas@x.es",
+    });
   });
 
   it("ROLES_REALES_POR_ID: al abrir el editor pide los roles REALES de la cuenta y guarda sobre ellos (sin contraseña si no toca admin)", async () => {
@@ -214,7 +222,11 @@ describe("ADM-3 · página de usuarios", () => {
     await confirmWith("CAMBIAR ROLES bea@x.es", "mi-clave-larga-1");
     await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
     const c = calls("PUT", "/users/")[0];
-    expect(c[2]).toEqual({ roles: ["user", "developer", "admin"], password: "mi-clave-larga-1" });
+    expect(c[2]).toEqual({
+      roles: ["user", "developer", "admin"],
+      password: "mi-clave-larga-1",
+      confirmPhrase: "CAMBIAR ROLES bea@x.es",
+    });
     expect(c[3]).toEqual({ reauth: true });
     expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
@@ -233,7 +245,11 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.click(screen.getByTestId(`roles-save-${ADM.id}`));
     await confirmWith("CAMBIAR ROLES cris@x.es", "mi-clave-larga-1");
     await waitFor(() => expect(calls("PUT", "/users/")).toHaveLength(1));
-    expect(calls("PUT", "/users/")[0][2]).toEqual({ roles: ["user"], password: "mi-clave-larga-1" });
+    expect(calls("PUT", "/users/")[0][2]).toEqual({
+      roles: ["user"],
+      password: "mi-clave-larga-1",
+      confirmPhrase: "CAMBIAR ROLES cris@x.es",
+    });
     expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
 
@@ -254,7 +270,7 @@ describe("ADM-3 · página de usuarios", () => {
     expect(screen.getByTestId("recovery-token-value").textContent).toBe("TOKEN-SECRETO-DE-PRUEBA");
     expect(card.textContent).toMatch(/una sola vez/);
     const c = calls("POST", "/admin/users/")[0];
-    expect(c[2]).toEqual({ password: "mi-clave-larga-1" });
+    expect(c[2]).toEqual({ password: "mi-clave-larga-1", confirmPhrase: "RECUPERAR bea@x.es" });
     expect(c[3]).toEqual({ reauth: true });
     fireEvent.click(screen.getByTestId("recovery-token-close"));
     expect(screen.queryByTestId("recovery-token-card")).toBeNull();
@@ -276,7 +292,10 @@ describe("ADM-3 · página de usuarios", () => {
     fireEvent.click(screen.getByTestId(`recover-${ADM.id}`));
     await confirmWith("RECUPERAR cris@x.es", "mi-clave-larga-1");
     await screen.findByTestId("recovery-token-card");
-    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1" });
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({
+      password: "mi-clave-larga-1",
+      confirmPhrase: "RECUPERAR cris@x.es",
+    });
     expect(calls("POST", "/admin/operations")).toHaveLength(0);
   });
 
@@ -301,6 +320,7 @@ describe("ADM-3 · página de usuarios", () => {
       status: "blocked",
       password: "mi-clave-larga-1",
       totp: "123456",
+      confirmPhrase: "BLOQUEAR bea@x.es",
     });
   });
 
@@ -398,7 +418,10 @@ describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
     expect(screen.getByTestId("confirm-impact-summary").textContent).toMatch(/2FA de la cuenta se conserva/);
     await confirmWith("RECUPERAR bea@x.es", "mi-clave-larga-1");
     await screen.findByTestId("recovery-token-card");
-    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1" });
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({
+      password: "mi-clave-larga-1",
+      confirmPhrase: "RECUPERAR bea@x.es",
+    });
   });
 
   it("TFA_CASILLA_MARCADA: marcada envía resetTwoFactor:true y el impacto avisa de que se desactivará", async () => {
@@ -409,9 +432,14 @@ describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
     await screen.findByTestId("confirm-destructive");
     fireEvent.click(screen.getByTestId("reset-two-factor"));
     expect(screen.getByTestId("confirm-impact-summary").textContent).toMatch(/DESACTIVARÁ la 2FA/);
-    await confirmWith("RECUPERAR bea@x.es", "mi-clave-larga-1");
+    expect(screen.getByTestId("confirm-phrase").textContent).toBe("RESTABLECER 2FA bea@x.es");
+    await confirmWith("RESTABLECER 2FA bea@x.es", "mi-clave-larga-1");
     await screen.findByTestId("recovery-token-card");
-    expect(calls("POST", "/admin/users/")[0][2]).toEqual({ password: "mi-clave-larga-1", resetTwoFactor: true });
+    expect(calls("POST", "/admin/users/")[0][2]).toEqual({
+      password: "mi-clave-larga-1",
+      confirmPhrase: "RESTABLECER 2FA bea@x.es",
+      resetTwoFactor: true,
+    });
   });
 
   it("TFA_SIN_CASILLA_SIN_2FA: una cuenta sin 2FA no ofrece la casilla", async () => {
@@ -421,5 +449,20 @@ describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
     fireEvent.click(screen.getByTestId(`recover-${U1.id}`));
     await screen.findByTestId("confirm-destructive");
     expect(screen.queryByTestId("reset-two-factor")).toBeNull();
+  });
+
+  it("TFA_TOKEN_PENDIENTE_VISIBLE: el listado avisa de que el token pendiente restablecerá también la 2FA", async () => {
+    route({
+      "GET /admin/users": () =>
+        page([
+          { ...U1, recoveryPending: true, recoveryResetsTwoFactor: true },
+          { ...ADM, recoveryPending: true, recoveryResetsTwoFactor: false },
+        ]),
+    });
+    render(<UsersPage me={ME} />);
+    const table = await screen.findByTestId("users-table");
+    expect(table.textContent).toMatch(/recuperación pendiente \(restablece la 2FA\)/);
+    expect((table.textContent ?? "").match(/recuperación pendiente/g)).toHaveLength(2);
+    expect((table.textContent ?? "").match(/restablece la 2FA/g)).toHaveLength(1);
   });
 });

@@ -5,7 +5,7 @@ import { defineOperation } from "../registry.js";
 import { badRequest, notFound, tooMany } from "../errors.js";
 import { publicProfile, userToJson } from "../serialize.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
-import { currentRoles, planRoleChange, setUserRoles } from "../services/account-recovery.js";
+import { currentRoles, planRoleChange, requireConfirmPhrase, setUserRoles } from "../services/account-recovery.js";
 import { requireStrongReauth } from "./auth.js";
 import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { isUuid } from "../params.js";
@@ -58,6 +58,7 @@ export function userRoutes(db: Db, deps: { actionLimiter: RateLimiterLike }): Ro
       }
       const me = await db("users").where({ id: req.auth!.userId }).first();
       await requireStrongReauth(db, me, { password: body.password, totp: body.totp });
+      await requireConfirmPhrase(db, user.id, "roles", body.confirmPhrase);
     }
     const final = await setUserRoles(
       db,

@@ -524,7 +524,9 @@ describe("ADM-1 · límite de intentos de confirmación", () => {
   it("LIMITE_CONFIRM: pasado el máximo por admin, 429 (incluso con credenciales correctas) y otro admin no se ve afectado", async () => {
     const limited = createApp({
       db: h.db,
-      adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.test", { max: 3, windowMs: 60_000 }),
+      // Ventana FIJA alineada al reloj (floor(now/windowMs)): con 60 s, cruzar un minuto entre los 4 intentos reiniciaba
+      // la cuenta y el test fallaba al azar. Con windowMs = 2·now la ventana es siempre la 0: no depende del reloj.
+      adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.test", { max: 3, windowMs: Date.now() * 2 }),
     });
     const conf = (t: string, id: string, body: Record<string, unknown>) =>
       request(limited).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send(body);
@@ -632,12 +634,17 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
     });
   });
 
-  it("INMUTABLES_EN_BD: kind, params, impacto y solicitante no cambian nunca, ni siquiera para un superusuario", async () => {
+  it("INMUTABLES_EN_BD: id, kind, params, impacto, frase, created_at y solicitante no cambian nunca, ni siquiera para un superusuario", async () => {
     const { id } = await createAndTake(destructive);
     for (const patch of [
+      { id: "00000000-0000-4000-8000-000000000001" },
+      // el mensaje es el de la GUARDA (no el del CHECK de `kind`, que comparte el 23514): así la rama de `kind` se calibra
+      // aunque el CHECK admita más de un tipo en el futuro
+      { kind: "system.otro" },
       { params: JSON.stringify({ impactClass: "none" }) },
       { impact: JSON.stringify({ summary: "otro", counts: {} }) },
       { confirm_phrase: "otra frase" },
+      { created_at: new Date("2001-01-01T00:00:00Z") },
       { requested_by: (await h.db("users").where({ email: DEV_USERS.moderator }).first()).id },
     ]) {
       await expect(
@@ -645,9 +652,68 @@ describe("ADM-1 · máquina de estados en la BD (trigger)", () => {
         JSON.stringify(Object.keys(patch)),
       ).rejects.toMatchObject({
         code: "23514",
+        message: expect.stringMatching(/inmutables/),
       });
     }
     expect(await statusOf(id)).toBe("awaiting_confirmation");
+  });
+
+  it("CONFIRMADOR_NO_SE_REESCRIBE: una vez confirmada (pending) o tomada (running), el confirmador no cambia", async () => {
+    const moderatorId = (await h.db("users").where({ email: DEV_USERS.moderator }).first()).id as string;
+    const adminId = (await h.db("users").where({ email: DEV_USERS.admin }).first()).id as string;
+    for (const state of ["pending", "running"] as const) {
+      await h.db("admin_operations").delete();
+      const id = await insertOperationInState(h.db, state, { requested_by: adminId, confirmed_by: adminId });
+      await expect(
+        h.db("admin_operations").where({ id }).update({ confirmed_by: moderatorId }),
+        state,
+      ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/inmutables/) });
+      expect((await h.db("admin_operations").where({ id }).first()).confirmed_by).toBe(adminId);
+    }
+  });
+
+  it("FINALES_EXPIRED_Y_FAILED: expired y failed también son estados finales (no se modifican)", async () => {
+    for (const state of ["expired", "failed"] as const) {
+      await h.db("admin_operations").delete();
+      let id: string;
+      if (state === "failed") id = await insertOperationInState(h.db, "failed");
+      else {
+        id = await insertOperationInState(h.db, "awaiting_confirmation");
+        await h.db("admin_operations").where({ id }).update({ status: "expired", finished_at: h.db.fn.now() });
+      }
+      await expect(h.db("admin_operations").where({ id }).update({ attempts: 9 }), state).rejects.toMatchObject({
+        code: "23514",
+        message: expect.stringMatching(/estado final/),
+      });
+    }
+  });
+
+  it("RUNNING_NO_SE_CANCELA: una orden tomada por un ejecutor (running) no pasa a cancelled", async () => {
+    const id = await insertOperationInState(h.db, "running");
+    await expect(
+      h.db("admin_operations").where({ id }).update({ status: "cancelled", finished_at: h.db.fn.now() }),
+    ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/transición de estado no permitida/) });
+    expect(await statusOf(id)).toBe("running");
+  });
+
+  it("CONFIRMAR_EXIGE_CONFIRMADOR_Y_FECHA: awaiting_confirmation -> pending exige confirmed_by Y confirmed_at, cada uno por su lado", async () => {
+    const adminId = (await h.db("users").where({ email: DEV_USERS.admin }).first()).id as string;
+    const id = await insertOperationInState(h.db, "awaiting_confirmation", { requested_by: adminId });
+    // sólo la fecha (confirmación anónima)
+    await expect(
+      h.db("admin_operations").where({ id }).update({ status: "pending", confirmed_at: h.db.fn.now() }),
+    ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/exige la confirmación/) });
+    // sólo el confirmador (sin fecha)
+    await expect(
+      h.db("admin_operations").where({ id }).update({ status: "pending", confirmed_by: adminId }),
+    ).rejects.toMatchObject({ code: "23514", message: expect.stringMatching(/exige la confirmación/) });
+    expect(await statusOf(id)).toBe("awaiting_confirmation");
+    // con las dos cosas (el MISMO admin que la pidió), sí
+    await h
+      .db("admin_operations")
+      .where({ id })
+      .update({ status: "pending", confirmed_by: adminId, confirmed_at: h.db.fn.now() });
+    expect(await statusOf(id)).toBe("pending");
   });
 
   it("USUARIO_BORRADO: borrar al solicitante (ON DELETE SET NULL) no choca con el trigger, con la orden viva", async () => {

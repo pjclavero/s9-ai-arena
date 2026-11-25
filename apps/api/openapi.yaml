@@ -357,6 +357,11 @@ paths:
                 roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
                 password: { type: string, x-private: true, description: 'Reautenticación: obligatoria al conceder o quitar `admin`.' }
                 totp: { type: string, x-private: true }
+                confirmPhrase:
+                  type: string
+                  description: >-
+                    Confirmación explícita, obligatoria (junto a la reautenticación) al conceder o quitar `admin`: la frase
+                    literal `CAMBIAR ROLES <email de la cuenta>`. Sin ella o distinta, 400.
       responses:
         '200': { description: Roles actualizados, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -3822,6 +3827,7 @@ components:
         status: { type: string, enum: [active, blocked] }
         twoFactorEnabled: { type: boolean }
         recoveryPending: { type: boolean, description: 'Hay un token de recuperación vigente sin usar.' }
+        recoveryResetsTwoFactor: { type: boolean, description: 'Ese token pendiente restablecerá también la 2FA al canjearse (D-OP-44).' }
         createdAt: { type: string, format: date-time }
         blockedAt: { type: string, format: date-time, nullable: true }
     AdminUserPage:
@@ -3832,11 +3838,14 @@ components:
     AdminUserStatusChange:
       type: object
       additionalProperties: false
-      required: [status, password]
+      required: [status, password, confirmPhrase]
       properties:
         status: { type: string, enum: [active, blocked] }
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true, description: 'Código TOTP o de recuperación si la cuenta del admin tiene 2FA.' }
+        confirmPhrase:
+          type: string
+          description: 'Confirmación explícita: la frase literal `BLOQUEAR <email>` o `DESBLOQUEAR <email>` de la cuenta. Sin ella o distinta, 400.'
     AdminUserStatusResult:
       type: object
       properties:
@@ -3847,10 +3856,15 @@ components:
     AdminRecoveryTokenRequest:
       type: object
       additionalProperties: false
-      required: [password]
+      required: [password, confirmPhrase]
       properties:
         password: { type: string, x-private: true }
         totp: { type: string, x-private: true }
+        confirmPhrase:
+          type: string
+          description: >-
+            Confirmación explícita: la frase literal `RECUPERAR <email>` o, con `resetTwoFactor: true`,
+            `RESTABLECER 2FA <email>`. Sin ella o distinta, 400.
         resetTwoFactor:
           type: boolean
           default: false

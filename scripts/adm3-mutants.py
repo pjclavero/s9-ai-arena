@@ -271,7 +271,7 @@ M = [
     (
         'M48 la emisión no es atómica con su auditoría',
         [
-            (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      const user = await t("users").where({ id: targetId }).forUpdate()', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      const user = await t("users").where({ id: targetId }).forUpdate()'),
+            (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      await requireActorStillAdmin(t, ctx.actorId);\n', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      await requireActorStillAdmin(t, ctx.actorId);\n'),
             (SVC, '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    }),\n  );\n  return out;', '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    })(db),\n  );\n  return out;'),
         ],
         T, 'AUDITORIA_ATOMICA',
@@ -342,7 +342,7 @@ M = [
     (
         'M61 la web bloquea sin marcar reautenticación',
         [
-            (PAGE, '{ status: a.to, ...reauth }, { reauth: true }', '{ status: a.to, ...reauth }'),
+            (PAGE, '{ status: a.to, ...reauth, confirmPhrase: c.phrase },\n          { reauth: true }', '{ status: a.to, ...reauth, confirmPhrase: c.phrase }'),
         ],
         WEBT, 'BLOQUEAR_CONFIRMA',
     ),
@@ -727,7 +727,7 @@ M = [
     ),
     (
         'N42 la web ignora la casilla',
-        [(PAGE, '{ ...reauth, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) }', '{ ...reauth }')],
+        [(PAGE, '{ ...reauth, confirmPhrase: c.phrase, ...(resetTwoFactor ? { resetTwoFactor: true } : {}) }', '{ ...reauth, confirmPhrase: c.phrase }')],
         WEBT, 'TFA_CASILLA_MARCADA',
     ),
     (
@@ -739,6 +739,221 @@ M = [
         'N44 la web envía la marca por defecto',
         [(PAGE, 'setResetTwoFactor] = useState(false);', 'setResetTwoFactor] = useState(true);')],
         WEBT, 'TFA_CASILLA_DESMARCADA',
+    ),
+    (
+        'G01 guarda 025: inmutabilidad con el RAISE anulado',
+        [("R025:" + MIGS, "          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';", '          NULL;')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
+    ),
+    (
+        'G02 guarda 025: inmutabilidad sin id',
+        [("R025:" + MIGS, 'IF NEW.id IS DISTINCT FROM OLD.id\n           OR NEW.kind', 'IF NEW.kind')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
+    ),
+    (
+        'G03 guarda 025: inmutabilidad sin kind (N33 con el mensaje de la guarda)',
+        [("R025:" + MIGS, '           OR NEW.kind IS DISTINCT FROM OLD.kind\n', '')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
+    ),
+    (
+        'G07 guarda 025: inmutabilidad sin created_at',
+        [("R025:" + MIGS, '           OR NEW.created_at IS DISTINCT FROM OLD.created_at\n', '')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INMUTABLES_EN_BD',
+    ),
+    (
+        'G09 guarda 025: confirmador reescribible en pending/running',
+        [("R025:" + MIGS, '           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)\n', '')],
+        'apps/api/src/settings/admin-operations.test.ts', 'CONFIRMADOR_NO_SE_REESCRIBE',
+    ),
+    (
+        'G10 guarda 025: estado final con el RAISE anulado',
+        [("R025:" + MIGS, "              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';", '              NULL;')],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES_SOLO_SET_NULL',
+    ),
+    (
+        'G11 guarda 025: estado final rechaza también el SET NULL',
+        [("R025:" + MIGS, '            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)\n', '            IF true OR (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)\n')],
+        'apps/api/src/settings/admin-operations.test.ts', 'USUARIO_BORRADO',
+    ),
+    (
+        'G12 guarda 025: estado final con confirmador rellenable',
+        [("R025:" + MIGS, '               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)\n', '')],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES_NO_SE_RELLENAN',
+    ),
+    (
+        'G14 guarda 025: estado final sin la tupla de campos',
+        [("R025:" + MIGS, '               OR (NEW.result, NEW.lease_owner', '               OR false AND (NEW.result, NEW.lease_owner')],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES_SOLO_SET_NULL',
+    ),
+    (
+        'G15 guarda 025: expired y cancelled no son finales',
+        [("R025:" + MIGS, "IF OLD.status IN ('done','failed','expired','cancelled') THEN", "IF OLD.status IN ('done','failed') THEN")],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES',
+    ),
+    (
+        'G15b guarda 025: expired no es final',
+        [("R025:" + MIGS, "IF OLD.status IN ('done','failed','expired','cancelled') THEN", "IF OLD.status IN ('done','failed','cancelled') THEN")],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES_EXPIRED_Y_FAILED',
+    ),
+    (
+        'G16 guarda 025: failed no es final',
+        [("R025:" + MIGS, "IF OLD.status IN ('done','failed','expired','cancelled') THEN", "IF OLD.status IN ('done','expired','cancelled') THEN")],
+        'apps/api/src/settings/admin-operations.test.ts', 'FINALES_EXPIRED_Y_FAILED',
+    ),
+    (
+        'G17 guarda 025: transición awaiting -> done',
+        [("R025:" + MIGS, "(OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))", "(OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled','done'))")],
+        'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD',
+    ),
+    (
+        'G18 guarda 025: transición pending -> done',
+        [("R025:" + MIGS, "(OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))", "(OLD.status = 'pending' AND NEW.status IN ('running','cancelled','done'))")],
+        'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD_ESTADOS',
+    ),
+    (
+        'G19 guarda 025: transición running -> cancelled',
+        [("R025:" + MIGS, "(OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))", "(OLD.status = 'running' AND NEW.status IN ('done','failed','pending','cancelled'))")],
+        'apps/api/src/settings/admin-operations.test.ts', 'RUNNING_NO_SE_CANCELA',
+    ),
+    (
+        'G20 guarda 025: transición final -> pending',
+        [("R025:" + MIGS, "          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))\n", "          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))\n          OR (OLD.status IN ('done','cancelled','expired') AND NEW.status = 'pending')\n")],
+        'apps/api/src/settings/admin-operations.test.ts', 'TRANSICIONES_EN_BD_ESTADOS',
+    ),
+    (
+        'G21 guarda 025: se confirma sin confirmed_by',
+        [("R025:" + MIGS, 'IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN', 'IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NULL THEN')],
+        'apps/api/src/settings/admin-operations.test.ts', 'CONFIRMAR_EXIGE_CONFIRMADOR_Y_FECHA',
+    ),
+    (
+        'G22 guarda 025: se confirma sin confirmed_at',
+        [("R025:" + MIGS, 'IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN', 'IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL THEN')],
+        'apps/api/src/settings/admin-operations.test.ts', 'CONFIRMAR_EXIGE_CONFIRMADOR_Y_FECHA',
+    ),
+    (
+        'G23 guarda 025: insert nace en cualquier estado',
+        [("R025:" + MIGS, "        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN", '        IF false THEN')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INSERT_GUARD',
+    ),
+    (
+        'G24 guarda 025: insert con campos prerrellenados',
+        [("R025:" + MIGS, '        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL', '        IF false AND NEW.confirmed_by IS NOT NULL OR false AND NEW.confirmed_at IS NOT NULL OR false AND NEW.result IS NOT NULL')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INSERT_GUARD',
+    ),
+    (
+        'G25 guarda 025: insert con intentos',
+        [("R025:" + MIGS, 'OR NEW.attempts <> 0 THEN', 'OR false THEN')],
+        'apps/api/src/settings/admin-operations.test.ts', 'INSERT_GUARD',
+    ),
+    (
+        'R2 crear órdenes con rol organizer',
+        [(OAPI, '        el privilegio.\n      x-min-role: admin', '        el privilegio.\n      x-min-role: organizer')],
+        'apps/api/src/settings/admin-operations.test.ts', 'NO_ADMIN_NO_CREA',
+    ),
+    (
+        'R41 confirmación sin frase literal',
+        [(CONF, '    phraseMatches(typed, props.phrase) && (!askPassword', '    (!askPassword')],
+        'apps/web/tests/adm1-settings-page.test.tsx', 'FRASE_EXACTA_Y_CONTRASEÑA',
+    ),
+    (
+        'R42 confirmación sin contraseña',
+        [(CONF, '(!askPassword || password.length > 0)', 'true')],
+        'apps/web/tests/adm1-settings-page.test.tsx', 'FRASE_EXACTA_Y_CONTRASEÑA',
+    ),
+    (
+        'R43 confirmación sin TOTP exigido',
+        [(CONF, '(!askTotp || totp.trim().length > 0)', 'true')],
+        'apps/web/tests/adm1-settings-page.test.tsx', 'TOTP',
+    ),
+    (
+        'N45 el bloqueo no revalida al actor',
+        [(SVC, 'await requireActorStillAdmin(t, ctx.actorId);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status === status)', 'const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status === status)')],
+        T2, 'TOCTOU_ACTOR_BLOQUEADO_ESTADO',
+    ),
+    (
+        'N46 los roles no revalidan al actor',
+        [(SVC, 'await requireActorStillAdmin(t, ctx.actorId);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id");', 'const user = await t("users").where({ id: targetId }).forUpdate().first("id");')],
+        T2, 'TOCTOU_ACTOR_BLOQUEADO: ',
+    ),
+    (
+        'N47 emitir el token no revalida al actor',
+        [(SVC, 'await requireActorStillAdmin(t, ctx.actorId);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status !== "active")', 'const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status !== "active")')],
+        T2, 'TOCTOU_ACTOR_DEGRADADO',
+    ),
+    (
+        'N48 la revalidación del actor ignora el estado bloqueado',
+        [(SVC, '.where({ "u.id": actorId, "r.role": "admin", "u.status": "active" })', '.where({ "u.id": actorId, "r.role": "admin" })')],
+        T2, 'TOCTOU_ACTOR_BLOQUEADO: ',
+    ),
+    (
+        'N49 la revalidación del actor ignora el rol admin',
+        [(SVC, '.where({ "u.id": actorId, "r.role": "admin", "u.status": "active" })', '.where({ "u.id": actorId, "u.status": "active" })')],
+        T2, 'TOCTOU_ACTOR_DEGRADADO',
+    ),
+    (
+        'N50 los roles de admin no exigen la frase en el servidor',
+        [(USERS, '      await requireConfirmPhrase(db, user.id, "roles", body.confirmPhrase);\n', '')],
+        T2, 'CONFIRMACION_SERVIDOR_ROLES',
+    ),
+    (
+        'N51 bloquear/desbloquear no exige la frase en el servidor',
+        [(RU, '    await requireConfirmPhrase(\n      db,\n      id,\n      status === "blocked" ? "block" : "unblock",\n      ((req.body ?? {}) as Record<string, unknown>).confirmPhrase,\n    );\n', '')],
+        T2, 'CONFIRMACION_SERVIDOR_ESTADO',
+    ),
+    (
+        'N52 emitir el token no exige la frase en el servidor',
+        [(RU, '    await requireConfirmPhrase(\n      db,\n      id,\n      flag === true ? "recover_2fa" : "recover",\n      ((req.body ?? {}) as Record<string, unknown>).confirmPhrase,\n    );\n', '')],
+        T2, 'CONFIRMACION_SERVIDOR_TOKEN',
+    ),
+    (
+        'N53 la frase del servidor no se compara',
+        [(SVC, 'if (typeof supplied !== "string" || supplied.trim() !== expected) {', 'if (typeof supplied !== "string") {')],
+        T2, 'CONFIRMACION_SERVIDOR_ESTADO',
+    ),
+    (
+        'N54 restablecer la 2FA usa la frase del token simple',
+        [(SVC, 'return `RESTABLECER 2FA ${email}`;', 'return `RECUPERAR ${email}`;')],
+        T2, 'CONFIRMACION_SERVIDOR_TOKEN',
+    ),
+    (
+        'N55 la frase de roles no es la de roles',
+        [(SVC, 'return `CAMBIAR ROLES ${email}`;', 'return `BLOQUEAR ${email}`;')],
+        T2, 'CONFIRMACION_SERVIDOR_ROLES',
+    ),
+    (
+        'N56 el listado marca como 2FA cualquier token pendiente',
+        [(SVC, ' AND pr.reset_two_factor) AS recovery_resets_2fa', ') AS recovery_resets_2fa')],
+        T2, 'LISTA_MARCA_2FA',
+    ),
+    (
+        'N57 el listado no cuenta el token vigente (cuenta anulados)',
+        [(SVC, 'pr.used_at IS NULL AND pr.expires_at > now() AND pr.reset_two_factor)', 'pr.expires_at > now() AND pr.reset_two_factor)')],
+        T2, 'LISTA_MARCA_2FA',
+    ),
+    (
+        'N58 la web no anuncia la marca de 2FA del token pendiente',
+        [(PAGE, '{u.recoveryResetsTwoFactor\n                            ? "recuperación pendiente (restablece la 2FA)"\n                            : "recuperación pendiente"}', '{"recuperación pendiente"}'),],
+        WEBT, 'TFA_TOKEN_PENDIENTE_VISIBLE',
+    ),
+    (
+        'N59 la web usa la frase simple al restablecer la 2FA',
+        [(PAGE, 'return resetTwoFactor ? `RESTABLECER 2FA ${a.user.email}` : `RECUPERAR ${a.user.email}`;', 'return `RECUPERAR ${a.user.email}`;')],
+        WEBT, 'TFA_CASILLA_MARCADA',
+    ),
+    (
+        'N60 la web no envía la frase en los roles de admin',
+        [(PAGE, '{ roles: a.roles, ...reauth, confirmPhrase: c.phrase },', '{ roles: a.roles, ...reauth },')],
+        WEBT, 'CONCEDER_ADMIN_REAUTH',
+    ),
+    (
+        'N61 la web no envía la frase al bloquear',
+        [(PAGE, '{ status: a.to, ...reauth, confirmPhrase: c.phrase },', '{ status: a.to, ...reauth },')],
+        WEBT, 'BLOQUEAR_CONFIRMA',
+    ),
+    (
+        'N62 el down de la 025 deja la guarda de la 023 distinta byte a byte',
+        [(MIGS, 'DEFAULT false;\n      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$\n      BEGIN\n', 'DEFAULT false;\n      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$\n      BEGIN\n        -- comentario de más\n')],
+        MIG25, 'MIG025_VUELTA_ATRAS',
     ),
 ]
 
@@ -791,12 +1006,36 @@ def baseline(test, frag):
     return _base[key]
 
 
+REGION_START = "-- ADM-1 sin segundo admin: guardas de la 023 SIN la regla"
+REGION_END = "ALTER TABLE admin_operations DROP COLUMN requires_second_admin;"
+
+
+def split_path(path):
+    """`R025:<fichero>` limita el ancla a la región del `up` de la 025 (sus guardas repiten texto de la 023 y del `down`)."""
+    return (path[5:], True) if path.startswith("R025:") else (path, False)
+
+
+def scope(src, in_region):
+    if not in_region:
+        return 0, len(src)
+    a = src.index(REGION_START)
+    return a, src.index(REGION_END, a)
+
+
+def apply_edit(src, path, old, new):
+    _real, in_region = split_path(path)
+    a, b = scope(src, in_region)
+    return src[:a] + src[a:b].replace(old, new, 1) + src[b:]
+
+
 def check_anchors(edits):
     bad = []
     for path, old, _new in edits:
-        src = open(os.path.join(ROOT, path)).read()
-        if src.count(old) != 1:
-            bad.append(f"{path}: ancla no única ({src.count(old)}): {old[:70]!r}")
+        real, in_region = split_path(path)
+        src = open(os.path.join(ROOT, real)).read()
+        a, b = scope(src, in_region)
+        if src[a:b].count(old) != 1:
+            bad.append(f"{path}: ancla no única ({src[a:b].count(old)}): {old[:70]!r}")
     return bad
 
 
@@ -846,11 +1085,13 @@ for name, edits, test, frag in M:
         sys.exit(2)
     originals = {}
     for path, _o, _n in edits:
-        originals.setdefault(path, open(os.path.join(ROOT, path)).read())
+        real, _r = split_path(path)
+        originals.setdefault(real, open(os.path.join(ROOT, real)).read())
     try:
         cur = dict(originals)
         for path, old, new in edits:
-            cur[path] = cur[path].replace(old, new, 1)
+            real, _r = split_path(path)
+            cur[real] = apply_edit(cur[real], path, old, new)
         for path, src in cur.items():
             open(os.path.join(ROOT, path), "w").write(src)
         rc2, out = run_filtered(test, frag)

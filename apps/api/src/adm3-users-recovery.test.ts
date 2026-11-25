@@ -13,7 +13,7 @@ import { createApp } from "./app.js";
 import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.js";
 import { hashPassword, verifyPassword } from "./auth/passwords.js";
 import { hashToken } from "./auth/tokens.js";
-import { RECOVERY_TTL_MS } from "./services/account-recovery.js";
+import { RECOVERY_TTL_MS, userActionPhrase, type UserActionKind } from "./services/account-recovery.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -78,10 +78,23 @@ async function tokenOf(u: TUser): Promise<string> {
   return r.body.accessToken as string;
 }
 const listUsers = (t: string, qs = "") => request(app).get(`/admin/users${qs}`).set("Authorization", `Bearer ${t}`);
-const setStatus = (t: string, id: string, body: Record<string, unknown>) =>
-  request(app).put(`/admin/users/${id}/status`).set("Authorization", `Bearer ${t}`).send(body);
-const issue = (t: string, id: string, body: Record<string, unknown> = { password: PW }) =>
-  request(app).post(`/admin/users/${id}/recovery-token`).set("Authorization", `Bearer ${t}`).send(body);
+/** Añade la frase de confirmación EXPLÍCITA (P3-5) salvo que el caso la ponga (o la quite) a propósito. */
+async function withPhrase(id: string, kind: UserActionKind, body: Record<string, unknown>) {
+  if ("confirmPhrase" in body) return body;
+  const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+  const u = isId ? await h.db("users").where({ id }).first("email") : undefined;
+  return { ...body, confirmPhrase: userActionPhrase(kind, (u?.email as string | undefined) ?? "") };
+}
+const setStatus = async (t: string, id: string, body: Record<string, unknown>) =>
+  request(app)
+    .put(`/admin/users/${id}/status`)
+    .set("Authorization", `Bearer ${t}`)
+    .send(await withPhrase(id, body.status === "blocked" ? "block" : "unblock", body));
+const issue = async (t: string, id: string, body: Record<string, unknown> = { password: PW }) =>
+  request(app)
+    .post(`/admin/users/${id}/recovery-token`)
+    .set("Authorization", `Bearer ${t}`)
+    .send(await withPhrase(id, body.resetTwoFactor === true ? "recover_2fa" : "recover", body));
 const reset = (token: unknown, newPassword: unknown) => request(app).post("/auth/reset").send({ token, newPassword });
 const audits = async (like: string) =>
   (await h.db("audit_log").where("action", "like", like).where("id", ">", auditFloor).orderBy("id")) as {
@@ -131,6 +144,7 @@ describe("ADM-3 · listado de usuarios", () => {
         "email",
         "id",
         "recoveryPending",
+        "recoveryResetsTwoFactor",
         "roles",
         "status",
         "twoFactorEnabled",
@@ -200,7 +214,11 @@ describe("ADM-3 · roles y última cuenta admin", () => {
       request(app)
         .put(`/users/${id}/roles`)
         .set("Authorization", `Bearer ${t}`)
-        .send({ roles: ["user"], password: PW });
+        .send({
+          roles: ["user"],
+          password: PW,
+          confirmPhrase: userActionPhrase("roles", id === a.id ? a.email : b.email),
+        });
     // b bloqueado a mano: «a» pasa a ser el único ADMIN ACTIVO
     await h.db("users").where({ id: b.id }).update({ status: "blocked", blocked_at: new Date() });
     const r = await selfRevoke(ta, a.id);
@@ -319,19 +337,20 @@ describe("ADM-3 · bloqueo y desbloqueo", () => {
     const { setUserStatus } = await import("./services/account-recovery.js");
     const a = await mkAdmin("bl-ultimo-a");
     const b = await mkAdmin("bl-ultimo-b");
-    // b bloqueado a mano: «a» es el único activo; ni siquiera otro actor puede bloquearlo
+    // b bloqueado a mano: «a» es el único activo y no puede bloquearse a sí mismo
     await h.db("users").where({ id: b.id }).update({ status: "blocked", blocked_at: new Date() });
-    const actor = await mkUser("bl-ultimo-actor", ["user"]);
-    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).rejects.toMatchObject({
+    await expect(setUserStatus(h.db, { actorId: a.id }, a.id, "blocked")).rejects.toMatchObject({
       status: 409,
       code: "last_admin",
     });
     expect((await h.db("users").where({ id: a.id }).first()).status).toBe("active");
-    // con b activo de nuevo, bloquear a «a» ya no deja 0 admins y NO exige a nadie más
+    // con b activo de nuevo, «a» puede bloquearse (queda b) y NO exige a nadie más
     await h.db("users").where({ id: b.id }).update({ status: "active", blocked_at: null });
-    await expect(setUserStatus(h.db, { actorId: actor.id }, a.id, "blocked")).resolves.toMatchObject({
+    await expect(setUserStatus(h.db, { actorId: a.id }, a.id, "blocked")).resolves.toMatchObject({
       status: "blocked",
     });
+    // y quien ya está bloqueado no puede seguir actuando (ver TOCTOU_ACTOR_BLOQUEADO)
+    await expect(setUserStatus(h.db, { actorId: a.id }, b.id, "blocked")).rejects.toMatchObject({ status: 403 });
   });
 
   it("BLOQUEO_ENTRADAS: id que no es uuid o inexistente 404; estado desconocido 400", async () => {

@@ -15,7 +15,7 @@ import { createApp } from "./app.js";
 import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.js";
 import { hashPassword, passwordPolicyViolation } from "./auth/passwords.js";
 import { generateTotpSecret } from "./auth/totp.js";
-import { mapDeadlock } from "./services/account-recovery.js";
+import { mapDeadlock, userActionPhrase, type UserActionKind } from "./services/account-recovery.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -68,16 +68,29 @@ async function tokenOf(u: TUser, totp?: string): Promise<string> {
   return r.body.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
-const putRoles = (t: string, id: string, body: Record<string, unknown>) =>
-  request(app).put(`/users/${id}/roles`).set(auth(t)).send(body);
-const issue = (t: string, id: string, body: Record<string, unknown> = { password: PW }) =>
-  request(app).post(`/admin/users/${id}/recovery-token`).set(auth(t)).send(body);
+/** Añade la frase de confirmación EXPLÍCITA (P3-5) salvo que el caso la ponga (o la quite) a propósito. */
+async function withPhrase(id: string, kind: UserActionKind, body: Record<string, unknown>) {
+  if ("confirmPhrase" in body) return body;
+  const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+  const u = isId ? await h.db("users").where({ id }).first("email") : undefined;
+  return { ...body, confirmPhrase: userActionPhrase(kind, (u?.email as string | undefined) ?? "") };
+}
+const putRoles = async (t: string, id: string, body: Record<string, unknown>) =>
+  request(app)
+    .put(`/users/${id}/roles`)
+    .set(auth(t))
+    .send(await withPhrase(id, "roles", body));
+const issue = async (t: string, id: string, body: Record<string, unknown> = { password: PW }) =>
+  request(app)
+    .post(`/admin/users/${id}/recovery-token`)
+    .set(auth(t))
+    .send(await withPhrase(id, body.resetTwoFactor === true ? "recover_2fa" : "recover", body));
 const reset = (token: string, newPassword = NEWPW) => request(app).post("/auth/reset").send({ token, newPassword });
-const setStatus = (t: string, id: string, status: string, body: Record<string, unknown> = { password: PW }) =>
+const setStatus = async (t: string, id: string, status: string, body: Record<string, unknown> = { password: PW }) =>
   request(app)
     .put(`/admin/users/${id}/status`)
     .set(auth(t))
-    .send({ status, ...body });
+    .send(await withPhrase(id, status === "blocked" ? "block" : "unblock", { status, ...body }));
 const hasAdmin = async (id: string) => !!(await h.db("user_roles").where({ user_id: id, role: "admin" }).first());
 const statusOf = async (id: string) => (await h.db("users").where({ id }).first()).status as string;
 const activeAdmins = async () =>
@@ -259,11 +272,17 @@ describe("ADM-3 · último admin protegido, bajo cerrojo y sin carreras", () => 
     // a bloquea a b (hay otro: a) y ahora a es el último
     expect((await setStatus(ta, b.id, "blocked")).status).toBe(200);
     const { setUserStatus, setUserRoles } = await import("./services/account-recovery.js");
-    await expect(setUserStatus(h.db, { actorId: b.id }, a.id, "blocked")).rejects.toMatchObject({
+    // b (ya bloqueado) ya no es un administrador activo: no puede actuar (P3-4), tampoco para tocar al último
+    await expect(setUserStatus(h.db, { actorId: b.id }, a.id, "blocked")).rejects.toMatchObject({ status: 403 });
+    await expect(setUserRoles(h.db, { actorId: b.id }, a.id, ["user"], { reauthed: true })).rejects.toMatchObject({
+      status: 403,
+    });
+    // y el último admin activo no puede bloquearse ni degradarse a sí mismo
+    await expect(setUserStatus(h.db, { actorId: a.id }, a.id, "blocked")).rejects.toMatchObject({
       status: 409,
       code: "last_admin",
     });
-    await expect(setUserRoles(h.db, { actorId: b.id }, a.id, ["user"], { reauthed: true })).rejects.toMatchObject({
+    await expect(setUserRoles(h.db, { actorId: a.id }, a.id, ["user"], { reauthed: true })).rejects.toMatchObject({
       status: 409,
       code: "last_admin",
     });
@@ -293,7 +312,8 @@ describe("ADM-3 · último admin protegido, bajo cerrojo y sin carreras", () => 
       const b = await mkAdmin(`cb-r${round}-b`);
       const [ta, tb] = [await tokenOf(a), await tokenOf(b)];
       const [r1, r2] = await Promise.all([setStatus(ta, b.id, "blocked"), setStatus(tb, a.id, "blocked")]);
-      expect([r1.status, r2.status].sort(), `ronda ${round}`).toEqual([200, 409]);
+      // el que llega segundo ya está bloqueado: su acción se rechaza (P3-4), nunca se llega a 0 admins activos
+      expect([r1.status, r2.status].sort(), `ronda ${round}`).toEqual([200, 403]);
       expect(await activeAdmins(), `ronda ${round}`).toBe(1);
     }
   });
@@ -457,7 +477,10 @@ describe("ADM-3 · cancelar y límites", () => {
       (await request(limited).post("/auth/login").send({ email: x.email, password: PW })).body.accessToken as string;
     const [ta, tb] = [await login(a), await login(b)];
     const call = (t: string, password: string) =>
-      request(limited).put(`/admin/users/${u.id}/status`).set(auth(t)).send({ status: "blocked", password });
+      request(limited)
+        .put(`/admin/users/${u.id}/status`)
+        .set(auth(t))
+        .send({ status: "blocked", password, confirmPhrase: userActionPhrase("block", u.email) });
     for (let i = 0; i < 3; i++) expect((await call(ta, "mala-contraseña-larga")).status).toBe(401);
     expect((await call(ta, PW)).status).toBe(429);
     expect(await statusOf(u.id)).toBe("active");
@@ -627,5 +650,165 @@ describe("ADM-3 · restablecer también la 2FA (D-OP-44)", () => {
     const ta = await tokenOf(a);
     expect((await issue(ta, u.id, { password: PW, resetTwoFactor: "yes" })).status).toBe(400);
     expect((await issue(ta, u.id, { resetTwoFactor: true })).status).toBe(401);
+  });
+});
+
+describe("ADM-3 · confirmación explícita en el SERVIDOR (P3-5)", () => {
+  const noEffectRoles = async (id: string) => (await currentRolesOf(id)).sort().join(",");
+  const currentRolesOf = async (id: string) =>
+    (await h.db("user_roles").where({ user_id: id })).map((r: { role: string }) => r.role as string);
+
+  it("CONFIRMACION_SERVIDOR_ROLES: conceder o quitar «admin» sin frase (o con otra) es 400 y no cambia nada", async () => {
+    const a = await mkAdmin("cs-r-a");
+    const b = await mkAdmin("cs-r-b");
+    const u = await mkUser("cs-r-u");
+    const ta = await tokenOf(a);
+    const before = await noEffectRoles(u.id);
+    for (const confirmPhrase of [undefined, "", "CAMBIAR ROLES otra@cuenta.es", userActionPhrase("block", u.email)]) {
+      const r = await request(app)
+        .put(`/users/${u.id}/roles`)
+        .set(auth(ta))
+        .send({
+          roles: ["user", "developer", "admin"],
+          password: PW,
+          ...(confirmPhrase === undefined ? {} : { confirmPhrase }),
+        });
+      expect(r.status, String(confirmPhrase)).toBe(400);
+      expect(r.body.message ?? r.body.error ?? "").toMatch(/confirmación|confirmPhrase/i);
+    }
+    expect(await noEffectRoles(u.id)).toBe(before);
+    // quitar admin a otro admin: igual
+    const r2 = await request(app)
+      .put(`/users/${b.id}/roles`)
+      .set(auth(ta))
+      .send({ roles: ["user"], password: PW });
+    expect(r2.status).toBe(400);
+    expect(await hasAdmin(b.id)).toBe(true);
+    // con la frase correcta, sí
+    expect((await putRoles(ta, u.id, { roles: ["user", "developer", "admin"], password: PW })).status).toBe(200);
+    expect(await hasAdmin(u.id)).toBe(true);
+  });
+
+  it("CONFIRMACION_SERVIDOR_ESTADO: bloquear y desbloquear sin la frase de SU verbo es 400 y no cambia el estado", async () => {
+    const a = await mkAdmin("cs-s-a");
+    const u = await mkUser("cs-s-u");
+    const ta = await tokenOf(a);
+    const put = (body: Record<string, unknown>) =>
+      request(app)
+        .put(`/admin/users/${u.id}/status`)
+        .set(auth(ta))
+        .send({ password: PW, ...body });
+    expect((await put({ status: "blocked" })).status).toBe(400);
+    expect((await put({ status: "blocked", confirmPhrase: userActionPhrase("unblock", u.email) })).status).toBe(400);
+    expect(await statusOf(u.id)).toBe("active");
+    expect((await setStatus(ta, u.id, "blocked")).status).toBe(200);
+    expect((await put({ status: "active" })).status).toBe(400);
+    expect((await put({ status: "active", confirmPhrase: userActionPhrase("block", u.email) })).status).toBe(400);
+    expect(await statusOf(u.id)).toBe("blocked");
+    expect((await setStatus(ta, u.id, "active")).status).toBe(200);
+  });
+
+  it("CONFIRMACION_SERVIDOR_TOKEN: emitir el token exige su frase; restablecer la 2FA exige la suya, distinta", async () => {
+    const a = await mkAdmin("cs-t-a");
+    const u = await mkUser("cs-t-u");
+    const ta = await tokenOf(a);
+    const post = (body: Record<string, unknown>) =>
+      request(app)
+        .post(`/admin/users/${u.id}/recovery-token`)
+        .set(auth(ta))
+        .send({ password: PW, ...body });
+    const openTokens = async () =>
+      Number((await h.db("password_resets").where({ user_id: u.id }).count({ n: "*" }).first())?.n);
+    expect((await post({})).status).toBe(400);
+    expect((await post({ confirmPhrase: userActionPhrase("block", u.email) })).status).toBe(400);
+    // la frase simple NO basta para restablecer la 2FA (acción más fuerte, confirmación propia)
+    expect((await post({ resetTwoFactor: true, confirmPhrase: userActionPhrase("recover", u.email) })).status).toBe(
+      400,
+    );
+    expect(await openTokens()).toBe(0);
+    expect((await post({ resetTwoFactor: true, confirmPhrase: userActionPhrase("recover_2fa", u.email) })).status).toBe(
+      201,
+    );
+    expect((await post({ confirmPhrase: userActionPhrase("recover", u.email) })).status).toBe(201);
+  });
+});
+
+describe("ADM-3 · el ACTOR se revalida bajo el cerrojo (P3-4)", () => {
+  /** Espera (sondeando pg_locks) a que haya una petición bloqueada esperando un cerrojo consultivo. */
+  async function waitForLockWaiter(): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const r = await h.db.raw(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`);
+      if (r.rows[0].n >= 1) return;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    throw new Error("la petición no llegó a esperar el cerrojo");
+  }
+  /** Retiene el cerrojo, lanza la petición (que queda esperando), bloquea al actor y suelta el cerrojo. */
+  async function blockActorWhileWaiting(actor: TUser, start: () => PromiseLike<{ status: number }>) {
+    const { lockAdminChanges } = await import("./services/account-recovery.js");
+    let pending: PromiseLike<{ status: number }> = Promise.resolve({ status: 0 });
+    await h.db.transaction(async (trx) => {
+      await lockAdminChanges(trx as never);
+      pending = start();
+      await waitForLockWaiter();
+      await trx("users").where({ id: actor.id }).update({ status: "blocked", blocked_at: new Date() });
+    });
+    return pending;
+  }
+
+  it("TOCTOU_ACTOR_BLOQUEADO: un admin bloqueado mientras su petición esperaba el cerrojo NO concede admin", async () => {
+    const a = await mkAdmin("tc-a");
+    const c = await mkUser("tc-c");
+    const ta = await tokenOf(a);
+    const r = await blockActorWhileWaiting(a, () =>
+      putRoles(ta, c.id, { roles: ["user", "developer", "admin"], password: PW }),
+    );
+    expect(r.status).toBe(403);
+    expect(await hasAdmin(c.id)).toBe(false);
+  });
+
+  it("TOCTOU_ACTOR_BLOQUEADO_ESTADO: lo mismo al bloquear a otra cuenta", async () => {
+    const a = await mkAdmin("tcs-a");
+    const u = await mkUser("tcs-u");
+    const ta = await tokenOf(a);
+    const r = await blockActorWhileWaiting(a, () => setStatus(ta, u.id, "blocked"));
+    expect(r.status).toBe(403);
+    expect(await statusOf(u.id)).toBe("active");
+  });
+
+  it("TOCTOU_ACTOR_DEGRADADO: un actor al que se le quitó «admin» mientras esperaba tampoco actúa; y emitir token revalida igual", async () => {
+    const a = await mkAdmin("td-a");
+    const u = await mkUser("td-u");
+    const ta = await tokenOf(a);
+    // degradado a mano con el access token aún vigente
+    await h.db("user_roles").where({ user_id: a.id, role: "admin" }).delete();
+    expect((await issue(ta, u.id)).status).toBe(403); // la ruta exige rol admin
+    // el servicio, llamado directamente, también lo rechaza (defensa en profundidad bajo el cerrojo)
+    const { issueRecoveryToken, setUserStatus } = await import("./services/account-recovery.js");
+    await expect(issueRecoveryToken(h.db, { actorId: a.id }, u.id)).rejects.toMatchObject({ status: 403 });
+    await expect(setUserStatus(h.db, { actorId: a.id }, u.id, "blocked")).rejects.toMatchObject({ status: 403 });
+    await expect(issueRecoveryToken(h.db, { actorId: null }, u.id)).rejects.toMatchObject({ status: 403 });
+    expect(await statusOf(u.id)).toBe("active");
+  });
+});
+
+describe("ADM-3 · el listado muestra la marca de 2FA del token pendiente (P3-6)", () => {
+  it("LISTA_MARCA_2FA: recoveryResetsTwoFactor sólo es true si el token vigente la lleva", async () => {
+    const a = await mkAdmin("lm-a");
+    const u = await mkUser("lm-u");
+    const ta = await tokenOf(a);
+    const view = async () =>
+      (await request(app).get(`/admin/users/${u.id}`).set(auth(ta))).body as {
+        recoveryPending: boolean;
+        recoveryResetsTwoFactor: boolean;
+      };
+    expect(await view()).toMatchObject({ recoveryPending: false, recoveryResetsTwoFactor: false });
+    expect((await issue(ta, u.id)).status).toBe(201);
+    expect(await view()).toMatchObject({ recoveryPending: true, recoveryResetsTwoFactor: false });
+    expect((await issue(ta, u.id, { password: PW, resetTwoFactor: true })).status).toBe(201);
+    expect(await view()).toMatchObject({ recoveryPending: true, recoveryResetsTwoFactor: true });
+    // un token con marca ya anulado (se emite otro sin ella) no se anuncia
+    expect((await issue(ta, u.id)).status).toBe(201);
+    expect(await view()).toMatchObject({ recoveryPending: true, recoveryResetsTwoFactor: false });
   });
 });

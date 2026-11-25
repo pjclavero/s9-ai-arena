@@ -62,6 +62,8 @@ export interface AdminUserView {
   status: "active" | "blocked";
   twoFactorEnabled: boolean;
   recoveryPending: boolean;
+  /** El token pendiente restablecerá también la 2FA al canjearse (D-OP-44). */
+  recoveryResetsTwoFactor: boolean;
   createdAt: string;
   blockedAt: string | null;
 }
@@ -98,6 +100,9 @@ export async function listUsers(
       db.raw(
         "EXISTS (SELECT 1 FROM password_resets pr WHERE pr.user_id = u.id AND pr.used_at IS NULL AND pr.expires_at > now()) AS recovery_pending",
       ),
+      db.raw(
+        "EXISTS (SELECT 1 FROM password_resets pr WHERE pr.user_id = u.id AND pr.used_at IS NULL AND pr.expires_at > now() AND pr.reset_two_factor) AS recovery_resets_2fa",
+      ),
       db.raw(cursorTsSql("u.created_at")),
     )
     .orderBy([
@@ -125,6 +130,7 @@ export async function listUsers(
       status: r.status,
       twoFactorEnabled: r.two_factor === true,
       recoveryPending: r.recovery_pending === true,
+      recoveryResetsTwoFactor: r.recovery_resets_2fa === true,
       createdAt: new Date(r.created_at).toISOString(),
       blockedAt: r.blocked_at ? new Date(r.blocked_at).toISOString() : null,
     })),
@@ -155,6 +161,57 @@ export async function lockAdminChanges(trx: Db): Promise<void> {
   await trx.raw("SELECT pg_advisory_xact_lock(?)", [LAST_ADMIN_LOCK_KEY]);
 }
 
+/**
+ * P3-4 · El ACTOR se revalida DENTRO de la transacción (y, donde hay cerrojo, tras tomarlo): un admin bloqueado o
+ * degradado mientras su petición esperaba el cerrojo no puede completar la acción que ya traía autenticada.
+ */
+export async function requireActorStillAdmin(trx: Db, actorId: string | null): Promise<void> {
+  if (!actorId) throw forbidden("Hace falta una cuenta de administrador");
+  const row = await trx("users as u")
+    .join("user_roles as r", "r.user_id", "u.id")
+    .where({ "u.id": actorId, "r.role": "admin", "u.status": "active" })
+    .first("u.id");
+  if (!row) throw forbidden("Tu cuenta ya no es un administrador activo");
+}
+
+// ----------------------------------------------- confirmación explícita (P3-5)
+export type UserActionKind = "roles" | "block" | "unblock" | "recover" | "recover_2fa";
+
+/**
+ * Frase literal que el admin debe escribir para confirmar una acción sensible sobre una cuenta (igual que ADM-1, pero
+ * derivada del email de la cuenta: no hay orden previa). La web escribe la MISMA frase; el servidor la exige además de la
+ * reautenticación, para que un cliente de la API no pueda saltarse la confirmación.
+ */
+export function userActionPhrase(kind: UserActionKind, email: string): string {
+  switch (kind) {
+    case "roles":
+      return `CAMBIAR ROLES ${email}`;
+    case "block":
+      return `BLOQUEAR ${email}`;
+    case "unblock":
+      return `DESBLOQUEAR ${email}`;
+    case "recover":
+      return `RECUPERAR ${email}`;
+    case "recover_2fa":
+      return `RESTABLECER 2FA ${email}`;
+  }
+}
+
+/** 400 si la frase no coincide EXACTAMENTE (salvo espacios en los extremos). Se llama tras la reautenticación. */
+export async function requireConfirmPhrase(
+  db: Db,
+  targetId: string,
+  kind: UserActionKind,
+  supplied: unknown,
+): Promise<void> {
+  const u = await db("users").where({ id: targetId }).first("email");
+  if (!u) throw notFound();
+  const expected = userActionPhrase(kind, u.email as string);
+  if (typeof supplied !== "string" || supplied.trim() !== expected) {
+    throw badRequest(`Falta la confirmación explícita: confirmPhrase debe ser «${expected}»`);
+  }
+}
+
 // ------------------------------------------------------------------- estado
 async function voidOpenResets(trx: Db, userId: string): Promise<number> {
   return trx("password_resets").where({ user_id: userId }).whereNull("used_at").update({ used_at: trx.fn.now() });
@@ -175,6 +232,7 @@ export async function setUserStatus(
     db.transaction(async (trx) => {
       const t = trx as unknown as Db;
       await lockAdminChanges(t);
+      await requireActorStillAdmin(t, ctx.actorId);
       const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
       if (!user) throw notFound();
       if (user.status === status) return { id: targetId, status, changed: false, sessionsRevoked: 0 };
@@ -247,6 +305,7 @@ export async function issueRecoveryToken(
   const out = await mapDeadlock(
     db.transaction(async (trx) => {
       const t = trx as unknown as Db;
+      await requireActorStillAdmin(t, ctx.actorId);
       const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
       if (!user) throw notFound();
       if (user.status !== "active") {
@@ -385,6 +444,7 @@ export async function setUserRoles(
     db.transaction(async (trx) => {
       const t = trx as unknown as Db;
       await lockAdminChanges(t);
+      await requireActorStillAdmin(t, ctx.actorId);
       const user = await t("users").where({ id: targetId }).forUpdate().first("id");
       if (!user) throw notFound();
       const before = await currentRoles(t, targetId);

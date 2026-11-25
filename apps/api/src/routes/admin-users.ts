@@ -20,7 +20,13 @@ import { isUuid, pathParam } from "../params.js";
 import { parseLimit } from "../serialize.js";
 import { requireStrongReauth } from "./auth.js";
 import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
-import { getAdminUser, issueRecoveryToken, listUsers, setUserStatus } from "../services/account-recovery.js";
+import {
+  getAdminUser,
+  issueRecoveryToken,
+  listUsers,
+  requireConfirmPhrase,
+  setUserStatus,
+} from "../services/account-recovery.js";
 
 export interface AdminUsersDeps {
   /** Límite de acciones con reautenticación por admin (por defecto: 20 cada 5 min, sobre api_usage). */
@@ -68,6 +74,12 @@ export function adminUsersRoutes(db: Db, deps: AdminUsersDeps): Router {
     const id = userIdParam(req);
     const status = (req.body as { status?: unknown } | undefined)?.status;
     if (status !== "active" && status !== "blocked") throw badRequest("status debe ser active o blocked");
+    await requireConfirmPhrase(
+      db,
+      id,
+      status === "blocked" ? "block" : "unblock",
+      ((req.body ?? {}) as Record<string, unknown>).confirmPhrase,
+    );
     res.setHeader("Cache-Control", "no-store");
     res.json(await setUserStatus(db, ctx(req), id, status));
   });
@@ -77,6 +89,12 @@ export function adminUsersRoutes(db: Db, deps: AdminUsersDeps): Router {
     const id = userIdParam(req);
     const flag = (req.body as Record<string, unknown> | undefined)?.resetTwoFactor;
     if (flag !== undefined && typeof flag !== "boolean") throw badRequest("resetTwoFactor debe ser booleano");
+    await requireConfirmPhrase(
+      db,
+      id,
+      flag === true ? "recover_2fa" : "recover",
+      ((req.body ?? {}) as Record<string, unknown>).confirmPhrase,
+    );
     const r = await issueRecoveryToken(db, ctx(req), id, { resetTwoFactor: flag === true });
     // El token se muestra UNA vez: nunca se cachea ni se vuelve a poder leer.
     res.setHeader("Cache-Control", "no-store");

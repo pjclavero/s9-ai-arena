@@ -1461,6 +1461,8 @@ const m025_user_status_recovery: Migration = {
 
         IF NEW.status = OLD.status THEN
           IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            -- Única modificación admitida en un estado final: ON DELETE SET NULL de requested_by/confirmed_by
+            -- (borrar o anonimizar un usuario). Cualquier otra columna debe quedar igual.
             IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
                OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
                OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
@@ -1620,8 +1622,9 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "021_runtime_settings",
   // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
   "022_entries_team",
-  // ADM-1 · la 023 SALIÓ de esta lista con la 025 (ADM-3): `password_resets.issued_via_operation` apunta a
-  // `admin_operations` y la 025 amplía su CHECK de `kind`, así que la 023 ya no es independiente de las posteriores.
+  // ADM-1 · la 023 SALIÓ de esta lista con la 025 (ADM-3): la 025 REESCRIBE las dos funciones de guarda de
+  // `admin_operations` (sin la regla del segundo admin) y ELIMINA su columna `requires_second_admin`; revertir la 023
+  // sola dejaría a la 025 sin tabla ni funciones que restaurar, así que ya no es independiente de las posteriores.
   // Se revierte en orden (025 → 023) con `rollback:1`.
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",

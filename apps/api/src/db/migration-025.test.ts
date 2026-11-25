@@ -133,6 +133,19 @@ describe("migración 025_user_status_recovery", () => {
         .update({ status: "pending", confirmed_by: blockedId, confirmed_at: h.db.fn.now() }),
     ).rejects.toThrow(/segundo admin/);
     await h.db("admin_operations").delete();
+    // IDÉNTICA byte a byte a una 023 pura: se compara el cuerpo (prosrc) de las dos funciones tras la vuelta atrás con el
+    // que deja la 023 recién aplicada (023.down + 023.up, que sólo se puede hacer con la 025 ya revertida)
+    const src = async () =>
+      (
+        await h.db.raw(
+          `SELECT proname, md5(prosrc) AS h FROM pg_proc WHERE proname IN ('admin_operations_guard','admin_operations_insert_guard') ORDER BY proname`,
+        )
+      ).rows as { proname: string; h: string }[];
+    const afterDown = await src();
+    const m023 = MIGRATIONS.find((m) => m.name === "023_system_settings_operations")!;
+    await m023.down(h.db);
+    await m023.up(h.db);
+    expect(await src()).toEqual(afterDown);
     await m025().up(h.db);
     expect(await cols("users")).toContain("status");
     expect(await cols("admin_operations")).not.toContain("requires_second_admin");

@@ -66,7 +66,8 @@ describe("migración 023_system_settings_operations", () => {
   });
 
   it("rollback: ya NO es por nombre (la 025 depende de ella) y, en orden 025 → 023, quita sus tablas y se reaplica", async () => {
-    // ADM-3: `password_resets.issued_via_operation` apunta a `admin_operations`; revertir la 023 sola es imposible.
+    // ADM-3: la 025 reescribe las guardas de `admin_operations` y elimina su columna `requires_second_admin`; revertir la
+    // 023 sola es imposible (se revierte en orden 025 → 023).
     expect(NAMED_ROLLBACK_ALLOWED).not.toContain(NAME);
     await expect(rollbackNamed(h.db, NAME)).rejects.toThrow(/no se puede revertir por nombre/);
     const m023 = MIGRATIONS.find((m) => m.name === NAME)!;

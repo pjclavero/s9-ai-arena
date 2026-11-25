@@ -18,7 +18,7 @@ Garantías (cada una tiene su test en `apps/api/src/adm3-users-recovery.test.ts`
 - El administrador **no conoce la contraseña**: la elige el usuario al canjear el token. La política es la única de la plataforma (`passwordPolicyViolation`); el mensaje del canje sale de esa función.
 - El canje **revalida el estado** de la cuenta (una cuenta bloqueada no se recupera y el token no se consume), **cierra todas las sesiones** y **no toca el 2FA por defecto** (el siguiente acceso sigue pidiendo su código). Si la persona perdió el móvil y los códigos, el admin marca **«Restablecer también la 2FA»** al emitir el token (D-OP-44): emitir no cambia nada; **al canjear** se fija la contraseña, se borran el secreto TOTP y los códigos de recuperación y se audita (`auth.two_factor.reset_by_recovery`). Vale también para la cuenta de otro admin (sigue siendo admin: no aplica la guarda del último admin). Un token anulado nunca toca la 2FA.
 - **Sin enumeración**: `POST /auth/reset` no recibe ningún email; un token inexistente, usado, caducado, anulado o de una cuenta bloqueada da exactamente la misma respuesta (401), con el mismo coste (sin oráculo de tiempo). Límite de **10 intentos por IP cada 5 min** (429).
-- Emitirlo exige **reautenticación fuerte** del admin y tiene límite de **20 acciones cada 5 min por admin** (429). No se emite para la propia cuenta (400: usar «Mi cuenta»).
+- Emitirlo exige **reautenticación fuerte** del admin **y confirmación explícita en el servidor** (`confirmPhrase`: la frase literal `RECUPERAR <email>`, o `RESTABLECER 2FA <email>` si se marca restablecer la 2FA; sin ella o distinta, 400; igual que ADM-1 pero derivada del email, porque aquí no hay orden previa; lo mismo exigen `BLOQUEAR <email>`, `DESBLOQUEAR <email>` y `CAMBIAR ROLES <email>` al conceder o quitar `admin`). Tiene límite de **20 acciones cada 5 min por admin** (429). No se emite para la propia cuenta (400: usar «Mi cuenta»).
 - Auditoría (`audit_log`): `admin.user.recovery_token_issued` (quién, a quién; **sin** el token) y `auth.password.reset` (sesiones cerradas, quién lo emitió; **sin** la contraseña).
 
 ## Roles y bloqueo (un solo admin, sin aprobaciones)
@@ -27,7 +27,7 @@ Garantías (cada una tiene su test en `apps/api/src/adm3-users-recovery.test.ts`
 - **Bloquear o desbloquear** a cualquier cuenta (también a otro admin y a uno mismo) exige reautenticación y lo hace UN admin. Una cuenta bloqueada no inicia sesión (403 `account_blocked` tras acertar la contraseña), no refresca tokens y no puede recibir un token de recuperación; bloquear cierra sus sesiones.
 - **Anti-bloqueo (nunca 0 admins activos).** Bloquear o quitar el rol al **último admin activo**, incluido uno mismo, da **409 `last_admin`**, bajo un **cerrojo consultivo** de PostgreSQL y sin carreras: dos admins que se bloquean o se degradan a la vez terminan siempre con 200/409 y un admin activo.
 - Cancelar la orden de ADM-1 de **otro** admin exige reautenticación y se audita con quién la canceló; la propia, no.
-- ADM-1: las órdenes **irreversibles** ya no exigen un segundo admin: las confirma el mismo admin con **token de un solo uso + frase literal + reautenticación + auditoría** (`requiresSecondAdmin` desaparece de la API; la columna `admin_operations.requires_second_admin` queda siempre a `false` con un CHECK de la 025).
+- ADM-1: las órdenes **irreversibles** ya no exigen un segundo admin: las confirma el mismo admin con **token de un solo uso + frase literal + reautenticación + auditoría** (`requiresSecondAdmin` desaparece de la API; la 025 **elimina** la columna `admin_operations.requires_second_admin` y reemplaza las dos funciones de guarda de la 023 sin esa regla; la vuelta atrás las restaura idénticas).
 
 ## Consola: último recurso
 
@@ -59,6 +59,9 @@ El PR #347 llegó a incluir un doble control (segundo admin para lo irreversible
 | Token de un solo uso, 30 min, sólo hash, anulado por rol/estado | TEST | `TOKEN_*`, `ROLES_ANULA_TOKENS`, `ESTADO_ANULA_TOKENS`, `CANJE_REVALIDA_ESTADO` |
 | Sin enumeración, límite de canje, política de contraseñas | TEST | `NO_ENUMERACION`, `RATE_LIMIT_RESET`, `POLITICA_*` |
 | ADM-1: la irreversible la confirma el mismo admin | TEST | `UN_ADMIN_IRREVERSIBLE`, `ADMIN_UNICO_IRREVERSIBLE` en `settings/admin-operations.test.ts` |
+| Restablecer también la 2FA: por defecto se conserva; con la marca sólo al canjear; un token anulado no la toca; vale para otro admin | TEST | `TFA_*` en `adm3-one-admin.test.ts` y en `adm3-users-page.test.tsx` |
+| Confirmación explícita exigida por el servidor en cada operación sensible (400 sin ella) | TEST | `CONFIRMACION_SERVIDOR_*` |
+| El actor se revalida bajo el cerrojo (un admin bloqueado mientras esperaba no concede admin) | TEST | `TOCTOU_*` |
 | CLI sin secretos por argv | TEST | `CLI_SERVICIO`, `CLI_ARGV`, `reset-password-cli.test.ts` |
 | Migración 025 y su vuelta atrás | TEST | `apps/api/src/db/migration-025.test.ts` |
 | Mutantes de calibración | SCRIPT | `scripts/adm3-mutants.py` |
