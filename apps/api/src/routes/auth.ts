@@ -52,7 +52,8 @@ export function refreshTokenFromCookie(req: { headers: Record<string, unknown> }
   return null;
 }
 
-function setRefreshCookie(
+// V1 ADM-SETUP · exportada: el asistente de primer arranque deja la sesión iniciada (routes/setup.ts).
+export function setRefreshCookie(
   res: { cookie: (n: string, v: string, o: Record<string, unknown>) => void },
   token: string,
   req: { secure?: boolean },
@@ -95,7 +96,8 @@ export interface AuthDeps {
  */
 const decoyHashPromise: Promise<string> = hashPassword(randomBytes(32).toString("base64url"));
 
-async function createSession(db: Db, userId: string, req: { headers: Record<string, unknown>; ip?: string }) {
+// V1 ADM-SETUP · exportada para routes/setup.ts (misma sesión que el login).
+export async function createSession(db: Db, userId: string, req: { headers: Record<string, unknown>; ip?: string }) {
   const { token, hash } = newRefreshToken();
   const now = Date.now();
   const [session] = await db("sessions")
@@ -520,7 +522,8 @@ export async function createPasswordReset(db: Db, userId: string): Promise<strin
   return token;
 }
 
-async function consumeRecoveryCode(db: Db, user: Record<string, unknown>, code: string): Promise<boolean> {
+// V1 ADM-SETUP · exportada para el canje del kit de recuperación (routes/recovery-kit.ts).
+export async function consumeRecoveryCode(db: Db, user: Record<string, unknown>, code: string): Promise<boolean> {
   const hashes: string[] = Array.isArray(user.recovery_codes)
     ? (user.recovery_codes as string[])
     : JSON.parse((user.recovery_codes as string) ?? "[]");

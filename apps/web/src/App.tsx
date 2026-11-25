@@ -56,6 +56,9 @@ import { NotFoundPage } from "./pages/NotFoundPage.js";
 // UX-A (G-01) · portada pública + home con primeros pasos y guía integrada.
 import { HomePage, LandingIntro } from "./pages/HomePage.js";
 import { HelpPage } from "./help/LazyHelpPage.js"; // EQ3 · carga diferida del Centro de Ayuda
+// V1 ADM-SETUP (D-OP-44) · asistente de primer arranque y kit de recuperación del admin.
+import { SetupPage } from "./pages/SetupPage.js";
+import { AccessHelp, RecoveryKitAdminPage, RecoveryKitRedeemPage } from "./pages/RecoveryKitPages.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -73,6 +76,8 @@ export function matchPublicRoute(route: string):
       | { kind: "live" }
       | { kind: "ranking" }
       | { kind: "help" }
+      | { kind: "setup" }
+      | { kind: "recoverKit" }
     )
   | null {
   const viewer = /^#\/viewer\/([^/?]+)/.exec(route);
@@ -85,6 +90,9 @@ export function matchPublicRoute(route: string):
   if (/^#\/ranking(?:[/?]|$)/.test(route)) return { kind: "ranking" };
   // UX-A (G-01) · guía integrada; #/ayuda y #/docs (que daban 404) son alias.
   if (/^#\/(?:help|ayuda|docs)(?:[/?].*)?$/.test(route)) return { kind: "help" };
+  // V1 ADM-SETUP · asistente de primer arranque y canje del kit de recuperación (sin sesión).
+  if (/^#\/setup\/?(?:\?.*)?$/.test(route)) return { kind: "setup" };
+  if (/^#\/recover-kit\/?(?:\?.*)?$/.test(route)) return { kind: "recoverKit" };
   return null;
 }
 
@@ -143,6 +151,7 @@ export type StaticPanelRoute =
   | "streaming"
   | "settings"
   | "account"
+  | "recoveryKit"
   | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
@@ -163,6 +172,8 @@ export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; patter
   { name: "settings", pattern: /^#\/settings(?:[/?].*)?$/ },
   // V1-B · Mi cuenta (cambio de contraseña).
   { name: "account", pattern: /^#\/account\/?(?:\?.*)?$/ },
+  // V1 ADM-SETUP · Administración → Kit de recuperación (estado y regeneración con reautenticación).
+  { name: "recoveryKit", pattern: /^#\/recovery-kit\/?(?:\?.*)?$/ },
   { name: "admin", pattern: /^#\/admin(?:[/?].*)?$/ },
 ];
 
@@ -270,6 +281,16 @@ export function App() {
         <RankingPage />
       ) : publicView.kind === "help" ? (
         <HelpPage loggedIn={!!me && !!getToken()} />
+      ) : publicView.kind === "setup" ? (
+        <SetupPage
+          onLogin={(who) => {
+            setNotice("");
+            setDraftOwner(who.id);
+            setMe(who);
+          }}
+        />
+      ) : publicView.kind === "recoverKit" ? (
+        <RecoveryKitRedeemPage />
       ) : booting ? (
         // PRC (TD-004): el replay se pide CON la sesión (si la hay). Se espera al
         // refresh desde la cookie para no pedirlo anónimo y recibir un 404.
@@ -334,6 +355,7 @@ export function App() {
         {/* G-01 · la portada explica qué es S9 y cómo empezar, junto al acceso. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 320px" }}>
+            <AccessHelp />
             <LoginPage
               notice={notice}
               onLogin={(who) => {
@@ -387,6 +409,8 @@ export function App() {
         return admin(<SettingsPage me={me!} />);
       case "account":
         return <AccountPage />;
+      case "recoveryKit":
+        return admin(<RecoveryKitAdminPage me={me!} />);
       case "admin":
         return admin(<AdminPage me={me!} />);
       case "bots":

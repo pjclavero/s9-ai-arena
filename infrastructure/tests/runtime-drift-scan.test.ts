@@ -289,8 +289,9 @@ describe("hechos reales de producción (fixture capturado del daemon)", () => {
     // interno del streamer), tampoco desplegados.
     // V1 BLOCK-RUN · y el secreto interno de arena-engine, que el compose nuevo ya no
     // monta en la API pero el contenedor vivo aún lleva (hasta desplegar).
+    // V1 ADM-SETUP · y el token del asistente de primer arranque (nuevo, sólo en `api`).
     expect(por("api").spec_drift).toBe(
-      "secreto ausente: artifact_verify_key,stream_secrets_public,streamer_control_secret · secreto no declarado: arena_engine_internal_secret",
+      "secreto ausente: artifact_verify_key,setup_token,stream_secrets_public,streamer_control_secret · secreto no declarado: arena_engine_internal_secret",
     );
   });
 

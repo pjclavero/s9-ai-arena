@@ -1339,6 +1339,97 @@ const m024_replay_artifacts: Migration = {
   },
 };
 
+// V1 ADM-SETUP (D-OP-44) · Primer arranque desde el navegador y kit de recuperación del admin.
+//
+//  * `install_state`: fila ÚNICA (id = true) que dice si la instalación ya tiene su primer
+//    administrador. El asistente web (`POST /setup/admin`) sólo está abierto con
+//    `setup_completed_at IS NULL`, 0 admins y el secreto `setup_token` presente; al completarse
+//    (por la web o por `cli.ts create-admin`) queda cerrado PARA SIEMPRE, aunque luego se
+//    borren todos los admins: el cierre lo marca esta fila, no el recuento.
+//    - El trigger impide reabrir (`setup_completed_at` y `via` son inmutables una vez fijados;
+//      `setup_completed_by` sólo puede pasar a NULL por el ON DELETE SET NULL).
+//    - Sin fila el asistente está CERRADO (fallo cerrado); además la fila no se puede borrar ni
+//      truncar, y no se admite insertar una fila abierta si ya hay algún admin (REV352-05).
+//    - BACKFILL: si al migrar ya hay algún admin, la fila nace completada con `via='migration'`:
+//      una instalación existente nunca abre el asistente.
+//  * `admin_recovery_kits`: un kit de recuperación ACTIVO por cuenta (hash Argon2id, nunca el
+//    valor). Un solo uso: canjearlo lo borra y regenerarlo lo sustituye.
+//
+// NUMERACIÓN: la 025 es de #347 (ADM-3) y la 026 de #350 (torneos por invitación); la 028 queda
+// reservada. Tablas NUEVAS e independientes (sólo FK a users): entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-027.test.ts`.
+const m027_web_setup_recovery_kit: Migration = {
+  name: "027_web_setup_recovery_kit",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE install_state (
+        id                 boolean PRIMARY KEY DEFAULT true CHECK (id),
+        setup_completed_at timestamptz,
+        setup_completed_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        via                text CHECK (via IN ('web', 'cli', 'migration')),
+        CHECK ((setup_completed_at IS NULL) = (via IS NULL))
+      );
+
+      CREATE FUNCTION install_state_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF OLD.setup_completed_at IS NOT NULL AND (
+             NEW.setup_completed_at IS DISTINCT FROM OLD.setup_completed_at
+             OR NEW.via IS DISTINCT FROM OLD.via
+             OR (NEW.setup_completed_by IS DISTINCT FROM OLD.setup_completed_by AND NEW.setup_completed_by IS NOT NULL))
+        THEN
+          RAISE EXCEPTION 'install_state: la instalación ya está completada y no se reabre' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE TRIGGER install_state_guard BEFORE UPDATE ON install_state
+        FOR EACH ROW EXECUTE FUNCTION install_state_guard();
+
+      INSERT INTO install_state (id, setup_completed_at, via)
+        SELECT true,
+               CASE WHEN EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN now() END,
+               CASE WHEN EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN 'migration' END;
+
+      -- REV352-05 · tampoco se reabre con DELETE/TRUNCATE + INSERT: la fila no se borra nunca, y una fila
+      -- ABIERTA no se puede insertar si ya hay algún admin. (Un DROP de la tabla, es decir revertir la 027
+      -- por consola, sigue siendo la vía de último recurso documentada en break-glass.md.)
+      CREATE FUNCTION install_state_no_reopen() RETURNS trigger LANGUAGE plpgsql AS $noreopen$
+      BEGIN
+        IF TG_OP IN ('DELETE', 'TRUNCATE') THEN
+          RAISE EXCEPTION 'install_state: la fila de instalación no se borra' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.setup_completed_at IS NULL AND EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN
+          RAISE EXCEPTION 'install_state: la instalación ya está completada y no se reabre' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $noreopen$;
+      CREATE TRIGGER install_state_no_delete BEFORE DELETE ON install_state
+        FOR EACH ROW EXECUTE FUNCTION install_state_no_reopen();
+      CREATE TRIGGER install_state_no_truncate BEFORE TRUNCATE ON install_state
+        FOR EACH STATEMENT EXECUTE FUNCTION install_state_no_reopen();
+      CREATE TRIGGER install_state_insert_guard BEFORE INSERT ON install_state
+        FOR EACH ROW EXECUTE FUNCTION install_state_no_reopen();
+
+      CREATE TABLE admin_recovery_kits (
+        user_id    uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        kit_hash   text NOT NULL CHECK (kit_hash LIKE '$argon2id$%'),
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+  },
+  // Vuelta atrás: se pierde el estado del primer arranque y los kits (las cuentas no se tocan).
+  // Tras un down + up, el backfill vuelve a marcar completada cualquier instalación con admin.
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS admin_recovery_kits;
+      DROP TABLE IF EXISTS install_state;
+      DROP FUNCTION IF EXISTS install_state_guard();
+      DROP FUNCTION IF EXISTS install_state_no_reopen();
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1364,6 +1455,8 @@ export const MIGRATIONS: Migration[] = [
   m022_entries_team,
   m023_system_settings_operations,
   m024_replay_artifacts,
+  // 025 (#347) y 026 (#350) se integran antes; huecos reservados en migrations-order.test.ts.
+  m027_web_setup_recovery_kit,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1442,6 +1535,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "023_system_settings_operations",
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",
+  // V1 ADM-SETUP · tablas propias (install_state, admin_recovery_kits), sin dependencias posteriores.
+  "027_web_setup_recovery_kit",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

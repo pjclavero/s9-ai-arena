@@ -247,8 +247,15 @@ Dentro del contenedor la conexión sale de `PGHOST`/`PGUSER`/`PGDATABASE` + `PGP
 
 ## 9. Primer administrador
 
-`bootstrap` no crea usuarios y cambiar roles (`PUT /users/{id}/roles`) exige ya un administrador.
-Para el **primero** hay un comando, sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)):
+`bootstrap` no crea usuarios. El **primero** se crea **desde el navegador**: abre
+`https://<host-arena>/#/setup` y pega el contenido de `infrastructure/secrets/setup_token.txt` (lo
+generó `init-secrets.sh`; el log de la API muestra su huella, nunca el token). El asistente se cierra
+para siempre al crear el primer administrador y muestra una vez su kit de recuperación. Detalle en
+[first-run.md](first-run.md#3-primer-administrador).
+
+Sólo como último recurso (sin navegador, o sin ningún administrador capaz de entrar,
+[break-glass.md](break-glass.md)) queda el comando, sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)),
+que también cierra el asistente:
 
 ```bash
 $DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombre visible>" --password-stdin

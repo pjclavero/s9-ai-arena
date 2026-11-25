@@ -250,9 +250,13 @@ services:
       STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
       STREAM_SECRETS_PUBLIC_KEY_FILE: /run/secrets/stream_secrets_public
       STREAMER_BROADCAST_BASE_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
+      # V1 ADM-SETUP (D-OP-44) · token del asistente de primer arranque (#/setup). Sólo
+      # en `api`. Sin fichero (o vacío) el asistente está cerrado; el log muestra sólo su
+      # huella. Tras crear el primer administrador deja de tener efecto.
+      SETUP_TOKEN_FILE: /run/secrets/setup_token
     # V1 · SIN arena_engine_internal_secret: la API ya no llama a POST /run de
     # arena-engine (launcher HTTP retirado de server.ts) y no debe poder hacerlo.
-    secrets: [postgres_password, jwt_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public]
+    secrets: [postgres_password, jwt_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public, setup_token]
     volumes:
       # B7 · SOLO LECTURA, y justificado por el código: getReplay y
       # verifyReplay (apps/api/src/routes/battles.ts) hacen
@@ -1339,3 +1343,7 @@ secrets:
   # montado en ambos servicios. Lo genera init-secrets.sh.
   replay_ingest_secret:
     file: ./secrets/replay_ingest_secret.txt
+  # V1 ADM-SETUP (D-OP-44) · token de instalación del asistente de primer arranque web.
+  # Lo genera init-secrets.sh; se monta SÓLO en `api`.
+  setup_token:
+    file: ./secrets/setup_token.txt

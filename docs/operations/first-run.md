@@ -3,9 +3,13 @@
 ## Resumen
 
 Lo que hay que hacer **una sola vez** después de [installation.md](installation.md) para que la
-instalación sea usable: contenido base en la base de datos, primer administrador, repositorio
-de copias inicializado y comprobación de readiness. Incluye los comandos que **no** deben
-usarse en producción.
+instalación sea usable: contenido base en la base de datos, primer administrador **desde el
+navegador**, repositorio de copias inicializado y comprobación de readiness. Incluye los comandos
+que **no** deben usarse en producción.
+
+El recorrido es: instalar → abrir el navegador → crear el primer administrador en el asistente con
+el token de instalación del host → gestionar todo desde la web con esa cuenta (D-OP-44). La consola
+queda para la instalación técnica y como **último recurso** ([break-glass.md](break-glass.md)).
 
 ## Índice
 
@@ -13,6 +17,9 @@ usarse en producción.
 - [1. Contenido base (`bootstrap`)](#1-contenido-base-bootstrap)
 - [2. Cuentas normales](#2-cuentas-normales)
 - [3. Primer administrador](#3-primer-administrador)
+  - [Asistente web (vía normal)](#asistente-web-vía-normal)
+  - [Kit de recuperación](#kit-de-recuperación)
+  - [Último recurso: `create-admin` por consola](#último-recurso-create-admin-por-consola)
 - [4. Repositorio de copias](#4-repositorio-de-copias)
 - [5. Readiness](#5-readiness)
 - [6. Opcional: equipos de demostración](#6-opcional-equipos-de-demostración)
@@ -24,8 +31,9 @@ usarse en producción.
 
 ## Orden
 
-1. secretos y `.env` (ya hechos en la instalación) → 2. `up -d` → 3. `bootstrap` → 4. primer
-administrador (`create-admin`) → 5. `backup.sh --init-repo` → 6. readiness.
+1. secretos (`init-secrets.sh`, que genera también `setup_token.txt`) y `.env` (ya hechos en la
+instalación) → 2. `up -d` → 3. `bootstrap` → 4. abrir el navegador en `#/setup` y crear el primer
+administrador con el token de instalación → 5. `backup.sh --init-repo` → 6. readiness.
 
 ```bash
 DC="docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env --profile production"
@@ -58,7 +66,8 @@ Limitación conocida: la web crea batallas con identificadores de modo que no so
 
 ## 2. Cuentas normales
 
-El primer administrador se crea en el paso 3. Las demás cuentas se registran desde la web, o por API:
+El primer administrador se crea en el paso 3 (asistente web). Las demás cuentas se registran desde la
+web, o por API:
 
 ```bash
 curl -s -H 'content-type: application/json' \
@@ -71,9 +80,71 @@ alcance la web ([TD-012](../roadmap/technical-debt.md#td-012)).
 
 ## 3. Primer administrador
 
-Un comando crea el primer administrador **sin SQL** ([TD-023](../roadmap/technical-debt.md#td-023)).
-Sustituye al paso 2 para esa cuenta: no hace falta registrarla antes (de hecho, si el email ya
-existe, el comando se niega y no la promueve).
+### Asistente web (vía normal)
+
+Con una instalación recién hecha (0 administradores) la API abre un **asistente de primer arranque**
+en el navegador. Está abierto sólo si se cumplen las tres condiciones: no hay ningún administrador,
+la instalación no está completada (`install_state`, migración 027) y el token de instalación está
+presente. Si falta cualquiera, está cerrado.
+
+1. Al arrancar con el asistente abierto, el log de la API lo anuncia con la **huella** del token
+   (nunca el token):
+
+   ```bash
+   $DC logs api | grep '\[setup\]'
+   # [setup] Abre la web de la plataforma, ruta #/setup y pega el contenido de secrets/setup_token.txt (huella sha256:…)
+   ```
+
+2. Abre la web (`https://<host-arena>/#/setup`; la pantalla de acceso también avisa con un enlace).
+3. Pega el contenido de `infrastructure/secrets/setup_token.txt` del host (lo genera
+   `init-secrets.sh`, 40 caracteres, `0400`, montado **sólo** en `api` como secreto Docker). Es la
+   prueba de que quien crea el administrador controla la máquina.
+4. Escribe email, nombre visible y la contraseña dos veces. La política es la única de la plataforma
+   (`passwordPolicyViolation`, validada en el servidor; con #348, 12-128 caracteres y lista de
+   contraseñas comunes).
+5. Al pulsar «Crear administrador» la cuenta nace con `user`, `developer` y `admin`, la sesión queda
+   iniciada y se muestra **una sola vez** el [kit de recuperación](#kit-de-recuperación). Guárdalo
+   antes de seguir.
+
+Garantías (tests en `apps/api/src/setup-web.test.ts`; mutantes en `scripts/v1-web-setup-mutants.mjs`):
+
+- el token se compara en tiempo constante; cada token erróneo responde 401 y queda auditado
+  (`setup.token_rejected`) sin su valor; límite de 5 intentos cada 15 min por IP y 20 por hora en total;
+- el alta reutiliza `createAdmin` (transacción + cerrojo consultivo): dos envíos simultáneos crean
+  **un** administrador; queda auditada (`admin.create_web_setup`, con IP, user-agent y huella del
+  token, sin contraseña ni token);
+- al completarse, la instalación queda cerrada **para siempre**: `GET /setup/status` dice
+  `{"open":false}` y `POST /setup/admin` responde `410 setup_closed`, aunque después se borren todos
+  los administradores (el cierre lo marca `install_state`, no el recuento);
+- una instalación que ya tenía administrador al migrar a la 027 nace completada (`via='migration'`):
+  nunca abre el asistente.
+
+Tras el alta el fichero `setup_token.txt` ya no tiene efecto. **No lo borres**: Compose exige que el
+fichero del secreto exista para arrancar. Vaciarlo (`: > infrastructure/secrets/setup_token.txt`)
+cierra el asistente aunque no se haya usado. Ojo: `init-secrets.sh` vuelve a rellenar un fichero
+vacío. Con la instalación **ya completada** eso no reabre nada; **antes** de crear el primer
+administrador, el token nuevo vuelve a abrir el asistente (con otra huella).
+
+Comprobación desde la web: entra con la cuenta; la barra muestra los roles de la sesión
+(`user, developer, admin`) y aparece **Administración**. Los roles se leen de la base de datos en cada
+petición autenticada, así que el login es efectivo de inmediato. No hace falta `psql`.
+
+### Kit de recuperación
+
+Código de un solo uso (`S9RK-XXXX-…`, 160 bits), guardado sólo como hash Argon2id. Sirve para que un
+administrador que olvida su contraseña la recupere **desde la web** (`#/recover-kit`) sin consola:
+email + kit + contraseña nueva. Si la cuenta tiene verificación en dos pasos, exige además un código
+TOTP o uno de sus códigos de recuperación: el kit **no** desactiva la 2FA. Al canjearlo se revocan
+todas las sesiones y el kit queda consumido; después se genera otro en **Administración → Kit de
+recuperación** (con reautenticación). Detalle y límites en [break-glass.md](break-glass.md).
+
+### Último recurso: `create-admin` por consola
+
+`create-admin` sigue existiendo, pero **no** es el paso normal: es la instalación técnica sin
+navegador o la recuperación cuando no queda ningún administrador capaz de autenticarse
+([break-glass.md](break-glass.md)). Crear el admin por consola **también cierra el asistente** para
+siempre (`install_state` con `via='cli'`). Crea el administrador **sin SQL**
+([TD-023](../roadmap/technical-debt.md#td-023)); si el email ya existe, se niega y no lo promueve.
 
 Forma recomendada: **prompt sin eco** (con terminal, sin `-T`). Pide la contraseña dos veces y no la
 escribe en pantalla ni en el historial:
@@ -108,8 +179,7 @@ usa el prompt.)
 - La contraseña **nunca** va en argv (`--password=…`, `-p…` y similares se rechazan con rc 2, sin
   repetir el valor). El fichero se abre sin seguir enlaces simbólicos y se valida sobre el
   descriptor abierto: debe ser regular, del mismo usuario y sin permisos de grupo/otros (`0600`).
-- Aplica la misma política que el registro (≥ 12 caracteres). Roles resultantes: `user`,
-  `developer` y `admin`.
+- Aplica la misma política que el registro. Roles resultantes: `user`, `developer` y `admin`.
 - **Códigos de salida:** `0` creado · `1` ya existe un administrador · `2` uso o entrada inválidos
   (argumentos, fichero de contraseña inexistente, con permisos/propietario/tipo inválidos o enlace
   simbólico, política de contraseñas, contraseñas del prompt distintas) · `3` precondición de
@@ -117,19 +187,10 @@ usa el prompt.)
   inesperado (sin traza). Para añadir otro administrador por esta vía: `--allow-additional-admin`; queda auditado
   (`admin.create_cli`, con `additional: true`, sin la contraseña). Lo normal es gestionar roles
   desde la web ([../user/administration.md](../user/administration.md)).
-- No usa `seed` ni credenciales del repositorio.
+- No usa `seed` ni credenciales del repositorio, y no emite kit de recuperación (genéralo después en
+  la web).
 - Alta y recuento van en una transacción con cerrojo: dos ejecuciones simultáneas no producen dos
   «primeros» administradores.
-
-Comprobación (lectura):
-
-```bash
-$DC exec postgres psql -U arena -d arena -tAc \
-  "SELECT role FROM user_roles WHERE user_id = (SELECT id FROM users WHERE email = lower('<email>')) ORDER BY role;"
-```
-
-Los roles se leen de la base de datos en cada petición autenticada, así que el login es efectivo
-de inmediato.
 
 ## 4. Repositorio de copias
 
@@ -157,8 +218,8 @@ npx tsx scripts/readiness.ts
 
 Requiere Node ≥ 22.15 y `npm ci` en el clon. Hoy el veredicto **nunca** es `READY`: varias
 comprobaciones obligatorias no se pueden ejercer desde el CLI. Qué mide y qué no en
-[readiness.md](readiness.md). El CLI **no consulta** si existe un administrador: compruébalo con la
-consulta del paso 3 (el sondeo `admin.bootstrap_identity` de `packages/first-run` no está cableado
+[readiness.md](readiness.md). El CLI **no consulta** si existe un administrador: compruébalo en la
+web, como indica el paso 3 (el sondeo `admin.bootstrap_identity` de `packages/first-run` no está cableado
 al CLI; [TD-024](../roadmap/technical-debt.md#td-024)).
 
 ## 6. Opcional: equipos de demostración
@@ -193,11 +254,13 @@ la instalación. El diseño original está archivado en
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE:** `bootstrap`, registro, `create-admin` (primer administrador sin SQL), `--init-repo`.
+- **IMPLEMENTADO (rama `feat/v1-web-setup`, sin integrar ni desplegar):** asistente web de primer
+  arranque con token de instalación (`#/setup`), cierre para siempre (`install_state`, migración 027)
+  y kit de recuperación del administrador (`#/recover-kit`, Administración → Kit de recuperación).
+- **FUNCIONA ACTUALMENTE:** `bootstrap`, registro, `create-admin` (último recurso, sin SQL), `--init-repo`.
 - **PARCIAL:** readiness (CLI, sin `READY` posible).
-- **PENDIENTE:** cierre del registro abierto; asistente de primer
-  arranque usable ([TD-023](../roadmap/technical-debt.md#td-023),
-  [TD-012](../roadmap/technical-debt.md#td-012), [TD-024](../roadmap/technical-debt.md#td-024)).
+- **PENDIENTE:** cierre del registro abierto; readiness desplegado
+  ([TD-012](../roadmap/technical-debt.md#td-012), [TD-024](../roadmap/technical-debt.md#td-024)).
 
 ## Documentación relacionada
 
@@ -214,6 +277,8 @@ la instalación. El diseño original está archivado en
 | Los roles los crean las migraciones | CODE_VERIFIED | `apps/api/src/db/migrations.ts:20,97-105` |
 | El registro asigna `user` + `developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts` (`register`) |
 | `create-admin`: sin SQL, contraseña por stdin/fichero 0600 (nunca argv), política ≥12, se niega con admin existente, auditado | TEST (PostgreSQL real, proceso real) | `apps/api/src/db/create-admin.test.ts`; mutantes `scripts/v1-first-admin-mutants.mjs` |
+| Asistente web: abierto sólo con 0 admins + instalación sin completar + token; token en tiempo constante, con límite y auditado sin valor; una sola alta ante carreras; cierre para siempre; el CLI también cierra; el log sólo lleva la huella | TEST (PostgreSQL real) | `apps/api/src/setup-web.test.ts`; `apps/api/src/db/migration-027.test.ts`; mutantes `scripts/v1-web-setup-mutants.mjs` |
+| Kit de recuperación: un solo uso, hash Argon2id, sólo admins, sin oráculo, exige el segundo factor con 2FA, regenerar con reautenticación | TEST (PostgreSQL real) | `apps/api/src/recovery-kit.test.ts`; mutantes `scripts/v1-web-setup-mutants.mjs` |
 | Roles de otros usuarios: `PUT /users/{id}/roles` (exige admin) | CODE_VERIFIED | `apps/api/src/routes/users.ts:51-53` |
 | Los roles se leen de BD en cada petición | CODE_VERIFIED | `apps/api/src/middleware/authenticate.ts:30,47-48` |
 | El usuario de BD es `arena`; `postgres` no existe | CODE_VERIFIED + RUNTIME_VERIFIED | compose `POSTGRES_USER: arena`; `SELECT rolname FROM pg_roles` en el entorno aislado; auditoría 2026-10-15 en producción |

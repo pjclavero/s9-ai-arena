@@ -46,7 +46,8 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Quiero… | Documento | Dónde se hace |
 |---|---|---|
 | Instalar desde cero | [installation.md](installation.md) | host (SSH) |
-| Hacer la puesta en marcha (contenido base, primer administrador, repositorio de copias) | [first-run.md](first-run.md) | host + web |
+| Hacer la puesta en marcha (contenido base, primer administrador en el asistente web, repositorio de copias) | [first-run.md](first-run.md) | host + navegador |
+| Recuperar el acceso cuando no queda ningún administrador que pueda entrar (último recurso) | [break-glass.md](break-glass.md) | web primero; host sólo si no hay otra vía |
 | Saber qué variable hace qué | [configuration.md](configuration.md) | `infrastructure/.env` |
 | Entender servicios, perfiles, volúmenes y redes | [docker.md](docker.md) | host |
 | Operar el proxy de Docker del host (ejecución de bots) | [docker-proxy.md](docker-proxy.md) | host (systemd) |
@@ -105,8 +106,11 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 - **PARCIAL:** readiness (sólo por CLI y nunca puede dar `READY`, ver [readiness.md](readiness.md));
   identidad de versión en runtime ([TD-006](../roadmap/technical-debt.md#td-006)); copias sin
   alertas ni snapshots de VM y apagado no limpio ([TD-007](../roadmap/technical-debt.md#td-007)).
-- **PENDIENTE:** alta del primer administrador sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)),
-  instalación de un solo paso y readiness desplegado ([TD-024](../roadmap/technical-debt.md#td-024)),
+- **HECHO EN MAIN:** alta del primer administrador sin SQL por consola (`create-admin`,
+  [TD-023](../roadmap/technical-debt.md#td-023)). **IMPLEMENTADO en rama (`feat/v1-web-setup`, sin
+  integrar ni desplegar):** asistente web de primer arranque y kit de recuperación del administrador
+  ([first-run.md](first-run.md#3-primer-administrador), [break-glass.md](break-glass.md)).
+- **PENDIENTE:** instalación de un solo paso y readiness desplegado ([TD-024](../roadmap/technical-debt.md#td-024)),
   ensayo reciente de restauración ([TD-025](../roadmap/technical-debt.md#td-025)).
 
 ## Documentación relacionada

@@ -496,6 +496,8 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
       "STREAMER_CONTROL_SECRET_FILE",
       "STREAM_SECRETS_PUBLIC_KEY_FILE",
       "STREAMER_BROADCAST_BASE_URL",
+      // V1 ADM-SETUP · token del asistente de primer arranque (llega con la recreación de la API).
+      "SETUP_TOKEN_FILE",
     ];
     const todo = envFalta.join(" | ");
     for (const v of esperadas) expect(todo, v).toContain(v);
@@ -504,14 +506,16 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     // V1 BLOCK-RUN: la API canónica ya NO monta `arena_engine_internal_secret`, pero
     // el contenedor vivo (hechos de producción) sí: deriva SECRETO_INESPERADO hasta
     // que se despliegue el compose nuevo.
+    // V1 ADM-SETUP · y `setup_token` (nuevo, sólo en `api`) falta en el vivo hasta desplegar.
     expect(codigos(otros)).toEqual([
+      CODIGOS.SECRETO_FALTA,
       CODIGOS.SECRETO_FALTA,
       CODIGOS.SECRETO_FALTA,
       CODIGOS.SECRETO_FALTA,
       CODIGOS.SECRETO_INESPERADO,
     ]);
     const secretos = otros.map((x: any) => String(x.detail)).join(" | ");
-    for (const s of ["artifact_verify_key", "stream_secrets_public", "streamer_control_secret"]) {
+    for (const s of ["artifact_verify_key", "setup_token", "stream_secrets_public", "streamer_control_secret"]) {
       expect(secretos, s).toContain(s);
     }
     const inesperado = otros.find((x: any) => x.code === CODIGOS.SECRETO_INESPERADO);

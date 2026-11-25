@@ -396,6 +396,24 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
   - **Tras desplegar:** las batallas nuevas graban `engine: "0.5.0"`. Las copias de reglas que ya existían conservan `engineVersion: "0.4.0"`: es sólo un metadato, y se juegan con 0.5.0 y `rearmPolicy` `self` si no la declaran.
   - **Vuelta atrás:** el motor anterior no re-simula los replays 0.5.0. Antes, vaciar las batallas `scheduled` con copia de reglas (procedimiento de 0.4.0, arriba).
 
+- **Primer arranque web y kit de recuperación (V1 ADM-SETUP, migración 027, 0.5.0):**
+  - **Antes de desplegar (OBLIGATORIO):** ejecutar `infrastructure/scripts/init-secrets.sh`
+    (idempotente: no toca los secretos que ya existen). Genera el secreto nuevo
+    `infrastructure/secrets/setup_token.txt`, que el compose monta en `api`. **Sin ese fichero
+    Compose no arranca la API** (`secrets: file:` exige que exista).
+  - **Comprobarlo:** `node infrastructure/scripts/check-secrets.mjs` (rc 0 = todos los ficheros de
+    secreto que declara el compose existen; rc 1 lista los que faltan; no lee su contenido). Si falta
+    `setup_token.txt`, vuelve a ejecutar `init-secrets.sh`; no lo crees a mano.
+  - **Migración 027** (`027_web_setup_recovery_kit`) crea `install_state` y `admin_recovery_kits`. En
+    una instalación que **ya tiene administrador** la instalación nace **completada**
+    (`via='migration'`): el asistente de primer arranque no se abre nunca, aunque el token exista.
+  - **Tras desplegar:** desde la web, `https://<host-arena>/api/v1/setup/status` responde
+    `{"open":false}`; el log de la API no muestra ninguna línea `[setup]`. Cada admin genera su kit en
+    Administración → Kit de recuperación.
+  - **Vuelta atrás:** `rollback:name 027_web_setup_recovery_kit` borra el estado de instalación y los
+    kits (no las cuentas). Con 0 administradores y el token presente, volver a migrar **reabre** el
+    asistente: sólo con acceso al host, que ya es prueba de titularidad ([break-glass.md](break-glass.md)).
+
 - **Administración de streaming (ADR-023, migración 017):**
   - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
     `streamer_control_secret.txt` y el par `stream_secrets_private.pem` / `stream_secrets_public.pem`.

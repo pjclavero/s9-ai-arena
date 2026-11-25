@@ -165,13 +165,32 @@ trust_dir . "$DIR"
 [ "$(lkind tls)" = absent ] && mkdir -m 0755 tls
 trust_dir tls "$DIR/tls"
 
+# REV352-11 · N caracteres alfanuméricos EXACTOS y uniformes (62 símbolos ⇒ 40 ≈ 238 bits).
+# Antes: `head -c 32 urandom | base64 | tr -d '=+/' | head -c 40`, que con 5 o más `+`/`/`
+# en el base64 dejaba MENOS de 40 caracteres (≈3,75 % de las veces) y un secreto más débil de lo
+# diseñado. Ahora se filtran bytes aleatorios a [A-Za-z0-9] (cada símbolo es un único valor de byte:
+# la distribución sigue siendo uniforme) y se repite hasta completar. Sin tuberías que reciban
+# SIGPIPE (pipefail): `head` termina antes de que `tr` lea. REV352-12 · la fuente es SIEMPRE
+# /dev/urandom: NINGUNA variable de entorno la cambia. El segundo argumento sólo lo pasa el test, que
+# extrae esta función del script (el script nunca lo pasa).
+rand_alnum() {
+  local n=$1 out="" chunk src="${2:-/dev/urandom}" tries=0
+  while [ "${#out}" -lt "$n" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 1000 ] || die "rand_alnum: la fuente aleatoria no produce caracteres válidos"
+    chunk=$(head -c 256 -- "$src" | LC_ALL=C tr -dc 'A-Za-z0-9')
+    out="$out$chunk"
+  done
+  printf '%s' "${out:0:$n}"
+}
+
 gen() {
   resolve "$1"
   if [ -n "$RES" ] && [ "$(stat -c '%s' -- "$RES")" -gt 0 ]; then
     echo "ya existe: $1 (no se toca)"
   else
     local t; t=$(newtmp); track "$t"
-    head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 40 > "$t"
+    rand_alnum 40 > "$t"
     harden_file "$t" -
     install_as "$t" "$1"
     echo "generado:  $1"
@@ -194,6 +213,14 @@ gen arena_engine_internal_secret.txt
 # ambos servicios (docker-compose.yml). Sin él, replay-service responde 401 a
 # toda escritura y la API reporta `replay.ingested: false`: fail closed.
 gen replay_ingest_secret.txt
+# V1 ADM-SETUP (D-OP-44) · token de instalación del asistente de primer arranque web
+# (#/setup). Montado SÓLO en `api` (SETUP_TOKEN_FILE). Sólo lo lee quien tiene el
+# host: pegarlo en el navegador prueba que quien crea el primer administrador es el
+# operador de la instalación. Tras crear el primer admin deja de tener efecto (el
+# cierre lo marca la BD, no el fichero); vaciarlo cierra el asistente aunque no se
+# haya usado. Si se vacía, este script lo vuelve a generar: con la instalación YA completada no reabre
+# nada; ANTES del primer admin, el fichero nuevo vuelve a abrir el asistente (REV352-08).
+gen setup_token.txt
 
 # R-DEPLOY · R2: clave de firma de artefactos (ed25519, PEM PKCS8) para el
 # bot-build-worker (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15). Idempotente.

@@ -83,6 +83,14 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
     operations: ["listSystemSettings", "updateSystemSettings"],
     minRole: "admin",
   },
+  // V1 ADM-SETUP · D-5 · Administración → Kit de recuperación del propio admin (autorrecuperación).
+  {
+    href: "#/recovery-kit",
+    label: "Kit de recuperación",
+    testId: "recovery-kit-link",
+    operations: ["getRecoveryKitStatus", "regenerateRecoveryKit"],
+    minRole: "admin",
+  },
 ];
 
 /** Pantallas del apartado que la sesión puede usar según el RBAC del servidor. */
