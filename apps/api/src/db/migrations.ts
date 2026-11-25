@@ -1339,6 +1339,189 @@ const m024_replay_artifacts: Migration = {
   },
 };
 
+// V1 ADM-3 · 025_user_status_recovery: usuarios operables desde la web y recuperación por token.
+// MODELO DE UN ADMINISTRADOR: ninguna operación exige un segundo admin; no hay órdenes de aprobación ni linaje.
+//  - `users.status` ('active' | 'blocked') con `blocked_at`/`blocked_by`: bloquear impide entrar (login y refresh)
+//    y sus sesiones se cierran en la misma transacción. Sin borrado: la cuenta y su historia se conservan.
+//  - `password_resets` gana `created_at` y `created_by` (el admin que lo emitió), con hash único y un índice de los
+//    abiertos por usuario. Sigue guardando SÓLO el hash.
+//  - ADM-1 (023) ya no admite el segundo admin: se REEMPLAZAN (`CREATE OR REPLACE`) las dos funciones de guarda de la 023
+//    sin la regla «una irreversible la confirma otro admin» (la 023 no se edita) y se ELIMINA la columna
+//    `admin_operations.requires_second_admin`. Se eligió eliminarla y no dejarla siempre a false con un CHECK porque, sin
+//    la regla en los triggers, la columna sería un campo muerto que invita a reintroducirla; la máquina de estados de
+//    la 023 (inmutabilidad, transiciones, insert-guard) queda intacta salvo esa regla. Las irreversibles se confirman con
+//    reautenticación + frase + token de un solo uso + auditoría, por el MISMO admin; la BD acepta que quien la pidió la
+//    confirme. La vuelta atrás restaura la columna y las funciones originales de la 023.
+// La vuelta atrás restaura la columna y las guardas de la 023, quita las columnas y el estado (los bloqueos se pierden: las cuentas vuelven a estar
+// activas). Probada en `migration-025.test.ts` (no entra en NAMED_ROLLBACK_ALLOWED: se revierte en orden).
+const m025_user_status_recovery: Migration = {
+  name: "025_user_status_recovery",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE users
+        ADD COLUMN status     text NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
+        ADD COLUMN blocked_at timestamptz,
+        ADD COLUMN blocked_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD CONSTRAINT users_blocked_consistent CHECK ((status = 'blocked') = (blocked_at IS NOT NULL));
+      ALTER TABLE password_resets
+        ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN reset_two_factor boolean NOT NULL DEFAULT false;
+      CREATE UNIQUE INDEX password_resets_token_hash_uq ON password_resets (token_hash);
+      CREATE INDEX password_resets_user_open_idx ON password_resets (user_id) WHERE used_at IS NULL;
+
+      -- ADM-1 sin segundo admin: guardas de la 023 SIN la regla del segundo admin (mismo resto de la máquina de estados).
+      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          -- (modelo de un administrador: confirma el mismo admin que la pidió)
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE OR REPLACE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
+      ALTER TABLE admin_operations DROP COLUMN requires_second_admin;
+    `);
+  },
+  async down(db) {
+    // AVISO: bajar la 025 DESBLOQUEA todas las cuentas bloqueadas (se pierde `users.status`). Queda constancia en la
+    // auditoría antes de borrar las columnas; el runbook de rollback debe volver a bloquearlas si hace falta.
+    await db.raw(`
+      INSERT INTO audit_log (action, target, detail)
+        SELECT 'migration.025.down', 'users',
+               jsonb_build_object('blockedAccountsUnblocked', count(*), 'note', 'la vuelta atrás desbloquea las cuentas')
+          FROM users WHERE status = 'blocked';
+      ALTER TABLE admin_operations ADD COLUMN requires_second_admin boolean NOT NULL DEFAULT false;
+      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$
+      BEGIN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.kind IS DISTINCT FROM OLD.kind
+           OR NEW.params IS DISTINCT FROM OLD.params
+           OR NEW.impact IS DISTINCT FROM OLD.impact
+           OR NEW.confirm_phrase IS DISTINCT FROM OLD.confirm_phrase
+           OR NEW.requires_second_admin IS DISTINCT FROM OLD.requires_second_admin
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at
+           OR (NEW.requested_by IS DISTINCT FROM OLD.requested_by AND NEW.requested_by IS NOT NULL)
+           OR (OLD.confirmed_by IS NOT NULL AND NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by AND NEW.confirmed_by IS NOT NULL)
+        THEN
+          RAISE EXCEPTION 'admin_operations: kind, params y datos de la solicitud son inmutables' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.status = OLD.status THEN
+          IF OLD.status IN ('done','failed','expired','cancelled') THEN
+            -- Única modificación admitida en un estado final: ON DELETE SET NULL de requested_by/confirmed_by
+            -- (borrar o anonimizar un usuario). Cualquier otra columna debe quedar igual.
+            IF (NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.confirmed_by IS NULL OR NEW.confirmed_by IS NOT DISTINCT FROM OLD.confirmed_by)
+               OR NOT (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+               OR (NEW.result, NEW.lease_owner, NEW.lease_expires_at, NEW.attempts, NEW.started_at, NEW.finished_at,
+                   NEW.confirm_token_hash, NEW.confirm_expires_at, NEW.confirmed_at)
+                  IS DISTINCT FROM
+                  (OLD.result, OLD.lease_owner, OLD.lease_expires_at, OLD.attempts, OLD.started_at, OLD.finished_at,
+                   OLD.confirm_token_hash, OLD.confirm_expires_at, OLD.confirmed_at)
+            THEN
+              RAISE EXCEPTION 'admin_operations: una orden en estado final (%) no se modifica', OLD.status USING ERRCODE = '23514';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END IF;
+
+        IF NOT (
+             (OLD.status = 'awaiting_confirmation' AND NEW.status IN ('pending','expired','cancelled'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('running','cancelled'))
+          OR (OLD.status = 'running' AND NEW.status IN ('done','failed','pending'))
+        ) THEN
+          RAISE EXCEPTION 'admin_operations: transición de estado no permitida (% -> %)', OLD.status, NEW.status USING ERRCODE = '23514';
+        END IF;
+
+        IF OLD.status = 'awaiting_confirmation' AND NEW.status = 'pending' THEN
+          IF OLD.confirmed_by IS NOT NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_at IS NULL THEN
+            RAISE EXCEPTION 'admin_operations: awaiting_confirmation -> pending exige la confirmación de un admin' USING ERRCODE = '23514';
+          END IF;
+          IF OLD.requires_second_admin AND NEW.confirmed_by IS NOT DISTINCT FROM OLD.requested_by THEN
+            RAISE EXCEPTION 'admin_operations: la acción irreversible exige un segundo admin distinto del solicitante' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END
+      $guard$;
+      CREATE OR REPLACE FUNCTION admin_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $ig$
+      BEGIN
+        IF NEW.status NOT IN ('awaiting_confirmation','pending') THEN
+          RAISE EXCEPTION 'admin_operations: una orden sólo puede crearse en awaiting_confirmation o pending (%)', NEW.status USING ERRCODE = '23514';
+        END IF;
+        IF NEW.status = 'pending' AND NEW.requires_second_admin THEN
+          RAISE EXCEPTION 'admin_operations: una orden con segundo admin nace en awaiting_confirmation' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.confirmed_by IS NOT NULL OR NEW.confirmed_at IS NOT NULL OR NEW.result IS NOT NULL
+           OR NEW.lease_owner IS NOT NULL OR NEW.lease_expires_at IS NOT NULL
+           OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.attempts <> 0 THEN
+          RAISE EXCEPTION 'admin_operations: una orden nueva no puede traer confirmación, lease, resultado ni intentos' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $ig$;
+      DROP INDEX password_resets_user_open_idx;
+      DROP INDEX password_resets_token_hash_uq;
+      ALTER TABLE password_resets DROP COLUMN reset_two_factor, DROP COLUMN created_by, DROP COLUMN created_at;
+      ALTER TABLE users DROP CONSTRAINT users_blocked_consistent;
+      ALTER TABLE users DROP COLUMN blocked_by, DROP COLUMN blocked_at, DROP COLUMN status;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1364,6 +1547,7 @@ export const MIGRATIONS: Migration[] = [
   m022_entries_team,
   m023_system_settings_operations,
   m024_replay_artifacts,
+  m025_user_status_recovery,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1438,8 +1622,10 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "021_runtime_settings",
   // #287 · columna propia y nullable (entries.team_id), sin dependencias posteriores.
   "022_entries_team",
-  // ADM-1 · tablas propias sin dependencias posteriores.
-  "023_system_settings_operations",
+  // ADM-1 · la 023 SALIÓ de esta lista con la 025 (ADM-3): la 025 REESCRIBE las dos funciones de guarda de
+  // `admin_operations` (sin la regla del segundo admin) y ELIMINA su columna `requires_second_admin`; revertir la 023
+  // sola dejaría a la 025 sin tabla ni funciones que restaurar, así que ya no es independiente de las posteriores.
+  // Se revierte en orden (025 → 023) con `rollback:1`.
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",
 ]);

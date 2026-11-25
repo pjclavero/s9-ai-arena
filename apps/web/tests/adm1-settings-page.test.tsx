@@ -238,13 +238,10 @@ describe("ADM-1 · componente ConfirmDestructive", () => {
     expect(screen.queryByTestId("confirm-totp-input")).toBeNull();
   });
 
-  it("SEGUNDO_ADMIN: avisa de que la confirma otro administrador sólo cuando procede", () => {
-    cleanup();
-    setup({ requiresSecondAdmin: true });
-    expect(screen.getByTestId("confirm-second-admin").textContent).toMatch(/segundo administrador/);
-    cleanup();
+  it("SIN_SEGUNDO_ADMIN: la confirmación no habla de otro administrador (la hace el mismo admin)", () => {
     setup();
     expect(screen.queryByTestId("confirm-second-admin")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/segundo administrador|otro administrador/i);
   });
 
   it("OCUPADO_Y_CANCELAR: con busy no se puede reenviar; Cancelar llama a onCancel; el error se pinta", () => {

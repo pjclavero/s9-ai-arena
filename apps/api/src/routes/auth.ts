@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { MIN_PASSWORD_LENGTH, hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
+import { hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -17,12 +17,18 @@ import {
 } from "../auth/tokens.js";
 import { generateRecoveryCodes, generateTotpSecret, totpUri, verifyTotp } from "../auth/totp.js";
 import { audit } from "../audit.js";
-import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
+import { ApiError, badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
 import { rateLimit } from "../middleware/rate-limit.js";
-import { SharedFailedLoginGuard, type LoginGuardLike, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
+import {
+  SharedFailedLoginGuard,
+  SharedRateLimiter,
+  type LoginGuardLike,
+  type RateLimiterLike,
+} from "../middleware/shared-rate-limit.js";
 import { sessionToJson, userToJson } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import { isUuid } from "../params.js";
+import { redeemRecoveryToken } from "../services/account-recovery.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -85,6 +91,11 @@ export interface AuthDeps {
    * ⇒ 15 min de bloqueo. Por defecto, persistente sobre api_usage.
    */
   passwordChangeGuard?: LoginGuardLike;
+  /**
+   * ADM-3 · límite de `POST /auth/reset` por IP (el canje del token de recuperación). Por defecto 10 cada 5 min,
+   * persistente sobre api_usage. El token es de 192 bits: el límite frena el abuso, no una adivinación factible.
+   */
+  resetLimiter?: RateLimiterLike;
 }
 
 /**
@@ -150,6 +161,7 @@ async function revokeOtherSessions(db: Db, userId: string, keepSessionId: string
 export function authRoutes(deps: AuthDeps): Router {
   const { db, loginGuard } = deps;
   const passwordChangeGuard = deps.passwordChangeGuard ?? new SharedFailedLoginGuard(db, 5);
+  const resetLimiter = deps.resetLimiter ?? new SharedRateLimiter(db, "auth.reset", { max: 10, windowMs: 5 * 60_000 });
   const router = Router();
 
   // ------------------------------------------------------------- register
@@ -214,6 +226,11 @@ export function authRoutes(deps: AuthDeps): Router {
         throw unauthorized("Credenciales inválidas");
       }
 
+      // ADM-3 · cuenta bloqueada por un administrador: no abre sesión (sólo se sabe tras acertar la contraseña).
+      if (user.status === "blocked") {
+        throw new ApiError(403, "account_blocked", "Cuenta bloqueada: contacta con un administrador");
+      }
+
       if (user.totp_secret) {
         const codeOk =
           (typeof totp === "string" && (await verifyTotp(totp, user.totp_secret))) ||
@@ -266,6 +283,10 @@ export function authRoutes(deps: AuthDeps): Router {
         });
         throw unauthorized("Refresh token reutilizado: la sesión ha sido revocada");
       }
+
+      // ADM-3 · defensa en profundidad: bloquear cierra las sesiones, y además un bloqueado no rota tokens.
+      const owner = await db("users").where({ id: session.user_id }).first("status");
+      if (!owner || owner.status !== "active") throw unauthorized("Refresh token inválido, revocado o expirado");
 
       const now = Date.now();
       const absolute = session.absolute_expires_at
@@ -454,71 +475,27 @@ export function authRoutes(deps: AuthDeps): Router {
   );
 
   // ------------------------------------- recuperación de cuenta (extensión)
-  defineExtension(
-    router,
-    { operationId: "recoverAccount", method: "post", path: "/auth/recover", minRole: "visitor" },
-    async (req, res) => {
-      const { email } = req.body ?? {};
-      // Respuesta idéntica exista o no la cuenta (no enumerar emails).
-      if (typeof email === "string") {
-        const user = await db("users").where({ email: email.toLowerCase() }).first();
-        if (user) await createPasswordReset(db, user.id);
-      }
-      res.status(202).json({ status: "accepted" });
-    },
-    rateLimit(deps.loginLimiter, "recover"),
-  );
-
+  // ADM-3 (B5, D-OP-8) · `POST /auth/recover` se RETIRÓ: creaba el token y lo descartaba (nadie podía obtenerlo), una
+  // vía rota y engañosa. Ahora el token lo genera un administrador desde la web (`POST /admin/users/{id}/recovery-token`)
+  // y se lo entrega al usuario fuera de banda; el usuario lo canjea aquí. Sin correo ni enumeración posible: esta
+  // ruta no recibe ningún email.
   defineExtension(
     router,
     { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" },
     async (req, res) => {
       const { token, newPassword } = req.body ?? {};
-      if (typeof token !== "string" || passwordPolicyViolation(newPassword) !== null) {
-        throw badRequest(`token y newPassword (≥${MIN_PASSWORD_LENGTH}) obligatorios`);
-      }
-      const reset = await db("password_resets")
-        .where({ token_hash: hashToken(token) })
-        .whereNull("used_at")
-        .where("expires_at", ">", db.fn.now())
-        .first();
-      if (!reset) throw unauthorized("Token de recuperación inválido o expirado");
-
-      await db.transaction(async (trx) => {
-        await trx("password_resets").where({ id: reset.id }).update({ used_at: trx.fn.now() });
-        // La recuperación cambia la contraseña y revoca sesiones, pero NO toca el
-        // 2FA: el siguiente login sigue exigiendo TOTP (DoD T7.2).
-        await trx("users")
-          .where({ id: reset.user_id })
-          .update({ password_hash: await hashPassword(newPassword), updated_at: trx.fn.now() });
-        await trx("sessions")
-          .where({ user_id: reset.user_id })
-          .whereNull("revoked_at")
-          .update({ revoked_at: trx.fn.now() });
-      });
-      await audit(db, {
-        actorId: reset.user_id,
-        action: "auth.password.reset",
-        target: `user:${reset.user_id}`,
-        correlationId: req.correlationId,
-      });
+      // Política única de contraseñas y canje ATÓMICO (un solo uso; revoca todas las sesiones): ver el servicio.
+      await redeemRecoveryToken(db, { correlationId: req.correlationId, ip: req.ip }, token, newPassword);
       res.status(204).end();
     },
+    rateLimit(resetLimiter, "reset"),
   );
 
   return router;
 }
 
-/** Crea un token de recuperación (el transporte real sería email; en dev se loguea). */
-export async function createPasswordReset(db: Db, userId: string): Promise<string> {
-  const token = randomBytes(24).toString("base64url");
-  await db("password_resets").insert({
-    user_id: userId,
-    token_hash: hashToken(token),
-    expires_at: new Date(Date.now() + 30 * 60 * 1000),
-  });
-  return token;
-}
+// Compatibilidad: el helper vive en el servicio de recuperación (lo usan tests; ninguna ruta pública lo expone).
+export { createPasswordReset } from "../services/account-recovery.js";
 
 async function consumeRecoveryCode(db: Db, user: Record<string, unknown>, code: string): Promise<boolean> {
   const hashes: string[] = Array.isArray(user.recovery_codes)

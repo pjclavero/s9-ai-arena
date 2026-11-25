@@ -30,12 +30,25 @@ function idParam(raw: unknown): string {
   return raw;
 }
 
-export function adminOperationsRoutes(db: Db, deps: { confirmLimiter: RateLimiterLike }): Router {
+export function adminOperationsRoutes(
+  db: Db,
+  deps: { confirmLimiter: RateLimiterLike; actionLimiter: RateLimiterLike },
+): Router {
   const router = Router();
   const ctx = (req: { auth?: { userId: string }; correlationId?: string }) => ({
     actorId: req.auth?.userId ?? null,
     correlationId: req.correlationId,
   });
+
+  /** Cancelar la orden de OTRO admin exige REAUTENTICACIÓN fuerte y tiene límite por admin; queda auditado. */
+  async function reauth(req: { auth?: { userId: string } }, body: Record<string, unknown>): Promise<void> {
+    if (!(await deps.actionLimiter.hit(`admin-users:${req.auth!.userId}`))) {
+      throw tooMany("Demasiados intentos: espera unos minutos");
+    }
+    const me = await db("users").where({ id: req.auth!.userId }).first();
+    if (!me) throw notFound();
+    await requireStrongReauth(db, me, { password: body.password, totp: body.totp });
+  }
 
   defineOperation(router, "createAdminOperation", async (req, res) => {
     const r = await createOperation(db, ctx(req), req.body);
@@ -70,8 +83,13 @@ export function adminOperationsRoutes(db: Db, deps: { confirmLimiter: RateLimite
   });
 
   defineOperation(router, "cancelAdminOperation", async (req, res) => {
+    const id = idParam(req.params.id);
+    const row = await db("admin_operations").where({ id }).first("kind", "requested_by");
+    if (row && row.requested_by !== req.auth!.userId) {
+      await reauth(req, (req.body ?? {}) as Record<string, unknown>);
+    }
     res.setHeader("Cache-Control", "no-store");
-    res.json(await cancelOperation(db, ctx(req), idParam(req.params.id)));
+    res.json(await cancelOperation(db, ctx(req), id));
   });
 
   return router;

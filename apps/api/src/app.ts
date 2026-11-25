@@ -26,6 +26,7 @@ import { RuntimeSettingsStore } from "./runtime-settings.js";
 import { runtimeSettingsRoutes } from "./routes/runtime-settings.js";
 import { adminSettingsRoutes } from "./routes/admin-settings.js";
 import { adminOperationsRoutes } from "./routes/admin-operations.js";
+import { adminUsersRoutes } from "./routes/admin-users.js";
 import { SYSTEM_SETTINGS_REGISTRY, type SettingsRegistry } from "../../../packages/system-settings/registry.js";
 import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
 import { standingsRoutes } from "./routes/standings.js";
@@ -119,6 +120,10 @@ export interface AppConfig {
   systemSettings?: { registry?: SettingsRegistry; env?: NodeJS.ProcessEnv };
   /** ADM-1 · Límite de intentos de `confirmAdminOperation` por admin (por defecto, compartido en BD). */
   adminConfirmLimiter?: RateLimiterLike;
+  /** ADM-3 · Límite de `POST /auth/reset` (canje del token de recuperación) por IP; por defecto, compartido en BD. */
+  resetLimiter?: RateLimiterLike;
+  /** ADM-3 · Límite de acciones de usuarios con reautenticación (bloqueo, token) por admin; por defecto, en BD. */
+  adminUsersLimiter?: RateLimiterLike;
   streamingPublicKey?: () => { pem: string; kid: string } | null;
   broadcastBaseUrl?: string;
 }
@@ -182,9 +187,12 @@ export function createApp(cfg: AppConfig): express.Express {
       refreshLimiter:
         cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
       passwordChangeGuard: cfg.passwordChangeGuard,
+      resetLimiter: cfg.resetLimiter,
     }),
   );
-  app.use(userRoutes(cfg.db));
+  const adminUsersLimiter =
+    cfg.adminUsersLimiter ?? new SharedRateLimiter(cfg.db, "admin.users", { max: 20, windowMs: 5 * 60_000 });
+  app.use(userRoutes(cfg.db, { actionLimiter: adminUsersLimiter }));
   app.use(teamRoutes(cfg.db));
   // R2.5 (ERR-SEC-12): por defecto el ENCOLADOR real (tabla jobs): el pipeline de
   // builds corre en el worker del bot-manager, nunca aquí. El worker sigue fallando
@@ -214,8 +222,15 @@ export function createApp(cfg: AppConfig): express.Express {
   );
   app.use(
     adminOperationsRoutes(cfg.db, {
+      actionLimiter: adminUsersLimiter,
       confirmLimiter:
         cfg.adminConfirmLimiter ?? new SharedRateLimiter(cfg.db, "admin.confirm", { max: 10, windowMs: 5 * 60_000 }),
+    }),
+  );
+  // ADM-3 · usuarios (listado, bloqueo) y emisión del token de recuperación (sólo admin).
+  app.use(
+    adminUsersRoutes(cfg.db, {
+      actionLimiter: adminUsersLimiter,
     }),
   );
   app.use(

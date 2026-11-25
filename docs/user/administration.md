@@ -4,14 +4,40 @@ Esta página es para quien tiene un rol de **administrador dentro del juego**. N
 
 Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Encima de todas ellas, el panel **«Acceso público / Broadcast»** (ver [Acceso público](#acceso-público)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
 
-No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloqueo ni borrado.
+Los usuarios se gestionan desde la sección **«Usuarios»** de la pantalla *Usuarios y seguridad* (ver [Usuarios](#usuarios)). No hay borrado de cuentas.
 
 ## Usuarios y seguridad
 
-- **Roles de usuario**: escribe el identificador del usuario y los **roles separados por coma** (por ejemplo `user, developer, organizer`) y pulsa **«Asignar roles»**. La lista **sustituye** los roles del usuario, y una lista vacía le deja sin acceso. Sólo se muestran los errores; no hay mensaje de éxito. Hay que conocer el identificador del usuario: la web no lo muestra.
+- **Usuarios**: listado, búsqueda, roles, bloqueo y recuperación de cuentas (sección siguiente).
 - **Catálogo importado**: las versiones del catálogo de equipamiento, con su número de piezas.
 - **Hallazgos de seguridad**: lo que detecta la validación de bots (dependencias no permitidas, secretos en el código…), con fecha, tipo, gravedad y detalle.
 - **Auditoría (solo inserción)**: las últimas acciones registradas.
+
+## Usuarios
+
+La tabla **«Usuarios»** (la primera de *Usuarios y seguridad*) lista las cuentas de 20 en 20 (**«Cargar más»** pide la página siguiente) y se filtra con **«Buscar por nombre o email»** (no distingue mayúsculas; `%` y `_` se buscan tal cual). Cada fila muestra nombre, email, roles, si tiene 2FA y su estado (**activa** o **bloqueada**, y **recuperación pendiente** si hay un token vigente sin usar; si ese token restablecerá también la 2FA, lo dice: «recuperación pendiente (restablece la 2FA)»). Nunca se muestran contraseñas, secretos ni códigos de recuperación.
+
+**Un solo administrador gestiona todo.** No hace falta que otro admin apruebe nada: puedes dar o quitar el rol `admin`, bloquear o desbloquear (también a otro admin) y recuperar la cuenta de cualquiera. Cada acción importante pide **escribir una frase exacta**, **tu contraseña** (y el código 2FA si tu cuenta lo tiene) cuando el servidor reautentica, y queda en la **auditoría**. Sólo hay un límite de seguridad: **nunca puede quedar 0 administradores activos** (ver abajo).
+
+| Acción | Qué hace |
+|---|---|
+| **Roles** | pulsa **«Roles»** (se cargan los roles REALES de la cuenta), marca los roles y pulsa **«Guardar roles»**. La lista **sustituye** a la actual; vacía deja a la cuenta sin acceso. Cualquier cambio **anula los tokens de recuperación abiertos** de la cuenta. **Dar o quitar el rol `admin` (a quien sea, también a ti) pide tu contraseña** (y el 2FA si lo tienes); el resto de cambios, no. Pide la frase `CAMBIAR ROLES <email>`. |
+| **Bloquear / Desbloquear** | un usuario bloqueado **no puede iniciar sesión** (aunque acierte la contraseña, ve «Cuenta bloqueada»), se le **cierran todas las sesiones** y se anulan sus tokens de recuperación. Puedes bloquear o desbloquear a cualquier cuenta, también a otro admin y a ti mismo. Frase `BLOQUEAR <email>` / `DESBLOQUEAR <email>`. |
+| **Token de recuperación** | para un usuario que olvidó su contraseña (ver [abajo](#recuperar-la-cuenta-de-un-usuario)); vale también para la cuenta de otro admin. Frase `RECUPERAR <email>`. |
+
+**Último admin protegido.** Quitar el rol `admin` o bloquear al **último administrador activo** (también a ti mismo) se rechaza con **409 `last_admin`**: la plataforma nunca se queda sin administrador. Se comprueba con un cerrojo, así que dos admins que se degraden a la vez no pueden dejarla vacía.
+
+Todas las acciones quedan en la **auditoría** con quién las hizo (`admin.user.roles_set`, `admin.user.blocked`, `admin.user.unblocked`, `admin.user.recovery_token_issued`).
+
+### Recuperar la cuenta de un usuario
+
+No hay correo: el token se entrega **en persona o por un canal que controle el usuario**.
+
+1. En la fila del usuario, **«Token de recuperación»**, escribe la frase y tu contraseña. Aparece el **token** una sola vez, con su caducidad (**30 minutos**). Si ya había uno vigente, queda anulado. No hay token para tu propia cuenta (usa «Mi cuenta»).
+2. Dáselo al usuario. Él abre **«¿Has olvidado la contraseña?… canjéalo aquí»** en la pantalla de acceso (`#/reset`), pega el token y **elige él su contraseña** (mínimo 12 caracteres): tú nunca la conoces. El token vale **una sola vez**; al canjearlo se **cierran todas sus sesiones**. Si tiene 2FA, sigue necesitando su código para entrar, **salvo** que al emitir hayas marcado **«Restablecer también la 2FA»** (casilla visible si la cuenta tiene 2FA; por defecto desmarcada): entonces, al canjear, se desactiva la 2FA y se borran sus códigos (la activación de la 2FA tiene hoy su operación en la API; la pantalla propia llega con ACC-2FA, #351). Pide la frase `RESTABLECER 2FA <email>` en lugar de `RECUPERAR <email>`.
+3. Un token caducado, usado, anulado (por un cambio de roles o de estado de la cuenta) o de una cuenta bloqueada se rechaza siempre con el mismo mensaje.
+
+La **consola** (`reset-password`) es sólo el último recurso, para cuando ningún admin puede entrar: ver [recuperación de cuentas](../operations/account-recovery.md).
 
 ## Sistema
 

@@ -2,12 +2,15 @@
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { audit } from "../audit.js";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, notFound, tooMany } from "../errors.js";
 import { publicProfile, userToJson } from "../serialize.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
+import { currentRoles, planRoleChange, requireConfirmPhrase, setUserRoles } from "../services/account-recovery.js";
+import { requireStrongReauth } from "./auth.js";
+import type { RateLimiterLike } from "../middleware/shared-rate-limit.js";
+import { isUuid } from "../params.js";
 
-export function userRoutes(db: Db): Router {
+export function userRoutes(db: Db, deps: { actionLimiter: RateLimiterLike }): Router {
   const router = Router();
 
   defineOperation(router, "getMe", async (req, res) => {
@@ -37,30 +40,34 @@ export function userRoutes(db: Db): Router {
   });
 
   defineOperation(router, "setUserRoles", async (req, res) => {
-    const { roles } = req.body ?? {};
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { roles } = body;
     if (!Array.isArray(roles) || roles.some((r) => !ROLES.includes(r as RoleName))) {
       throw badRequest(`roles debe ser un subconjunto de [${ROLES.join(", ")}]`);
     }
-    const user = await db("users")
-      .where({ id: req.params.userId })
-      .first()
-      .catch(() => null);
+    const userId = String(req.params.userId);
+    const user = isUuid(userId) ? await db("users").where({ id: userId }).first() : null;
     if (!user) throw notFound();
 
-    await db.transaction(async (trx) => {
-      await trx("user_roles").where({ user_id: user.id }).delete();
-      if (roles.length > 0) {
-        await trx("user_roles").insert(roles.map((role: string) => ({ user_id: user.id, role })));
+    // ADM-3 · conceder o quitar «admin» exige reautenticación fuerte (contraseña y, si hay 2FA, TOTP).
+    const plan = planRoleChange(await currentRoles(db, user.id), roles as string[]);
+    const reauthed = plan.grantsAdmin || plan.revokesAdmin;
+    if (reauthed) {
+      if (!(await deps.actionLimiter.hit(`admin-users:${req.auth!.userId}`))) {
+        throw tooMany("Demasiados intentos: espera unos minutos");
       }
-    });
-    await audit(db, {
-      actorId: req.auth!.userId,
-      action: "admin.user.roles_set",
-      target: `user:${user.id}`,
-      detail: { roles },
-      correlationId: req.correlationId,
-    });
-    res.json(userToJson(user, roles, { includePrivate: true }));
+      const me = await db("users").where({ id: req.auth!.userId }).first();
+      await requireStrongReauth(db, me, { password: body.password, totp: body.totp });
+      await requireConfirmPhrase(db, user.id, "roles", body.confirmPhrase);
+    }
+    const final = await setUserRoles(
+      db,
+      { actorId: req.auth!.userId, correlationId: req.correlationId },
+      user.id,
+      roles as string[],
+      { reauthed },
+    );
+    res.json(userToJson(user, final, { includePrivate: true }));
   });
 
   return router;

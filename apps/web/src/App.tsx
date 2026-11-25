@@ -23,6 +23,7 @@ import { setDraftOwner } from "./ui/draft.js";
 import { observeStackTables } from "./ui/stack-table.js";
 import type { ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { LoginPage } from "./pages/LoginPage.js";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage.js"; // ADM-3 · canje del token de recuperación
 import { BotsPage } from "./pages/BotsPage.js";
 import { TeamsPage } from "./pages/TeamsPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
@@ -73,6 +74,7 @@ export function matchPublicRoute(route: string):
       | { kind: "live" }
       | { kind: "ranking" }
       | { kind: "help" }
+      | { kind: "reset" }
     )
   | null {
   const viewer = /^#\/viewer\/([^/?]+)/.exec(route);
@@ -85,6 +87,8 @@ export function matchPublicRoute(route: string):
   if (/^#\/ranking(?:[/?]|$)/.test(route)) return { kind: "ranking" };
   // UX-A (G-01) · guía integrada; #/ayuda y #/docs (que daban 404) son alias.
   if (/^#\/(?:help|ayuda|docs)(?:[/?].*)?$/.test(route)) return { kind: "help" };
+  // ADM-3 · #/reset: el usuario canjea el token de recuperación que le dio un admin (no exige sesión).
+  if (/^#\/reset\/?(?:\?.*)?$/.test(route)) return { kind: "reset" };
   return null;
 }
 
@@ -270,6 +274,8 @@ export function App() {
         <RankingPage />
       ) : publicView.kind === "help" ? (
         <HelpPage loggedIn={!!me && !!getToken()} />
+      ) : publicView.kind === "reset" ? (
+        <ResetPasswordPage />
       ) : booting ? (
         // PRC (TD-004): el replay se pide CON la sesión (si la hay). Se espera al
         // refresh desde la cookie para no pedirlo anónimo y recibir un 404.

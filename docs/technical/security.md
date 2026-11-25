@@ -38,7 +38,7 @@ explotación. Los gates de activación de la ejecución real (Carril I) y del es
 | Token de acceso | JWT HS256, `iss = s9-ai-arena`, `aud = s9-arena/session`; caduca en **15 min**; enviado como `Authorization: Bearer` |
 | 2FA | TOTP (`otplib`) con códigos de recuperación hasheados. Sólo está disponible por API (`enable2fa`, `disable2fa`) |
 | Registro | `POST /auth/register`, abierto a `visitor`, **sin interruptor ni invitación**; concede `user` + `developer` ([TD-012](../roadmap/technical-debt.md#td-012)) |
-| Recuperación | `POST /auth/recover` crea un token de un solo uso, con la misma respuesta exista o no la cuenta; `POST /auth/reset` lo consume (contraseña ≥ 12). **No hay canal** que entregue el token al usuario |
+| Recuperación | Sin correo. Un admin emite desde la web (`POST /admin/users/{id}/recovery-token`, reautenticación + límite) un token de **192 bits, un solo uso y 30 min** para CUALQUIER cuenta (también la de otro admin); en BD sólo su hash SHA-256; el usuario lo canjea en `POST /auth/reset` (consumo atómico, política de contraseñas, límite por IP, cierra todas sus sesiones; por defecto sin tocar la 2FA, salvo que el admin marcara «restablecer también la 2FA» al emitir: entonces el canje borra el secreto y los códigos y lo audita). Cada acción sensible exige reautenticación y la frase de confirmación (`confirmPhrase`) en el servidor, y revalida al admin que actúa bajo el cerrojo del último admin. Modelo de un administrador: ninguna operación exige un segundo admin; nunca queda 0 admins activos (409 `last_admin`). La consola (`reset-password`) es el último recurso. `POST /auth/recover` se retiró. Detalle en [account-recovery](../operations/account-recovery.md) |
 | Cambio de contraseña | **no existe** |
 
 ## Sesiones y refresh

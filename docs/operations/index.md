@@ -56,6 +56,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Retransmitir (`/broadcast`, streamer, RTMPS, grabación MP4) y saber qué está verificado | [streaming.md](streaming.md) | host (perfil `streaming`) |
 | Ver métricas, alertas y logs | [observability.md](observability.md) | host (perfil `observability`) |
 | Comprobar las copias | [backup.md](backup.md) | host |
+| Recuperar una cuenta (contraseña olvidada; CLI local con un solo admin) | [account-recovery.md](account-recovery.md) | web + host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |
 | Llevar bots y equipos a una instalación nueva (export/import portable) | [portable-export.md](portable-export.md) | cualquier host con Node y acceso a las dos APIs |
 | Saber si la instalación está lista | [readiness.md](readiness.md) | host |

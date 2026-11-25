@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { insertOperationInState } from "../testing/admin-ops.js";
-import { MIGRATIONS, migrateNamed, NAMED_ROLLBACK_ALLOWED, rollbackNamed } from "./migrations.js";
+import { MIGRATIONS, NAMED_ROLLBACK_ALLOWED, rollbackNamed } from "./migrations.js";
 
 let h: TestDbHandle;
 const NAME = "023_system_settings_operations";
@@ -65,13 +65,20 @@ describe("migración 023_system_settings_operations", () => {
     await h.db("admin_operations").delete();
   });
 
-  it("rollback por nombre: quita sus tablas y se puede volver a aplicar", async () => {
-    expect(NAMED_ROLLBACK_ALLOWED).toContain(NAME);
-    await rollbackNamed(h.db, NAME);
+  it("rollback: ya NO es por nombre (la 025 depende de ella) y, en orden 025 → 023, quita sus tablas y se reaplica", async () => {
+    // ADM-3: la 025 reescribe las guardas de `admin_operations` y elimina su columna `requires_second_admin`; revertir la
+    // 023 sola es imposible (se revierte en orden 025 → 023).
+    expect(NAMED_ROLLBACK_ALLOWED).not.toContain(NAME);
+    await expect(rollbackNamed(h.db, NAME)).rejects.toThrow(/no se puede revertir por nombre/);
+    const m023 = MIGRATIONS.find((m) => m.name === NAME)!;
+    const m025 = MIGRATIONS.find((m) => m.name === "025_user_status_recovery")!;
+    await m025.down(h.db);
+    await m023.down(h.db);
     expect(await hasTable("system_settings")).toBe(false);
     expect(await hasTable("admin_operations")).toBe(false);
     expect(await hasTable("audit_log")).toBe(true);
-    await migrateNamed(h.db, NAME);
+    await m023.up(h.db);
+    await m025.up(h.db);
     expect(await hasTable("system_settings")).toBe(true);
     expect(await hasTable("admin_operations")).toBe(true);
   });
