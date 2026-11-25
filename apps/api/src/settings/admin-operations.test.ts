@@ -522,11 +522,13 @@ describe("ADM-1 · ejecutor: lease, reintentos y rol de BD mínimo", () => {
 
 describe("ADM-1 · límite de intentos de confirmación", () => {
   it("LIMITE_CONFIRM: pasado el máximo por admin, 429 (incluso con credenciales correctas) y otro admin no se ve afectado", async () => {
+    const frozenLimiter = new SharedRateLimiter(h.db, "admin.confirm.test", { max: 3, windowMs: 60_000 });
+    const FROZEN_NOW = Date.now();
     const limited = createApp({
       db: h.db,
-      // Ventana FIJA alineada al reloj (floor(now/windowMs)): con 60 s, cruzar un minuto entre los 4 intentos reiniciaba
-      // la cuenta y el test fallaba al azar. Con windowMs = 2·now la ventana es siempre la 0: no depende del reloj.
-      adminConfirmLimiter: new SharedRateLimiter(h.db, "admin.confirm.test", { max: 3, windowMs: Date.now() * 2 }),
+      // Reloj CONGELADO: la ventana (60 s) está alineada al reloj y cruzar un minuto entre los 4 intentos reiniciaba la
+      // cuenta (el test fallaba al azar). `hit(key, now)` ya acepta `now`: se fija y la ventana es la misma siempre.
+      adminConfirmLimiter: { hit: (k: string) => frozenLimiter.hit(k, FROZEN_NOW) },
     });
     const conf = (t: string, id: string, body: Record<string, unknown>) =>
       request(limited).post(`/admin/operations/${id}/confirm`).set("Authorization", `Bearer ${t}`).send(body);

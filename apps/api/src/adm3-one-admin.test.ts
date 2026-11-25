@@ -361,6 +361,16 @@ describe("ADM-3 · último admin protegido, bajo cerrojo y sin carreras", () => 
     expect(r.error).toBeNull();
     expect(await hasAdmin(a.id)).toBe(false);
   });
+
+  it("CERROJO_EMITIR: emitir un token también espera al cerrojo (serializa con bloquear y roles; sin interbloqueos cruzados)", async () => {
+    const { issueRecoveryToken } = await import("./services/account-recovery.js");
+    const a = await mkAdmin("cke-a");
+    const c = await mkUser("cke-c");
+    const r = await holdsWhile(() => issueRecoveryToken(h.db, { actorId: a.id }, c.id));
+    expect(r.doneWhileHeld).toBe(false);
+    expect(r.error).toBeNull();
+    expect(Number((await h.db("password_resets").where({ user_id: c.id }).count({ n: "*" }).first())?.n)).toBe(1);
+  });
 });
 
 describe("ADM-3 · tokens: anulación por cambio de rol o de estado, y revalidación en el canje", () => {
@@ -810,5 +820,74 @@ describe("ADM-3 · el listado muestra la marca de 2FA del token pendiente (P3-6)
     // un token con marca ya anulado (se emite otro sin ella) no se anuncia
     expect((await issue(ta, u.id)).status).toBe(201);
     expect(await view()).toMatchObject({ recoveryPending: true, recoveryResetsTwoFactor: false });
+  });
+});
+
+describe("ADM-3 · emitir el token revalida al actor con su fila bloqueada (P3-A)", () => {
+  /** Espera (sondeando pg_locks) a que haya al menos `n` peticiones esperando un bloqueo de fila. */
+  async function waitForRowWaiters(n: number, ms = 5000): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      const r = await h.db.raw(
+        `SELECT count(*)::int AS n FROM pg_locks WHERE locktype IN ('transactionid','tuple') AND NOT granted`,
+      );
+      if (r.rows[0].n >= n) return true;
+      await new Promise((res) => setTimeout(res, 40));
+    }
+    return false;
+  }
+  const tokensOf = async (id: string) =>
+    Number((await h.db("password_resets").where({ user_id: id }).count({ n: "*" }).first())?.n);
+
+  it("TOCTOU_EMITIR_ACTOR_BLOQUEADO: un admin bloqueado mientras su emisión esperaba la fila del objetivo NO emite (403, ningún token)", async () => {
+    const a = await mkAdmin("te-a");
+    const b = await mkAdmin("te-b");
+    const c = await mkUser("te-c");
+    const ta = await tokenOf(a);
+    let pending: PromiseLike<{ status: number; body: { error?: string } }> = Promise.resolve({ status: 0, body: {} });
+    await h.db.transaction(async (trx) => {
+      await trx.raw("SELECT id FROM users WHERE id = ? FOR UPDATE", [c.id]);
+      pending = issue(ta, c.id, { password: PW, resetTwoFactor: true });
+      expect(await waitForRowWaiters(1)).toBe(true);
+      // b bloquea a «a» (estado y sesiones) mientras la emisión espera
+      await h.db("users").where({ id: a.id }).update({ status: "blocked", blocked_at: new Date(), blocked_by: b.id });
+    });
+    const r = await pending;
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("actor_not_admin");
+    expect(await tokensOf(c.id)).toBe(0);
+  });
+
+  it("TOCTOU_EMITIR_FILA_ACTOR_BLOQUEADA: tras revalidar, la fila del actor queda bloqueada: un bloqueo concurrente espera a que la emisión termine", async () => {
+    const a = await mkAdmin("tf-a");
+    const c = await mkUser("tf-c");
+    const ta = await tokenOf(a);
+    // un token abierto de «c»: emitir otro lo anula (UPDATE), y esa fila la retiene el «holder»
+    await h.db("password_resets").insert({
+      user_id: c.id,
+      token_hash: "h".repeat(64),
+      expires_at: new Date(Date.now() + 600_000),
+    });
+    let pending: PromiseLike<{ status: number }> = Promise.resolve({ status: 0 });
+    let block: PromiseLike<unknown> = Promise.resolve();
+    let reachedTwoWaiters = false;
+    await h.db.transaction(async (trx) => {
+      await trx.raw("SELECT id FROM password_resets WHERE user_id = ? FOR UPDATE", [c.id]);
+      pending = issue(ta, c.id);
+      expect(await waitForRowWaiters(1)).toBe(true); // la emisión ya revalidó a «a» y espera la fila retenida
+      block = h
+        .db("users")
+        .where({ id: a.id })
+        .update({ status: "blocked", blocked_at: new Date() })
+        .then((x) => x);
+      // con la fila del actor bloqueada, el bloqueo ESPERA a la emisión: hay dos esperando (emisión + bloqueo)
+      reachedTwoWaiters = await waitForRowWaiters(2);
+    });
+    expect(reachedTwoWaiters).toBe(true);
+    const r = await pending;
+    await block;
+    // la emisión quedó serializada ANTES del bloqueo: es legítima; y después «a» está bloqueado
+    expect(r.status).toBe(201);
+    expect(await statusOf(a.id)).toBe("blocked");
   });
 });

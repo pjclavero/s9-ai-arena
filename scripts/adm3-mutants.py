@@ -271,7 +271,7 @@ M = [
     (
         'M48 la emisión no es atómica con su auditoría',
         [
-            (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      await requireActorStillAdmin(t, ctx.actorId);\n', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      await requireActorStillAdmin(t, ctx.actorId);\n'),
+            (SVC, 'const out = await mapDeadlock(\n    db.transaction(async (trx) => {\n      const t = trx as unknown as Db;\n      // Mismo cerrojo', 'const out = await mapDeadlock(\n    (async (trx: Db) => {\n      const t = trx;\n      // Mismo cerrojo'),
             (SVC, '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    }),\n  );\n  return out;', '      return { token, expiresAt, userId: targetId, resetTwoFactor };\n    })(db),\n  );\n  return out;'),
         ],
         T, 'AUDITORIA_ATOMICA',
@@ -876,8 +876,8 @@ M = [
         T2, 'TOCTOU_ACTOR_BLOQUEADO: ',
     ),
     (
-        'N47 emitir el token no revalida al actor',
-        [(SVC, 'await requireActorStillAdmin(t, ctx.actorId);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status !== "active")', 'const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      if (user.status !== "active")')],
+                'N47 emitir el token no revalida al actor',
+        [(SVC, 'if (!user) throw notFound();\n      await requireActorStillAdmin(t, ctx.actorId);\n      if (user.status !== "active") {', 'if (!user) throw notFound();\n      if (user.status !== "active") {')],
         T2, 'TOCTOU_ACTOR_DEGRADADO',
     ),
     (
@@ -954,6 +954,26 @@ M = [
         'N62 el down de la 025 deja la guarda de la 023 distinta byte a byte',
         [(MIGS, 'DEFAULT false;\n      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$\n      BEGIN\n', 'DEFAULT false;\n      CREATE OR REPLACE FUNCTION admin_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$\n      BEGIN\n        -- comentario de más\n')],
         MIG25, 'MIG025_VUELTA_ATRAS',
+    ),
+    (
+        'N63 la revalidación del actor no bloquea su fila (sin FOR SHARE)',
+        [(SVC, '    .forShare()\n    .first("u.id");', '    .first("u.id");')],
+        T2, 'TOCTOU_EMITIR_FILA_ACTOR_BLOQUEADA',
+    ),
+    (
+        'N64 emitir el token revalida al actor ANTES de esperar la fila del objetivo',
+        [(SVC, 'const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      await requireActorStillAdmin(t, ctx.actorId);', 'await requireActorStillAdmin(t, ctx.actorId);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();')],
+        T2, 'TOCTOU_EMITIR_ACTOR_BLOQUEADO',
+    ),
+    (
+        'N65 emitir el token no toma el cerrojo del último admin',
+        [(SVC, '      await lockAdminChanges(t);\n      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      await requireActorStillAdmin', '      const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");\n      if (!user) throw notFound();\n      await requireActorStillAdmin')],
+        T2, 'CERROJO_EMITIR',
+    ),
+    (
+        'N66 la revalidación del actor responde con el código del RBAC',
+        [(SVC, 'throw new ApiError(403, "actor_not_admin", "Tu cuenta ya no es un administrador activo");', 'throw new ApiError(403, "forbidden", "Tu cuenta ya no es un administrador activo");')],
+        T2, 'TOCTOU_EMITIR_ACTOR_BLOQUEADO',
     ),
 ]
 

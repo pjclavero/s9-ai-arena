@@ -61,7 +61,7 @@ El PR #347 llegó a incluir un doble control (segundo admin para lo irreversible
 | ADM-1: la irreversible la confirma el mismo admin | TEST | `UN_ADMIN_IRREVERSIBLE`, `ADMIN_UNICO_IRREVERSIBLE` en `settings/admin-operations.test.ts` |
 | Restablecer también la 2FA: por defecto se conserva; con la marca sólo al canjear; un token anulado no la toca; vale para otro admin | TEST | `TFA_*` en `adm3-one-admin.test.ts` y en `adm3-users-page.test.tsx` |
 | Confirmación explícita exigida por el servidor en cada operación sensible (400 sin ella) | TEST | `CONFIRMACION_SERVIDOR_*` |
-| El actor se revalida bajo el cerrojo (un admin bloqueado mientras esperaba no concede admin) | TEST | `TOCTOU_*` |
+| El actor se revalida bajo el cerrojo y con su fila bloqueada (`FOR SHARE`): un admin bloqueado mientras esperaba no concede admin ni emite token (403 `actor_not_admin`) | TEST | `TOCTOU_*`, `CERROJO_EMITIR` |
 | CLI sin secretos por argv | TEST | `CLI_SERVICIO`, `CLI_ARGV`, `reset-password-cli.test.ts` |
 | Migración 025 y su vuelta atrás | TEST | `apps/api/src/db/migration-025.test.ts` |
 | Mutantes de calibración | SCRIPT | `scripts/adm3-mutants.py` |

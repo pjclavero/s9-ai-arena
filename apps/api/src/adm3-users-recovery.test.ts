@@ -112,14 +112,14 @@ describe("ADM-3 · permisos (RBAC)", () => {
       const u = await mkUser(`rbac-${role}`, [...new Set(["user", role])]);
       const t = await tokenOf(u);
       expect((await listUsers(t)).status, `GET /admin/users como ${role}`).toBe(403);
-      // el 403 debe venir de la guarda RBAC del contrato («Requiere rol admin»), no de la revalidación del actor del
-      // servicio (defensa en profundidad, que también respondería 403 y escondería un x-min-role mal puesto)
+      // el 403 debe venir de la guarda RBAC del contrato (`forbidden`), no de la revalidación del actor del servicio
+      // (`actor_not_admin`: defensa en profundidad que también responde 403 y escondería un x-min-role mal puesto)
       const st = await setStatus(t, target.id, { status: "blocked", password: PW });
       expect(st.status, `status como ${role}`).toBe(403);
-      expect(JSON.stringify(st.body), `status como ${role}`).toMatch(/Requiere rol admin/);
+      expect(st.body.error, `status como ${role}`).toBe("forbidden");
       const tk = await issue(t, target.id);
       expect(tk.status, `recovery-token como ${role}`).toBe(403);
-      expect(JSON.stringify(tk.body), `recovery-token como ${role}`).toMatch(/Requiere rol admin/);
+      expect(tk.body.error, `recovery-token como ${role}`).toBe("forbidden");
     }
     expect((await h.db("users").where({ id: target.id }).first()).status).toBe("active");
     expect(await h.db("password_resets").where({ user_id: target.id }).count({ n: "*" }).first()).toMatchObject({

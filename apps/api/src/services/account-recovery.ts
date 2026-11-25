@@ -21,7 +21,7 @@ import type { Db } from "../db/connection.js";
 import { audit } from "../audit.js";
 import { hashPassword, passwordPolicyViolation } from "../auth/passwords.js";
 import { hashToken } from "../auth/tokens.js";
-import { ApiError, badRequest, conflict, forbidden, notFound, unauthorized } from "../errors.js";
+import { ApiError, badRequest, conflict, notFound, unauthorized } from "../errors.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
 import { isUuid } from "../params.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, runCursorQuery } from "../serialize.js";
@@ -166,12 +166,15 @@ export async function lockAdminChanges(trx: Db): Promise<void> {
  * degradado mientras su petición esperaba el cerrojo no puede completar la acción que ya traía autenticada.
  */
 export async function requireActorStillAdmin(trx: Db, actorId: string | null): Promise<void> {
-  if (!actorId) throw forbidden("Hace falta una cuenta de administrador");
+  if (!actorId) throw new ApiError(403, "actor_not_admin", "Hace falta una cuenta de administrador");
+  // `FOR SHARE`: la fila del actor queda bloqueada hasta el final de ESTA transacción, así que un bloqueo o una
+  // degradación que llegue después espera a que la acción termine (se serializa tras ella) y uno que ya se confirmó se ve.
   const row = await trx("users as u")
     .join("user_roles as r", "r.user_id", "u.id")
     .where({ "u.id": actorId, "r.role": "admin", "u.status": "active" })
+    .forShare()
     .first("u.id");
-  if (!row) throw forbidden("Tu cuenta ya no es un administrador activo");
+  if (!row) throw new ApiError(403, "actor_not_admin", "Tu cuenta ya no es un administrador activo");
 }
 
 // ----------------------------------------------- confirmación explícita (P3-5)
@@ -305,9 +308,13 @@ export async function issueRecoveryToken(
   const out = await mapDeadlock(
     db.transaction(async (trx) => {
       const t = trx as unknown as Db;
-      await requireActorStillAdmin(t, ctx.actorId);
+      // Mismo cerrojo que bloquear/roles (serializa con ellos y evita interbloqueos entre emisiones cruzadas); primero la
+      // fila del objetivo y DESPUÉS el actor, ya con su fila bloqueada: ni el que espera la fila del objetivo ni el que
+      // es bloqueado entre medias puede emitir (P3-A).
+      await lockAdminChanges(t);
       const user = await t("users").where({ id: targetId }).forUpdate().first("id", "status");
       if (!user) throw notFound();
+      await requireActorStillAdmin(t, ctx.actorId);
       if (user.status !== "active") {
         throw conflict("account_blocked", "La cuenta está bloqueada: desbloquéala antes de emitir un token");
       }
