@@ -1348,7 +1348,8 @@ const m024_replay_artifacts: Migration = {
 //    borren todos los admins: el cierre lo marca esta fila, no el recuento.
 //    - El trigger impide reabrir (`setup_completed_at` y `via` son inmutables una vez fijados;
 //      `setup_completed_by` sólo puede pasar a NULL por el ON DELETE SET NULL).
-//    - Sin fila el asistente está CERRADO (fallo cerrado), así que borrarla no reabre nada.
+//    - Sin fila el asistente está CERRADO (fallo cerrado); además la fila no se puede borrar ni
+//      truncar, y no se admite insertar una fila abierta si ya hay algún admin (REV352-05).
 //    - BACKFILL: si al migrar ya hay algún admin, la fila nace completada con `via='migration'`:
 //      una instalación existente nunca abre el asistente.
 //  * `admin_recovery_kits`: un kit de recuperación ACTIVO por cuenta (hash Argon2id, nunca el
@@ -1389,6 +1390,27 @@ const m027_web_setup_recovery_kit: Migration = {
                CASE WHEN EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN now() END,
                CASE WHEN EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN 'migration' END;
 
+      -- REV352-05 · tampoco se reabre con DELETE/TRUNCATE + INSERT: la fila no se borra nunca, y una fila
+      -- ABIERTA no se puede insertar si ya hay algún admin. (Un DROP de la tabla, es decir revertir la 027
+      -- por consola, sigue siendo la vía de último recurso documentada en break-glass.md.)
+      CREATE FUNCTION install_state_no_reopen() RETURNS trigger LANGUAGE plpgsql AS $noreopen$
+      BEGIN
+        IF TG_OP IN ('DELETE', 'TRUNCATE') THEN
+          RAISE EXCEPTION 'install_state: la fila de instalación no se borra' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.setup_completed_at IS NULL AND EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN
+          RAISE EXCEPTION 'install_state: la instalación ya está completada y no se reabre' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $noreopen$;
+      CREATE TRIGGER install_state_no_delete BEFORE DELETE ON install_state
+        FOR EACH ROW EXECUTE FUNCTION install_state_no_reopen();
+      CREATE TRIGGER install_state_no_truncate BEFORE TRUNCATE ON install_state
+        FOR EACH STATEMENT EXECUTE FUNCTION install_state_no_reopen();
+      CREATE TRIGGER install_state_insert_guard BEFORE INSERT ON install_state
+        FOR EACH ROW EXECUTE FUNCTION install_state_no_reopen();
+
       CREATE TABLE admin_recovery_kits (
         user_id    uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         kit_hash   text NOT NULL CHECK (kit_hash LIKE '$argon2id$%'),
@@ -1403,6 +1425,7 @@ const m027_web_setup_recovery_kit: Migration = {
       DROP TABLE IF EXISTS admin_recovery_kits;
       DROP TABLE IF EXISTS install_state;
       DROP FUNCTION IF EXISTS install_state_guard();
+      DROP FUNCTION IF EXISTS install_state_no_reopen();
     `);
   },
 };

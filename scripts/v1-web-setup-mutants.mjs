@@ -29,6 +29,7 @@ const T_KIT = "apps/api/src/recovery-kit.test.ts";
 const T_MIG = "apps/api/src/db/migration-027.test.ts";
 const T_CMP = "infrastructure/tests/setup-token-compose.test.ts";
 const T_INIT = "infrastructure/tests/init-secrets-nofollow.test.ts";
+const T_CHK = "infrastructure/tests/check-secrets.test.ts";
 const T_WEB = "apps/web/tests/setup-page.test.tsx";
 
 const F_ROUTE = "apps/api/src/routes/setup.ts";
@@ -92,6 +93,8 @@ export const MUTANTES = [
   {
     // Dentro del cerrojo: sin volver a mirar `install_state`, una instalación cerrada con 0 admins
     // (cerrada entre la comprobación de la ruta y el cerrojo) aceptaría otro «primer» admin web.
+    // (Descartado por EQUIVALENTE: quitar sólo `adminCount > 0` de esta condición; lo cubre la
+    // comprobación siguiente, `admin_exists`, que la ruta traduce al mismo 410. REV352-10.)
     id: "M-SETUP-no-recheck-in-lock",
     fichero: F_ADMIN,
     de: 'if (via === "web" && (!state || state.setup_completed_at || adminCount > 0)) {',
@@ -142,8 +145,8 @@ export const MUTANTES = [
   {
     id: "M-SETUP-trigger-allows-reopen",
     fichero: F_MIG,
-    de: "RAISE EXCEPTION 'install_state: la instalación ya está completada y no se reabre' USING ERRCODE = '23514';",
-    a: "NULL;",
+    de: "IF OLD.setup_completed_at IS NOT NULL AND (",
+    a: "IF false AND (",
     test: T_MIG,
     nombre: "[M027-trigger-no-reabre]",
   },
@@ -175,8 +178,8 @@ export const MUTANTES = [
   {
     id: "M-KIT-skip-2fa",
     fichero: F_KIT,
-    de: "if (user.totp_secret) {\n        const second =",
-    a: "if (false) {\n        const second =",
+    de: "if (user.totp_secret) {\n        const guardKey",
+    a: "if (false) {\n        const guardKey",
     test: T_KIT,
     nombre: "[K4-2fa-segundo-factor]",
   },
@@ -236,6 +239,63 @@ export const MUTANTES = [
     a: "\n",
     test: T_INIT,
     nombre: "[INFRA-setup-token]",
+  },
+  // ---------------------------------------------------------- revisión de #352 (REV352-01/03/04/05/11)
+  {
+    id: "M-KIT-blocked-redeems",
+    fichero: F_KIT,
+    de: "const active = user ? accountIsActive(user) : false;",
+    a: "const active = true;",
+    test: T_KIT,
+    nombre: "[K10-cuenta-bloqueada]",
+  },
+  {
+    id: "M-KIT-revoke-noop",
+    fichero: "apps/api/src/services/recovery-kit.ts",
+    de: 'const n = await trx("admin_recovery_kits").where({ user_id: userId }).del();',
+    a: "const n = 1;",
+    test: T_KIT,
+    nombre: "[K11-revocar-kit]",
+  },
+  {
+    id: "M-KIT-no-2fa-guard",
+    fichero: F_KIT,
+    de: "if (await deps.secondFactorGuard.isBlocked(guardKey)) {",
+    a: "if (false) {",
+    test: T_KIT,
+    nombre: "[K12-bloqueo-segundo-factor]",
+  },
+  {
+    id: "M-SETUP-trigger-allows-delete",
+    fichero: F_MIG,
+    de: "CREATE TRIGGER install_state_no_delete BEFORE DELETE ON install_state\n        FOR EACH ROW EXECUTE FUNCTION install_state_no_reopen();",
+    a: "",
+    test: T_MIG,
+    nombre: "[M027-no-delete-reabre]",
+  },
+  {
+    id: "M-SETUP-insert-reopens",
+    fichero: F_MIG,
+    de: "IF NEW.setup_completed_at IS NULL AND EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN",
+    a: "IF false THEN",
+    test: T_MIG,
+    nombre: "[M027-no-delete-reabre]",
+  },
+  {
+    id: "M-SETUP-generator-single-pass",
+    fichero: "infrastructure/scripts/init-secrets.sh",
+    de: 'while [ "${#out}" -lt "$n" ]; do',
+    a: "for _una in 1; do",
+    test: T_INIT,
+    nombre: "[INFRA-generador-longitud]",
+  },
+  {
+    id: "M-SETUP-check-secrets-ignora-faltantes",
+    fichero: "infrastructure/scripts/check-secrets.mjs",
+    de: 'missing.push({ ...s, why: "no existe" });',
+    a: "",
+    test: T_CHK,
+    nombre: "[INFRA-check-secrets-falta]",
   },
   // ---------------------------------------------------------- web
   {

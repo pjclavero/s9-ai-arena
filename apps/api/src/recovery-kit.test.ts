@@ -11,7 +11,12 @@ import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { createApp } from "./app.js";
 import { hashPassword } from "./auth/passwords.js";
-import { issueRecoveryKit, normalizeRecoveryKit, generateRecoveryKit } from "./services/recovery-kit.js";
+import {
+  issueRecoveryKit,
+  normalizeRecoveryKit,
+  generateRecoveryKit,
+  revokeRecoveryKit,
+} from "./services/recovery-kit.js";
 import { SlidingWindowLimiter } from "./middleware/rate-limit.js";
 import { FailedLoginGuard } from "./middleware/rate-limit.js";
 
@@ -206,5 +211,48 @@ describe("V1 ADM-SETUP · kit de recuperación del admin", () => {
     const r = await redeem({ email: a.email, recoveryKit: a.kit, newPassword: "corta" });
     expect(r.status).toBe(400);
     expect(await h.db("admin_recovery_kits").where({ user_id: a.id })).toHaveLength(1);
+  });
+
+  it("[K10-cuenta-bloqueada] una cuenta bloqueada no canjea el kit: la misma 401 genérica y nada cambia", async () => {
+    // `users.status` llega con #347 (migración 025). Se simula su columna; con #347 integrado ya existe.
+    await h.db.raw(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`);
+    const a = await newAccount(true);
+    const wrong = await redeem({ email: a.email, recoveryKit: generateRecoveryKit(), newPassword: NEW_PW });
+    await h.db("users").where({ id: a.id }).update({ status: "blocked" });
+    const r = await redeem({ email: a.email, recoveryKit: a.kit, newPassword: NEW_PW });
+    expect(r.status).toBe(401);
+    expect(strip(r.body)).toEqual(strip(wrong.body));
+    expect(await h.db("admin_recovery_kits").where({ user_id: a.id })).toHaveLength(1);
+    await h.db("users").where({ id: a.id }).update({ status: "active" });
+    expect((await login(a.email, PW)).status).toBe(200); // la contraseña no cambió
+    // Desbloqueada, el kit vuelve a valer (lo invalida `revokeRecoveryKit` al bloquear, con #347).
+    expect((await redeem({ email: a.email, recoveryKit: a.kit, newPassword: NEW_PW })).status).toBe(204);
+  });
+
+  it("[K11-revocar-kit] revokeRecoveryKit invalida el kit (auditado) y después el canje da 401", async () => {
+    const a = await newAccount(true);
+    expect(await revokeRecoveryKit(h.db, a.id, { actorId: null, reason: "account_blocked" })).toBe(true);
+    expect(await revokeRecoveryKit(h.db, a.id, { actorId: null, reason: "account_blocked" })).toBe(false);
+    const rows = await h.db("audit_log").where({ action: "auth.recovery_kit.revoked", target: `user:${a.id}` });
+    expect(rows).toHaveLength(1);
+    expect((await redeem({ email: a.email, recoveryKit: a.kit, newPassword: NEW_PW })).status).toBe(401);
+    expect((await login(a.email, PW)).status).toBe(200);
+  });
+
+  it("[K12-bloqueo-segundo-factor] 5 códigos erróneos con el kit bloquean el canje de ESA cuenta (429) aunque el código sea bueno", async () => {
+    const a = await newAccount(true);
+    const s = await login(a.email, PW);
+    const en = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${s.body.accessToken}`).send({});
+    const code: string = en.body.recoveryCodes[0];
+    for (let i = 0; i < 5; i++) {
+      const r = await redeem({ email: a.email, recoveryKit: a.kit, newPassword: NEW_PW, totp: "000000" });
+      expect(r.status).toBe(401);
+    }
+    const blocked = await redeem({ email: a.email, recoveryKit: a.kit, newPassword: NEW_PW, totp: code });
+    expect(blocked.status).toBe(429);
+    expect(await h.db("admin_recovery_kits").where({ user_id: a.id })).toHaveLength(1);
+    // Otra cuenta no queda afectada.
+    const b = await newAccount(true);
+    expect((await redeem({ email: b.email, recoveryKit: b.kit, newPassword: NEW_PW })).status).toBe(204);
   });
 });

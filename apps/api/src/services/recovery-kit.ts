@@ -19,6 +19,7 @@
 import { randomBytes } from "node:crypto";
 import type { Knex } from "knex";
 import { hashPassword, verifyPassword } from "../auth/passwords.js";
+import { audit } from "../audit.js";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 símbolos, sin 0/O ni 1/I
 const KIT_BYTES = 20; // 160 bits ⇒ 32 símbolos base32
@@ -69,6 +70,31 @@ export async function issueRecoveryKit(trx: Knex, userId: string): Promise<strin
     [userId, hash],
   );
   return kit;
+}
+
+/**
+ * REV352-03 · Invalida el kit de la cuenta (si lo tiene) y lo audita. Devuelve si había kit.
+ *
+ * PUNTO DE INTEGRACIÓN con #347: `setUserStatus` debe llamarla al BLOQUEAR una cuenta (y la emisión de
+ * la recuperación de ADM-3, al recuperar una cuenta ajena), dentro de su misma transacción, con el admin
+ * que actúa como `actorId`. Así un atacante con el kit de un admin bloqueado no recupera el acceso al
+ * desbloquearlo.
+ */
+export async function revokeRecoveryKit(
+  trx: Knex,
+  userId: string,
+  ctx: { actorId?: string | null; reason: string; correlationId?: string },
+): Promise<boolean> {
+  const n = await trx("admin_recovery_kits").where({ user_id: userId }).del();
+  if (n === 0) return false;
+  await audit(trx, {
+    actorId: ctx.actorId ?? null,
+    action: "auth.recovery_kit.revoked",
+    target: `user:${userId}`,
+    detail: { reason: ctx.reason },
+    correlationId: ctx.correlationId,
+  });
+  return true;
 }
 
 /** Estado del kit de la cuenta (sin el hash). */

@@ -38,6 +38,20 @@ export interface RecoveryKitDeps {
   redeemGlobalLimiter: RateLimiterLike;
   /** Regenerar: fallos de reautenticación por usuario (por defecto 5 ⇒ 15 min de bloqueo). */
   regenerateGuard: LoginGuardLike;
+  /**
+   * REV352-04 · Canje: fallos del SEGUNDO FACTOR por cuenta (por defecto 5 ⇒ 15 min de bloqueo, como el
+   * cambio de contraseña). Sólo lo alcanza quien ya presentó un kit válido: no es un oráculo de cuentas.
+   */
+  secondFactorGuard: LoginGuardLike;
+}
+
+/**
+ * REV352-03 · ¿La cuenta está activa? `users.status` llega con #347 (migración 025: `active` | `blocked`).
+ * Sin la columna (main antes de #347) toda cuenta está activa. Cualquier otro valor ⇒ NO activa
+ * (fallo cerrado).
+ */
+export function accountIsActive(user: Record<string, unknown>): boolean {
+  return user.status === undefined || user.status === null || user.status === "active";
 }
 
 /** Hash señuelo: un intento sobre una cuenta que no existe paga el mismo Argon2id. */
@@ -122,8 +136,10 @@ export function recoveryKitRoutes(deps: RecoveryKitDeps): Router {
       const row = user ? await db("admin_recovery_kits").where({ user_id: user.id }).first() : undefined;
       const isAdmin = row ? !!(await db("user_roles").where({ user_id: user.id, role: "admin" }).first()) : false;
       // Mismo coste en todas las ramas: Argon2id contra el hash real o contra el señuelo.
+      // REV352-03 · una cuenta bloqueada no canjea el kit: misma 401 genérica y mismo coste (Argon2id).
+      const active = user ? accountIsActive(user) : false;
       const ok =
-        kit !== null && row && isAdmin
+        kit !== null && row && isAdmin && active
           ? await recoveryKitMatches(row.kit_hash, kit)
           : (await verifyPassword(await decoyHashPromise, kit ?? "x"), false);
 
@@ -142,17 +158,27 @@ export function recoveryKitRoutes(deps: RecoveryKitDeps): Router {
       }
       // NO se resetea la 2FA: si la cuenta la tiene, el kit solo no basta (dos posesiones).
       if (user.totp_secret) {
+        const guardKey = `recovery-kit-2fa|${user.id}`;
+        if (await deps.secondFactorGuard.isBlocked(guardKey)) {
+          await reject("second_factor_blocked");
+          throw tooMany("Demasiados códigos erróneos para esta cuenta: bloqueo temporal");
+        }
+        // PUNTO DE INTEGRACIÓN con #351 (REV352-02): sustituir estas dos llamadas por su `verifySecondFactor`
+        // (anti-replay del TOTP y consumo atómico del código de recuperación), con `replay` ⇒ 401 propio, y
+        // quitar el `export` de `consumeRecoveryCode` si #351 lo deja privado.
         const second =
           (typeof totp === "string" && (await verifyTotp(totp, String(user.totp_secret)))) ||
           (typeof totp === "string" && (await consumeRecoveryCode(db, user, totp)));
         if (!second) {
-          await reject("second_factor");
+          const blocked = await deps.secondFactorGuard.recordFailure(guardKey);
+          await reject(blocked ? "second_factor_blocked" : "second_factor");
           throw new ApiError(
             401,
             "totp_required",
             "La cuenta tiene verificación en dos pasos: añade un código TOTP o un código de recuperación",
           );
         }
+        await deps.secondFactorGuard.recordSuccess(guardKey);
       }
 
       const newHash = await hashPassword(newPassword);

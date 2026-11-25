@@ -121,8 +121,9 @@ Garantías (tests en `apps/api/src/setup-web.test.ts`; mutantes en `scripts/v1-w
 
 Tras el alta el fichero `setup_token.txt` ya no tiene efecto. **No lo borres**: Compose exige que el
 fichero del secreto exista para arrancar. Vaciarlo (`: > infrastructure/secrets/setup_token.txt`)
-cierra el asistente aunque no se haya usado (y `init-secrets.sh` lo volvería a rellenar sin reabrir
-nada).
+cierra el asistente aunque no se haya usado. Ojo: `init-secrets.sh` vuelve a rellenar un fichero
+vacío. Con la instalación **ya completada** eso no reabre nada; **antes** de crear el primer
+administrador, el token nuevo vuelve a abrir el asistente (con otra huella).
 
 Comprobación desde la web: entra con la cuenta; la barra muestra los roles de la sesión
 (`user, developer, admin`) y aparece **Administración**. Los roles se leen de la base de datos en cada

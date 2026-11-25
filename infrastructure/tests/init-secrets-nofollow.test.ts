@@ -131,6 +131,32 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     expect(readdirSync(secrets).filter((n) => n.includes(".tmp") || n.startsWith(".init-secrets."))).toEqual([]);
   });
 
+  it("[INFRA-generador-longitud] con una fuente que da sólo 10 alfanuméricos por lectura, cada secreto generado sigue teniendo 40", () => {
+    // Fuente DETERMINISTA: 256 bytes con 10 alfanuméricos y el resto `+`/`/` (lo que el base64 anterior
+    // tiraba). Un generador de una sola pasada daría 10 caracteres; el bueno repite hasta completar.
+    const src = join(base, "fuente-pobre");
+    writeFileSync(src, Buffer.from("abcdefghij" + "+/".repeat(123), "latin1"));
+    const r = run({ S9_INIT_SECRETS_RANDOM_SOURCE: src });
+    expect(r.status, r.stderr).toBe(0);
+    for (const f of [
+      "setup_token.txt",
+      "jwt_secret.txt",
+      "postgres_password.txt",
+      "replay_ingest_secret.txt",
+      "streamer_control_secret.txt",
+    ]) {
+      expect(readFileSync(join(secrets, f), "utf8"), f).toBe("abcdefghij".repeat(4));
+    }
+  });
+
+  it("[INFRA-generador-fuente-vacia] una fuente sin ningún alfanumérico falla cerrado (rc≠0), sin dejar un secreto corto", () => {
+    const src = join(base, "fuente-inutil");
+    writeFileSync(src, Buffer.from("+/".repeat(128), "latin1"));
+    const r = run({ S9_INIT_SECRETS_RANDOM_SOURCE: src });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("rand_alnum");
+  });
+
   it("[INFRA-setup-token] genera setup_token.txt: 40 caracteres, 0400, del uid del runtime y estable entre ejecuciones", () => {
     expect(run().status).toBe(0);
     const p = join(secrets, "setup_token.txt");

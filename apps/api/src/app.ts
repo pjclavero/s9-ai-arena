@@ -140,6 +140,7 @@ export interface AppConfig {
     redeemIpLimiter?: RateLimiterLike;
     redeemGlobalLimiter?: RateLimiterLike;
     regenerateGuard?: LoginGuardLike;
+    secondFactorGuard?: LoginGuardLike;
   };
 }
 
@@ -227,6 +228,7 @@ export function createApp(cfg: AppConfig): express.Express {
         cfg.recoveryKit?.redeemGlobalLimiter ??
         new SharedRateLimiter(cfg.db, "recovery_kit.redeem.all", { max: 60, windowMs: 60 * 60_000 }),
       regenerateGuard: cfg.recoveryKit?.regenerateGuard ?? new SharedFailedLoginGuard(cfg.db, 5),
+      secondFactorGuard: cfg.recoveryKit?.secondFactorGuard ?? new SharedFailedLoginGuard(cfg.db, 5),
     }),
   );
   app.use(userRoutes(cfg.db));

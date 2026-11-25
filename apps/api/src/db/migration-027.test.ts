@@ -66,6 +66,18 @@ describe("migración 027_web_setup_recovery_kit", () => {
     expect(st.via).toBe("migration");
   });
 
+  it("[M027-no-delete-reabre] no se reabre con DELETE, TRUNCATE ni INSERT de una fila abierta habiendo admin", async () => {
+    await expect(h.db("install_state").del()).rejects.toThrow(/no se borra/);
+    await expect(h.db.raw("TRUNCATE install_state")).rejects.toThrow(/no se borra/);
+    expect(await h.db("install_state").where({ id: true }).first()).toBeTruthy();
+    // Aunque alguien vaciara la tabla saltándose los triggers, una fila ABIERTA no entra con un admin.
+    await h.db.raw("ALTER TABLE install_state DISABLE TRIGGER install_state_no_delete");
+    await h.db("install_state").del();
+    await h.db.raw("ALTER TABLE install_state ENABLE TRIGGER install_state_no_delete");
+    await expect(h.db("install_state").insert({ id: true })).rejects.toThrow(/no se reabre/);
+    await h.db("install_state").insert({ id: true, setup_completed_at: h.db.fn.now(), via: "cli" });
+  });
+
   it("singleton: no admite una segunda fila ni completar sin vía", async () => {
     await expect(h.db("install_state").insert({ id: false })).rejects.toThrow();
     await rollbackNamed(h.db, NAME);
@@ -101,7 +113,9 @@ describe("migración 027_web_setup_recovery_kit", () => {
     expect(t).not.toContain("install_state");
     expect(t).not.toContain("admin_recovery_kits");
     expect(t).toContain("users");
-    const fn = await h.db.raw(`SELECT 1 FROM pg_proc WHERE proname = 'install_state_guard'`);
+    const fn = await h.db.raw(
+      `SELECT 1 FROM pg_proc WHERE proname IN ('install_state_guard', 'install_state_no_reopen')`,
+    );
     expect(fn.rows).toHaveLength(0);
     await migrateNamed(h.db, NAME);
     expect(await tables()).toEqual(expect.arrayContaining(["install_state", "admin_recovery_kits"]));

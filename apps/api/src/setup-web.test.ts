@@ -6,8 +6,9 @@
  *
  * Nota: los usuarios NO se borran entre casos (audit_log es de sólo inserción y su FK `actor_id` es
  * ON DELETE SET NULL, que el trigger rechaza). Cada caso usa emails propios y «reabre» la instalación
- * quitando el rol admin y recreando la fila de `install_state` (el DELETE no lo impide el trigger, y
- * sin fila el asistente está cerrado).
+ * quitando el rol admin y recreando la fila de `install_state`. Como la 027 prohíbe borrarla (REV352-05),
+ * el ARNÉS desactiva los triggers de usuario de esa tabla sólo durante la recreación (superusuario de la
+ * BD de test; la aplicación no tiene esa vía).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
@@ -31,10 +32,21 @@ let gate: (() => Promise<void>) | undefined;
 let seq = 0;
 const email = (tag: string) => `setup-${tag}-${++seq}@ejemplo.test`;
 
+async function withoutInstallTriggers(fn: () => Promise<unknown>): Promise<void> {
+  await h.db.raw("ALTER TABLE install_state DISABLE TRIGGER USER");
+  try {
+    await fn();
+  } finally {
+    await h.db.raw("ALTER TABLE install_state ENABLE TRIGGER USER");
+  }
+}
+
 async function reopen(): Promise<void> {
   await h.db("user_roles").where({ role: "admin" }).del();
-  await h.db("install_state").del();
-  await h.db("install_state").insert({ id: true });
+  await withoutInstallTriggers(async () => {
+    await h.db("install_state").del();
+    await h.db("install_state").insert({ id: true });
+  });
   currentToken = TOKEN;
   gate = undefined;
 }
@@ -89,7 +101,7 @@ describe("V1 ADM-SETUP · asistente de primer arranque", () => {
     expect(await adminCount()).toBe(0);
 
     currentToken = TOKEN;
-    await h.db("install_state").del(); // sin fila ⇒ cerrado (fallo cerrado)
+    await withoutInstallTriggers(() => h.db("install_state").del()); // sin fila ⇒ cerrado (fallo cerrado)
     expect((await request(app).get("/setup/status")).body).toEqual({ open: false });
     expect((await post(body("sin-fila"))).status).toBe(410);
     expect(await adminCount()).toBe(0);
