@@ -8,7 +8,6 @@
  * sale a la red.
  */
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
 import {
   mkdtempSync,
   writeFileSync,
@@ -33,6 +32,7 @@ import { StreamSupervisor, type SpawnedProcess } from "./supervisor.js";
 import { createLogger, DEFAULT_CONFIG } from "./config.js";
 import { applyRetention } from "./recordings.js";
 import { sealSecret } from "../../../packages/stream-secrets/index.js";
+import { startStreamer } from "../tests/support/start-streamer.js";
 import { EventEmitter } from "node:events";
 
 const servers: Server[] = [];
@@ -382,32 +382,16 @@ describe("EQ6b · API interna de control del streamer", () => {
     const secretFile = join(dir, "streamer_control_secret.txt");
     writeFileSync(secretFile, randomBytes(24).toString("hex"), { mode: 0o600 });
     chmodSync(secretFile, 0o000); // EACCES: lo que pasa con un owner equivocado (init-secrets.sh, chown || true)
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    const child = spawn(process.execPath, ["--import", "tsx", "apps/streamer/src/main.ts"], {
-      env: {
-        PATH: process.env.PATH ?? "",
-        STREAMER_CONTROL_PORT: String(port),
-        STREAMER_CONTROL_SECRET_FILE: secretFile,
-        FFMPEG_BIN: "/nonexistent-ffmpeg",
-        CHROMIUM_BIN: "/nonexistent-chromium",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // Puerto del SO + espera al «escuchando» de ESTE hijo (antes: puerto aleatorio sin reservar,
+    // flaky por EADDRINUSE; ver tests/support/start-streamer.ts).
+    const p = await startStreamer({ STREAMER_CONTROL_SECRET_FILE: secretFile });
     try {
-      let status = 0;
-      for (let i = 0; i < 80 && !status; i++) {
-        await new Promise((r) => setTimeout(r, 150));
-        try {
-          status = (await fetch(`http://127.0.0.1:${port}/status`)).status;
-        } catch {
-          /* aún arrancando */
-        }
-      }
+      const status = (await fetch(`${p.base}/status`)).status;
       expect(status).not.toBe(0); // el proceso arrancó y respondió (control positivo de la prueba)
       // Sin cabecera, un contenedor vecino de la red `platform` no debería leer ni mandar nada.
       expect(status).toBe(401);
     } finally {
-      child.kill("SIGKILL");
+      await p.stop();
     }
   }, 20_000);
 });
