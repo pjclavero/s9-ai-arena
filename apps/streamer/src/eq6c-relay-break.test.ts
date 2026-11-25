@@ -10,7 +10,6 @@
  * Servidores RTMP falsos en 127.0.0.1 con puerto efímero; nada sale a la red.
  */
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
@@ -26,6 +25,7 @@ import { createControlServer } from "./control.js";
 import { StreamSupervisor, type SpawnedProcess } from "./supervisor.js";
 import { createLogger, DEFAULT_CONFIG, SecretRegistry } from "./config.js";
 import { canonicalIngestUrl, openSecret, sealSecret } from "../../../packages/stream-secrets/index.js";
+import { startStreamer } from "../tests/support/start-streamer.js";
 
 const { publicKey: PUB, privateKey: PRIV } = generateKeyPairSync("rsa", {
   modulusLength: 3072,
@@ -495,31 +495,10 @@ describe("EQ6c · P2-2 · sobre v2 atado a su destino", () => {
 
 // ── P2-3 ────────────────────────────────────────────────────────────────────
 describe("EQ6c · P2-3 · control en cerrado con el proceso REAL", () => {
-  async function runMain(secretPath: string) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    const child = spawn(process.execPath, ["--import", "tsx", "apps/streamer/src/main.ts"], {
-      env: {
-        PATH: process.env.PATH ?? "",
-        STREAMER_CONTROL_PORT: String(port),
-        STREAMER_CONTROL_SECRET_FILE: secretPath,
-        FFMPEG_BIN: "/nonexistent-ffmpeg",
-        CHROMIUM_BIN: "/nonexistent-chromium",
-      },
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    const base = `http://127.0.0.1:${port}`;
-    let up = false;
-    for (let i = 0; i < 100 && !up; i++) {
-      await sleep(150);
-      try {
-        await fetch(`${base}/healthz`);
-        up = true;
-      } catch {
-        /* arrancando */
-      }
-    }
-    return { child, base, up };
-  }
+  // Antes: puerto 20000+random sin reservar y «up» = cualquier respuesta en 15 s ⇒ flaky en CI
+  // (EADDRINUSE del hijo). Ahora: puerto del SO, espera al «escuchando» de ESTE hijo y relanzamiento
+  // sólo ante EADDRINUSE (tests/support/start-streamer.ts).
+  const runMain = (secretPath: string) => startStreamer({ STREAMER_CONTROL_SECRET_FILE: secretPath });
 
   it("CIERRE P2-3 · secreto vacío, sólo espacios, ilegible (0000), inexistente o directorio ⇒ 401 en todo (con y sin cabecera) y /healthz 503", async () => {
     const dir = mkdtempSync(join(tmpdir(), "eq6c-"));
@@ -536,9 +515,11 @@ describe("EQ6c · P2-3 · control en cerrado con el proceso REAL", () => {
     mkdirSync(cases.directorio);
     const results: Record<string, unknown> = {};
     for (const [name, path] of Object.entries(cases)) {
-      const p = await runMain(path);
+      // Si ESTE hijo no llega a escuchar, rechaza con su salida (control positivo: antes `expect(p.up)`).
+      const p = await runMain(path).catch((e: Error) => {
+        throw new Error(`${name}: el streamer real no arrancó: ${e.message}`);
+      });
       try {
-        expect(p.up, name).toBe(true);
         const h = (v: string) => ({ "x-streamer-auth": v });
         results[name] = {
           healthz: (await fetch(`${p.base}/healthz`)).status,
@@ -549,7 +530,7 @@ describe("EQ6c · P2-3 · control en cerrado con el proceso REAL", () => {
           recordings: (await fetch(`${p.base}/recordings`, { headers: h("x") })).status,
         };
       } finally {
-        p.child.kill("SIGKILL");
+        await p.stop();
       }
     }
     for (const [name, r] of Object.entries(results)) {
@@ -575,7 +556,7 @@ describe("EQ6c · P2-3 · control en cerrado con el proceso REAL", () => {
       expect((await fetch(`${p.base}/status`)).status).toBe(401);
       expect((await fetch(`${p.base}/status`, { headers: { "x-streamer-auth": secret } })).status).toBe(200);
     } finally {
-      p.child.kill("SIGKILL");
+      await p.stop();
     }
   }, 30_000);
 });
