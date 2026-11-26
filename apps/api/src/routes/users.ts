@@ -4,7 +4,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
 import { badRequest, notFound } from "../errors.js";
-import { publicProfile, userToJson } from "../serialize.js";
+import { publicProfile, recoveryCodesCount, userToJson } from "../serialize.js";
 import { ROLES, type RoleName } from "../db/migrations.js";
 
 export function userRoutes(db: Db): Router {
@@ -12,7 +12,11 @@ export function userRoutes(db: Db): Router {
 
   defineOperation(router, "getMe", async (req, res) => {
     const user = await db("users").where({ id: req.auth!.userId }).first();
-    res.json(userToJson(user, req.auth!.roles, { includePrivate: true }));
+    const me = userToJson(user, req.auth!.roles, { includePrivate: true });
+    // ACC-2FA · cuántos códigos de recuperación le quedan (nunca cuáles): la web avisa cuando quedan pocos.
+    if (user.totp_secret) me.recoveryCodesRemaining = recoveryCodesCount(user.recovery_codes);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(me);
   });
 
   defineOperation(router, "updateMe", async (req, res) => {

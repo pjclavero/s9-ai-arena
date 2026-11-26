@@ -19,6 +19,20 @@ export function userToJson(
   return base;
 }
 
+/** ACC-2FA · número de códigos de recuperación vigentes (la columna jsonb llega como array). */
+export function recoveryCodesCount(raw: unknown): number {
+  if (Array.isArray(raw)) return raw.length;
+  if (typeof raw === "string") {
+    try {
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? v.length : 0;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
+}
+
 export function publicProfile(user: Record<string, unknown>): Record<string, unknown> {
   return {
     id: user.id,

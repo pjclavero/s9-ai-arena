@@ -10,7 +10,7 @@ Puedes registrarte libremente, iniciar sesión, mantener la sesión al recargar 
 
 ## Iniciar sesión
 
-Escribe tu email y tu contraseña y pulsa **«Entrar»**. Si tu cuenta tiene activada la verificación en dos pasos, aparece el campo **«Código TOTP»**: escribe el código de seis cifras de tu aplicación de autenticación (o un código de recuperación) y vuelve a pulsar «Entrar».
+Escribe tu email y tu contraseña y pulsa **«Entrar»**. Si tu cuenta tiene activada la verificación en dos pasos, aparece el campo **«Código TOTP»**: escribe el código de seis cifras de tu aplicación de autenticación (o un código de recuperación, ver [Si pierdes el móvil](#si-pierdes-el-móvil)) y vuelve a pulsar «Entrar».
 
 ## Mantener y cerrar la sesión
 
@@ -28,6 +28,40 @@ Con la sesión iniciada, entra en **«Mi cuenta»** (barra de navegación, junto
 - Se cierran **todas tus otras sesiones** (otros navegadores o dispositivos); la actual sigue abierta.
 - Tras **5 intentos fallidos** seguidos con la contraseña actual, el cambio queda bloqueado unos 15 minutos («Demasiados intentos fallidos»).
 - No desactiva la verificación en dos pasos: el siguiente inicio de sesión sigue pidiendo el código.
+
+## Verificación en dos pasos
+
+Con la verificación en dos pasos (2FA), además de la contraseña se pide un código de 6 cifras que genera una aplicación de autenticación del móvil (Google Authenticator, Aegis, FreeOTP, 1Password…). Se gestiona en **«Mi cuenta» → «Verificación en dos pasos»**, que muestra si está activada y cuántos **códigos de recuperación** te quedan. Con menos de 3 verás un aviso para que generes otros.
+
+### Activarla
+
+1. Escribe tu **contraseña** y pulsa **«Activar la verificación en dos pasos»** (se pide para que nadie con tu sesión abierta pueda activarla por ti).
+2. En la app del móvil añade una cuenta escaneando el **código QR**. Si no puedes escanearlo, escribe a mano la clave que aparece debajo (tipo «basada en el tiempo»).
+3. Escribe el código de 6 cifras que muestra la app y pulsa **«Confirmar»**.
+   - Hasta que confirmes, **no se activa nada**: si cancelas o cierras la página, tu cuenta sigue como estaba.
+   - El alta caduca a los 10 minutos («El alta ha caducado»): vuelve a pulsar «Activar».
+   - Si el código no vale, comprueba que la hora del móvil está en automático. Tras **5 códigos fallidos** queda bloqueado unos 15 minutos.
+4. Se muestran tus **8 códigos de recuperación**. **Es la única vez que se ven**: guárdalos en un gestor de contraseñas o en papel, marca **«Los he guardado»** y pulsa **«Hecho»**.
+
+Al activarla se cierran tus otras sesiones abiertas; la actual sigue.
+
+### Regenerar los códigos de recuperación
+
+Escribe tu **contraseña** y un **código** (de la app o uno de recuperación) y pulsa **«Regenerar los códigos»**. Se crean 8 códigos nuevos, que se muestran una sola vez, y **todos los anteriores dejan de valer**, también los que no hayas usado. Queda registrado en la auditoría (sin los códigos).
+
+### Desactivarla
+
+Escribe tu contraseña y un código y pulsa **«Desactivar la verificación en dos pasos»**. Tu cuenta volverá a pedir sólo la contraseña y se cerrarán tus otras sesiones.
+
+Tras **5 intentos fallidos** seguidos al regenerar o desactivar, la operación queda bloqueada unos 15 minutos.
+
+### Si pierdes el móvil
+
+1. En **«Iniciar sesión»** escribe tu email y tu contraseña y pulsa «Entrar». Aparece el campo «Código TOTP».
+2. Escribe ahí **uno de tus códigos de recuperación** (12 caracteres; da igual si lo escribes en mayúsculas o con espacios o guiones) y pulsa «Entrar».
+3. Ya dentro, ve a «Mi cuenta»: regenera los códigos, o desactiva la verificación y vuelve a activarla con el móvil nuevo.
+
+Cada código (de recuperación o de la app) **sirve una sola vez**: si acabas de usar uno, espera al siguiente que muestre la app. Sin móvil y sin códigos no se puede entrar desde la web: pide ayuda a un administrador.
 
 ## Roles
 
@@ -53,6 +87,7 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 | «email inválido» / «displayName obligatorio (máx. 48)» | Datos del formulario no válidos. |
 | «Credenciales inválidas» | Email o contraseña incorrectos. |
 | «Se requiere un código TOTP válido (2FA activo)» | Falta el código de dos pasos o es incorrecto. |
+| «Ese código ya se ha usado: espera al siguiente…» | Acabas de usar ese código (o uno posterior). Espera a que la app muestre otro; no cuenta como intento fallido. |
 | «Demasiados intentos fallidos: bloqueo temporal» | Muchos fallos seguidos; espera unos minutos. |
 | «Reautenticación requerida: contraseña inválida» | Al cambiar la contraseña, la actual no es correcta. |
 | «La nueva contraseña debe ser distinta de la actual» | La contraseña nueva coincide con la actual. |
@@ -60,7 +95,7 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 ## Lo que todavía no puedes hacer desde la web
 
 - **Recuperar la contraseña** si la olvidas: la plataforma no envía correos y todavía no existe un restablecimiento iniciado por un administrador (propuesto, pendiente de decisión). Hasta entonces no hay un procedimiento soportado para recuperar una cuenta cuya contraseña se ha olvidado: guarda la tuya y cámbiala desde «Mi cuenta» mientras tengas la sesión abierta.
-- **Activar la verificación en dos pasos**, ver tus sesiones abiertas o cambiar tu nombre visible: existen en la plataforma, pero no tienen pantalla.
+- Ver tus sesiones abiertas o cambiar tu nombre visible: existen en la plataforma, pero no tienen pantalla.
 - El registro está abierto a cualquiera.
 
 Siguiente: [Primeros pasos](getting-started.md) · [Bots](bots.md).

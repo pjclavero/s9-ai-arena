@@ -11,8 +11,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import * as otplib from "otplib";
 import type { Express } from "express";
+import { enable2faFor, freshTotp } from "./testing/totp-codes.js";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { seedDev } from "./db/seeds/dev.js";
 import { createApp } from "./app.js";
@@ -39,12 +39,6 @@ afterAll(async () => {
 
 const OLD = "password-vieja-larga-1";
 const NEW = "password-nueva-larga-2";
-
-async function totpFromUri(otpauthUrl: string): Promise<string> {
-  const secret = new URL(otpauthUrl).searchParams.get("secret")!;
-  const r = (await otplib.generate({ secret })) as unknown;
-  return typeof r === "string" ? r : String((r as { otp: string }).otp);
-}
 
 async function newUser(tag: string) {
   const email = `v1b-pw-${tag}@test.local`;
@@ -158,22 +152,22 @@ describe("V1-B · cambio de contraseña autenticado", () => {
 
   it("con 2FA exige también el TOTP y NO desactiva el 2FA", async () => {
     const u = await newUser("2fa");
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${u.a.accessToken}`);
+    const enable = await enable2faFor(app, u.a.accessToken, OLD);
     expect(enable.status).toBe(200);
     const url = enable.body.otpauthUrl as string;
-    const login = await u.login(OLD, await totpFromUri(url));
+    const login = await u.login(OLD, await freshTotp(url));
     expect(login.status).toBe(200);
     const access = login.body.accessToken as string;
 
     const sinTotp = await change(access, { currentPassword: OLD, newPassword: NEW });
     expect(sinTotp.status).toBe(401);
-    expect((await u.login(NEW, await totpFromUri(url))).status).toBe(401);
+    expect((await u.login(NEW, await freshTotp(url))).status).toBe(401);
 
-    const ok = await change(access, { currentPassword: OLD, newPassword: NEW, totp: await totpFromUri(url) });
+    const ok = await change(access, { currentPassword: OLD, newPassword: NEW, totp: await freshTotp(url) });
     expect(ok.status).toBe(204);
     // el 2FA sigue activo: la contraseña nueva sola no basta
     expect((await u.login(NEW)).status).toBe(401);
-    expect((await u.login(NEW, await totpFromUri(url))).status).toBe(200);
+    expect((await u.login(NEW, await freshTotp(url))).status).toBe(200);
   });
 });
 
@@ -236,11 +230,11 @@ describe("V1-B · límite de la ruta y aislamiento por usuario", () => {
 describe("V1-B · con 2FA, una petición rechazada por política NO gasta el código de recuperación", () => {
   it("nueva == actual: 400 y el código de recuperación sigue valiendo para el cambio válido", async () => {
     const u = await newUser("2fa-codigo");
-    const enable = await request(app).post("/auth/2fa").set("Authorization", `Bearer ${u.a.accessToken}`);
+    const enable = await enable2faFor(app, u.a.accessToken, OLD);
     expect(enable.status).toBe(200);
     const url = enable.body.otpauthUrl as string;
     const code = (enable.body.recoveryCodes as string[])[0];
-    const login = await u.login(OLD, await totpFromUri(url));
+    const login = await u.login(OLD, await freshTotp(url));
     const access = login.body.accessToken as string;
 
     const rechazada = await change(access, { currentPassword: OLD, newPassword: OLD, totp: code });

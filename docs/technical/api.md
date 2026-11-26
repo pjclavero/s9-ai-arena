@@ -59,6 +59,14 @@ Autenticación:
   - vida deslizante de 14 días y absoluta de 30 días.
 - **`POST /auth/logout`** (extensión): revoca la sesión de la cookie.
 - **Otras**: `GET/DELETE /auth/sessions[/{id}]`, `POST/DELETE /auth/2fa`, `POST /auth/recover`, `POST /auth/reset`.
+- **Verificación en dos pasos** (ACC-2FA, contrato 0.28.0):
+  - `POST /auth/2fa/setup` `{password}` → `{otpauthUrl, secret, enrollmentToken, expiresIn}`; no activa nada; `401` sin contraseña válida; `409` si ya está activa; `429` tras 5 fallos;
+  - `POST /auth/2fa/confirm` `{enrollmentToken, totp}` → `{recoveryCodes}` (una vez); `400` token caducado, manipulado o de otra sesión; `401` código inválido; `409` ya activa; `429` tras 5 fallos;
+  - `POST /auth/2fa/recovery-codes` `{password, totp}` → `{recoveryCodes}`; invalida los anteriores; auditado como `auth.2fa.recovery_codes_regenerated` con `{count}`;
+  - `DELETE /auth/2fa` comparte el límite de 5 fallos (`429`);
+  - `POST /auth/2fa` (alta directa) está **retirada**: responde `410 enable2fa_removed` y no cambia la cuenta;
+  - `GET /users/me` añade `recoveryCodesRemaining` con la 2FA activa;
+  - todo código TOTP o de recuperación vale una sola vez, también en el login (**cambio de contrato** V1); un TOTP de un paso igual o anterior al último usado da `401 totp_code_reused`, que no suma a los bloqueos.
   - `recover` y `reset` son extensiones y no tienen transporte de correo.
 - **Cambio de contraseña**: no existe en `main`; lo añade el PR #315 (abierto).
 
@@ -107,7 +115,7 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | Método y ruta | Rol |
 |---|---|
 | `POST /auth/register`, `/auth/login`, `/auth/refresh` | anón. |
-| `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}`, `POST/DELETE /auth/2fa` | user |
+| `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}`, `POST/DELETE /auth/2fa`, `POST /auth/2fa/setup`, `POST /auth/2fa/confirm`, `POST /auth/2fa/recovery-codes` | user |
 | `GET /users/me`, `PATCH /users/me` (sólo `displayName`) | user |
 | `GET /users/{userId}` | anón. |
 | `PUT /users/{userId}/roles` | admin |
