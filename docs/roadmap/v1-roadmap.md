@@ -25,6 +25,97 @@ Base: `main` en `80f4952` (2026-11-20). Referencias de PR e issues: `https://git
 - [Streaming V2 y Broadcast Manager](#streaming-v2-y-broadcast-manager)
 - [Verificación](#verificación)
 
+## Contrato operativo de cierre V1 — actualización 2026-11-22
+
+> **Fuente y vigencia:** decisiones del operador y reportes de agentes del 22-11-2026; el estado por PR se debe volver a contrastar con GitHub antes de actuar. Esta sección es el **tablero de trabajo del cierre**, no una afirmación de que sus tareas estén integradas, desplegadas o verificadas. Las tablas históricas inferiores describen principalmente la revisión del 20-11 y deben reconciliarse al terminar los PR.
+
+### Decisión de alcance: cerrar primero lo existente (22-11-2026)
+
+**Mandato del operador: congelación funcional para V1.** Antes de ampliar nada, terminar lo que ya existe y conseguir que funcione de manera fiable con el hardware disponible. **Después de publicar y verificar V1**, retomar mejoras a medio implementar y nuevas funcionalidades; a continuación acometer la optimización general de consumos con mediciones. No añadir nuevos frentes que retrasen la salida.
+
+**Límites físicos no ampliables en este ciclo:** hipervisor Proxmox con 28 CPU lógicas/núcleos reportados y 32 GB RAM; VM108 con 6 vCPU tipo `host` y **6,84 GB RAM**. No planear compras ni ampliaciones. El sistema debe operar dentro de esos límites, incluyendo emisión YouTube 1080p30 y batallas simultáneas dentro de la concurrencia realmente validada.
+
+**Orden de ejecución obligatorio:**
+
+1. **Cerrar V1 con el producto actual:** corregir defectos que impiden funcionar (worker/CTF, replays que agotan RAM, datos privados, backup/restore, flujo de cuentas, estabilidad del streaming), terminar los PR ya abiertos que formen parte del alcance de salida y verificar que la administración ordinaria necesaria es operable desde la web. Los mínimos técnicos indispensables para estabilidad y espacio (almacenamiento incremental, cuotas, limpieza, exportación/borrado comprometidos) **sí forman parte de cerrar lo existente**, no son una ampliación del producto.
+2. **Validar y publicar V1:** pruebas reales y completas del alcance anunciado, reinicios, streaming simultáneo 1080p30, recuperación, limpieza de residuos de pruebas, documentación; despliegue con autorización explícita. Modos y formatos no validados se **ocultan y rechazan en web/API** y se documentan como excluidos, en vez de prometer que funcionan.
+3. **Después de V1:** finalizar características parcialmente desarrolladas o aplazadas (incluidos extras visuales, formatos nuevos, Broadcast Manager, matchmaking, SDK adicionales, nuevas piezas y sensores), sólo tras priorización.
+4. **Optimización general posterior:** perfilado global, reducción sistemática de CPU/RAM/disco y mejora de rendimiento. **Excepción:** fugas, OOM, residuos, falta de limpieza, cuotas, límites de recursos y consumos que bloqueen el uso fiable **deben corregirse ahora** como estabilidad de V1.
+
+**Disciplina de recursos para pruebas y runtime:** una prueba pesada cada vez cuando corresponda, límites de memoria/CPU/duración, procesos y contenedores liberados siempre al salir (también por error), limpiar temporales y navegadores, medir consumo antes/durante/después y no confundir swap ocupada con presión activa. No bloquear globalmente por una cifra aislada sin diagnóstico. No borrar datos persistentes ni operar sobre producción sin permiso.
+
+**Seguimiento:** todo requisito nuevo se clasifica como (a) imprescindible para que funcione V1 o (b) mejora posterior; el coordinador no abre PR de nuevas prestaciones V1 sin demostrar que bloquean el contrato de salida. La lista de 12 áreas más abajo es **inventario de aceptación**, no una orden de construir funciones adicionales que no sean necesarias para operar la V1 existente.
+
+### Criterio de lanzamiento
+
+- **V1 0.5.0 no se declara cerrada** hasta que los bloques obligatorios de abajo estén probados de punta a punta, documentados, integrados en `main`, desplegados en una ventana autorizada y verificados en VM108.
+- **Administración operativa desde la web:** después de la instalación inicial, un administrador debe gestionar el juego y sus servicios normales desde la web. No depender de SSH, Docker CLI ni SQL para operaciones corrientes. Proxmox y recuperación excepcional del SO quedan fuera del panel.
+- **Datos previos a V1 son de desarrollo:** no se exige compatibilidad con formatos antiguos de replay; sí se exige preservar configuración, credenciales, secretos y posibilidad de restaurar una copia válida antes de cualquier limpieza. Ningún borrado real está autorizado por esta entrada.
+- **Separar estados:** propuesta / en desarrollo / PR / integrado / probado / validado en laboratorio / desplegado / verificado. No llamar «hecho» a un PR que aún no se haya validado y desplegado.
+
+### Avances comunicados (pendientes de cierre funcional)
+
+| Área | Estado reportado el 22-11 | Evidencia / falta |
+|---|---|---|
+| VM108: 6 vCPU, CPU `host` con AVX2 y reinicio | **Verificado por agente** | 13/13 servicios healthy, API/web, BD y worker arrancan; código desplegado sigue en `8f380eb`; smoke funcional pospuesto por `prodguard=PRESSURE`. Informe local `~/s9-release-0.5/vm108-reinicio/INFORME-ANTES-DESPUES.md` |
+| CTF afectadas por OOM | **Contenidas, defecto P0 abierto** | Cuatro `failed/infrastructure`, cuatro jobs `needs_review`, cero batallas activas; mantener bloqueo de nuevas CTF hasta corregir y probar |
+| Integración previa | **Reportada en main** | #309, #314, #313, #316, #315, #311, #312, #317, #318, #320; HEAD reportado `7397964`. Confirmar HEAD y CI antes de seguir |
+| Streamer #327 | **PR en curso, no desplegado** | `cpus: 3.0`, prioridad baja; pendiente CI y medir YouTube real 1080p30 con batallas simultáneas |
+| #323 organizer docs | **CI pendiente de resolver** | Fallo intermitente informado en build-images del streamer; verificar CI antes de merge |
+
+### Obligatorio antes de declarar V1 cerrada
+
+| ID | Bloque | Criterios de aceptación | Estado de trabajo |
+|---|---|---|---|
+| V1-01 | **Worker y CTF P0** | Reintentos acotados, leases vencidas saneadas, no duplicar trabajos, limpieza de bot containers, límites de memoria/concurrencia; CTF 4v4 larga hasta límite técnico sin OOM ni bucles; ninguna victoria/Elo ficticios por fallo | **En desarrollo / no validado** |
+| V1-02 | **Replay incremental integral** | Captura a disco con búfer RAM acotado, compresión, integridad, manejo de interrupción y errores; API, estadísticas y visor sin cargar enteramente replays enormes; pruebas deterministas, exportables y reproducción real | **Diseño completado; implementación pendiente** |
+| V1-03 | **Cuotas y mantenimiento del disco** | Volumen configurable, cuotas, espacio de reserva, rotación de logs/temporales, retención y limpieza programada desde web, simulación antes de borrar, alertas y protección contra disco lleno a mitad de partida | **Pendiente** |
+| V1-04 | **Gestión web de replays** | Listar, visualizar tamaño/uso, reproducir, descargar/exportar portable, proteger y borrar con autorización, confirmación y auditoría; borrar replay no borra resultados competitivos por accidente | **Pendiente** |
+| V1-05 | **Administración completa desde web** | Usuarios, roles y recuperación; batallas y jobs bloqueados; concurrencia y límites; backups/verificación/restore; streaming y credenciales; almacenamiento, retención, limpieza, diagnósticos y alertas. API administrativa sin shell arbitrario; pruebas E2E de navegador | **Parcial; matriz funcional por verificar** |
+| V1-06 | **Streaming V1 y espectador** | Resolver imagen blanca YouTube (#256), emisión **real** a 1080p30 sin pérdida significativa de frames en carga compatible con VM108 de 6 vCPU; probar #327 con 3 CPU y bajo prioridad; control web, protección de credenciales, recuperación y señal de fallo; gate de acceso público sólo si habilitado | **Parcial; prueba real pendiente** |
+| V1-07 | **Juego y torneos incluidos en V1** | Recorrido jugador y admin, build sandbox, equipos 2v2/3v3/4v4, modos publicados, torneo round-robin/eliminación/suizo y Elo verificados; casos de bye 0 puntos, fallos y cancelación. Liga/doble eliminación: E2E si se ofrecen como V1, de lo contrario ocultar/excluir explícitamente. CTF/zona en torneos fuera de V1 y rechazados en API y web | **Parcial; B3, bye y validaciones pendientes** |
+| V1-08 | **Seguridad y cuentas** | Resolver filtraciones de privados (#322 error 409 y otras expuestas), permisos `organizer`, permisos de ejecución, recuperación de cuentas usable desde web (B5/#319), sesiones y 2FA según alcance explícito; revisar imágenes con HIGH/CRITICAL y privilegios/secrets/red de bots | **Parcial; P1 conocidos abiertos por verificar** |
+| V1-09 | **Backup, restauración y observabilidad** | Backup/restore verificables del nuevo replay, sin filtro erróneo para oficiales antiguos mientras existan; configurar y operar desde web, snapshot recuperable, alertas efectivas de backup, worker, disco, API y streamer; verificar reinicio limpio y drift/runtime | **Parcial; #321/#324 y alertas por verificar** |
+| V1-10 | **Instalación y recuperación** | Instalación desde cero, primer admin sin SQL (#319), credenciales, configuración inicial del servicio, persistencia tras reinicio, smoke, rollback, backup restaurable; no requiere consola en operación ordinaria | **Parcial** |
+| V1-11 | **Limpieza pre-release** | Inventario read-only de replays, batallas/torneos de prueba, backups antiguos, logs, temporales, caché/imágenes/volúmenes Docker; informe de tamaños/riesgos; ejecución sólo tras autorización; reset competitivo coherente y restauración mínima preservada | **Inventario y plan pendientes, borrado NO autorizado** |
+| V1-12 | **Documentación, CI y contrato de salida** | Unificar README, manual de jugador, administración, operaciones, seguridad, roadmap, estado y exclusiones; tests unitarios/integración/navegador y CI de `main` verdes; despliegue final con verificación real y matriz de evidencias | **Pendiente de cierre** |
+
+### Integración y dependencias de PR
+
+| Referencia | Trabajo | Pendiente conocido / condición |
+|---|---|---|
+| **P0 worker** | Reintentos, leases, memoria, contenedores | PR correctivo, revisión independiente y pruebas; no exponer CTF hasta validación |
+| **Bloqueo temporal CTF** | Impedir nuevas CTF de práctica en API y web | Mantener hasta que P0 y replay incremental estén verificados |
+| **#319 / B5** | Bootstrap admin, contraseñas y recuperación | Test de reset con contraseña corta, mutantes y recuperación usable |
+| **#321** | Backup/restauración de replays | Comprobar corrección del filtro de oficiales >180 días y adaptar al formato nuevo sin trabajo duplicado |
+| **#322 / B4** | Presupuesto y munición | Cerrar P1 del error 409 (no filtrar bot privado de terceros), revalidar mutantes |
+| **#323** | Documentación de organizer | Revalidar CI |
+| **#324** | Avisos del nightly | Completar evidencia de laboratorio |
+| **#327** | Streamer 3 CPU | CI y mediciones de 1080p30 real sin afectar a worker/API |
+| **#328** | Bye justo | Prettier, comprobar regresiones y CI; 0 puntos en suizo y sin Elo/victoria |
+| **B3** | Excluir modos no jugables de torneos V1 | Rechazo tanto API como web, sin anunciar CTF/zona en torneos |
+| **#326** | Sensores, bandera/portador y hardware | **Futuro, no bloquea V1** |
+
+### Orden de ejecución y puertas
+
+1. Recuperar margen del hipervisor; repetir `prodguard` y terminar smoke de VM108. Sin pruebas de carga bajo `PRESSURE`.
+2. Corregir P0 del worker y contener CTF en API y web.
+3. Implementar escritura y lectura incremental de replays; validar límites de memoria y disco, reintentos, recuperación y CTF 4v4.
+4. Añadir cuotas, programación de retención desde **Administración → Configuración**, exportación, borrado, backups y limpieza segura.
+5. Cerrar P1 de seguridad, cuentas, panel de administración y PR existentes; integrar secuencialmente con CI y revisión.
+6. Medir emisión real 1080p30 con partidas en paralelo; resolver el defecto de imagen y validar prioridad del streamer.
+7. Probar flujos completos desde navegador, simulacros backup/restore, apagado/reinicio y alertas.
+8. Inventariar/autorizar limpieza de datos de desarrollo y backups redundantes; reset previo a V1; documentar qué se conserva.
+9. Desplegar la nueva versión **sólo con autorización del operador**, verificar y publicar matriz de aceptación V1.
+
+### Después de V1 (no bloquea cierre)
+
+Streaming V2/Broadcast Manager, matchmaking/prepare-battle/auto-run, SDK .NET/Java, nuevas piezas/armas/sensores/chasis/energía, fases visuales R16.4–R16.8 y mejoras avanzadas de torneos no ofertadas en V1. Una función sin validación E2E no puede anunciarse como disponible.
+
+### Seguimiento
+
+Mantener esta sección actualizada por cada PR integrado y por cada prueba relevante, con fecha, commit, CI, evidencia, estado de despliegue y bloqueantes. Antes de publicar V1, reconciliar las secciones históricas de este archivo, `current-status.md`, `pending-features.md` y `known-issues.md`; no mantener dos «fuentes únicas» contradictorias.
+
 ## Cómo se clasifica
 
 | Cajón | Criterio |
