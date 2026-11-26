@@ -294,6 +294,25 @@ el job nightly no habilita `unshare -rm` (el job `unit` de `ci.yml` sí lo hace)
 `build-images` y en la nightly no se carga. El resto de la suite pasa. Seguimiento:
 [TD-019](../roadmap/technical-debt.md#td-019).
 
+### Aviso automático (V1-OPS, AUD2-01 / D-OP-13)
+
+El job `aviso` (`needs` de los dos anteriores, `if: always()`) hace que un nightly rojo no pase
+desapercibido, sin servicios nuevos: sólo `GITHUB_TOKEN` con `issues: write` (el resto del workflow
+queda en `contents: read`).
+
+- Si **algún** job termina en algo distinto de `success` (fallo, cancelado, tiempo agotado, saltado),
+  abre el issue «Nightly en rojo» (etiqueta `nightly-fallido`) o, si ya hay uno abierto, le añade un
+  comentario con el enlace a la ejecución, el commit y el resultado por job.
+- Cuando ambos jobs vuelven a `success`, comenta y **cierra** el issue.
+- Un error de la API al buscar el issue **no** se interpreta como «no hay issue»: el job `aviso`
+  queda rojo (no se crean duplicados ni se da por bueno un aviso que no se pudo comprobar).
+- Lógica en `.github/scripts/nightly-alert.sh`; tests en `infrastructure/tests/nightly-alert.test.ts`.
+- Prueba sin forzar un fallo real: `gh workflow run nightly.yml --ref <rama> -f prueba_aviso=fallo`
+  (y luego `=verde`). Las suites se saltan y se usa un issue aparte «[PRUEBA] Nightly en rojo»
+  (etiqueta `nightly-prueba`); no toca el aviso real. Con `prueba_aviso=ninguno` (o el cron) es la
+  ejecución normal.
+- Visible para quien tenga activadas las notificaciones de issues del repositorio.
+
 ## `e6-security.yml`
 
 | Job | Qué hace |

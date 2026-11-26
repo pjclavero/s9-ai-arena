@@ -7,9 +7,20 @@ on:
   schedule:
     - cron: "30 3 * * *" # 03:30 UTC diario
   workflow_dispatch:
+    inputs:
+      prueba_aviso:
+        description: "Sólo para probar el aviso (sin ejecutar las suites): ninguno (ejecución normal), fallo o verde. Usa un issue «[PRUEBA]» aparte."
+        type: choice
+        options: [ninguno, fallo, verde]
+        default: ninguno
+
+# Permisos mínimos por defecto: lectura. El único job con escritura es `aviso`, y sólo en issues.
+permissions:
+  contents: read
 
 jobs:
   determinism-1000:
+    if: ${{ github.event.inputs.prueba_aviso == '' || github.event.inputs.prueba_aviso == 'ninguno' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -25,6 +36,7 @@ jobs:
         run: npx vitest run apps/arena-engine/tests/determinism.test.ts
 
   slow-suites:
+    if: ${{ github.event.inputs.prueba_aviso == '' || github.event.inputs.prueba_aviso == 'ninguno' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -68,3 +80,38 @@ jobs:
           RUN_SLOW: "1"
           PYTHON_BIN: ${{ github.workspace }}/sdks/python/.venv/bin/python
         run: npm test
+
+  # AUD2-01 / D-OP-13 · un nightly rojo no puede pasar desapercibido. Si falla (o se cancela/agota
+  # el tiempo) algún job se abre —o se actualiza— UN issue «Nightly en rojo»; cuando vuelve a verde
+  # se comenta y se cierra. Sólo GITHUB_TOKEN con `issues: write`: ningún servicio ni secreto nuevo.
+  aviso:
+    needs: [determinism-1000, slow-suites]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Abrir, actualizar o cerrar el aviso
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRUEBA: ${{ github.event.inputs.prueba_aviso }}
+          R_DET: ${{ needs.determinism-1000.result }}
+          R_SLOW: ${{ needs.slow-suites.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          case "$PRUEBA" in
+            fallo) RESULT=failure; export TITLE="[PRUEBA] Nightly en rojo" LABEL="nightly-prueba" ;;
+            verde) RESULT=success; export TITLE="[PRUEBA] Nightly en rojo" LABEL="nightly-prueba" ;;
+            *)
+              # Verde sólo si ambos jobs terminaron en success; cualquier otra cosa es rojo.
+              if [ "$R_DET" = success ] && [ "$R_SLOW" = success ]; then RESULT=success; else RESULT=failure; fi ;;
+          esac
+          export RESULT
+          export DETAIL="- determinism-1000: ${R_DET}
+          - slow-suites: ${R_SLOW}"
+          bash .github/scripts/nightly-alert.sh
