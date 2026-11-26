@@ -95,7 +95,7 @@ por defecto antes de matar el proceso, lo que no basta a PostgreSQL ni a Redis e
 | Volumen (nombre real) | Montado en | Contenido | En el backup |
 |---|---|---|---|
 | `infrastructure_postgres_data` | postgres | base de datos completa | sí (vía `pg_dump`) |
-| `infrastructure_arena_replays` | api (ro), tournament-worker, replay-service, backup (ro) | replays | sí (≤ `REPLAY_RETENTION_DAYS`, `official/` sin límite) |
+| `infrastructure_arena_replays` | api (ro), tournament-worker, replay-service, backup (ro) | replays | sí (todos, sin límite de edad; `REPLAY_BACKUP_MAX_AGE_DAYS` opcional) |
 | `infrastructure_arena_maps` | map-service, backup (ro) | mapas del map-service | sí |
 | `infrastructure_arena_bot_sources` | bot-manager, bot-build-worker, backup (ro) | código fuente de bots | sí |
 | `infrastructure_arena_assets` | map-service (ro), backup (ro) | recursos | sí |

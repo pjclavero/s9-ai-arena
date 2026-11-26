@@ -206,10 +206,22 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
     purpose: "Vacío = ingesta best-effort. Exigirla es un endurecimiento, no el defecto.",
   },
   {
-    key: "REPLAY_RETENTION_DAYS",
+    key: "REPLAY_BACKUP_MAX_AGE_DAYS",
     kind: "safeDefault",
-    default: "180",
-    purpose: "Días que la copia conserva replays antes de podarlos.",
+    default: "0",
+    purpose: "Edad máxima (días) de los replays que entran en la copia. 0 = todos, sin límite.",
+  },
+  {
+    key: "RESTIC_CHECK_MODE",
+    kind: "safeDefault",
+    default: "subset",
+    purpose: "Verificación del repositorio: subset (lee datos 1/N por día), all o none (sólo estructura).",
+  },
+  {
+    key: "RESTIC_CHECK_SUBSET_PARTS",
+    kind: "safeDefault",
+    default: "7",
+    purpose: "Partes en que se divide la lectura de datos de restic check; todo el repositorio se lee cada N días.",
   },
   {
     key: "RESTIC_REPOSITORY",

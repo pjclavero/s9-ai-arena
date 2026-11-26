@@ -521,9 +521,20 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
   it("backup diverge en imagen, hostname de restic y healthcheck", () => {
     const res = r();
     const b = res.hallazgos.filter((x: any) => x.service === "backup" && x.code !== CODIGOS.CONFIG_FILES_DIVERGENTE);
-    expect(codigos(b).sort()).toEqual(
-      [CODIGOS.ENV_FALTA, CODIGOS.HEALTHCHECK_DIVERGENTE, CODIGOS.IMAGEN_DIVERGENTE].sort(),
-    );
+    // V1-OPS (AUD2-02/03): el backup recibe tres variables nuevas que el contenedor vivo aún no
+    // tiene (llegan al recrear el servicio): edad máxima de replays y lectura de datos de restic check.
+    const envFalta = b.filter((x: any) => x.code === CODIGOS.ENV_FALTA).map((x: any) => String(x.detail));
+    const esperadas = [
+      "RESTIC_HOSTNAME",
+      "REPLAY_BACKUP_MAX_AGE_DAYS",
+      "RESTIC_CHECK_MODE",
+      "RESTIC_CHECK_SUBSET_PARTS",
+    ];
+    const todo = envFalta.join(" | ");
+    for (const v of esperadas) expect(todo, v).toContain(v);
+    expect(envFalta.length).toBe(esperadas.length);
+    const otros = b.filter((x: any) => x.code !== CODIGOS.ENV_FALTA);
+    expect(codigos(otros).sort()).toEqual([CODIGOS.HEALTHCHECK_DIVERGENTE, CODIGOS.IMAGEN_DIVERGENTE].sort());
   });
 
   it("postgres diverge en la referencia de imagen: canonizar lo RECREARÍA", () => {

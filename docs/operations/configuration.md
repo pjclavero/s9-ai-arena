@@ -70,7 +70,9 @@ Ningún valor secreto aparece aquí.
 | `RESTIC_REPOSITORY` | `backup` | vacío | **sí** para tener copias | `sftp:usuario@host:/ruta` (ruta dentro del chroot) o ruta montada |
 | `RESTIC_HOSTNAME` | `backup` | un nombre lógico fijo | **sí** (vacío aborta el arranque) | agrupa la retención; no cambiarlo en producción |
 | `BACKUP_CRON` | `backup` | `15 4 * * *` | no | hora del contenedor (UTC) |
-| `REPLAY_RETENTION_DAYS` | `backup` | `180` | no | replays de más edad no se copian (`official/` sin límite) |
+| `REPLAY_BACKUP_MAX_AGE_DAYS` | `backup` | `0` | no | edad máxima (días) de los replays que entran en la copia; `0` = todos, sin límite. Sustituye a `REPLAY_RETENTION_DAYS` (obsoleta, ignorada) |
+| `RESTIC_CHECK_MODE` | `backup` | `subset` | no | `subset` (lee datos 1/N por día), `all` o `none` (sólo estructura) |
+| `RESTIC_CHECK_SUBSET_PARTS` | `backup` | `7` | no | N de `--read-data-subset=n/N`; todo el repositorio se lee cada N días |
 | `BUILD_COMMIT` / `BUILD_DATE` | `build.args` de todas las imágenes propias | `unknown` | **sí al construir** | identidad ADR-016; sólo afecta a `build` |
 | `BROADCAST_URL`, `RTMPS_URL`, `STREAM_MODE`, `STREAM_ENCODER`, `STREAM_AUTOSTART` | `streamer` (perfil `streaming`) | ver compose | no | fuera del perfil `production` |
 | `ALERT_WEBHOOK_URL`, `ALERT_EMAIL`, `PG_EXPORTER_URI` | perfil `observability` | — | no | observabilidad no desplegada en producción |

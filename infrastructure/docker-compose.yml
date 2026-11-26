@@ -922,7 +922,11 @@ services:
     networks: [data, public]
     environment:
       BACKUP_CRON: ${BACKUP_CRON:-15 4 * * *}
-      REPLAY_RETENTION_DAYS: ${REPLAY_RETENTION_DAYS:-180}
+      # 0 = todos los replays entran en el backup (sin límite de edad); N>0 excluye los de más de N días fuera de official/.
+      REPLAY_BACKUP_MAX_AGE_DAYS: ${REPLAY_BACKUP_MAX_AGE_DAYS:-0}
+      # restic check lee datos: subset (1/PARTS rotativo por día), all o none (sólo estructura).
+      RESTIC_CHECK_MODE: ${RESTIC_CHECK_MODE:-subset}
+      RESTIC_CHECK_SUBSET_PARTS: ${RESTIC_CHECK_SUBSET_PARTS:-7}
       # fix/restic-stable-hostname: hostname LÓGICO y ESTABLE de la
       # instalación que se pasa a `restic backup`/`forget --host`. Sin esto,
       # restic usa por defecto el hostname del contenedor (su ID corto),
