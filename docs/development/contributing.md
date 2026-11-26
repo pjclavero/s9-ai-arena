@@ -68,8 +68,8 @@ que la documentación no afirma nada no verificado y que no hay topología ni se
 
 ## Informar de un problema de seguridad
 
-No abras un issue público con detalles explotables. Contacta con el propietario del repositorio
-por un canal privado y aporta pasos de reproducción en un entorno aislado.
+No abras un issue público con detalles explotables. Sigue la [política de seguridad](../../SECURITY.md)
+(«Report a vulnerability» en la pestaña *Security*) y aporta pasos de reproducción en un entorno aislado.
 
 ## Documentación relacionada
 
