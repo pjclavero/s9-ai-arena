@@ -24,7 +24,8 @@ describe("MIGRATIONS: numeración y orden", () => {
   // Huecos RESERVADOS, explícitos y temporales: un número reservado por otro PR abierto
   // puede faltar, pero sólo ése. EQ5e · con `017_streaming_admin` (PR #227) integrada detrás
   // de `018_battle_reverted` (#229) ya no queda ninguno: la numeración vuelve a ser consecutiva.
-  const RESERVED_GAPS = new Set<number>();
+  // V1 · la 025 la reserva ADM-3 (#347, abierto); la 026 (torneos por invitación) va detrás.
+  const RESERVED_GAPS = new Set<number>([25]);
 
   it("prefijos únicos, consecutivos desde 001 (salvo huecos reservados) y en orden de aplicación", () => {
     const prefixes = names.map((n) => Number(n.slice(0, 3)));

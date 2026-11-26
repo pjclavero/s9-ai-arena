@@ -136,7 +136,15 @@ info:
   # (/admin/operations…). Ajustes funcionales persistidos (registro en código, techo del entorno, versión
   # optimista, auditoría atómica) y órdenes administrativas de tipos cerrados con confirmación en dos pasos
   # (token de un solo uso, frase literal, reautenticación, segundo admin para lo irreversible). Migración 023.
-  version: 0.26.0
+  # 0.28.0 · V1 TORNEOS POR INVITACIÓN (D-OP-43; la 0.27.0 la reserva ADM-3, #347): `enrollment` (open | invitation)
+  # en TournamentInput/Tournament (no decide la visibilidad: todo torneo publicado se lista y se consulta igual);
+  # enterTournament y enterTournamentTeam aceptan `invitationToken` y, en un torneo por invitación, responden 403
+  # invitation_required / invitation_invalid sin una invitación válida y no revocada. Operaciones nuevas:
+  # setTournamentEnrollment (PUT …/enrollment), getTournamentInvitation / createTournamentInvitation /
+  # revokeTournamentInvitation (GET/POST/DELETE …/invitation, sólo dueño del torneo o staff) y
+  # checkTournamentInvitation (POST …/invitation/check). El token sólo aparece en la respuesta 201 de
+  # createTournamentInvitation (x-private). Migración 026.
+  version: 0.28.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1162,9 +1170,14 @@ paths:
               properties:
                 botId: { type: string }
                 version: { type: integer }
+                invitationToken:
+                  type: string
+                  description: 'V1 · INVITACIÓN · obligatorio para un ALTA en un torneo `enrollment: invitation` (el del enlace); no hace falta para cambiar la versión de una inscripción ya admitida. Se ignora en un torneo abierto. Va en el CUERPO, nunca en la URL.'
       responses:
         '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
+        '429': { description: 'V1 INVITACIÓN · too_many_requests: límite de intentos por usuario de las inscripciones que presentan `invitationToken` (compartido con checkTournamentInvitation). Una inscripción sin token no cuenta.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'forbidden (el bot no es tuyo) · V1 INVITACIÓN invitation_required (torneo por invitación sin `invitationToken`) · invitation_invalid (token que no es el de la invitación activa: revocado, sustituido al regenerar o inventado). Sólo para un ALTA nueva: cambiar la versión pendiente de una inscripción YA admitida del propio bot (200) no exige el enlace, aunque se haya revocado, y sigue sujeto a todas las reglas. No inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · bot_not_published (FROZEN-REUSE: la versión no existe o su estado no es `published` ni `frozen` —borrador, en validación, suspendida, retirada…—; con `currentState`) · already_entered · bot_version_not_eligible (ELIG, con `notEligible`) · team_enrollment_required (#287: torneo `teams` con reglas NvN, se inscribe el equipo completo con enterTournamentTeam). Una versión `frozen` de un torneo anterior SÍ se inscribe, tal cual y sin cambiar de estado.', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
 
   /tournaments/{tournamentId}/team-entries:
@@ -1191,6 +1204,9 @@ paths:
               required: [teamId, members]
               properties:
                 teamId: { type: string }
+                invitationToken:
+                  type: string
+                  description: 'V1 · INVITACIÓN · obligatorio si el torneo es `enrollment: invitation`; se ignora en uno abierto.'
                 members:
                   type: array
                   minItems: 1
@@ -1215,7 +1231,8 @@ paths:
                   teamName: { type: string }
                   entries: { type: array, items: { $ref: '#/components/schemas/Entry' } }
         '400': { description: 'teamId o members mal formados, o un bot repetido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '403': { description: 'forbidden (no eres miembro del equipo)', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
+        '429': { description: 'V1 INVITACIÓN · too_many_requests: límite de intentos con `invitationToken` (por usuario; compartido con checkTournamentInvitation)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: 'forbidden (no eres miembro del equipo) · V1 INVITACIÓN invitation_required / invitation_invalid (torneo por invitación sin una invitación válida y no revocada; no entra nadie)', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
         '404': { description: 'Torneo o equipo inexistente', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · not_a_team_tournament · team_size_undefined (reglas sin tamaño de equipo) · rules_team_size (no son exactamente N; `teamSize`, `got`) · team_bot_not_member (`botIds`) · bot_retired (`botIds`) · bot_not_published (`notPublished` con `currentState`) · bot_version_not_eligible (`notEligible`) · team_consent_required (algún bot de otro dueño sin su autorización de esa versión; `botIds`) · team_already_entered · already_entered (`botIds`). Ninguno inscribe nada.', content: { application/json: { schema: { $ref: '#/components/schemas/TeamEntryError' } } } }
 
@@ -1306,6 +1323,107 @@ paths:
                   withdrawnEntries: { type: integer }
         '404': { description: No hay autorización tuya para ese bot, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: 'entries_closed · not_a_team_tournament', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /tournaments/{tournamentId}/enrollment:
+    put:
+      tags: [tournaments]
+      operationId: setTournamentEnrollment
+      summary: >-
+        V1 · INVITACIÓN · Cambia la modalidad de inscripción (`open` | `invitation`). Sólo quien creó el torneo o el
+        staff (canManageTournament) y sólo en `draft` u `open`. Pasar a `open` revoca el enlace activo (al volver a
+        `invitation` hay que generar otro). No cambia la visibilidad del torneo ni las inscripciones ya hechas. Auditado
+        (`tournament.enrollment_changed`, sin token).
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment]
+              properties:
+                enrollment: { $ref: '#/components/schemas/TournamentEnrollment' }
+      responses:
+        '200': { description: Modalidad aplicada (o ya lo estaba), content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '400': { description: enrollment no es open ni invitation, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'tournament_enrollment_locked (estado distinto de draft/open; `currentState`, `editableStates`)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /tournaments/{tournamentId}/invitation:
+    get:
+      tags: [tournaments]
+      operationId: getTournamentInvitation
+      summary: 'V1 · INVITACIÓN · Si hay un enlace vigente y desde cuándo. NUNCA devuelve el token (no se guarda) ni su hash. Sólo quien creó el torneo o el staff.'
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '200': { description: Estado del enlace, content: { application/json: { schema: { $ref: '#/components/schemas/TournamentInvitationStatus' } } } }
+        '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [tournaments]
+      operationId: createTournamentInvitation
+      summary: >-
+        V1 · INVITACIÓN · Genera un enlace NUEVO (256 bits de aleatoriedad criptográfica; se guarda sólo su sha256) y
+        revoca el anterior en la misma transacción. El token en claro se devuelve SÓLO en esta respuesta (no se puede
+        volver a leer: para copiarlo otra vez se genera otro). Sólo en `draft`/`open` y con `enrollment: invitation`.
+        Sólo quien creó el torneo o el staff. Auditado (`tournament.invitation_created`, con `invitationId`, sin token).
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '201': { description: Enlace generado (Cache-Control no-store), content: { application/json: { schema: { $ref: '#/components/schemas/TournamentInvitationCreated' } } } }
+        '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'tournament_not_invitation (torneo abierto) · tournament_enrollment_locked (estado distinto de draft/open)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [tournaments]
+      operationId: revokeTournamentInvitation
+      summary: 'V1 · INVITACIÓN · Revoca el enlace activo DE INMEDIATO (idempotente). Las inscripciones hechas antes se mantienen. Sólo quien creó el torneo o el staff. Auditado si revoca algo.'
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '200':
+          description: Sin enlace activo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active: { type: boolean, const: false }
+                  revoked: { type: boolean, description: 'true si había un enlace activo y se revocó' }
+        '403': { description: Ni quien creó el torneo ni staff, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tournaments/{tournamentId}/invitation/check:
+    post:
+      tags: [tournaments]
+      operationId: checkTournamentInvitation
+      summary: 'V1 · INVITACIÓN · El invitado (con sesión) comprueba si su enlace es válido antes de ver el formulario. El token va en el cuerpo. No inscribe nada.'
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invitationToken: { type: string }
+      responses:
+        '200':
+          description: Resultado de la comprobación
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrollment: { $ref: '#/components/schemas/TournamentEnrollment' }
+                  valid: { type: boolean, description: 'true sólo si el torneo es por invitación y el token es el de la invitación activa' }
+                  entriesOpen: { type: boolean }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: 'too_many_requests: límite de intentos por usuario (compartido con las inscripciones que presentan token)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
@@ -2920,6 +3038,14 @@ components:
         seedCommitment:
           type: string
           description: 'Hash del lote de semillas, publicado ANTES del cierre (commit-reveal, E9/T9.4).'
+        enrollment:
+          allOf: [{ $ref: '#/components/schemas/TournamentEnrollment' }]
+          default: open
+          description: >-
+            V1 · INVITACIÓN · modalidad de inscripción. `open`: cualquiera inscribe desde la ficha. `invitation`: sólo
+            con un enlace de invitación válido (createTournamentInvitation). NO decide la visibilidad: todo torneo se
+            lista y se consulta igual, y sus directos y resultados públicos no dependen de ella. Se cambia con
+            setTournamentEnrollment en `draft`/`open`. Los torneos anteriores son `open`.
         broadcast:
           type: boolean
           default: false
@@ -2949,6 +3075,24 @@ components:
             state: { enum: [draft, open, closed, running, finished, cancelled] }
             seedsRevealed: { type: array, items: { type: string }, description: 'Se rellena al cerrar inscripciones.' }
             rules: { $ref: '#/components/schemas/BattleRules' }
+    TournamentEnrollment:
+      enum: [open, invitation]
+    TournamentInvitationStatus:
+      type: object
+      properties:
+        enrollment: { $ref: '#/components/schemas/TournamentEnrollment' }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    TournamentInvitationCreated:
+      type: object
+      required: [invitationToken, createdAt]
+      properties:
+        invitationToken:
+          type: string
+          x-private: true
+          description: 'Token del enlace (43 caracteres base64url, 256 bits). SÓLO en esta respuesta; la API guarda su sha256. El enlace de la web lo lleva en el fragmento (#), que el navegador no envía al servidor.'
+        createdAt: { type: string, format: date-time }
+        revokedPrevious: { type: boolean, description: 'true si había un enlace activo y ha quedado revocado' }
     TournamentPage:
       type: object
       properties:

@@ -155,7 +155,9 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 |---|---|
 | `GET /tournaments`, `GET /tournaments/{id}/matches`, `GET /tournaments/{id}/team-standings` | anón. |
 | `POST /tournaments`, `POST …/actions/close-entries`, `POST …/actions/dry-run`, `POST …/actions/cancel` | organizer (y ser quien creó el torneo, o staff: `canManageTournament`) |
-| `POST /tournaments/{id}/entries` | user |
+| `POST /tournaments/{id}/entries` | user (en un torneo por invitación, con `invitationToken` válido: [tournament-invitations.md](tournament-invitations.md)) |
+| `PUT /tournaments/{id}/enrollment`, `GET`/`POST`/`DELETE /tournaments/{id}/invitation` | organizer (y ser quien creó el torneo, o staff: `canManageTournament`); V1 invitación, contrato 0.28.0 |
+| `POST /tournaments/{id}/invitation/check` | user (comprueba un enlace; no inscribe) |
 | `GET /standings`, `GET /bots/{botId}/rating-history` | anón. |
 
 **Batallas, espectador y replays** ([battles.md](battles.md), [websocket.md](websocket.md), [replays.md](replays.md)):
@@ -221,6 +223,11 @@ Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 
 | `putTeamEntryConsent` | `PUT /tournaments/{tournamentId}/team-consents/{botId}` | user (autorización del dueño del bot) |
 | `deleteTeamEntryConsent` | `DELETE /tournaments/{tournamentId}/team-consents/{botId}` | user |
 | `cancelTournament` | `POST /tournaments/{tournamentId}/actions/cancel` | organizer (dueño del torneo o staff, #289) |
+| `setTournamentEnrollment` | `PUT /tournaments/{tournamentId}/enrollment` | organizer (dueño del torneo o staff; sólo draft/open) |
+| `getTournamentInvitation` | `GET /tournaments/{tournamentId}/invitation` | organizer (dueño del torneo o staff; nunca devuelve el token) |
+| `createTournamentInvitation` | `POST /tournaments/{tournamentId}/invitation` | organizer (dueño del torneo o staff; token una sola vez) |
+| `revokeTournamentInvitation` | `DELETE /tournaments/{tournamentId}/invitation` | organizer (dueño del torneo o staff) |
+| `checkTournamentInvitation` | `POST /tournaments/{tournamentId}/invitation/check` | user |
 | `getStreamingAdmin` y las demás de `/admin/streaming…` | ver la tabla «Administración» | admin |
 
 ## Extensiones fuera del contrato

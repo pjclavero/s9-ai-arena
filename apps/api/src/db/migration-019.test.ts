@@ -45,7 +45,13 @@ const strip = (rows: unknown[], col: string) =>
     return rest;
   });
 /** #287 · columnas de migraciones POSTERIORES a la 019 (022: entries.team_id), fuera de la comparación. */
-const withoutLater = (tn: string, rows: unknown) => (tn === "entries" ? strip(rows as unknown[], "team_id") : rows);
+// V1 · INVITACIÓN · y `tournaments.enrollment` (026_tournament_invitations).
+const withoutLater = (tn: string, rows: unknown) =>
+  tn === "entries"
+    ? strip(rows as unknown[], "team_id")
+    : tn === "tournaments"
+      ? strip(rows as unknown[], "enrollment")
+      : rows;
 async function lastMigration(): Promise<string> {
   return (await h.db("knex_migrations").orderBy("id", "desc").first()).name;
 }
@@ -107,7 +113,9 @@ describe("migración 019_visibility_broadcast", () => {
     await migrateToLatest(h.db);
     expect(await lastMigration()).toBe(LATEST);
     const afterUp = await dump();
-    expect(strip(afterUp.tournaments, "broadcast")).toEqual(before.tournaments);
+    expect(strip(withoutLater("tournaments", afterUp.tournaments) as unknown[], "broadcast")).toEqual(
+      withoutLater("tournaments", before.tournaments),
+    );
     expect((afterUp.tournaments as { broadcast: boolean }[]).every((x) => x.broadcast === false)).toBe(true);
     // #287 · la 022 (posterior) añade entries.team_id: se compara sin esa columna.
     for (const tn of TABLES.filter((x) => x !== "tournaments"))
@@ -137,7 +145,9 @@ describe("migración 019_visibility_broadcast", () => {
     expect(await lastMigration()).toBe(PREVIOUS);
     expect(await columns("tournaments")).not.toContain("broadcast");
     const afterDown = await dump();
-    expect(afterDown.tournaments).toEqual(strip(backup.tournaments, "broadcast"));
+    expect(withoutLater("tournaments", afterDown.tournaments)).toEqual(
+      strip(withoutLater("tournaments", backup.tournaments) as unknown[], "broadcast"),
+    );
     for (const tn of TABLES.filter((x) => x !== "tournaments"))
       expect(withoutLater(tn, afterDown[tn])).toEqual(withoutLater(tn, backup[tn]));
     // Vuelve la irreversibilidad de D9.

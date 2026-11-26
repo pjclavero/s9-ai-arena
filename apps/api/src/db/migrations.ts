@@ -1339,6 +1339,43 @@ const m024_replay_artifacts: Migration = {
   },
 };
 
+// V1 · TORNEOS POR INVITACIÓN (D-OP-43). Modalidad de inscripción del torneo y enlace de invitación.
+//  - `tournaments.enrollment`: 'open' (cualquiera inscribe desde la ficha; TODO torneo existente) o
+//    'invitation' (sólo con un enlace de invitación válido). NO decide la visibilidad: todo torneo
+//    publicado se lista igual (docs/technical/tournament-invitations.md).
+//  - `tournament_invitations`: SÓLO el sha256 (hex) del token, nunca el token. A lo sumo UNA
+//    invitación activa (`revoked_at IS NULL`) por torneo: generar otra revoca la anterior.
+// NUMERACIÓN: la 025 la reserva ADM-3 (#347, abierto). Columna y tabla PROPIAS, sin dependencias
+// posteriores: entra en NAMED_ROLLBACK_ALLOWED. Probada en `migration-026.test.ts`.
+const m026_tournament_invitations: Migration = {
+  name: "026_tournament_invitations",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE tournaments
+        ADD COLUMN enrollment text NOT NULL DEFAULT 'open' CHECK (enrollment IN ('open', 'invitation'));
+      CREATE TABLE tournament_invitations (
+        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tournament_id uuid NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        token_sha256  text NOT NULL UNIQUE CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
+        created_by    uuid REFERENCES users(id) ON DELETE SET NULL,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        revoked_at    timestamptz,
+        revoked_by    uuid REFERENCES users(id) ON DELETE SET NULL,
+        CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+      );
+      CREATE UNIQUE INDEX tournament_invitations_one_active
+        ON tournament_invitations (tournament_id) WHERE revoked_at IS NULL;
+    `);
+  },
+  // Vuelta atrás: se pierden las invitaciones y la modalidad (todo torneo vuelve a ser abierto).
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS tournament_invitations;
+      ALTER TABLE tournaments DROP COLUMN IF EXISTS enrollment;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1364,6 +1401,7 @@ export const MIGRATIONS: Migration[] = [
   m022_entries_team,
   m023_system_settings_operations,
   m024_replay_artifacts,
+  m026_tournament_invitations,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1442,6 +1480,8 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "023_system_settings_operations",
   // V1 REPLAYS PR-3 · tabla propia (replay_artifacts), sin dependencias posteriores.
   "024_replay_artifacts",
+  // V1 · torneos por invitación: columna y tabla propias, sin dependencias posteriores.
+  "026_tournament_invitations",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

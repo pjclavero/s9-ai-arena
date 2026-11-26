@@ -44,6 +44,7 @@ en disco. Todo está verificado en `27f70bb` (octubre de 2026). Este documento n
 | `020_streaming_ingests` | `streaming_ingests` (ingestas RTMPS por plataforma) y `streaming_credentials.sealed_backup` |
 | `021_runtime_settings` | `app_runtime_settings` (una fila: espectador y replays públicos; la crea la primera API que arranca) |
 | `022_entries_team` | `entries.team_id` e índice parcial; `team_entry_consents` (autorizaciones de los dueños para inscribir un equipo) |
+| `026_tournament_invitations` | `tournaments.enrollment` (`open` por defecto) y `tournament_invitations` (sólo el sha256 del token; una activa por torneo). La 025 la reserva ADM-3 (#347). Ver [tournament-invitations.md](tournament-invitations.md) |
 
 ## Cómo se aplican
 

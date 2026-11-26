@@ -56,6 +56,8 @@ import { NotFoundPage } from "./pages/NotFoundPage.js";
 // UX-A (G-01) · portada pública + home con primeros pasos y guía integrada.
 import { HomePage, LandingIntro } from "./pages/HomePage.js";
 import { HelpPage } from "./help/LazyHelpPage.js"; // EQ3 · carga diferida del Centro de Ayuda
+// V1 · TORNEOS POR INVITACIÓN · el token del enlace sale de la barra y vive en sessionStorage.
+import { captureInvitationFromLocation, clearAllInvitations, pendingInvitation } from "./tournament-invitation.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -179,10 +181,12 @@ export function App() {
   /** FC-D (TD-022) · API caída al arrancar: NO es «sin sesión» (antes mandaba al login). */
   const [bootError, setBootError] = useState<unknown>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [route, setRoute] = useState(window.location.hash || "#/");
+  // V1 · INVITACIÓN · un enlace `#/tournaments/<id>/invitation/<token>` se captura ANTES de pintar:
+  // el token pasa a sessionStorage y la ruta queda en la ficha (`#/tournaments/<id>`).
+  const [route, setRoute] = useState(() => captureInvitationFromLocation() ?? (window.location.hash || "#/"));
 
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash || "#/");
+    const onHash = () => setRoute(captureInvitationFromLocation() ?? (window.location.hash || "#/"));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -240,6 +244,7 @@ export function App() {
   if (broadcast) return <BroadcastPage config={broadcast} />;
 
   function doLogout() {
+    clearAllInvitations(); // V1 · INVITACIÓN · un enlace no sobrevive a la sesión en esta pestaña
     void logout().then(() => {
       setNotice("Sesión cerrada.");
       setMe(null);
@@ -323,6 +328,41 @@ export function App() {
     // UX-A · Sin sesión, una dirección que no es de NINGUNA pantalla es un 404
     // (con la barra para volver), no el formulario de acceso.
     if (!panelRoute && !staticRoute) return shell(<NotFoundPage route={route} loggedIn={false} />);
+    const onLogin = (who: Me) => {
+      setNotice("");
+      // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
+      setDraftOwner(who.id);
+      setMe(who);
+    };
+    // V1 · TI-01 (D-OP-43) · el listado y la ficha de torneos son PÚBLICOS, en sólo lectura, para
+    // todo torneo (abierto o por invitación). Debajo, el acceso: tras entrar o registrarse la MISMA
+    // ruta pinta el panel (y, con un enlace de invitación, el formulario de inscripción).
+    const publicTournamentId = panelRoute?.kind === "tournament" ? panelRoute.id : null;
+    if (publicTournamentId || staticRoute === "tournaments") {
+      return shell(
+        <>
+          {publicTournamentId ? (
+            <TournamentDetailPage id={publicTournamentId} me={null} />
+          ) : (
+            <TournamentsPage me={null} />
+          )}
+          <section aria-label="acceso" data-testid="public-tournament-access">
+            {publicTournamentId && pendingInvitation(publicTournamentId) ? (
+              <p className="warn" role="status" data-testid="invitation-login-notice">
+                Tienes una invitación para inscribirte en este torneo: inicia sesión o regístrate para inscribirte y
+                volverás al formulario de inscripción.
+              </p>
+            ) : (
+              <p className="muted" data-testid="public-tournament-login-hint">
+                Para inscribir tus bots o crear torneos, inicia sesión o crea una cuenta.
+              </p>
+            )}
+            <LoginPage notice={notice} onLogin={onLogin} />
+          </section>
+        </>,
+        "los torneos",
+      );
+    }
     return shell(
       <>
         <h1>S9 AI Arena</h1>
@@ -334,15 +374,7 @@ export function App() {
         {/* G-01 · la portada explica qué es S9 y cómo empezar, junto al acceso. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 320px" }}>
-            <LoginPage
-              notice={notice}
-              onLogin={(who) => {
-                setNotice("");
-                // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
-                setDraftOwner(who.id);
-                setMe(who);
-              }}
-            />
+            <LoginPage notice={notice} onLogin={onLogin} />
           </div>
           <div style={{ flex: "2 1 420px" }}>
             <LandingIntro />
@@ -508,6 +540,8 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
             {link("#/maps", "Mapas")}
           </>
         )}
+        {/* V1 · TI-01 · sin sesión, «Torneos» es el listado público de sólo lectura. */}
+        {!me && link("#/tournaments", "Torneos", "nav-tournaments")}
         {/* R11 · #/live y N6 · #/ranking son públicas (sin cuenta). */}
         {link("#/live", "En directo")}
         {link("#/ranking", "Ranking")}

@@ -41,7 +41,8 @@ async function columns(table: string): Promise<string[]> {
 }
 // VISIBILIDAD · `tournaments.broadcast` es de una migración POSTERIOR (019_visibility_broadcast),
 // que rollbackReverted revierte antes y migrateToLatest vuelve a aplicar: no es objeto de este test.
-const LATER_COLUMNS = ["broadcast"];
+// V1 · INVITACIÓN · y `tournaments.enrollment` (026_tournament_invitations).
+const LATER_COLUMNS = ["broadcast", "enrollment"];
 async function dump() {
   const out: Record<string, unknown[]> = {};
   for (const t of TABLES) {
