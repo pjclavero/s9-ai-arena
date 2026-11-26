@@ -42,7 +42,7 @@ Autenticación:
 ## Autenticación y sesión
 
 - **`POST /auth/register`**:
-  - `{email, password ≥12, displayName ≤48}` → `201`;
+  - `{email, password (12-128, [política](security.md#política-de-contraseñas)), displayName ≤48}` → `201`;
   - **concede los roles `user` y `developer`**;
   - email duplicado: `409 email_taken`;
   - el registro **está abierto**: no hay invitación ni interruptor ([TD-012](../roadmap/technical-debt.md#td-012)).

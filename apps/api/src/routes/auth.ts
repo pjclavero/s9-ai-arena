@@ -6,7 +6,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { MIN_PASSWORD_LENGTH, hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
+import { hashPassword, passwordPolicyViolation, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_ABSOLUTE_TTL_S,
@@ -159,7 +159,10 @@ export function authRoutes(deps: AuthDeps): Router {
     async (req, res) => {
       const { email, password, displayName } = req.body ?? {};
       if (typeof email !== "string" || !EMAIL_RE.test(email)) throw badRequest("email inválido");
-      const violation = passwordPolicyViolation(password);
+      const violation = passwordPolicyViolation(password, undefined, {
+        email,
+        displayName: typeof displayName === "string" ? displayName : null,
+      });
       if (violation) throw badRequest(violation);
       if (typeof displayName !== "string" || !displayName || displayName.length > 48) {
         throw badRequest("displayName obligatorio (máx. 48)");
@@ -392,7 +395,7 @@ export function authRoutes(deps: AuthDeps): Router {
 
   // ------------------------------------------------- cambio de contraseña
   // V1-B · Usuario AUTENTICADO que conoce su contraseña actual. Exige la actual (y TOTP/código de
-  // recuperación si hay 2FA: un access token robado no basta), aplica la política (≥12, distinta de la
+  // recuperación si hay 2FA: un access token robado no basta), aplica la política (12-128, sin comunes, distinta de la
   // actual), limita los intentos fallidos por usuario (429) y revoca TODAS las demás sesiones
   // (la actual sigue viva; sus refresh tokens mueren con la sesión). No toca el 2FA.
   defineExtension(
@@ -403,7 +406,12 @@ export function authRoutes(deps: AuthDeps): Router {
       if (typeof currentPassword !== "string" || !currentPassword) {
         throw badRequest("currentPassword obligatorio");
       }
-      const violation = passwordPolicyViolation(newPassword, "La nueva contraseña");
+      // El contexto (email/nombre de la cuenta) sale del usuario autenticado, no del cuerpo.
+      const me = await db("users").where({ id: req.auth!.userId }).first();
+      const violation = passwordPolicyViolation(newPassword, "La nueva contraseña", {
+        email: me?.email,
+        displayName: me?.display_name,
+      });
       if (violation) throw badRequest(violation);
       // Política ANTES de la reautenticación: una petición que se va a rechazar no debe gastar un código
       // de recuperación (requireStrongReauth lo consume). Sólo compara el cuerpo consigo mismo: no revela nada.
@@ -474,15 +482,22 @@ export function authRoutes(deps: AuthDeps): Router {
     { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" },
     async (req, res) => {
       const { token, newPassword } = req.body ?? {};
-      if (typeof token !== "string" || passwordPolicyViolation(newPassword) !== null) {
-        throw badRequest(`token y newPassword (≥${MIN_PASSWORD_LENGTH}) obligatorios`);
-      }
+      if (typeof token !== "string") throw badRequest("token obligatorio");
+      const generic = passwordPolicyViolation(newPassword, "La nueva contraseña");
+      if (generic) throw badRequest(generic);
       const reset = await db("password_resets")
         .where({ token_hash: hashToken(token) })
         .whereNull("used_at")
         .where("expires_at", ">", db.fn.now())
         .first();
       if (!reset) throw unauthorized("Token de recuperación inválido o expirado");
+      // Con el token ya validado (y SIN consumirlo) se aplica también la parte que depende de la cuenta.
+      const owner = await db("users").where({ id: reset.user_id }).first();
+      const ownerViolation = passwordPolicyViolation(newPassword, "La nueva contraseña", {
+        email: owner?.email,
+        displayName: owner?.display_name,
+      });
+      if (ownerViolation) throw badRequest(ownerViolation);
 
       await db.transaction(async (trx) => {
         await trx("password_resets").where({ id: reset.id }).update({ used_at: trx.fn.now() });

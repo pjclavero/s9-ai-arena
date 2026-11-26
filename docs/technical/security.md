@@ -38,8 +38,21 @@ explotación. Los gates de activación de la ejecución real (Carril I) y del es
 | Token de acceso | JWT HS256, `iss = s9-ai-arena`, `aud = s9-arena/session`; caduca en **15 min**; enviado como `Authorization: Bearer` |
 | 2FA | TOTP (`otplib`) con códigos de recuperación hasheados. Sólo está disponible por API (`enable2fa`, `disable2fa`) |
 | Registro | `POST /auth/register`, abierto a `visitor`, **sin interruptor ni invitación**; concede `user` + `developer` ([TD-012](../roadmap/technical-debt.md#td-012)) |
-| Recuperación | `POST /auth/recover` crea un token de un solo uso, con la misma respuesta exista o no la cuenta; `POST /auth/reset` lo consume (contraseña ≥ 12). **No hay canal** que entregue el token al usuario |
-| Cambio de contraseña | **no existe** |
+| Recuperación | `POST /auth/recover` crea un token de un solo uso, con la misma respuesta exista o no la cuenta; `POST /auth/reset` lo consume (misma [política de contraseñas](#política-de-contraseñas)). **No hay canal** que entregue el token al usuario |
+| Cambio de contraseña | `POST /auth/password` (usuario autenticado): exige la contraseña actual (y TOTP o código de recuperación si hay 2FA), aplica la [política de contraseñas](#política-de-contraseñas), limita los intentos fallidos (429) y cierra las demás sesiones |
+
+### Política de contraseñas
+
+Una única función, `passwordPolicyViolation` (`apps/api/src/auth/passwords.ts`), la aplican el registro, el cambio (`/auth/password`), la recuperación (`/auth/reset`), el servicio de primer administrador y el CLI `create-admin`. No hay copias de la política.
+
+- **Longitud: 12 a 128 caracteres.** Se cuenta en puntos de código Unicode tras normalizar a NFC: un emoji o una letra acentuada cuentan 1, y «é» precompuesta y «e»+acento combinante son lo mismo. El tope es de 128 caracteres (hasta 512 bytes en UTF-8), no de bytes.
+- **Algoritmo y límite de bytes:** Argon2id no trunca la entrada (bcrypt sí, a 72 bytes), así que no hace falta prehash ni un límite de bytes distinto; el tope sólo acota el coste de procesar una petición. La normalización NFC se usa **sólo** para evaluar la política: el hash y el login usan la cadena tal como llega.
+- **Texto bien formado:** se rechazan los sustitutos UTF-16 solitarios (Argon2 los codificaría como U+FFFD y claves distintas colisionarían). Las entradas de más de 512 unidades UTF-16 se rechazan sin normalizar.
+- **Lista de contraseñas comunes:** `apps/api/src/auth/common-passwords.ts` (versionada con `COMMON_PASSWORDS_VERSION`; unas 10 000 entradas de 12 o más caracteres tomadas de listas públicas de contraseñas filtradas, ver la cabecera del fichero y [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md); sin direcciones de email ni dominios, vigilado por `common-passwords.test.ts`). Se compara en minúsculas y NFC, sin distinguir mayúsculas. Es un módulo estático: sin servicios externos y sin red en ejecución. Contraseñas como `aaaaaaaaaaaa` o `qwertyqwerty` se rechazan **por estar en la lista**, no por composición.
+- **Derivadas de la cuenta:** se rechaza la contraseña igual al email, a su parte local o al nombre visible (también con cifras o signos al final, p. ej. `nombre2024!`). La comprobación sale de la cuenta (usuario autenticado, dueño del token de recuperación o datos de alta), nunca de datos del cuerpo ajenos a ella. Al recuperar la contraseña, un rechazo no consume el token.
+- **Sin reglas de composición:** no se exigen mayúsculas, cifras ni símbolos (recomendación NIST SP 800-63B).
+- **Mensajes:** dicen qué regla falló, sin repetir la contraseña ni indicar qué entrada de la lista coincidió.
+- **Alcance:** la política se evalúa al fijar una contraseña. Las contraseñas ya guardadas no se revisan y siguen sirviendo para entrar.
 
 ## Sesiones y refresh
 

@@ -5,7 +5,7 @@ Puedes registrarte libremente, iniciar sesión, mantener la sesión al recargar 
 ## Crear cuenta
 
 1. En la pantalla inicial pulsa **«Crear cuenta»**.
-2. Rellena **«Nombre visible»** (el que verán los demás jugadores, hasta 48 caracteres), **«Email»** y **«Contraseña (≥12)»**.
+2. Rellena **«Nombre visible»** (el que verán los demás jugadores, hasta 48 caracteres), **«Email»** y **«Contraseña (≥12)»**. Una buena contraseña es una frase larga y fácil de recordar: de 12 a 128 caracteres, sin obligación de mayúsculas, números ni símbolos, pero que no sea una contraseña común.
 3. Pulsa **«Registrarse y entrar»**. Se crea la cuenta y entras directamente.
 
 ## Iniciar sesión
@@ -49,6 +49,9 @@ Los roles de organizador o superiores los concede un administrador ([Administrac
 | Mensaje | Significa |
 |---|---|
 | «La contraseña debe tener al menos 12 caracteres» | Contraseña corta. |
+| «La contraseña no puede superar 128 caracteres» | Contraseña demasiado larga. |
+| «La contraseña es demasiado común o ha aparecido en filtraciones: elige otra» | Está en la lista de contraseñas comunes (sin importar mayúsculas). |
+| «La contraseña no puede basarse en tu email o nombre visible» | Es tu email, tu nombre o ese texto con cifras al final. |
 | «Ya existe una cuenta con ese email» | El email ya está registrado. |
 | «email inválido» / «displayName obligatorio (máx. 48)» | Datos del formulario no válidos. |
 | «Credenciales inválidas» | Email o contraseña incorrectos. |

@@ -2564,7 +2564,16 @@ components:
       required: [email, password, displayName]
       properties:
         email: { type: string, format: email }
-        password: { type: string, minLength: 12, x-private: true }
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+          x-private: true
+          description: >
+            Política única de contraseñas (registro, cambio, recuperación y primer administrador):
+            de 12 a 128 caracteres (puntos de código Unicode, normalizados a NFC), que no esté en la lista
+            de contraseñas comunes (sin distinguir mayúsculas) y que no sea el email o el nombre visible de
+            la cuenta. No hay reglas de composición: no se exigen mayúsculas, cifras ni símbolos.
         displayName: { type: string, maxLength: 48 }
 
     LoginRequest:

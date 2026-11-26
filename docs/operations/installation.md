@@ -256,7 +256,7 @@ $DC exec -w /app api npx tsx apps/api/src/db/cli.ts create-admin <email> "<nombr
 
 
 Con terminal pide la contraseña **sin eco** (dos veces); en scripts, por un fichero `0600` (`--password-file`) o por tubería, **nunca** por argumento;
-cumple la política de registro (≥ 12 caracteres) y el comando se niega si ya hay un
+cumple la política de registro (12-128 caracteres, no común; ver [seguridad](../technical/security.md#política-de-contraseñas)) y el comando se niega si ya hay un
 administrador. Detalle en [first-run.md](first-run.md#3-primer-administrador).
 
 ## 10. Verificar
